@@ -112,12 +112,37 @@ pub struct TopModel {
     pub selected: usize,
     /// Keep the selection on the newest live run.
     pub follow: bool,
+    /// The panel the scroll keys act on.
+    pub focus: Panel,
+    /// The index of the Shells body line drawn first; clamped to the
+    /// content and the panel's inner height.
+    pub shells_top: usize,
+    /// The index of the Activity body line drawn first while not tailing.
+    pub activity_top: usize,
+    /// The Activity panel shows its newest rows until the user scrolls it.
+    pub tailing: bool,
+    /// The inner heights the current layout gives Runs, Shells and
+    /// Activity; the loop refreshes them so key handling clamps against
+    /// the real panels.
+    pub heights: PanelHeights,
     /// The Activity filter text.
     pub filter: String,
     /// Whether the filter is being edited.
     pub editing: bool,
     /// The loop saw a quit key.
     pub quit: bool,
+}
+
+/// The inner heights of the scrollable panels, from `plan_layout` for the
+/// current terminal size. Zero until the loop measures them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PanelHeights {
+    /// The Runs panel's inner height.
+    pub runs: usize,
+    /// The Shells panel's inner height.
+    pub shells: usize,
+    /// The Activity panel's inner height.
+    pub activity: usize,
 }
 
 impl TopModel {
@@ -127,6 +152,11 @@ impl TopModel {
             snapshot,
             selected,
             follow: true,
+            focus: Panel::Runs,
+            shells_top: 0,
+            activity_top: 0,
+            tailing: true,
+            heights: PanelHeights::default(),
             filter: String::new(),
             editing: false,
             quit: false,
@@ -157,28 +187,253 @@ impl TopModel {
                 }
                 _ => {}
             }
+            self.clamp_offsets();
             return;
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.selected = self.selected.saturating_sub(1);
-                self.follow = false;
+            KeyCode::Tab => self.focus = self.focus.next(),
+            KeyCode::BackTab => self.focus = self.focus.previous(),
+            KeyCode::Char(c @ '1'..='4') => self.focus = focus_of(c),
+            KeyCode::Up | KeyCode::Char('k') => self.scroll_up(1),
+            KeyCode::Down | KeyCode::Char('j') => self.scroll_down(1),
+            KeyCode::PageUp => self.scroll_up(self.page()),
+            KeyCode::PageDown => self.scroll_down(self.page()),
+            KeyCode::Home => self.scroll_home(),
+            KeyCode::End => self.scroll_end(),
+            KeyCode::Char('f') => {
+                self.follow = true;
+                self.tailing = true;
+                self.clamp_offsets();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                let max = self.snapshot.runs.len().saturating_sub(1);
-                self.selected = (self.selected + 1).min(max);
-                self.follow = false;
-            }
-            KeyCode::Char('f') => self.follow = true,
             KeyCode::Char('/') => self.editing = true,
             _ => {}
         }
         if self.follow {
             self.selected = follow_target(&self.snapshot.runs);
         }
+        self.clamp_offsets();
     }
 
+    /// A page of the focused panel: its inner height minus one, at least 1.
+    fn page(&self) -> usize {
+        let h = match self.focus {
+            Panel::Runs => self.heights.runs,
+            Panel::Budget => 0,
+            Panel::Shells => self.heights.shells,
+            Panel::Activity => self.heights.activity,
+        };
+        h.saturating_sub(1).max(1)
+    }
+
+    /// One line up on the focused panel. Runs moves the selection and stops
+    /// follow; Shells and Activity move their top offset and stop Activity
+    /// tailing; Budget ignores the key.
+    fn scroll_up(&mut self, n: usize) {
+        match self.focus {
+            Panel::Runs => {
+                self.selected = self.selected.saturating_sub(n);
+                self.follow = false;
+            }
+            Panel::Budget => {}
+            Panel::Shells => self.shells_top = self.shells_top.saturating_sub(n),
+            Panel::Activity => {
+                self.activity_top = self.activity_top.saturating_sub(n);
+                self.tailing = false;
+            }
+        }
+    }
+
+    /// One line down on the focused panel; see [`TopModel::scroll_up`].
+    fn scroll_down(&mut self, n: usize) {
+        match self.focus {
+            Panel::Runs => {
+                let max = self.snapshot.runs.len().saturating_sub(1);
+                self.selected = (self.selected + n).min(max);
+                self.follow = false;
+            }
+            Panel::Budget => {}
+            Panel::Shells => {
+                self.shells_top = (self.shells_top + n).min(
+                    self.last_window_top(shells_lines(&self.snapshot.shells), self.heights.shells),
+                );
+            }
+            Panel::Activity => {
+                self.activity_top += n;
+                self.tailing = false;
+            }
+        }
+    }
+
+    /// The top of the focused panel. Runs selects the first run; Shells and
+    /// Activity go to their first body line; Budget ignores the key.
+    fn scroll_home(&mut self) {
+        match self.focus {
+            Panel::Runs => {
+                self.selected = 0;
+                self.follow = false;
+            }
+            Panel::Budget => {}
+            Panel::Shells => self.shells_top = 0,
+            Panel::Activity => {
+                self.activity_top = 0;
+                self.tailing = false;
+            }
+        }
+    }
+
+    /// The bottom of the focused panel. Runs selects the last run; Shells
+    /// and Activity scroll to their last full window; Budget ignores the
+    /// key. Scrolling Activity to its bottom resumes tailing.
+    fn scroll_end(&mut self) {
+        match self.focus {
+            Panel::Runs => {
+                self.selected = self.snapshot.runs.len().saturating_sub(1);
+                self.follow = false;
+            }
+            Panel::Budget => {}
+            Panel::Shells => {
+                let total = shells_lines(&self.snapshot.shells);
+                self.shells_top = self.last_window_top(total, self.heights.shells);
+            }
+            Panel::Activity => {
+                self.tailing = true;
+            }
+        }
+    }
+
+    /// The first top offset that shows the last full window of `total`
+    /// lines in `inner_h` rows: `total - inner_h` when the content
+    /// overflows, else 0.
+    fn last_window_top(&self, total: usize, inner_h: usize) -> usize {
+        total.saturating_sub(inner_h)
+    }
+
+    /// Pull every offset back inside the content and the stored heights,
+    /// after a key, a snapshot refresh or a filter change. Activity that
+    /// has scrolled to its bottom resumes tailing.
+    pub fn clamp_offsets(&mut self) {
+        let activity_lines = activity_text(&self.filtered_activity()).lines().count();
+        let bottom = self.last_window_top(activity_lines, self.heights.activity);
+        if self.tailing {
+            self.activity_top = bottom;
+        } else {
+            self.activity_top = self.activity_top.min(bottom);
+            // The newest row is visible again: tail from here.
+            if self.activity_top == bottom {
+                self.tailing = true;
+            }
+        }
+        let shells = shells_lines(&self.snapshot.shells);
+        self.shells_top = self
+            .shells_top
+            .min(self.last_window_top(shells, self.heights.shells));
+    }
+}
+
+/// The panel the keys act on, in the order `1` to `4` and the Tab cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Panel {
+    /// The run list.
+    Runs,
+    /// Today's spend.
+    Budget,
+    /// The daemon's live shells.
+    Shells,
+    /// The day's events.
+    Activity,
+}
+
+impl Panel {
+    /// The next panel in the cycle, wrapping from Activity to Runs.
+    pub fn next(self) -> Self {
+        match self {
+            Panel::Runs => Panel::Budget,
+            Panel::Budget => Panel::Shells,
+            Panel::Shells => Panel::Activity,
+            Panel::Activity => Panel::Runs,
+        }
+    }
+
+    /// The previous panel in the cycle, wrapping from Runs to Activity.
+    pub fn previous(self) -> Self {
+        match self {
+            Panel::Runs => Panel::Activity,
+            Panel::Budget => Panel::Runs,
+            Panel::Shells => Panel::Budget,
+            Panel::Activity => Panel::Shells,
+        }
+    }
+
+    /// The word the footer names: `Runs`, `Budget`, `Shells`, `Activity`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Panel::Runs => "Runs",
+            Panel::Budget => "Budget",
+            Panel::Shells => "Shells",
+            Panel::Activity => "Activity",
+        }
+    }
+
+    /// The panel's position in the Tab cycle, `0` to `3`.
+    pub fn index(self) -> usize {
+        match self {
+            Panel::Runs => 0,
+            Panel::Budget => 1,
+            Panel::Shells => 2,
+            Panel::Activity => 3,
+        }
+    }
+}
+
+/// The panel a digit key jumps to; `1` to `4`.
+fn focus_of(c: char) -> Panel {
+    match c {
+        '1' => Panel::Runs,
+        '2' => Panel::Budget,
+        '3' => Panel::Shells,
+        _ => Panel::Activity,
+    }
+}
+
+/// The inner heights `plan_layout` gives the three scrollable panels at
+/// `size` for the model's current content. A size the backend cannot report
+/// leaves the stored heights alone.
+fn measured_heights(model: &TopModel, size: Option<ratatui::layout::Rect>) -> PanelHeights {
+    let Some(size) = size else {
+        return model.heights;
+    };
+    let rects = crate::cli::commands::top::plan_layout(
+        size,
+        runs_lines(&model.snapshot.runs),
+        budget_lines(&model.snapshot.budget),
+        shells_lines(&model.snapshot.shells),
+    );
+    PanelHeights {
+        runs: inner_height(rects.runs),
+        shells: inner_height(rects.shells),
+        activity: inner_height(rects.activity),
+    }
+}
+
+/// The Runs panel's body line count: one per run plus the column header,
+/// capped where `plan_layout` caps it. Pure.
+fn runs_lines(runs: &[crate::cli::commands::top::TopRunRow]) -> usize {
+    runs.len() + 1
+}
+
+/// The Budget panel's body line count: the four text lines plus the bar
+/// when a cap is set. Pure.
+fn budget_lines(budget: &crate::cli::commands::top::BudgetPanel) -> usize {
+    budget_text(budget).lines().count() + usize::from(budget.cap > 0.0)
+}
+
+/// The Shells panel's body line count from its text. Pure.
+fn shells_lines(panel: &crate::cli::commands::top::ShellsPanel) -> usize {
+    shells_text(panel).lines().count()
+}
+
+impl TopModel {
     /// The Activity rows the filter admits, in `filter_activity`'s order:
     /// log order, oldest first. The Activity panel draws them tail-first,
     /// so the newest row that fits is the one on screen.
@@ -189,6 +444,7 @@ impl TopModel {
         ))
     }
 }
+
 /// Draw one frame at the wall clock: [`draw_at`] with the local zone now.
 pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
     draw_at(frame, model, Local::now().fixed_offset());
@@ -239,10 +495,11 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
     draw_panel(
         frame,
         rects.runs,
-        "Runs",
+        &panel_title(Panel::Runs),
         &runs_display,
         runs_sel,
         &display_fades,
+        model.focus == Panel::Runs,
     );
 
     let bar = budget_bar(
@@ -267,44 +524,107 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(Line::styled(
-            " Budget ".to_string(),
-            Style::default().add_modifier(Modifier::BOLD),
+        .title(panel_title_line(
+            Panel::Budget,
+            model.focus == Panel::Budget,
         ));
     let inner = block.inner(rects.budget);
     block.render(rects.budget, frame.buffer_mut());
     Paragraph::new(budget_lines).render(inner, frame.buffer_mut());
 
-    draw_panel(frame, rects.shells, "Shells", &shells_body, None, &[]);
+    let shells_window = window_text(&shells_body, model.shells_top, inner_height(rects.shells));
+    draw_panel(
+        frame,
+        rects.shells,
+        &panel_title(Panel::Shells),
+        &shells_window,
+        None,
+        &[],
+        model.focus == Panel::Shells,
+    );
 
-    let activity_lines = activity_body.lines().count();
-    // The new Activity rows land at the bottom of the body, so a body taller
-    // than its panel shows its tail, not its head.
-    let activity_shown = activity_body
-        .lines()
-        .skip(activity_lines.saturating_sub(inner_height(rects.activity)))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let activity_total = activity_body.lines().count();
+    let activity_window = if model.tailing {
+        // The newest rows fill the panel: the tail starts where the last
+        // full window starts.
+        window_text(
+            &activity_body,
+            activity_total.saturating_sub(inner_height(rects.activity)),
+            inner_height(rects.activity),
+        )
+    } else {
+        activity_window_text(
+            &activity_body,
+            model.activity_top,
+            inner_height(rects.activity),
+        )
+    };
     draw_panel(
         frame,
         rects.activity,
-        "Activity",
-        &activity_shown,
+        &panel_title(Panel::Activity),
+        &activity_window,
         None,
         &[],
+        model.focus == Panel::Activity,
     );
     let mode = if model.follow {
         "following"
     } else {
         "scrolled"
     };
+    let activity_mode = if model.tailing {
+        "tailing"
+    } else {
+        "activity scrolled"
+    };
     let mut footer = format!(
-        "q quit \u{b7} \u{2191}\u{2193} scroll \u{b7} f follow \u{b7} / filter \u{b7} {mode}"
+        "q quit \u{b7} \u{2191}\u{2193} scroll \u{b7} tab focus \u{b7} f follow \u{b7} / filter \u{b7} focus: {} \u{b7} {mode} \u{b7} {activity_mode}",
+        model.focus.label()
     );
     if !model.filter.is_empty() {
         footer.push_str(&format!(" \u{b7} filter: {}", model.filter));
     }
     Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
+}
+
+/// A panel's title text: ` <n> <Name> `.
+fn panel_title(panel: Panel) -> String {
+    format!(" {} {} ", panel.index() + 1, panel.label())
+}
+
+/// A panel's title line, cyan on the focused panel.
+fn panel_title_line(panel: Panel, focused: bool) -> Line<'static> {
+    let mut style = Style::default().add_modifier(Modifier::BOLD);
+    if focused {
+        style = style.fg(Color::Cyan);
+    }
+    Line::styled(panel_title(panel), style)
+}
+
+/// The Shells body's visible window: the lines `top` onward as far as the
+/// panel's inner height shows, from the one pure range helper.
+fn window_text(body: &str, top: usize, inner_h: usize) -> String {
+    let total = body.lines().count();
+    visible_range(total, inner_h, top)
+        .map(|i| body.lines().nth(i).unwrap_or_default().to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The Activity body's visible window while not tailing, from the same
+/// range helper.
+fn activity_window_text(body: &str, top: usize, inner_h: usize) -> String {
+    window_text(body, top, inner_h)
+}
+
+/// The lines a panel shows: `top` onward for `inner_h` lines, clamped so
+/// the range always lies inside `0..total`. Empty when the content is
+/// empty.
+pub fn visible_range(total: usize, inner_h: usize, top: usize) -> std::ops::Range<usize> {
+    let start = top.min(total.saturating_sub(inner_h));
+    let end = start.saturating_add(inner_h).min(total);
+    start..end
 }
 
 /// A bordered panel's inner height: the borders take one line at each edge.
@@ -354,7 +674,8 @@ fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<u
 
 /// One bordered panel with its title and a plain-text body. `selected`, when
 /// given, is the line index inside `body` drawn reversed. `fades` is the set
-/// of line indices drawn dimmed.
+/// of line indices drawn dimmed. The focused panel's border and title are
+/// cyan.
 fn draw_panel(
     frame: &mut ratatui::Frame<'_>,
     area: ratatui::layout::Rect,
@@ -362,14 +683,21 @@ fn draw_panel(
     body: &str,
     selected: Option<usize>,
     fades: &[usize],
+    focused: bool,
 ) {
+    let mut style = Style::default().add_modifier(Modifier::BOLD);
+    if focused {
+        style = style.fg(Color::Cyan);
+    }
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(Line::styled(
-            format!(" {title} "),
-            Style::default().add_modifier(Modifier::BOLD),
-        ));
+        .border_style(if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default()
+        })
+        .title(Line::styled(format!(" {title} "), style));
     let inner = block.inner(area);
     block.render(area, frame.buffer_mut());
     let lines: Vec<Line<'_>> = body
@@ -417,6 +745,14 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
     let snapshot = crate::cli::commands::top::take_snapshot(config_cap).await;
     let mut model = TopModel::new(snapshot);
     model.filter = filter;
+    // The snapshot's panels are the content the first frame sizes to, so the
+    // key handling clamps against real heights from the first key.
+    if let Ok(size) = terminal.size() {
+        model.heights = measured_heights(
+            &model,
+            Some(ratatui::layout::Rect::new(0, 0, size.width, size.height)),
+        );
+    }
 
     let running = Arc::new(AtomicBool::new(true));
     let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -438,7 +774,16 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+    let mut last_size = None;
     let result = loop {
+        let size = terminal
+            .size()
+            .ok()
+            .map(|s| ratatui::layout::Rect::new(0, 0, s.width, s.height));
+        if size != last_size {
+            last_size = size;
+            model.heights = measured_heights(&model, size);
+        }
         tokio::select! {
             maybe_event = event_rx.recv() => {
                 match maybe_event {
@@ -466,11 +811,13 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
                     if model.follow {
                         model.selected = follow_target(&model.snapshot.runs);
                     }
+                    model.clamp_offsets();
                     since_disk = Duration::ZERO;
                     last_fp = Some(now_fp);
                 }
                 if plan.shells {
                     shells_refresh(&mut model, &IpcFetcher).await;
+                    model.clamp_offsets();
                     since_shells = Duration::ZERO;
                 }
                 terminal.draw(|f| draw(f, &model))?;
@@ -636,6 +983,20 @@ mod tests {
         snapshot_with(runs, vec![])
     }
 
+    fn shell(id: &str) -> crate::ipc::ShellInfo {
+        crate::ipc::ShellInfo {
+            id: id.to_string(),
+            host: "local".to_string(),
+            owner: format!("chat:{id}{id}"),
+            started_unix: 0,
+            dedicated: false,
+            exited_unix: None,
+            last_command: None,
+            foreground: None,
+            last_line: None,
+        }
+    }
+
     fn snapshot_with(
         runs: Vec<TopRunRow>,
         activity: Vec<crate::cli::commands::top::ActivityRow>,
@@ -655,6 +1016,25 @@ mod tests {
             shells: crate::cli::commands::top::ShellsPanel::DaemonDown,
             daemon: None,
         }
+    }
+
+    fn snapshot_with_shells(
+        runs: Vec<TopRunRow>,
+        shells: Vec<crate::ipc::ShellInfo>,
+    ) -> crate::cli::commands::top::TopSnapshot {
+        let mut snap = snapshot_with(runs, vec![]);
+        snap.shells = crate::cli::commands::top::ShellsPanel::Rows(shells);
+        snap
+    }
+
+    fn snapshot_with_all(
+        runs: Vec<TopRunRow>,
+        activity: Vec<crate::cli::commands::top::ActivityRow>,
+        shells: Vec<crate::ipc::ShellInfo>,
+    ) -> crate::cli::commands::top::TopSnapshot {
+        let mut snap = snapshot_with(runs, activity);
+        snap.shells = crate::cli::commands::top::ShellsPanel::Rows(shells);
+        snap
     }
 
     fn activity_row(
@@ -1057,6 +1437,500 @@ mod tests {
         assert!(
             text.contains("ID"),
             "the header line stays visible: {text:?}"
+        );
+    }
+
+    // ── focus ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn focus_cycles_with_tab_and_wraps() {
+        let mut model = TopModel::new(snapshot(vec![]));
+        assert_eq!(model.focus, Panel::Runs, "the screen starts on Runs");
+        for want in [Panel::Budget, Panel::Shells, Panel::Activity, Panel::Runs] {
+            press(&mut model, KeyCode::Tab);
+            assert_eq!(model.focus, want, "Tab moves to the next panel");
+        }
+        press(&mut model, KeyCode::BackTab);
+        assert_eq!(
+            model.focus,
+            Panel::Activity,
+            "BackTab from Runs wraps to Activity"
+        );
+        press(&mut model, KeyCode::BackTab);
+        assert_eq!(model.focus, Panel::Shells, "BackTab moves back one panel");
+    }
+
+    #[test]
+    fn number_keys_jump_focus() {
+        let mut model = TopModel::new(snapshot(vec![]));
+        press(&mut model, KeyCode::Char('3'));
+        assert_eq!(model.focus, Panel::Shells, "3 jumps to Shells");
+        press(&mut model, KeyCode::Char('1'));
+        assert_eq!(model.focus, Panel::Runs, "1 jumps to Runs");
+        press(&mut model, KeyCode::Char('4'));
+        assert_eq!(model.focus, Panel::Activity, "4 jumps to Activity");
+        press(&mut model, KeyCode::Char('2'));
+        assert_eq!(model.focus, Panel::Budget, "2 jumps to Budget");
+    }
+
+    #[test]
+    fn number_keys_type_into_the_filter_while_editing() {
+        let mut model = TopModel::new(snapshot(vec![]));
+        press(&mut model, KeyCode::Char('/'));
+        press(&mut model, KeyCode::Char('3'));
+        assert_eq!(
+            model.filter, "3",
+            "a digit typed while editing goes to the filter"
+        );
+        assert_eq!(
+            model.focus,
+            Panel::Runs,
+            "a digit typed while editing leaves the focus"
+        );
+    }
+
+    // ── scroll keys act on the focused panel only ────────────────────────────
+
+    #[test]
+    fn arrows_move_only_the_focused_panel() {
+        let activity: Vec<_> = (1..=30)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let shells: Vec<_> = (1..=10).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_all(
+            vec![row("r01", Liveness::Live)],
+            activity,
+            shells,
+        ));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+        };
+        model.focus = Panel::Shells;
+        model.clamp_offsets();
+        let selected = model.selected;
+        let activity_top = model.activity_top;
+        press(&mut model, KeyCode::Down);
+        assert!(
+            model.shells_top > 0,
+            "↓ moves the Shells offset when Shells is focused"
+        );
+        assert_eq!(
+            model.selected, selected,
+            "the Runs selection does not move when Shells is focused"
+        );
+        assert!(model.follow, "the Runs follow does not stop");
+        assert!(model.tailing, "Activity keeps tailing");
+        assert_eq!(
+            model.activity_top, activity_top,
+            "the Activity offset does not move when Shells is focused"
+        );
+        let shells_top = model.shells_top;
+        press(&mut model, KeyCode::Down);
+        assert!(
+            model.shells_top > shells_top,
+            "another ↓ moves the Shells offset again"
+        );
+        press(&mut model, KeyCode::Up);
+        assert_eq!(
+            model.shells_top, shells_top,
+            "↑ moves the Shells offset back one"
+        );
+        model.focus = Panel::Budget;
+        for code in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Home,
+            KeyCode::End,
+        ] {
+            press(&mut model, code);
+            assert_eq!(
+                model.shells_top, shells_top,
+                "a scroll key on Budget leaves the Shells offset"
+            );
+            assert!(model.follow, "a scroll key on Budget leaves the follow");
+            assert!(model.tailing, "a scroll key on Budget leaves the tailing");
+        }
+    }
+
+    #[test]
+    fn shells_scroll_clamps_at_both_ends() {
+        let shells: Vec<_> = (1..=20).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 6,
+            activity: 10,
+        };
+        model.focus = Panel::Shells;
+        press(&mut model, KeyCode::Up);
+        assert_eq!(model.shells_top, 0, "↑ at the top stays 0");
+        press(&mut model, KeyCode::End);
+        assert_eq!(
+            model.shells_top, 14,
+            "End shows the last full window: 20 - 6"
+        );
+        press(&mut model, KeyCode::Down);
+        assert_eq!(model.shells_top, 14, "↓ at the bottom stays 14");
+        press(&mut model, KeyCode::Up);
+        assert_eq!(model.shells_top, 13, "one ↑ from the bottom moves one line");
+        let shells: Vec<_> = (1..=3).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 6,
+            activity: 10,
+        };
+        model.focus = Panel::Shells;
+        press(&mut model, KeyCode::End);
+        assert_eq!(
+            model.shells_top, 0,
+            "End on content that fits stays at the top"
+        );
+    }
+
+    // ── Activity tailing ─────────────────────────────────────────────────────
+
+    #[test]
+    fn activity_tails_until_scrolled() {
+        let activity: Vec<_> = (1..=30)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let mut model = TopModel::new(snapshot_with(vec![], activity));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+        };
+        model.focus = Panel::Activity;
+        model.clamp_offsets();
+        assert!(model.tailing, "the panel starts tailing");
+        assert_eq!(
+            model.activity_top, 20,
+            "tailing shows the newest rows: 30 - 10"
+        );
+        // A refresh that adds rows moves the window with them.
+        let more: Vec<_> = (1..=35)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        model.snapshot.activity = more;
+        model.clamp_offsets();
+        assert!(model.tailing, "new rows do not stop the tail");
+        assert_eq!(
+            model.activity_top, 25,
+            "tailing shows the newest rows after the refresh"
+        );
+        press(&mut model, KeyCode::Up);
+        assert!(!model.tailing, "↑ stops tailing");
+        let frozen = model.activity_top;
+        let still: Vec<_> = (1..=40)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        model.snapshot.activity = still;
+        model.clamp_offsets();
+        assert!(!model.tailing, "a refresh does not resume tailing");
+        assert_eq!(
+            model.activity_top, frozen,
+            "new rows arriving leave the top row fixed"
+        );
+    }
+
+    #[test]
+    fn activity_scrolling_to_the_bottom_resumes_tailing() {
+        let activity: Vec<_> = (1..=30)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let mut model = TopModel::new(snapshot_with(vec![], activity));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+        };
+        model.focus = Panel::Activity;
+        model.clamp_offsets();
+        press(&mut model, KeyCode::Up);
+        assert!(!model.tailing, "↑ stops tailing");
+        // Twenty presses move the window back to its bottom.
+        for _ in 0..20 {
+            press(&mut model, KeyCode::Down);
+        }
+        assert!(
+            model.tailing,
+            "scrolling until the newest row is visible resumes tailing"
+        );
+        press(&mut model, KeyCode::Up);
+        press(&mut model, KeyCode::End);
+        assert!(model.tailing, "End resumes tailing");
+    }
+
+    #[test]
+    fn f_resumes_follow_and_tailing() {
+        let activity: Vec<_> = (1..=30)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let shells: Vec<_> = (1..=20).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_all(
+            vec![row("r01", Liveness::Live)],
+            activity,
+            shells,
+        ));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 6,
+            activity: 10,
+        };
+        model.focus = Panel::Runs;
+        press(&mut model, KeyCode::Down);
+        assert!(!model.follow, "scrolling Runs stops the follow");
+        model.focus = Panel::Shells;
+        press(&mut model, KeyCode::Down);
+        press(&mut model, KeyCode::Down);
+        let shells_top = model.shells_top;
+        assert!(shells_top > 0, "the Shells panel scrolled");
+        assert!(!model.follow, "the Runs follow stopped");
+        assert!(model.tailing, "Activity still tails until it is scrolled");
+        model.focus = Panel::Activity;
+        press(&mut model, KeyCode::Up);
+        assert!(!model.tailing, "Activity stopped tailing");
+        model.focus = Panel::Shells;
+        press(&mut model, KeyCode::Char('f'));
+        assert!(model.follow, "f resumes the Runs follow");
+        assert!(model.tailing, "f resumes Activity tailing");
+        assert_eq!(
+            model.shells_top, shells_top,
+            "f leaves the Shells scroll where it was"
+        );
+    }
+
+    #[test]
+    fn page_and_home_keys_move_by_a_page() {
+        let activity: Vec<_> = (1..=100)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let mut model = TopModel::new(snapshot_with(vec![], activity));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+        };
+        model.focus = Panel::Activity;
+        model.clamp_offsets();
+        assert!(model.tailing, "the panel starts tailing");
+        press(&mut model, KeyCode::Home);
+        assert!(!model.tailing, "Home stops tailing");
+        assert_eq!(model.activity_top, 0, "Home shows row 0 at the top");
+        press(&mut model, KeyCode::PageDown);
+        assert_eq!(
+            model.activity_top, 9,
+            "PageDown moves the top by the page: 10 - 1"
+        );
+        press(&mut model, KeyCode::End);
+        assert!(model.tailing, "End resumes tailing");
+        // The tail's top is 90 (100 - 10); one PageUp of 9 lands on 81.
+        press(&mut model, KeyCode::PageUp);
+        assert_eq!(
+            model.activity_top, 81,
+            "PageUp moves up a page from the tail"
+        );
+    }
+
+    #[test]
+    fn empty_panels_ignore_scroll_keys() {
+        let mut model = TopModel::new(snapshot_with(vec![], vec![]));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+        };
+        for focus in [Panel::Runs, Panel::Budget, Panel::Shells, Panel::Activity] {
+            model.focus = focus;
+            for code in [
+                KeyCode::Up,
+                KeyCode::Down,
+                KeyCode::PageUp,
+                KeyCode::PageDown,
+                KeyCode::Home,
+                KeyCode::End,
+            ] {
+                press(&mut model, code);
+                assert_eq!(
+                    model.shells_top, 0,
+                    "a scroll key on {focus:?} leaves the Shells offset at 0"
+                );
+                assert_eq!(
+                    model.activity_top, 0,
+                    "a scroll key on {focus:?} leaves the Activity offset at 0"
+                );
+                assert_eq!(
+                    model.selected, 0,
+                    "a scroll key on {focus:?} leaves the Runs selection at 0"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn offsets_clamp_when_content_or_size_shrinks() {
+        let activity: Vec<_> = (1..=100)
+            .map(|i| activity_row("12:00:00", "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let mut model = TopModel::new(snapshot_with(vec![], activity));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+        };
+        model.focus = Panel::Activity;
+        model.clamp_offsets();
+        press(&mut model, KeyCode::Home);
+        press(&mut model, KeyCode::PageDown);
+        model.activity_top = 80;
+        model.clamp_offsets();
+        assert_eq!(
+            model.activity_top, 80,
+            "a top of 80 of 100 rows with height 10 stays: 100 - 10 = 90 >= 80"
+        );
+        // A filter that leaves 5 rows clamps the offset back inside. The
+        // filter keeps every `ai_cost` row, so 100 rows stay; the point is
+        // that the clamp sees the filtered count.
+        model.filter = "ai_cost".to_string();
+        model.clamp_offsets();
+        let top = model.activity_top;
+        let total = activity_text(&model.filtered_activity()).lines().count();
+        assert_eq!(total, 100, "the filter keeps every ai_cost row");
+        assert!(
+            top + model.heights.activity <= total,
+            "the window lies inside the filtered content: top {top} + 10 <= {total}"
+        );
+        // A filter that leaves fewer rows than the panel shows clamps the
+        // offset to 0.
+        model.filter = "model01".to_string();
+        model.clamp_offsets();
+        let top = model.activity_top;
+        assert_eq!(top, 0, "a window taller than the content clamps to 0");
+        // Halved heights clamp the offset again.
+        model.filter = "ai_cost".to_string();
+        model.heights.activity = 5;
+        model.clamp_offsets();
+        let top = model.activity_top;
+        let total = activity_text(&model.filtered_activity()).lines().count();
+        assert!(
+            top + model.heights.activity <= total,
+            "the window lies inside the content at the smaller height"
+        );
+        assert!(top <= total.saturating_sub(model.heights.activity));
+    }
+
+    // ── visible_range ────────────────────────────────────────────────────────
+
+    #[test]
+    fn visible_range_never_leaves_the_content() {
+        assert!(
+            visible_range(0, 10, 0).is_empty(),
+            "no content gives an empty range"
+        );
+        assert_eq!(
+            visible_range(5, 10, 0),
+            0..5,
+            "content under the height shows all of it"
+        );
+        assert_eq!(
+            visible_range(20, 10, 15),
+            10..20,
+            "a top past the last window clamps to the last window"
+        );
+        assert!(
+            visible_range(5, 0, 0).is_empty(),
+            "a zero height shows nothing"
+        );
+        for total in [0usize, 1, 5, 20] {
+            for inner_h in [0usize, 1, 6, 10] {
+                for top in [0usize, 3, 15, 100] {
+                    let range = visible_range(total, inner_h, top);
+                    assert!(
+                        range.start <= range.end && range.end <= total,
+                        "the range lies inside 0..{total}: {range:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // ── screen ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn screen_names_the_focused_panel() {
+        let mut model = TopModel::new(snapshot(vec![]));
+        model.focus = Panel::Shells;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let buffer = terminal.backend().buffer().content.clone();
+        let cells_at = |y: u16| {
+            (0..80)
+                .map(|x| &buffer[y as usize * 80 + x as usize])
+                .collect::<Vec<_>>()
+        };
+        let title_row_of = |needle: &str| {
+            (0..24u16)
+                .find(|y| {
+                    cells_at(*y)
+                        .iter()
+                        .map(|c| c.symbol())
+                        .collect::<String>()
+                        .contains(needle)
+                })
+                .expect("the title row")
+        };
+        let shells_row = title_row_of(" 3 Shells ");
+        let runs_row = title_row_of(" 1 Runs ");
+        let shells_cyan = cells_at(shells_row)
+            .iter()
+            .filter(|c| c.fg == ratatui::style::Color::Cyan)
+            .count();
+        assert!(
+            shells_cyan >= 9,
+            "the focused Shells title is cyan: {shells_cyan} cells"
+        );
+        let runs_cyan = cells_at(runs_row)
+            .iter()
+            .filter(|c| c.fg == ratatui::style::Color::Cyan)
+            .count();
+        assert_eq!(runs_cyan, 0, "the unfocused Runs title is not cyan");
+        let footer = cells_at(23).iter().map(|c| c.symbol()).collect::<String>();
+        assert!(
+            footer.contains("focus: Shells"),
+            "the footer names the focus: {footer:?}"
+        );
+    }
+
+    #[test]
+    fn screen_draws_scrolled_shells() {
+        let shells: Vec<_> = (1..=10).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
+        model.shells_top = 2;
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            text.contains("s3 chat"),
+            "the third shell is the first body row at offset 2: {text:?}"
+        );
+        assert!(
+            !text.contains("s1 chat"),
+            "the first shell scrolled off: {text:?}"
+        );
+        assert!(
+            !text.contains("s2 chat"),
+            "the second shell scrolled off with it: {text:?}"
         );
     }
 }

@@ -1,7 +1,7 @@
 # Phase 13: top-focus — one focused panel, every panel scrolls
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-12
 **Estimated diff:** ~450 lines, more than half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -175,3 +175,45 @@ the wall clock or sleep; nothing in this phase needs it.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-24 21:26 (started)
+
+**By:** executor (Claude)
+
+Flipped the phase to `in-progress` and the README's phase-table row to
+match. Reading the current `top_tui.rs` and `top.rs`, then writing the
+tests the spec lists before the focus/scroll code.
+
+### Update — 2026-10-24 22:10 (end-to-end verification)
+
+**By:** executor (Claude)
+
+Ran the phase harness from `/tmp/e2e-m30-13.sh` (scratch file outside the
+repo, no fabricated events, no clock dependency):
+
+```
+focus_cycles_with_tab_and_wraps: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+number_keys_jump_focus: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+number_keys_type_into_the_filter_while_editing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+arrows_move_only_the_focused_panel: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+shells_scroll_clamps_at_both_ends: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+activity_tails_until_scrolled: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+activity_scrolling_to_the_bottom_resumes_tailing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+f_resumes_follow_and_tailing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+page_and_home_keys_move_by_a_page: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+empty_panels_ignore_scroll_keys: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+offsets_clamp_when_content_or_size_shrinks: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+visible_range_never_leaves_the_content: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_names_the_focused_panel: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_draws_scrolled_shells: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+once_order=Runs,Budget,Shells,Activity
+once_rate=1
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2549 failed=0
+```
+
+`--once` preservation holds: the frame still prints the four section
+heads in order and exactly one `rate (60 s):` line. Clippy is clean with
+`-D warnings`, `cargo fmt --all --check` exits 0, and the whole suite is
+`passed=2549 failed=0`.
