@@ -1,6 +1,6 @@
 # Phase 01 — The hygiene gate
 
-**Status:** todo
+**Status:** in-progress (refined re-dispatch after a stall, 2026-10-25)
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-25
 
@@ -81,6 +81,69 @@ shrink. Every later M31 phase removes entries from it.
    `tests/hygiene.rs` checks, and that a phase which shrinks an offender
    below its cap deletes its allowlist line.
 
+**Work order.** Do these in order, in the repo, and run the tests after
+each step.
+1. Spec 1 is already done: the two dev-dependencies are in `Cargo.toml`.
+   Do not change them.
+2. Write `tests/hygiene.rs` with the measurer and the nine unit tests of
+   Spec 6, using the verified API below. Run `cargo test --test hygiene`
+   until they pass.
+3. Add the four integration tests of Spec 5, with the allowlist read from
+   `tests/hygiene_allowlist.txt` (empty at first). Run them once: their
+   failure messages list every offender.
+4. Write `tests/hygiene_allowlist.txt` from that output. Run again: green.
+5. The mutation check, CLAUDE.md, the end-to-end block, the Findings entry.
+
+**Do not build a scratch crate** (`/tmp/...`, `cargo new`) to try the
+`syn` API. The API below has been compiled and run against `syn 2.0.119`;
+write it straight into `tests/hygiene.rs`. Work outside the repo counts as
+no progress, and the first dispatch stalled doing exactly that. Only two
+item kinds matter: an **item carrying a test-only attribute** (any kind:
+its whole span is test lines), and a **function** (`ItemFn`,
+`ImplItemFn`, `TraitItemFn` with a body). No other item kind needs
+handling.
+
+**Verified `syn` 2 API** (compiled and run 2026-10-25):
+
+```rust
+use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;            // .span() on any syntax node
+use syn::{Attribute, Meta, Token};
+
+fn meta_is_test(m: &Meta) -> bool {
+    match m {
+        Meta::Path(p) => p.is_ident("test"),
+        Meta::List(l) if l.path.is_ident("all") || l.path.is_ident("any") => l
+            .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            .map(|ms| ms.iter().any(meta_is_test))
+            .unwrap_or(false),
+        _ => false, // not(test), unix, feature = "..": production
+    }
+}
+
+fn is_test_only(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        let p = a.path();
+        if p.segments.last().is_some_and(|s| s.ident == "test") {
+            return true; // #[test], #[tokio::test]
+        }
+        p.is_ident("cfg") && a.parse_args::<Meta>().is_ok_and(|m| meta_is_test(&m))
+    })
+}
+```
+
+- An item's lines: `item.span().start().line ..= item.span().end().line`
+  (1-based; the span **includes** its attributes and doc comments).
+- A function's length: from `f.sig.span().start().line` to
+  `f.block.brace_token.span.close().start().line`, inclusive. Measured on
+  `/// doc\n#[inline]\npub fn e(x: u8)\n    -> u8 {\n    x\n}` starting at
+  line 9: signature line 11, close line 14, so 4 lines.
+- An impl's type name: `if let syn::Type::Path(tp) = &*imp.self_ty {
+  tp.path.segments.last() }` and take `.ident`. Track it in your
+  `visit_item_impl` before calling `syn::visit::visit_item_impl(self, i)`.
+- `syn::parse_file(&source)` parses a whole file; a file that fails to
+  parse is a test failure naming the file.
+
 **Gotchas.**
 - `Span::start()` is only available with `proc-macro2`'s `span-locations`
   feature; without it the build fails, or every line reads 0.
@@ -144,3 +207,21 @@ Expected: one `ok.` line with no failures, three nonzero allowlist counts,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-25
+
+The first dispatch stalled after 129 turns (`NoProgressStall`, 120
+consecutive read-only turns). It added the dev-dependencies correctly, then
+spent about 70 turns in a scratch crate in `/tmp`, printing how every item
+kind (`static`, `union`, `enum`, `trait`, …) spans, and never wrote
+`tests/hygiene.rs`. The Spec now carries a work order, a compiled `syn` API
+excerpt, the two item kinds that matter, and a ban on scratch crates. The
+`Cargo.toml` change from the first run is kept; start at work-order step 2.
+
+### Update — 2026-10-25 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** the stall traces to the Spec: it named the behaviour but not
+the `syn` API or an order of work, so the executor explored the API without
+end instead of writing the file; a verified excerpt and a work order close
+that gap, and only `Cargo.toml` was on disk, so there is little to resume.

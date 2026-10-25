@@ -130,7 +130,7 @@ Expected count: 12–14. Each may split at drafting.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | hygiene-gate ([phase-01-hygiene-gate.md](phase-01-hygiene-gate.md)) — `tests/hygiene.rs` measures files and functions with `syn`, the allowlist of today's offenders that may only shrink, the two exemptions | todo |
+| 01 | hygiene-gate ([phase-01-hygiene-gate.md](phase-01-hygiene-gate.md)) — `tests/hygiene.rs` measures files and functions with `syn`, the allowlist of today's offenders that may only shrink, the two exemptions | in-progress |
 
 ## Notes
 

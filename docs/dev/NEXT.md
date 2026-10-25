@@ -8,7 +8,7 @@ for the bug and optimisation audit every phase reports into. MCP surface
 is now M32, Knowledge M33.
 
 **Active phase:** [phase-01-hygiene-gate](milestones/M31-code-hygiene/phase-01-hygiene-gate.md)
-— todo. `tests/hygiene.rs` and the allowlist of today's offenders.
+— in-progress, refined after a stall. `tests/hygiene.rs` and the allowlist of today's offenders.
 
 M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M32 (MCP surface) and M33
