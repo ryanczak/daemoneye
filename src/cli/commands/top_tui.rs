@@ -22,9 +22,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::cli::commands::top::{
-    ActivityRow, BarLevel, Liveness, TopFingerprint, TopRunRow, activity_text, budget_bar,
-    budget_text, collapse_activity, filter_activity, fingerprint, header_text, plan_layout,
-    run_fades, runs_text, shells_text,
+    ActivityRow, BarLevel, Liveness, PanelRects, TopFingerprint, TopRunRow, activity_text,
+    budget_bar, budget_text, collapse_activity, filter_activity, fingerprint, header_text,
+    plan_layout, run_fades, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
 /// Poll the disk fingerprint every this long.
@@ -121,6 +121,9 @@ pub struct TopModel {
     pub activity_top: usize,
     /// The Activity panel shows its newest rows until the user scrolls it.
     pub tailing: bool,
+    /// The first visible Activity row while not tailing, so a content
+    /// refresh can put the window back on it; `None` while tailing.
+    pub activity_anchor: Option<ActivityRow>,
     /// The inner heights the current layout gives Runs, Shells and
     /// Activity; the loop refreshes them so key handling clamps against
     /// the real panels.
@@ -156,6 +159,7 @@ impl TopModel {
             shells_top: 0,
             activity_top: 0,
             tailing: true,
+            activity_anchor: None,
             heights: PanelHeights::default(),
             filter: String::new(),
             editing: false,
@@ -313,21 +317,45 @@ impl TopModel {
     /// after a key, a snapshot refresh or a filter change. Activity that
     /// has scrolled to its bottom resumes tailing.
     pub fn clamp_offsets(&mut self) {
-        let activity_lines = activity_text(&self.filtered_activity()).lines().count();
+        let rows = self.filtered_activity();
+        let activity_lines = activity_text(&rows).lines().count();
         let bottom = self.last_window_top(activity_lines, self.heights.activity);
         if self.tailing {
             self.activity_top = bottom;
+            self.activity_anchor = None;
         } else {
             self.activity_top = self.activity_top.min(bottom);
             // The newest row is visible again: tail from here.
             if self.activity_top == bottom {
                 self.tailing = true;
+                self.activity_anchor = None;
+            } else {
+                // The row the window shows first, so a refresh that slides
+                // the list can put the window back on it.
+                self.activity_anchor = rows.get(self.activity_top).cloned();
             }
         }
         let shells = shells_lines(&self.snapshot.shells);
         self.shells_top = self
             .shells_top
             .min(self.last_window_top(shells, self.heights.shells));
+    }
+
+    /// Put the not-tailing Activity window back on the row it showed: the
+    /// panel holds the day's last events, so a refresh drops the oldest
+    /// rows and every index shifts under a fixed top. While tailing the
+    /// window follows the bottom and this does nothing.
+    pub fn hold_activity(&mut self) {
+        if self.tailing {
+            return;
+        }
+        let Some(anchor) = self.activity_anchor.clone() else {
+            return;
+        };
+        let rows = self.filtered_activity();
+        if let Some(idx) = rows.iter().position(|r| *r == anchor) {
+            self.activity_top = idx;
+        }
     }
 }
 
@@ -396,24 +424,34 @@ fn focus_of(c: char) -> Panel {
     }
 }
 
-/// The inner heights `plan_layout` gives the three scrollable panels at
-/// `size` for the model's current content. A size the backend cannot report
-/// leaves the stored heights alone.
-fn measured_heights(model: &TopModel, size: Option<ratatui::layout::Rect>) -> PanelHeights {
-    let Some(size) = size else {
-        return model.heights;
-    };
-    let rects = crate::cli::commands::top::plan_layout(
-        size,
+/// The rects and the three scrollable panels' inner heights the model's
+/// current content and terminal give. The one call site of the layout
+/// planner in this file, so the drawn panels and the stored heights cannot
+/// disagree again.
+fn layout_at(model: &TopModel, area: ratatui::layout::Rect) -> (PanelRects, PanelHeights) {
+    let rects = plan_layout(
+        area,
         runs_lines(&model.snapshot.runs),
         budget_lines(&model.snapshot.budget),
         shells_lines(&model.snapshot.shells),
     );
-    PanelHeights {
+    let heights = PanelHeights {
         runs: inner_height(rects.runs),
         shells: inner_height(rects.shells),
         activity: inner_height(rects.activity),
-    }
+    };
+    (rects, heights)
+}
+
+/// Re-measure the stored heights for `size` and the model's current content.
+/// A size the backend cannot report leaves the stored heights alone. The
+/// loop calls this on resize and after every content refresh, because the
+/// panels are sized to their content.
+fn refresh_heights(model: &mut TopModel, size: Option<ratatui::layout::Rect>) {
+    let Some(size) = size else {
+        return;
+    };
+    model.heights = layout_at(model, size).1;
 }
 
 /// The Runs panel's body line count: one per run plus the column header,
@@ -459,16 +497,11 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
 /// header time is testable without racing the wall clock.
 pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<FixedOffset>) {
     let area = frame.area();
+    let (rects, _heights) = layout_at(model, area);
     let runs_body = runs_text(&model.snapshot.runs);
     let budget_body = budget_text(&model.snapshot.budget);
     let shells_body = shells_text(&model.snapshot.shells);
     let activity_body = activity_text(&model.filtered_activity());
-    let rects = plan_layout(
-        area,
-        runs_body.lines().count(),
-        budget_body.lines().count() + 1,
-        shells_body.lines().count(),
-    );
 
     let host = crate::daemon::utils::daemon_hostname();
     let header = header_text(model.snapshot.daemon.as_ref(), &host, now);
@@ -748,8 +781,8 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
     // The snapshot's panels are the content the first frame sizes to, so the
     // key handling clamps against real heights from the first key.
     if let Ok(size) = terminal.size() {
-        model.heights = measured_heights(
-            &model,
+        refresh_heights(
+            &mut model,
             Some(ratatui::layout::Rect::new(0, 0, size.width, size.height)),
         );
     }
@@ -782,7 +815,7 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
             .map(|s| ratatui::layout::Rect::new(0, 0, s.width, s.height));
         if size != last_size {
             last_size = size;
-            model.heights = measured_heights(&model, size);
+            refresh_heights(&mut model, size);
         }
         tokio::select! {
             maybe_event = event_rx.recv() => {
@@ -811,12 +844,14 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
                     if model.follow {
                         model.selected = follow_target(&model.snapshot.runs);
                     }
+                    model.hold_activity();
                     model.clamp_offsets();
                     since_disk = Duration::ZERO;
                     last_fp = Some(now_fp);
                 }
                 if plan.shells {
                     shells_refresh(&mut model, &IpcFetcher).await;
+                    model.hold_activity();
                     model.clamp_offsets();
                     since_shells = Duration::ZERO;
                 }
@@ -1931,6 +1966,126 @@ mod tests {
         assert!(
             !text.contains("s2 chat"),
             "the second shell scrolled off with it: {text:?}"
+        );
+    }
+
+    // ── bounce 1: stored heights and the sliding Activity window ─────────────
+
+    /// The heights `draw_at` lays out, computed here from the drawn text so a
+    /// drift in the input convention between drawing and measuring fails.
+    fn drawn_heights(model: &TopModel, size: ratatui::layout::Rect) -> PanelHeights {
+        let rects = plan_layout(
+            size,
+            runs_text(&model.snapshot.runs).lines().count(),
+            budget_text(&model.snapshot.budget).lines().count()
+                + usize::from(model.snapshot.budget.cap > 0.0),
+            shells_text(&model.snapshot.shells).lines().count(),
+        );
+        PanelHeights {
+            runs: inner_height(rects.runs),
+            shells: inner_height(rects.shells),
+            activity: inner_height(rects.activity),
+        }
+    }
+
+    #[test]
+    fn stored_heights_match_the_drawn_layout() {
+        let size = ratatui::layout::Rect::new(0, 0, 80, 24);
+        for cap in [0.0, 10.0] {
+            let mut model = TopModel::new(snapshot_with_all(
+                vec![row("r01", Liveness::Live), row("r02", Liveness::Done)],
+                vec![],
+                vec![shell("s1")],
+            ));
+            model.snapshot.budget.cap = cap;
+            refresh_heights(&mut model, Some(size));
+            assert_eq!(
+                model.heights,
+                drawn_heights(&model, size),
+                "the stored heights match the drawn layout at cap {cap}"
+            );
+            // The content grows; no resize in between.
+            model.snapshot.shells =
+                ShellsPanel::Rows((1..=10).map(|i| shell(&format!("s{i}"))).collect());
+            model.snapshot.runs = (1..=20)
+                .map(|i| row(&format!("r{i:02}"), Liveness::Done))
+                .collect();
+            refresh_heights(&mut model, Some(size));
+            assert_eq!(
+                model.heights,
+                drawn_heights(&model, size),
+                "the stored heights follow the grown content at cap {cap}"
+            );
+        }
+    }
+
+    #[test]
+    fn scrolled_activity_holds_its_rows_as_the_window_slides() {
+        let activity: Vec<_> = (1..=50)
+            .map(|i| activity_row(&format!("12:{i:02}:00"), "ai_cost", &format!("model{i:02}")))
+            .collect();
+        let mut model = TopModel::new(snapshot_with(vec![], activity));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 8,
+        };
+        model.focus = Panel::Activity;
+        model.clamp_offsets();
+        for _ in 0..10 {
+            press(&mut model, KeyCode::Up);
+        }
+        assert!(!model.tailing, "scrolled up 10, the panel stopped tailing");
+        assert_eq!(model.activity_top, 32, "the tail top is 42; 10 up is 32");
+        let panel_text = |terminal: &Terminal<ratatui::backend::TestBackend>| -> Vec<String> {
+            (0..24u16)
+                .map(|y| {
+                    (0..80u16)
+                        .map(|x| {
+                            terminal.backend().buffer().content[(y * 80 + x) as usize].symbol()
+                        })
+                        .collect::<String>()
+                })
+                .filter(|l| l.contains("model"))
+                .collect()
+        };
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &model)).expect("a draw");
+        let before = panel_text(&terminal);
+        assert_eq!(
+            before.len(),
+            8,
+            "the panel's rows are on screen: {before:?}"
+        );
+        // A refresh drops the five oldest rows and lands five new ones: the
+        // window slides under a fixed index.
+        let mut fresh: Vec<_> = (6..=50)
+            .map(|i| activity_row(&format!("12:{i:02}:00"), "ai_cost", &format!("model{i:02}")))
+            .collect();
+        fresh.extend(
+            (51..=55).map(|i| {
+                activity_row(&format!("12:{i:02}:00"), "ai_cost", &format!("model{i:02}"))
+            }),
+        );
+        model.snapshot.activity = fresh;
+        model.hold_activity();
+        model.clamp_offsets();
+        terminal.draw(|f| draw(f, &model)).expect("a draw");
+        let after = panel_text(&terminal);
+        assert_eq!(
+            before, after,
+            "the visible rows hold still as the window slides"
+        );
+        press(&mut model, KeyCode::End);
+        terminal.draw(|f| draw(f, &model)).expect("a draw");
+        let end = panel_text(&terminal);
+        assert!(
+            end.iter().any(|l| l.contains("model55")),
+            "End shows the newest row: {end:?}"
+        );
+        assert!(
+            !end.iter().any(|l| l.contains("model05")),
+            "End left the scrolled window: {end:?}"
         );
     }
 }
