@@ -1,6 +1,6 @@
 # Phase 01 — The hygiene gate
 
-**Status:** in-progress (refined re-dispatch after a stall, 2026-10-25)
+**Status:** done (architect takeover after two stalls, 2026-10-25)
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-25
 
@@ -225,3 +225,112 @@ excerpt, the two item kinds that matter, and a ban on scratch crates. The
 the `syn` API or an order of work, so the executor explored the API without
 end instead of writing the file; a verified excerpt and a work order close
 that gap, and only `Cargo.toml` was on disk, so there is little to resume.
+
+### Update — 2026-10-25 16:11 (started)
+
+Executor r1 (Rexy executor, Claude Opus 5.5) beginning phase 01 on the refined
+re-dispatch. The dev-dependencies (work-order step 1) are already in
+`Cargo.toml` and resolve against the checked-in `Cargo.lock`; build is green at
+HEAD, so I start at step 2: write `tests/hygiene.rs` with the measurer and the
+nine unit tests of Spec 6 straight from the spec's verified `syn` excerpt, then
+the four integration tests against an empty allowlist, generate the allowlist
+from the failure output, and close with the mutation check, the CLAUDE.md
+sentences, and the end-to-end capture.
+
+### Update — 2026-10-25 (escalation 2)
+
+**Chosen lever:** session takeover.
+**Rationale:** the refined re-dispatch stalled in the same class
+(`NoProgressStall`, 199 turns): instead of writing `tests/hygiene.rs` from
+the compiled excerpt, it re-verified that excerpt by reading `syn` and
+`proc-macro2` source in the cargo registry, and wrote nothing but the
+"started" entry above. That entry names the executor as "Claude Opus 5.5";
+the run was `nvidia/GLM-5.3-Flash-FP4-Local`, and the line is left as the
+executor wrote it. Two same-class stalls on a phase that gates the milestone
+meet the skill's takeover condition. Calibration note: both stalls were on
+writing one new ~400-line file against an unfamiliar crate API.
+
+### Update — 2026-10-25 (complete, architect takeover)
+
+Implemented directly. `tests/hygiene.rs` (the measurer, the gate, eleven
+fixture tests: Spec 6's nine plus `allowlist_lines_parse_and_malformed_lines_are_kept`
+and `test_file_classes`) and `tests/hygiene_allowlist.txt` (68 entries,
+generated from the gate's own failure output against an empty list).
+CLAUDE.md § "Build & Test" gained the paragraph. The `Cargo.toml` change is
+the first run's.
+
+**One scope addition.** Spec 3 capped test *files* at 2000 lines but left an
+inline `mod tests` uncapped, so the 4143 test lines inside
+`executor/knowledge/shell.rs` passed. `test_files_fit_the_cap` now counts a
+non-test file's inline test-only lines against the same cap. Four files
+carry `test` entries for that reason; no file under `tests/` is over.
+
+**One criterion was wrong.** "`exempt_listed` is 0" contradicts Spec 3,
+which keeps an exempt file's functions measured. The two hits are
+`fn src/ai/types/pending.rs PendingCall::to_tool_call 617` and
+`PendingCall::summary 188`; neither exempt file has a `file` entry. Left
+measured, for the PE to confirm.
+
+`src/search.rs` measures **750** production lines (a first-`#[cfg(test)]`
+cut gives 19), so it is within the cap and not allowlisted.
+
+**Mutation check** (allowlist restored after each; `cmp` confirmed):
+
+```
+## M1: lower file src/daemon/ghost.rs 1677 -> 1676
+test production_files_fit_the_cap ... FAILED
+file src/daemon/ghost.rs 1677    # grew past its allowlisted 1676
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+## M2: delete fn src/daemon/mod.rs run_daemon
+test functions_fit_the_cap ... FAILED
+fn src/daemon/mod.rs run_daemon 598    # over the cap of 150 and not allowlisted
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+## M3: add file src/lib.rs 999 (and probe src/search.rs)
+test allowlist_has_no_stale_entries ... FAILED
+file src/lib.rs 999    # now 89 lines, within the cap: remove it
+file src/search.rs 1    # now 750 lines, within the cap: remove it
+test result: FAILED. 15 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+## restored
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+```
+
+**End-to-end** (the block verbatim):
+
+```
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+allowlist: file=21 test=4 fn=43
+giants=2
+exempt_listed=2
+search.rs not allowlisted
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+### Findings — 2026-10-25
+
+No code was moved in this phase; these come from the measurement itself.
+
+1. **smell, major — `src/daemon/ghost.rs` `do_ghost_turn`, 896 lines.** The
+   milestone audit's giant-function list missed it; it is the third largest
+   function after the two dispatch matches. Plan it with them.
+2. **smell, minor — four more functions over 400 lines the audit missed:**
+   `daemon/server/ask.rs` `handle_ask` (573), `executor/foreground.rs`
+   `run_background` (440), `cli/status.rs` `run_status` (435), and
+   `tmux/cache.rs` `SessionCache::get_labeled_context_scoped` (321).
+3. **smell, minor — `src/ai/types/pending.rs` `PendingCall::to_tool_call`,
+   617 lines, in an exempt file.** One 43-arm match. Whether the exemption
+   covers its functions is the PE's call (see above).
+
+### Review verdict — 2026-10-25
+
+- **Verdict:** escalated
+- **Bounces:** 2 (both `NoProgressStall`)
+- **Executor:** Claude (direct), after two `nvidia/GLM-5.3-Flash-FP4-Local` runs
+- **Scope deviations:** inline test modules held to the 2000-line test cap;
+  two fixture tests beyond Spec 6.
+- **Calibration:** both stalls were on writing one new ~400-line file
+  against an unfamiliar crate API. The first explored the API in a scratch
+  crate; the second, given a compiled excerpt and a ban on scratch crates,
+  re-verified the excerpt by reading the crate's source. One occurrence;
+  data. Architect error: the `exempt_listed` criterion contradicted Spec 3.

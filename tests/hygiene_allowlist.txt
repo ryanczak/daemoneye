@@ -1,0 +1,78 @@
+# M31 hygiene allowlist — today's offenders against the caps in tests/hygiene.rs.
+#
+#   file <path> <production lines>    cap 800
+#   test <path> <test lines>          cap 2000 (a test file, or a file's inline tests)
+#   fn   <path> <name> <lines>        cap 150, signature to closing brace
+#
+# An entry may never grow. A phase that brings a subject within its cap
+# deletes its line; the gate fails with "remove it" until it does.
+# Generated 2026-10-25 from the gate's own measurement (M31 phase 01).
+
+file src/ai/tools/defs.rs 1398
+file src/cli/commands/chat.rs 1147
+file src/cli/commands/slash.rs 958
+file src/cli/commands/stream.rs 1520
+file src/cli/commands/top.rs 1394
+file src/cli/commands/top_tui.rs 1050
+file src/cli/render_ratatui.rs 1225
+file src/cli/tail.rs 988
+file src/cli/viewer.rs 907
+file src/config/types.rs 1466
+file src/daemon/context/epochs.rs 840
+file src/daemon/executor/file_ops/ops.rs 1018
+file src/daemon/executor/knowledge/shell.rs 2627
+file src/daemon/executor/mod.rs 2121
+file src/daemon/executor/shell_exec.rs 1129
+file src/daemon/ghost.rs 1677
+file src/daemon/mod.rs 901
+file src/daemon/server/handlers.rs 877
+file src/daemon/stream.rs 1613
+file src/ipc.rs 966
+file src/memory/index/mod.rs 1135
+test src/cli/render_ratatui.rs 2056
+test src/daemon/executor/knowledge/shell.rs 4143
+test src/daemon/executor/shell_exec.rs 3091
+test src/memory/index/mod.rs 2605
+fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
+fn src/ai/backends/gemini.rs GeminiClient::chat 263
+fn src/ai/backends/openai.rs OpenAiClient::chat 238
+fn src/ai/types/pending.rs PendingCall::summary 188
+fn src/ai/types/pending.rs PendingCall::to_tool_call 617
+fn src/cli/commands/ask.rs run_ask_raw 169
+fn src/cli/commands/chat.rs read_input_line_inner_ratatui 183
+fn src/cli/commands/chat.rs run_chat_ratatui 500
+fn src/cli/commands/costs.rs aggregate_costs 159
+fn src/cli/commands/setup.rs run_setup 256
+fn src/cli/commands/slash.rs cmd_session 155
+fn src/cli/commands/stream.rs ask_with_session_ratatui 673
+fn src/cli/commands/top.rs activity_row_in 163
+fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
+fn src/cli/markdown/syntax.rs lang_keywords 216
+fn src/cli/status.rs run_status 435
+fn src/cli/viewer.rs viewer_loop 234
+fn src/daemon/context/background.rs run_compaction 184
+fn src/daemon/executor/file_ops/ops.rs run_copy_with_spawn 213
+fn src/daemon/executor/file_ops/ops.rs run_create_with_spawn 164
+fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 271
+fn src/daemon/executor/file_ops/read.rs run_read_file 165
+fn src/daemon/executor/foreground.rs run_background 440
+fn src/daemon/executor/knowledge/shell.rs watch_shell_with 159
+fn src/daemon/executor/mod.rs execute_tool_call 1439
+fn src/daemon/executor/mod.rs prompt_and_await_approval 210
+fn src/daemon/executor/schedule.rs run_schedule_command 184
+fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
+fn src/daemon/ghost.rs do_ghost_turn 896
+fn src/daemon/ghost.rs trigger_ghost_turn 172
+fn src/daemon/mod.rs run_daemon 598
+fn src/daemon/scheduled.rs run_scheduled_job_inner 193
+fn src/daemon/server/ask.rs handle_ask 573
+fn src/daemon/server/handlers.rs handle_status 200
+fn src/daemon/server/mod.rs handle_client 214
+fn src/daemon/stream.rs run_conversation_loop 1454
+fn src/main.rs async_main 173
+fn src/manifest.rs auto_search_context 211
+fn src/search.rs search_memory_fts 154
+fn src/shell/client.rs read_to_marker 163
+fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321
+fn src/tmux/cache.rs SessionCache::refresh 171
+fn src/webhook/process.rs maybe_analyze_alert 240

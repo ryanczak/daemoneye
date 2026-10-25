@@ -5,7 +5,7 @@ a test keeps it that way: production code is at most 800 lines per file,
 tests live in sibling files, no function is over 150 lines, and the two
 1400-line tool dispatch matches are decomposed into per-family modules.
 
-**Status:** planning (scoped 2026-10-25)
+**Status:** in-progress (scoped 2026-10-25)
 
 **Release:** 2.4.0
 
@@ -130,8 +130,19 @@ Expected count: 12–14. Each may split at drafting.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | hygiene-gate ([phase-01-hygiene-gate.md](phase-01-hygiene-gate.md)) — `tests/hygiene.rs` measures files and functions with `syn`, the allowlist of today's offenders that may only shrink, the two exemptions | in-progress |
+| 01 | hygiene-gate ([phase-01-hygiene-gate.md](phase-01-hygiene-gate.md)) — `tests/hygiene.rs` measures files and functions with `syn`, the allowlist of today's offenders that may only shrink, the two exemptions | done |
 
 ## Notes
 
-<!-- design decisions made during the milestone, dead ends, deferred defects -->
+- **The gate is in, with 68 entries (phase 01, 2026-10-25):** 21 `file`,
+  4 `test`, 43 `fn`. Every later phase deletes lines from
+  `tests/hygiene_allowlist.txt`; the exit criterion is an empty list.
+  Inline test modules count against the 2000-line test cap, so group 1's
+  moves are enforced too.
+- **The audit's giant-function list was short.** The gate also found
+  `do_ghost_turn` (896), `handle_ask` (573), `run_background` (440),
+  `run_status` (435) and `get_labeled_context_scoped` (321). Group 3 grows
+  to cover them.
+- **Open for the PE:** the exemption of `pending.rs` covers its file size;
+  its `to_tool_call` (617) and `summary` (188) are still measured and
+  allowlisted.
