@@ -116,6 +116,7 @@ close. Each may split at drafting.
 | 13 | top-focus ([phase-13-top-focus.md](phase-13-top-focus.md)) — one focused panel (Tab / Shift-Tab / `1`–`4`, named in the title and footer), per-panel scrolling for Runs, Shells and Activity, Activity tailing until scrolled with `f` resuming it | done       |
 | 14 | top-detail ([phase-14-top-detail.md](phase-14-top-detail.md)) — Enter on a run opens its detail: the `run` record's fields when finished (failure class, tool calls and success rate, tokens, cost, wall clock) or the turn log's state so far, plus the turn log tail; scrollable; Esc returns; still read-only | done       |
 | 10a | rehearsal-fixes ([phase-10a-rehearsal-fixes.md](phase-10a-rehearsal-fixes.md)) — rehearsal 1's F1 (chat runs write `turn_started`, so `top`/`run list` show their turns) and F2 (a finished waited command records `Foreground::Prompt`), plus the `run_tui` doc nit | done |
+| 10b | title-padding ([phase-10b-title-padding.md](phase-10b-title-padding.md)) — the L8 F1 nit: every `top` title reads `╭ <title> ─`, one padding in one place (Runs, Shells, Activity and the detail view were doubled; Budget was not) | todo |
 
 ## Notes
 

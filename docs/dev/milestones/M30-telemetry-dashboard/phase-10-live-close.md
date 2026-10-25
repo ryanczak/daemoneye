@@ -84,9 +84,9 @@ from the session's history file, never from GLM's prose.
 ## Close (after the PE run passes)
 
 0. **L8** passes at the PE run of `top` after phases 11–14.
-1. **The nit recorded in review 09.** The first line of `run_tui`'s doc
-   comment appears twice (`src/cli/commands/top_tui.rs`). It is source,
-   so it goes in a tiny `10a` or is deferred, as the PE decides.
+1. **The nits.** Review 09's duplicated `run_tui` doc-comment line was
+   fixed in phase 10a. The L8 rehearsal's F1 (doubled title padding) is
+   phase 10b, per the PE's decision of 2026-10-25.
 2. **The retrospective** in the README Notes, with the fold proposals for
    the PE's sign-off:
    - every Spec "must" gets a criterion (bug-01-1, bug-04-1, bug-05-1:
