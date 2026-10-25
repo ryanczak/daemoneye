@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (PE run passed 2026-10-23; L8 after phases 11–14, then the Close steps)
+**Status:** in-progress (PE run passed 2026-10-23; phases 11–14 done 2026-10-25; L8 rehearsed 2026-10-25, PE run of L8 next, then the Close steps)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -49,7 +49,11 @@ those are what this phase checks:
 2. **Model.** The local GLM at `brain:8000`. It is unpriced, so each
    `ai_cost` is `$0`. The cap block therefore seeds its spend on disk
    instead of buying it.
-3. **Config in `$R`** (copied from `/tmp/de29-live`):
+3. **Config in `$R`.** `/tmp` does not survive a reboot (the 2026-10-23
+   reboot took `/tmp/de29-live` and `/tmp/de30-live` with it), so build it
+   from the real `~/.daemoneye/etc/config.toml`. Set `[models.default]`
+   `model` to the GLM and `base_url` to `http://brain:8000/v1`: the real
+   config points at an LM Studio host, not brain. Then add:
    - the webhook on `127.0.0.1:19418` with `severity_threshold = "info"`
      and `dedup_window_secs = 0`;
    - no `[budget]` until L7;
@@ -75,7 +79,7 @@ from the session's history file, never from GLM's prose.
 | L5 | **Scheduled.** Ask the chat to schedule an interval ghost job on `disk-full-l4` every 2 minutes, and answer `y` to the panel (`schedule_command` is gated even under `/approvals on`). Wait for one firing (about 2 min) | A `run` event with `kind: scheduled` and `model: null`, plus the ghost run it started, as in L4 |
 | L6 | **Scorecard and profile, daemon down.** `daemoneye stop`, then `scorecard`, `scorecard --by kind --json \| jq`, `scorecard --min-runs 100`, `profile <GLM model>` and `profile no-such-model` | The scorecard has a GLM row with `n_runs` counting L1–L5, and no `scheduled` record is counted against the model. `--by kind` separates `chat` from `ghost`. The JSON parses. `--min-runs 100` drops every row. The profile shows the strengths rows and the ranked classes without `none`. `no-such-model` names GLM and exits 0 |
 | L7 | **The daily cap, all three paths.** With the daemon down, add `[budget] max_cost_per_day = 1.0`, append one local-today `ai_cost` line of `$5.00` to the segment, and start the daemon. Then run `status`, ask the chat anything, POST `disk-full-l4`, and wait for the L5 job's next firing | `status` shows the spend against the cap. The chat shows the `SystemMsg` naming `$5.00` and `$1.00` at `--resume`, before any typing (the greeting turn is a model call), and again after the ask; no new `ai_cost` is written. daemon.log has the webhook's `skipped — daily cost cap` line. The L5 job fires within seconds of the restart (missed-run catch-up); its ghost run ends `budget_exceeded` with a briefing whose `budget_left` is `Usd`, while the `scheduled` wrapper completes (O3). `budget_refused` events name `chat`, `webhook` and `ghost`. Finally, cancel the L5 job |
-| L8 | **`top` after phases 11–14** (added 2026-10-23). With the daemon up, the L1 chat attached and one ghost run finished, run `HOME=$R $BIN top` at the PE's terminal size, then at 100 columns | The header names the daemon pid, model and local time; Runs and Budget sit side by side at the wide size and stack at 100 columns; a ghost row's SUBJECT reads `disk-full-l4 ← webhook`; Activity times match the PE's clock; a burst of identical events shows as one row `×N`; Tab moves the focus through the four panels and ↑↓ scrolls the focused one, Activity stopping its tail until `f`; Enter on the ghost row opens its detail with the record's fields and turn log tail, Esc returns; the Budget bar changes colour once L7's seed is in; `q` quits cleanly |
+| L8 | **`top` after phases 11–14** (added 2026-10-23). Needs the daemon up, the L1 chat attached and L4's ghost finished, so on a fresh root run L1 and L4 first, with `[budget] max_cost_per_day = 1.0` already set (GLM spends $0, so the cap refuses nothing). Seed today's segment with five identical `cache_refresh_error` lines and one `ai_cost` of $0.85, by cloning a real `ai_cost` line. Run `HOME=$R $BIN top` at the PE's terminal size; while it runs, seed $0.30 more; then resize the client to 100 columns | The header names the daemon pid, model and local time; Runs and Budget sit side by side at the wide size and stack at 100 columns; a ghost row's SUBJECT reads `disk-full-l4 ← webhook`; Activity times match the PE's clock; a burst of identical events shows as one row `×N`; Tab moves the focus through the four panels and ↑↓ scrolls the focused one, Activity stopping its tail until `f`; Enter on the ghost row opens its detail with the record's fields and turn log tail, Esc returns; the Budget bar is yellow at 85 % and turns red within a refresh of the $0.30 seed, its `115%` still on screen; `q` quits cleanly |
 
 ## Close (after the PE run passes)
 
@@ -224,3 +228,42 @@ recreated; nothing else was affected).
 
 **Next.** The Close steps, on the PE's sign-off: retrospective, `NEXT.md`
 to none, 2.3.0.
+
+### Update — 2026-10-25 (L8 rehearsal, architect)
+
+Release build at `69c368f6` (phases 11–14 in), on a root rebuilt from the
+real config as the pre-flight now says. The 2026-10-23 reboot had cleared
+`/tmp`. The first chat greeting failed with `No models loaded` because the
+copied `base_url` pointed at an LM Studio host. With `brain:8000` it
+worked, and that failed greeting left a `hard_fail / backend_error` chat
+run, which the detail view later drew. Teardown killed only `HOME=$R`
+processes; the PE's daemon was untouched.
+
+| Block | Result |
+|---|---|
+| L1 | **pass**: `80afab71fe694469` chat, complete/none, turns 2, tool_calls 1, success 1.0 |
+| L4 | **pass on the first alert**: `ghost_trigger: true`; ghost `4897c66857ed4234` complete/none, turns 2, tool_calls 1, tagged `runbook: disk-full-l4` |
+| L8 | **pass** at 160×47, then 100×39 |
+
+L8 in detail:
+
+- **Header:** `daemoneye · pid 477673 · up 2m 19s · ollama/nvidia/GLM-5.3-Flash-FP4-Local · pinky · 08:52:19`. The clock matched `date` to the second, and Activity times are in the same zone.
+- **Layout:** at 160 columns Runs and Budget share the top row, with Budget 40 wide on the right. At 100 columns the four panels stack in order.
+- **Rows:** the ghost's SUBJECT is `disk-full-l4 ← webhook`, the chats read `chat:<8>`, and the shells read `chat:fe9731b4` and `ghost:disk-full-l4`. The seeded burst shows once as `cache_refresh_error Failed to get active pane for session 'm30' ×5`.
+- **Budget:** the bar was yellow (`38;5;3`) at 85 % and red (`38;5;1`) after the $0.30 seed, with `[███…] 115%` and `spend: $1.15 of $1.00 cap (115%)`.
+- **Focus:** `Tab` cycles Runs → Budget → Shells → Activity → Runs, `BackTab` goes from Runs to Activity, and `4` jumps to Activity. The focused border is cyan (`38;5;6`).
+- **Activity:** while all of today's rows fit, `↑` scrolls nothing and the tail stays, which is correct. Once they overflow, `↑` shows `activity scrolled` and the top row holds while new rows arrive. `f` resumes tailing.
+- **Detail:** `1`, `Home` and `Enter` on the ghost row open ` Run 4897c66857ed4234 ` with status, failure, model, turns, `tool calls: 1 · 100.0% ok`, tokens, cost, wall clock and the four turn-log records. `Esc` returns with Runs focus.
+- **Quit:** `q` leaves a prompt, and `stty -a` shows `icanon,echo`.
+
+**Findings.** F1 (nit, cosmetic): the Runs, Shells and Activity titles
+draw with doubled padding (`╭  1 Runs  ─`) while Budget's is single
+(`╭ 2 Budget ─`), because `draw_panel` pads a title `panel_title` already
+padded. For the PE to file or defer.
+
+**Observations.** A completed run reads `failure: none (not the model)`
+(review 14's nit). A ghost's `command` row reads `ghost-disk-full-l4 - df
+-h / exit -`, because ghost commands log no shell id or exit code.
+
+**Next.** The PE run of L8, on a fresh root, with the PE attached
+read-only. Then the Close steps.
