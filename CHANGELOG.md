@@ -8,6 +8,47 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-10-25 — M30 Telemetry & dashboard
+
+Every run now leaves one record of which model did what and how well. The
+daemon answers "which model handles which run class" from those records,
+a daily USD cap stops the spend before the bill does, and `daemoneye top`
+shows the live daemon read-only. The retrospective is in
+`docs/dev/milestones/M30-telemetry-dashboard/README.md`.
+
+- **Run records** — every finished chat turn, ghost and scheduled run
+  appends one `run` event to the dated events log: kind, agent, provider
+  and model, status, a computed `failure_class` and whether the model is to
+  blame, turns, tool calls and their success rate, parse failures, tokens,
+  USD cost, wall clock and tags. Every `ai_cost` event carries the
+  `run_id` it belongs to, and chat runs log `turn_started` like ghosts do.
+- **`daemoneye scorecard`** — reads the records with the daemon down and
+  buckets them by model and `--by kind | agent | tag`, with pass rate,
+  tool success, parse failures, turns, wall clock, cost and the
+  model-attributable failure rate per row. `--min-runs`, `--since`,
+  `--until` and `--json` work as in `daemoneye costs`.
+- **`daemoneye profile <model>`** — a model's strengths per bucket and its
+  failure classes ranked by count, non-attributable classes marked.
+- **Daily cost cap** — `[budget] max_cost_per_day` is checked at every
+  model call, the five formerly uncosted side calls included. Over the
+  cap, a chat turn is refused with a message naming spend and cap, a
+  ghost or scheduled run ends `budget_exceeded` with a true
+  `budget_left`, and webhook analysis is skipped and logged. The day ends
+  at local midnight. `daemoneye status` shows spend against the cap.
+- **`daemoneye top`** — a read-only dashboard. A header names the daemon's
+  pid, uptime, model, host and local time. Runs has a SUBJECT column such
+  as `disk-full-l4 ← webhook`, Budget draws the day's spend as a bar that
+  turns yellow at 80 % and red at 100 %, Shells shows each live shell's
+  foreground and last line, and Activity tails the day's events in local
+  time with repeated events collapsed to one `×N` row. Runs and Budget sit
+  side by side on a wide terminal. Tab, Shift-Tab and `1`–`4` move the
+  focus, the arrows scroll the focused panel, `f` resumes the Activity
+  tail, and Enter opens a run's detail with its record and turn log.
+  `top --once` prints the same panels as text, and `top --once --run <id>`
+  prints one run's detail.
+- **Shells foreground** — a shell whose waited command has finished now
+  reads `shell prompt` instead of `-`.
+
 ## [2.2.0] — 2026-10-20 — M29 Post-2.0 fixes
 
 The defects that shipped in 2.0 and 2.1, found in the M27 and M28 live
