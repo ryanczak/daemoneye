@@ -51,8 +51,10 @@ under `src/`. 42 files are over 1000 lines. They fall into three groups:
 **PE decisions (2026-10-25):**
 
 1. **Caps.** 800 lines of production code per file, where production code
-   is everything before the first column-0 `#[cfg(test)]`. 150 lines per
-   function body. Test files (`*_tests.rs`, `tests/*.rs`, a `tests.rs`
+   is every line not inside an item that carries `#[cfg(test)]` (drafting
+   01 found that "everything before the first `#[cfg(test)]`" undercounts:
+   `search.rs` and `header.rs` have production code after a test-only
+   helper). 150 lines per function, signature to closing brace. Test files (`*_tests.rs`, `tests/*.rs`, a `tests.rs`
    under a module directory) are exempt from the production cap and
    capped at 2000 lines each.
 2. **Exemptions**, as flat data a split would not make more readable:
@@ -128,7 +130,7 @@ Expected count: 12–14. Each may split at drafting.
 
 | #  | Phase | Status |
 |----|-------|--------|
-| 01 | hygiene-gate — `tests/hygiene.rs`, the caps, the allowlist of today's offenders, the `ipc.rs` decision | todo |
+| 01 | hygiene-gate ([phase-01-hygiene-gate.md](phase-01-hygiene-gate.md)) — `tests/hygiene.rs` measures files and functions with `syn`, the allowlist of today's offenders that may only shrink, the two exemptions | todo |
 
 ## Notes
 
