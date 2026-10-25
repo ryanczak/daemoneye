@@ -196,7 +196,8 @@ M29's again: an entry point is verified only when it is driven live.
 - **Single call sites keep screen state honest.** One `plan_layout` call
   and one refresh tail closed 13's whole bug class. Data.
 
-**Fold proposals** (PE sign-off needed before any lands in `WORKFLOW.md`).
+**Fold proposals.** Both folded 2026-10-25 with PE sign-off, as
+`WORKFLOW.md` § "Pre-dispatch check" rules 6 and 7.
 - **Proposal A: screen and window code names its edge cases as tests.**
   Four occurrences (bug-07-1, bug-09-1, phase 12's two bounces, 13's first
   bounce), against two clean phases that did it. Proposed as pre-dispatch

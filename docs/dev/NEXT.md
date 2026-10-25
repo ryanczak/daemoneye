@@ -12,6 +12,5 @@ M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
 foreground) remain unscheduled.
 
 Still queued: the M29 deferred list (O5, O6, F8), the M28 `wait: false`
-note. Fold queue: M30 proposals A and B (awaiting
-sign-off), M28 proposal B (held), M27 proposal B (held) and M23's
+note. Fold queue: M28 proposal B (held), M27 proposal B (held) and M23's
 two proposals.

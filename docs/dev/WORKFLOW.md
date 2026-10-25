@@ -226,6 +226,26 @@ Before dispatch, with the finished Spec in front of you:
    caller and what it passes. A Spec fact that was not read is a guess the
    executor cannot tell from a fact, and it will spend a stall looking for
    a code bug that is in the Spec.
+6. **Screen, layout and scrolling code names its edge cases as tests.** For
+   a renderer, a layout or a windowed view, the Spec names each edge case
+   as a test before dispatch: empty, one row, exactly full, one past full,
+   a sliding window that drops rows, the narrowest and widest terminal, and
+   a fixture shaped like a real day's data rather than like the code. A
+   Spec that leaves them unnamed gets them back as bugs, one at a time.
+7. **Every Spec "must" has a criterion.** Walk the finished Spec for each
+   must, should and never. Each one is backed by an acceptance criterion
+   or a named test, or it is cut. This is § "Give the executor a condition
+   it can check, not an instruction it can agree with" applied at drafting
+   time: a requirement nothing in the executor's loop evaluates is a
+   requirement the executor can honestly miss.
+
+*(Rules 6 and 7 folded 2026-10-25 at M30 close, on PE sign-off. Rule 6:
+four occurrences (bug-07-1, bug-09-1, phase 12's two bounces with seven
+bugs between them, phase 13's first bounce), against two phases, 11 and
+14, that named every edge case and went through first try. Rule 7: three
+occurrences (bug-01-1, bug-04-1, bug-05-1) plus phase 13's claimed fix
+that only a harness grep caught; the content already existed, the
+drafting-time trigger did not.)*
 
 *(Rules 1 and 2 folded 2026-09-18 at M22 close, on PE sign-off. Neither is new;
 this is a trigger for two that already existed. Rule 1 was folded 2026-07-27 and
