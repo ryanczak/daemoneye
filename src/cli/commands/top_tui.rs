@@ -357,6 +357,18 @@ impl TopModel {
             self.activity_top = idx;
         }
     }
+
+    /// Everything the loop applies after a refresh, in one place: hold the
+    /// Activity anchor, re-measure the stored heights against the fresh
+    /// content — the panels are sized to their content, so a refresh
+    /// resizes them without a terminal resize — and clamp the offsets.
+    /// The loop calls this after every disk and shells refresh and on
+    /// resize; it never clamps on its own.
+    pub fn after_refresh(&mut self, size: Option<ratatui::layout::Rect>) {
+        self.hold_activity();
+        refresh_heights(self, size);
+        self.clamp_offsets();
+    }
 }
 
 /// The panel the keys act on, in the order `1` to `4` and the Tab cycle.
@@ -781,10 +793,12 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
     // The snapshot's panels are the content the first frame sizes to, so the
     // key handling clamps against real heights from the first key.
     if let Ok(size) = terminal.size() {
-        refresh_heights(
-            &mut model,
-            Some(ratatui::layout::Rect::new(0, 0, size.width, size.height)),
-        );
+        model.after_refresh(Some(ratatui::layout::Rect::new(
+            0,
+            0,
+            size.width,
+            size.height,
+        )));
     }
 
     let running = Arc::new(AtomicBool::new(true));
@@ -815,7 +829,7 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
             .map(|s| ratatui::layout::Rect::new(0, 0, s.width, s.height));
         if size != last_size {
             last_size = size;
-            refresh_heights(&mut model, size);
+            model.after_refresh(size);
         }
         tokio::select! {
             maybe_event = event_rx.recv() => {
@@ -844,15 +858,13 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
                     if model.follow {
                         model.selected = follow_target(&model.snapshot.runs);
                     }
-                    model.hold_activity();
-                    model.clamp_offsets();
+                    model.after_refresh(size);
                     since_disk = Duration::ZERO;
                     last_fp = Some(now_fp);
                 }
                 if plan.shells {
                     shells_refresh(&mut model, &IpcFetcher).await;
-                    model.hold_activity();
-                    model.clamp_offsets();
+                    model.after_refresh(size);
                     since_shells = Duration::ZERO;
                 }
                 terminal.draw(|f| draw(f, &model))?;
@@ -1998,7 +2010,7 @@ mod tests {
                 vec![shell("s1")],
             ));
             model.snapshot.budget.cap = cap;
-            refresh_heights(&mut model, Some(size));
+            model.after_refresh(Some(size));
             assert_eq!(
                 model.heights,
                 drawn_heights(&model, size),
@@ -2010,13 +2022,54 @@ mod tests {
             model.snapshot.runs = (1..=20)
                 .map(|i| row(&format!("r{i:02}"), Liveness::Done))
                 .collect();
-            refresh_heights(&mut model, Some(size));
+            model.after_refresh(Some(size));
             assert_eq!(
                 model.heights,
                 drawn_heights(&model, size),
                 "the stored heights follow the grown content at cap {cap}"
             );
         }
+    }
+
+    /// The loop's refresh path — `after_refresh`, never `refresh_heights` on
+    /// its own — re-measures the stored heights after any content refresh,
+    /// with no resize in between.
+    #[test]
+    fn content_refresh_re_measures_heights() {
+        let size = ratatui::layout::Rect::new(0, 0, 80, 24);
+        let mut model = TopModel::new(snapshot_with_all(
+            vec![row("r01", Liveness::Live), row("r02", Liveness::Done)],
+            vec![],
+            vec![shell("s1")],
+        ));
+        model.after_refresh(Some(size));
+        let before = model.heights;
+
+        // A disk refresh grows the runs from 2 to 20.
+        model.snapshot.runs = (1..=20)
+            .map(|i| row(&format!("r{i:02}"), Liveness::Done))
+            .collect();
+        model.after_refresh(Some(size));
+        assert_ne!(
+            model.heights, before,
+            "a run refresh moves the heights: {} -> {:?}",
+            before.runs, model.heights.runs
+        );
+        assert_eq!(
+            model.heights,
+            drawn_heights(&model, size),
+            "the stored heights match the drawn layout after the run refresh"
+        );
+
+        // A shells refresh grows the shells from 1 to 10.
+        model.snapshot.shells =
+            ShellsPanel::Rows((1..=10).map(|i| shell(&format!("s{i}"))).collect());
+        model.after_refresh(Some(size));
+        assert_eq!(
+            model.heights,
+            drawn_heights(&model, size),
+            "the stored heights match the drawn layout after the shells refresh"
+        );
     }
 
     #[test]
