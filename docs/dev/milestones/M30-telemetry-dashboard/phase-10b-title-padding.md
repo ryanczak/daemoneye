@@ -1,6 +1,6 @@
 # Phase 10b — One padding for every panel title
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M30 — Telemetry & dashboard
 **Drafted:** 2026-10-25 (from the L8 rehearsal and PE run, finding F1)
 
@@ -96,3 +96,52 @@ Expected: two `ok. 1 passed` lines, clippy finished with no warnings,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-25 11:06 (progress)
+
+Started phase 10b (executor, headless run). Flipped the phase and the M30
+README's 10b row to `in-progress`. Plan: make `draw_panel` render the title
+text as given, drop the padding from `panel_title`, let `draw_at`'s four
+call sites and `panel_title_line` pad once, have `draw_detail_at` pass the
+bare `Run <id>`, then the two tests, the mutation check and the end-to-end
+capture.
+
+### Update — 2026-10-25 11:13 (progress)
+
+All Spec tasks implemented in `src/cli/commands/top_tui.rs`: `draw_panel`
+renders its `title` argument with the one padding (`format!(" {title} ")`),
+`panel_title` returns the bare `<n> <Name>` (no padding), the Budget block's
+`panel_title_line` pads once itself, and `draw_detail_at` passes the bare
+`Run <id>`; doc comments updated to match. Two tests added:
+`every_title_is_padded_once` (80×24 and 160×48; the four `╭ <n> <Name> ─`
+needles per row, plus no `╭  ` and no `  ─` on any row) and
+`the_detail_title_is_padded_once` (`╭ Run <id> ─` present, no `╭  Run`); the
+phase-14 test `screen_draws_the_detail_view`'s title needle was updated to
+the bordered form `╭ Run <id> ─` (it asserted the old doubled padding ` Run
+<id> `). Mutation check done: an extra space in `draw_panel`'s padding made
+both new tests fail (`a row contains "╭ 1 Runs ─"`, `the panel is titled
+with the run id`), restored, both pass. `cargo fmt --all`, `cargo build`,
+`cargo clippy --all-targets --all-features -- -D warnings` clean;
+`cargo test` 2570 passed, 0 failed (`cargo test top_tui` 45 passed).
+Next: the end-to-end capture entry.
+
+### Update — 2026-10-25 11:14 (end-to-end verification)
+
+Ran the block in § End-to-end verification verbatim, unmodified; the
+artifact `/tmp/e2e-m30-10b.txt` was generated mechanically by the block
+(`A=/tmp/e2e-m30-10b.txt; : > "$A"`, the two `cargo test <name>` lines, the
+clippy tail, the `cargo fmt --all --check` exit and the full-suite awk) and
+its contents are pasted byte-exact below.
+
+```
+every_title_is_padded_once: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+the_detail_title_is_padded_once: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2570 failed=0
+```
+
+Expected vs actual: two `ok. 1 passed` lines — present; clippy finished
+with no warnings — the tail line is a bare `Finished`, no warnings;
+`fmt_exit=0` — got 0; `failed=0` — got 0. Every line of the expected shape
+is present.

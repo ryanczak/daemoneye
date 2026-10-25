@@ -758,12 +758,13 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
     Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
 }
 
-/// A panel's title text: ` <n> <Name> `.
+/// A panel's title text: `<n> <Name>`. `draw_panel` and `panel_title_line`
+/// put the one padding around it; no caller pads it twice.
 fn panel_title(panel: Panel) -> String {
-    format!(" {} {} ", panel.index() + 1, panel.label())
+    format!("{} {}", panel.index() + 1, panel.label())
 }
 
-/// The detail view: the header line, one bordered panel titled ` Run <id> `
+/// The detail view: the header line, one bordered panel titled `Run <id>`
 /// over the detail text's visible window, and a footer naming `esc back`.
 /// Scroll and the clamped window use the same helpers the panels do.
 fn draw_detail_at(
@@ -782,7 +783,7 @@ fn draw_detail_at(
     draw_panel(
         frame,
         panel,
-        &format!(" Run {} ", detail.id),
+        &format!("Run {}", detail.id),
         &body,
         None,
         &[],
@@ -792,13 +793,14 @@ fn draw_detail_at(
     Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
 }
 
-/// A panel's title line, cyan on the focused panel.
+/// A panel's title line, cyan on the focused panel. Pads once, like
+/// `draw_panel` does; the Budget block renders it as its own title.
 fn panel_title_line(panel: Panel, focused: bool) -> Line<'static> {
     let mut style = Style::default().add_modifier(Modifier::BOLD);
     if focused {
         style = style.fg(Color::Cyan);
     }
-    Line::styled(panel_title(panel), style)
+    Line::styled(format!(" {} ", panel_title(panel)), style)
 }
 
 /// The Shells body's visible window: the lines `top` onward as far as the
@@ -871,10 +873,11 @@ fn runs_window(body: &str, selected: usize, inner_h: usize) -> (String, Option<u
     (display, Some(1 + row - start), kept)
 }
 
-/// One bordered panel with its title and a plain-text body. `selected`, when
-/// given, is the line index inside `body` drawn reversed. `fades` is the set
-/// of line indices drawn dimmed. The focused panel's border and title are
-/// cyan.
+/// One bordered panel with its title and a plain-text body. `title` is the
+/// text between the border and the one padding (`╭ <title> ─`); `selected`,
+/// when given, is the line index inside `body` drawn reversed. `fades` is
+/// the set of line indices drawn dimmed. The focused panel's border and
+/// title are cyan.
 fn draw_panel(
     frame: &mut ratatui::Frame<'_>,
     area: ratatui::layout::Rect,
@@ -1286,6 +1289,60 @@ mod tests {
             Some("09:00:04"),
             "the merged row keeps the last time of its run"
         );
+    }
+
+    /// The drawn screen as rows, one `String` per row, so a title needle is
+    /// matched within a single row and not across the whole screen.
+    fn drawn_rows(terminal: &Terminal<ratatui::backend::TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| {
+                        buffer
+                            .cell((x, y))
+                            .map(|c| c.symbol().to_string())
+                            .unwrap_or_default()
+                    })
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    /// Assert a title needle sits on one row, and no row carries a doubled
+    /// padding on either side of a title.
+    fn assert_title_rows(rows: &[String], needles: &[&str]) {
+        for needle in needles {
+            assert!(
+                rows.iter().any(|row| row.contains(needle)),
+                "a row contains {needle:?}: {rows:?}"
+            );
+        }
+        for row in rows {
+            assert!(
+                !row.contains("╭  ") && !row.contains("  ─"),
+                "no doubled padding on a title row: {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_title_is_padded_once() {
+        for (w, h) in [(80u16, 24u16), (160u16, 48u16)] {
+            let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            let model = TopModel::new(snapshot(vec![]));
+            terminal.draw(|f| draw(f, &model)).unwrap();
+            let rows = drawn_rows(&terminal);
+            assert_title_rows(
+                &rows,
+                &[
+                    "╭ 1 Runs ─",
+                    "╭ 2 Budget ─",
+                    "╭ 3 Shells ─",
+                    "╭ 4 Activity ─",
+                ],
+            );
+        }
     }
 
     #[test]
@@ -2579,6 +2636,32 @@ mod tests {
     }
 
     #[test]
+    fn the_detail_title_is_padded_once() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let mut model = TopModel::new(snapshot(vec![
+            row("r01", Liveness::Live),
+            row("r02", Liveness::Done),
+        ]));
+        model.detail = Some(OpenDetail {
+            id: detail_id(),
+            text: "7eb9151d45fa49f1  ghost  disk-full-l4 ← webhook  hard-fail  2m".to_string(),
+        });
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let rows = drawn_rows(&terminal);
+        assert!(
+            rows.iter()
+                .any(|row| row.contains(&format!("╭ Run {} ─", DETAIL_ID))),
+            "a row contains the padded detail title: {rows:?}"
+        );
+        for row in &rows {
+            assert!(
+                !row.contains("╭  Run"),
+                "no doubled padding before the detail title: {row:?}"
+            );
+        }
+    }
+
+    #[test]
     fn screen_draws_the_detail_view() {
         let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
         let mut model = TopModel::new(snapshot(vec![
@@ -2604,7 +2687,7 @@ mod tests {
             .map(|l| format!("{l}\n"))
             .collect();
         assert!(
-            text.contains(&format!(" Run {DETAIL_ID} ")),
+            text.contains(&format!("╭ Run {DETAIL_ID} ─")),
             "the panel is titled with the run id: {text}"
         );
         assert!(
