@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (PE run passed 2026-10-23; phases 11–14 done 2026-10-25; L8 rehearsed 2026-10-25, PE run of L8 next, then the Close steps)
+**Status:** in-progress (PE run passed 2026-10-23; phases 11–14 done 2026-10-25; L8 rehearsed and PE-run 2026-10-25, both pass; the Close steps await the PE's sign-off)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -267,3 +267,39 @@ padded. For the PE to file or defer.
 
 **Next.** The PE run of L8, on a fresh root, with the PE attached
 read-only. Then the Close steps.
+
+### Update — 2026-10-25 (L8 PE run, architect)
+
+Release build at `09d62f83` (source as at `69c368f6`), on a fresh root:
+`$R/.daemoneye/var` removed, config and runbook kept. The PE attached
+read-only at 255×66, so the window followed the PE's size. Raw notes in
+`/tmp/e2e-m30-10-pe.txt`.
+
+One harness note: `chat` did not start the daemon on its own this time
+(`Failed to connect to daemon at …/daemoneye.sock`), so the daemon was
+started with `daemon` and the ask retried. Not a `top` matter; recorded
+for the next harness run.
+
+| Block | Result |
+|---|---|
+| L1 | **pass**: `847123440902422b` chat, complete/none, turns 2, tool_calls 1, success 1.0; both `ai_cost` lines carry the id |
+| L4 | **pass on the first alert**: `ghost_trigger: true`; ghost `cdc3b20745d44c53` complete/none, turns 2, tool_calls 1, tagged `runbook: disk-full-l4`; its two `ai_cost` lines carry the id, the watchdog's has `run_id: ""`; the turn log has `turn_started` ×2 |
+| L8 | **pass** at 255×65, then 100×39 |
+
+L8 in detail:
+
+- **Header:** `daemoneye · pid 484597 · up 2m 7s · ollama/nvidia/GLM-5.3-Flash-FP4-Local · pinky · 10:05:34`; pid = the daemon's, clock = `date` to the second.
+- **Layout:** `1 Runs` and `2 Budget` on one line at 255 columns; at 100 columns the panels stack at rows 2, 7, 14, 18.
+- **Rows:** `cdc3b20745d44c53 ghost disk-full-l4 ← webhook complete 2 1m done` and `847123440902422b chat chat:d8bb75c3 complete 2 2m done`; Shells `s1 ghost:disk-full-l4 shell prompt … 12% /`; the burst as `cache_refresh_error … ×5`.
+- **Budget:** yellow (`38;5;3`) at `85%`; red (`38;5;1`) within one refresh of the $0.30 seed, `[███…] 115%`, `spend: $1.15 of $1.00 cap (115%)`.
+- **Focus:** Tab cycles Budget → Shells → Activity → Runs; BackTab Runs → Activity; the focused border is `38;5;6` (cyan), the unfocused one unstyled.
+- **Activity:** at 255×65 every row fit and `↑` moved nothing (correct). At 100×39 (19 rows visible) `↑` showed `activity scrolled`, the first row held while two seeded rows arrived, and `f` resumed the tail.
+- **Detail:** `1`, `Home`, `Enter` opened ` Run cdc3b20745d44c53 ` with status, `failure: none (not the model)`, model, turns, `tool calls: 1 · 100.0% ok`, parse failures, tokens, cost, wall clock and the four turn-log records; `Esc` returned with Runs focus.
+- **Quit:** `q` left the prompt; `stty -a` shows `icanon,echo`.
+
+**Findings.** None new. F1 (nit, doubled title padding) stands as in the
+rehearsal entry.
+
+**Next.** The Close steps, on the PE's sign-off: the F1 and review-09
+nits (a tiny `10a` or deferred), the retrospective and fold proposals,
+`NEXT.md` to none, the 2.3.0 release.
