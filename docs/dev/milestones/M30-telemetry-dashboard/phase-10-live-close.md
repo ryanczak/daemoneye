@@ -1,7 +1,7 @@
 # Phase 10: live-close — telemetry, the daily cap and `top`, checked against a real daemon; 2.3.0 ships
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** in-progress (PE run passed 2026-10-23; phases 11–14 done 2026-10-25; L8 rehearsed and PE-run 2026-10-25, both pass; the Close steps await the PE's sign-off)
+**Status:** done (PE run L1–L7 2026-10-23, L8 2026-10-25; closed 2026-10-25)
 **Depends on:** 01–09 (all `done`)
 **Estimated diff:** this doc's Update Log, the milestone README, then the
 release (`Cargo.toml` / `Cargo.lock`, `CHANGELOG.md`)
@@ -303,3 +303,11 @@ rehearsal entry.
 **Next.** The Close steps, on the PE's sign-off: the F1 and review-09
 nits (a tiny `10a` or deferred), the retrospective and fold proposals,
 `NEXT.md` to none, the 2.3.0 release.
+
+### Update — 2026-10-25 (close, architect)
+
+Phase 10b fixed the L8 F1 nit and was approved first try. The Close steps
+ran: the retrospective and fold proposals are in the milestone README,
+`NEXT.md` is none, and `2.3.0` is released locally (version bump,
+CHANGELOG, four gates, commit, annotated tag `v2.3.0`). The push waits on
+the PE's go-ahead and a credential scan.

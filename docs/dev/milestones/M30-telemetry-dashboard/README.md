@@ -5,7 +5,7 @@ how well, the daemon can answer "which model handles which run class" from
 those records, a daily USD cap stops the spend before the bill does, and
 `daemoneye top` shows the live daemon read-only.
 
-**Status:** in-progress (scoped 2026-10-20)
+**Status:** done (scoped 2026-10-20, closed 2026-10-25)
 
 **Release:** 2.3.0
 
@@ -110,13 +110,123 @@ close. Each may split at drafting.
 | 07 | top-data ([phase-07-top-data.md](phase-07-top-data.md)) — Runs, Budget and Activity from disk, the stats-only fingerprint, `daemoneye top --once`; no IPC | done |
 | 08 | top-shells ([phase-08-top-shells.md](phase-08-top-shells.md)) — the Shells panel: `ShellInfo` gains `foreground` and `last_line`, `top --once` adds the section (daemon down ⇒ `daemon not running`) | done |
 | 09 | top-tui ([phase-09-top-tui.md](phase-09-top-tui.md)) — the ratatui screen over the snapshot: 500 ms poll, re-read on fingerprint change, follow the newest live run until the user scrolls, activity filter, `q` quits | done |
-| 10 | live-close ([phase-10-live-close.md](phase-10-live-close.md)) — architect rehearsals, the PE run, 2.3.0 | in-progress |
+| 10 | live-close ([phase-10-live-close.md](phase-10-live-close.md)) — architect rehearsals, the PE run, 2.3.0 | done |
 | 11 | top-rows ([phase-11-top-rows.md](phase-11-top-rows.md)) — what the rows say: a SUBJECT column in Runs (runbook ← trigger, job, session), local-time Activity, shaped summaries for the daemon's everyday events, consecutive repeats collapsed to one row `×N`, short shell owners, the rate labelled with its 60 s window | done        |
 | 12 | top-layout ([phase-12-top-layout.md](phase-12-top-layout.md)) — the screen: a one-line header (daemon pid and uptime, model, host, local time; the down state named there), Runs and Budget side by side when the terminal is wide enough, Runs and Shells sized to content up to a cap with Activity taking the rest, a Budget bar coloured at 80 % and 100 % of the cap, finished runs dimmed after a few minutes | done       |
 | 13 | top-focus ([phase-13-top-focus.md](phase-13-top-focus.md)) — one focused panel (Tab / Shift-Tab / `1`–`4`, named in the title and footer), per-panel scrolling for Runs, Shells and Activity, Activity tailing until scrolled with `f` resuming it | done       |
 | 14 | top-detail ([phase-14-top-detail.md](phase-14-top-detail.md)) — Enter on a run opens its detail: the `run` record's fields when finished (failure class, tool calls and success rate, tokens, cost, wall clock) or the turn log's state so far, plus the turn log tail; scrollable; Esc returns; still read-only | done       |
 | 10a | rehearsal-fixes ([phase-10a-rehearsal-fixes.md](phase-10a-rehearsal-fixes.md)) — rehearsal 1's F1 (chat runs write `turn_started`, so `top`/`run list` show their turns) and F2 (a finished waited command records `Foreground::Prompt`), plus the `run_tui` doc nit | done |
 | 10b | title-padding ([phase-10b-title-padding.md](phase-10b-title-padding.md)) — the L8 F1 nit: every `top` title reads `╭ <title> ─`, one padding in one place (Runs, Shells, Activity and the detail view were doubled; Budget was not) | done |
+
+## Retrospective (2026-10-25)
+
+**Outcome.** Every exit criterion is met and checked live on pinky.
+- Every finished run of every kind writes one `run` record, and every
+  `ai_cost` a run makes carries its `run_id` (L1, L4, L5).
+- `daemoneye scorecard` and `daemoneye profile` answer "which model
+  handles which run class" from those records with the daemon down (L6).
+- `[budget] max_cost_per_day` refuses a chat turn, a webhook analysis and a
+  ghost or scheduled run at every model call, naming spend and cap (L7).
+- `daemoneye top` is a read-only dashboard: a header, Runs with a SUBJECT
+  column, a Budget bar, Shells, a local-time Activity tail that collapses
+  bursts, one focused panel with scrolling, and a run detail view (L2, L3,
+  L8).
+
+The PE run passed L1–L7 on 2026-10-23 and L8 on 2026-10-25. The suite
+went from 2430 to 2570 tests.
+
+**Numbers** (from the telemetry store). 15 executor phases, 29 recorded
+runs, 5,165 executor turns, about 33 hours of executor wall clock. Two more
+runs were lost to `serve` restarts and are not in the store. The executor
+model changed mid-milestone: phases 01–10a ran on
+`local-inference-lab/GLM-5.3-Flash-NVFP4-Spark`, and 10b–14 on
+`nvidia/GLM-5.3-Flash-FP4-Local`.
+- **6 `approved_first_try`:** 02, 03, 10a, 10b, 11, 14.
+- **6 `approved_after_1`:** 01, 04, 05, 06, 07, 09.
+- **3 `approved_after_2`:** 08, 12, 13.
+- **3 hard-failed runs:** 07 once and 08 twice, all stalls on a Spec that
+  sent the executor to find its own sources.
+- **1 cancelled run:** 11, stopped on the PE's instruction, because the
+  harness pinned a future timestamp (spec bug).
+- **18 bug docs:** one each on 01, 04, 05 and 07, two each on 06 and 09,
+  seven on 12, three on 13.
+
+**What the live close found that nothing else did.**
+- **Rehearsal 1, F1 and F2 (minor):** chat runs showed `TURNS 0`, because
+  the chat loop wrote no `turn_started`; and an idle shell's foreground
+  read `-`. Both fixed in 10a.
+- **The PE run, 2026-10-23:** no defects, but watching `top` showed it hard
+  to read. That became phases 11–14.
+- **L8 F1 (nit):** three panel titles and the detail title were padded
+  twice. Fixed in 10b.
+
+Every one of these passed its unit tests first. The lesson is M26's to
+M29's again: an entry point is verified only when it is driven live.
+
+**Architect errors, recorded.**
+- **A Spec "must" with no criterion behind it:** 01 (bug-01-1), 04
+  (bug-04-1) and 05 (bug-05-1). Phase 13's second run also claimed a fix
+  it had not made, and only the harness grep on the loop body caught it.
+- **A preservation criterion assumed, not run:** 07 `live_exit`, 08
+  `budget_usd`.
+- **Fixtures shaped like the code, not the data:** bug-07-1 and bug-09-1
+  passed on one or two events and failed on a real day's log.
+- **Screen code with its edge cases left unnamed:** 12's seven bugs (stale
+  header, fade off by one, bar clipping, usize underflow in window
+  arithmetic, a racy clock test) and 13's first bounce (heights measured
+  only on resize, index drift under the sliding window). Phases 11 and 14
+  named every edge case as a test and went through first try.
+- **A Spec that makes the executor discover its sources:** 07 and 08
+  stalled reading. The re-scoped Specs named every symbol and landed.
+- **Clock-dependent harnesses:** 11's pinned future timestamp and a
+  UTC-versus-local expectation, then 12's wall-clock test.
+
+**Process calibration.**
+- **`max_tokens` was too small for GLM's reasoning.** At 8192 the dashboard
+  showed repeated "cut off at the output-token limit" parse failures.
+  Raised to 32768 on 2026-10-24, and turn counts fell from 377 to 117 to
+  61 across the next three runs.
+- **A `/mcp` reconnect loses an in-flight run,** because the run registry
+  lives in the `serve` process. Two runs were lost this way during the
+  `top` phases. Hold `/mcp` while a run is live. This is a rexyMCP product issue,
+  not a DaemonEye one.
+- **Harness greps on the loop body work.** Phase 13's `loop_clamps` and
+  `layout_inputs` criteria caught a false completion that every unit test
+  passed. One occurrence; data.
+- **Single call sites keep screen state honest.** One `plan_layout` call
+  and one refresh tail closed 13's whole bug class. Data.
+
+**Fold proposals** (PE sign-off needed before any lands in `WORKFLOW.md`).
+- **Proposal A: screen and window code names its edge cases as tests.**
+  Four occurrences (bug-07-1, bug-09-1, phase 12's two bounces, 13's first
+  bounce), against two clean phases that did it. Proposed as pre-dispatch
+  rule 6: *"For a renderer, a layout or a scrolling window, the Spec names
+  each edge case as a test before dispatch: empty, one row, exactly full,
+  one past full, a sliding window that drops rows, the narrowest and widest
+  terminal, and a fixture shaped like a real day's data, not like the
+  code."*
+- **Proposal B: every Spec "must" is re-read against the criteria list
+  before dispatch.** Three occurrences (01, 04, 05), plus 13's false
+  completion. The rule already exists as § "Give the executor a condition
+  it can check, not an instruction it can agree with", so this is a
+  trigger, not new content: pre-dispatch rule 7, *"Walk the Spec for each
+  must, should and never. Each one has a criterion or a named test, or it
+  is cut."*
+- **Not proposed, already covered.** Measured preservation criteria are
+  § "Run every count criterion; never derive it". Naming every source
+  symbol is rule 5. Both were broken here, so the trigger list above is
+  where they belong if the PE wants them re-stated.
+- **Held as data (two occurrences or fewer):** clock-independent
+  harnesses (11, 12), "harnesses that use bash say so", and one convention
+  for counting stalls in a verdict.
+
+**Deferred.**
+- **Observation, unconfirmed:** at the L8 PE run, `chat` on a fresh root
+  did not start the daemon and printed `Failed to connect to daemon`. The
+  rehearsal the same morning did not show it. Check whether `chat` is
+  meant to fork the daemon before calling it a bug.
+- Carried from M29 and earlier, unchanged: O5, O6, F8, and the M28
+  `wait: false` note.
 
 ## Notes
 
