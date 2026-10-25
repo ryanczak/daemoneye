@@ -1,7 +1,7 @@
 # Phase 14: top-detail — open a run
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-13
 **Estimated diff:** ~450 lines, more than half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -427,3 +427,30 @@ kill: (-468522): No such process
 **Commit:** a6409fdeab1804fdf87e0b169ce9dd046d35d9ac
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (245 turns, `max_tokens = 32768`)
+- **Scope deviations:** accepted. `--run` without `--once` refuses an id
+  with no turn log before the screen starts, the same way `--once` does.
+  `run_tui` became `pub(crate)` and its unused re-export was dropped. With
+  no tool calls the line reads `tool calls: 0 · -`, and a cancelled run
+  prints its own `turns:` line. Both are fair readings of the spec.
+- **Nits, not filed:** `Enter` loads the run from disk inside `handle_key`,
+  so the key tests read the real `~/.daemoneye` (read-only, and their ids
+  never exist there). A completed run reads `failure: none (not the
+  model)`, because the spec adds the tag whenever `is_model_attributable`
+  is false; that wording is the architect's.
+- **Gates (reviewer re-run):** fmt clean, build clean, clippy `-D warnings`
+  clean, `cargo test` passed=2568 failed=0. The full harness, rerun from a
+  scratch copy, matches every value, including `missing_exit=1`,
+  `detail_leak=0` and `requests=Request::ShellList,Request::Status`. No
+  new `unwrap()` / `expect()` / `#[allow]` outside tests.
+- **Live smoke (reviewer):** at 110×30 against real runs, `Enter` opened a
+  run's detail, the scroll keys and `End` moved it, `Esc` returned, a
+  second `Enter` opened the next run, and `q` quit with exit 0 and no
+  panic. `top --once --run` printed a real chat run's record and turn log.
+- **Calibration:** none. The spec named every edge case as a test and the
+  harness checked the live loop's refresh path; both held.
