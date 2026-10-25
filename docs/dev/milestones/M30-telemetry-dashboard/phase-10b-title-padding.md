@@ -1,6 +1,6 @@
 # Phase 10b — One padding for every panel title
 
-**Status:** review
+**Status:** done
 **Milestone:** M30 — Telemetry & dashboard
 **Drafted:** 2026-10-25 (from the L8 rehearsal and PE run, finding F1)
 
@@ -277,3 +277,16 @@ kill: (-509626): No such process
 **Commit:** 5888a786c703250a692ffdfda5661af0a926f3b5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (115 turns)
+- **Scope deviations:** `screen_draws_the_detail_view`'s title needle was
+  tightened to `╭ Run <id> ─`. Not forced (the old ` Run <id> ` is still a
+  substring of the new title), but harmless and stricter.
+- **Calibration:** none. Reviewer re-ran the four gates (fmt 0, build and
+  clippy clean, 2570 passed / 0 failed) and drew `top` live at 160×30 on an
+  empty root: `╭ 1 Runs ─`, `╭ 2 Budget ─`, `╭ 3 Shells ─`, `╭ 4 Activity ─`.
+  The mutation check is in the 11:13 entry.
