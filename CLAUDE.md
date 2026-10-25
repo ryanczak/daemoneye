@@ -15,7 +15,7 @@ cargo test -- --nocapture          # run tests with stdout visible
 
 The project compiles cleanly — `cargo clippy --all-targets -- -D warnings` exits zero. Tests pass (unit + integration in `tests/integration.rs`) + 1 ignored.
 
-`tests/hygiene.rs` parses every `.rs` file with `syn` and holds the M31 caps: at most 800 production lines per file (lines outside test-only items; `src/ai/types/pending.rs` and `src/ai/tools/args.rs` are exempt), at most 2000 test lines per file (a test file, or a file's inline tests), and at most 150 lines per function, signature to closing brace. Today's offenders are listed in `tests/hygiene_allowlist.txt`, whose counts may never grow; a change that brings an offender within its cap deletes its line, and the gate fails with "remove it" until it does.
+`tests/hygiene.rs` parses every `.rs` file with `syn` and holds the M31 caps: at most 800 production lines per file (lines outside test-only items), at most 2000 test lines per file (a test file, or a file's inline tests), and at most 150 lines per function, signature to closing brace; `src/ai/types/pending.rs` and `src/ai/tools/args.rs` are exempt from both. Today's offenders are listed in `tests/hygiene_allowlist.txt`, whose counts may never grow; a change that brings an offender within its cap deletes its line, and the gate fails with "remove it" until it does.
 
 ## Integration Tests
 

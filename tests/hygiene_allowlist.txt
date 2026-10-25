@@ -36,8 +36,6 @@ test src/memory/index/mod.rs 2605
 fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
 fn src/ai/backends/openai.rs OpenAiClient::chat 238
-fn src/ai/types/pending.rs PendingCall::summary 188
-fn src/ai/types/pending.rs PendingCall::to_tool_call 617
 fn src/cli/commands/ask.rs run_ask_raw 169
 fn src/cli/commands/chat.rs read_input_line_inner_ratatui 183
 fn src/cli/commands/chat.rs run_chat_ratatui 500

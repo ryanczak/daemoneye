@@ -33,7 +33,7 @@ const TEST_FILE_CAP: usize = 2000;
 /// Lines per production function, signature to closing brace.
 const FN_CAP: usize = 150;
 
-/// Files exempt from the file cap (their functions are still measured).
+/// Files exempt from the file and function caps (PE decision, M31 README).
 const EXEMPT: &[(&str, &str)] = &[
     (
         "src/ai/types/pending.rs",
@@ -418,7 +418,10 @@ fn test_files_fit_the_cap() {
 fn functions_fit_the_cap() {
     let allow = allowlist();
     let mut violations = Vec::new();
-    for (path, m) in tree().iter().filter(|(p, _)| !is_test_file(p)) {
+    for (path, m) in tree()
+        .iter()
+        .filter(|(p, _)| !is_test_file(p) && !is_exempt(p))
+    {
         for (name, lines) in &m.functions {
             if *lines <= FN_CAP {
                 continue;
@@ -475,6 +478,9 @@ fn allowlist_has_no_stale_entries() {
             .get(path)
             .and_then(|m| m.functions.iter().find(|(f, _)| f == name));
         match found {
+            _ if is_exempt(path) => stale.push(format!(
+                "fn {path} {name} {n}    # an exempt file's functions are not measured: remove it"
+            )),
             None => stale.push(format!(
                 "fn {path} {name} {n}    # no such function: remove it"
             )),

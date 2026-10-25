@@ -59,7 +59,9 @@ under `src/`. 42 files are over 1000 lines. They fall into three groups:
    capped at 2000 lines each.
 2. **Exemptions**, as flat data a split would not make more readable:
    `src/ai/types/pending.rs` (one 43-variant enum and its impl) and
-   `src/ai/tools/args.rs` (forty argument structs). `src/ipc.rs` (the wire
+   `src/ai/tools/args.rs` (forty argument structs). The exemption covers
+   both caps: the file's size and its functions (PE decision 2026-10-25,
+   after phase 01 measured `PendingCall::to_tool_call` at 617 lines). `src/ipc.rs` (the wire
    protocol enums) is a candidate for the same exemption; phase 01 says
    which way it goes.
 3. **Enforced, or it regresses.** `tests/doc_truth.rs` exists because the
@@ -134,8 +136,8 @@ Expected count: 12–14. Each may split at drafting.
 
 ## Notes
 
-- **The gate is in, with 68 entries (phase 01, 2026-10-25):** 21 `file`,
-  4 `test`, 43 `fn`. Every later phase deletes lines from
+- **The gate is in, with 66 entries (phase 01, 2026-10-25):** 21 `file`,
+  4 `test`, 41 `fn`. Every later phase deletes lines from
   `tests/hygiene_allowlist.txt`; the exit criterion is an empty list.
   Inline test modules count against the 2000-line test cap, so group 1's
   moves are enforced too.
@@ -143,6 +145,6 @@ Expected count: 12–14. Each may split at drafting.
   `do_ghost_turn` (896), `handle_ask` (573), `run_background` (440),
   `run_status` (435) and `get_labeled_context_scoped` (321). Group 3 grows
   to cover them.
-- **Open for the PE:** the exemption of `pending.rs` covers its file size;
-  its `to_tool_call` (617) and `summary` (188) are still measured and
-  allowlisted.
+- **Exemption settled (2026-10-25):** it covers functions too, so
+  `pending.rs`'s `to_tool_call` (617) and `summary` (188) left the
+  allowlist, which now holds 66 entries.
