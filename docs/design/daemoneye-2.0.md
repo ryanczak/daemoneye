@@ -559,15 +559,16 @@ per `WORKFLOW.md`; phase counts are estimates from the survey's line counts.
 | **M28** | **Interactive shells** *(inserted 2026-10-13; M28–M30 renumbered M29–M31)* | A TUI such as Claude Code runs inside a PTY shell and the model can see it, type into it safely, wait on it and never poison it: the host's `Screen` frame + `Status` foreground facts (raw-mode termios, alt screen, foreground command), the pure `Foreground` classifier, `read_shell_screen`, the static `interactive` flag replaced by observed state, busy-shell refusal, `send_input` `\r` + named `keys` + the guard/panel/ghost refusal, `run_terminal_command(interactive: true)`. See `docs/design/interactive-shells.md`. | 3 |
 | **M29** | **Post-2.0 fixes** *(inserted 2026-10-18; former M29–M31 renumbered M30–M32)* | Session residency unified (resident on presence attach), F9 active-pane label, invalid-args wording and budget exemption, `wait`/`shell` log fields, O3, O4, the `sbx.rs` flake. See `docs/dev/milestones/M29-post-2.0-fixes/`. | 6 |
 | **M30** | **Telemetry & dashboard** | `RunRecord` store, `daemoneye scorecard/profile` with `n_runs`, `failure_class` + `is_model_attributable`, `[budget] max_cost_per_day` breaker, `daemoneye top`. | 6–8 |
-| **M31** | **MCP surface** | `daemoneye mcp serve` (rmcp, stdio) with the § 2.8 tools; installed smoke test from Claude Code and from rexyMCP; `[mcp.servers]` client side as deferred tool groups. | 6–8 |
-| **M32** | **Knowledge & fleet follow-ons** | Shell logs as a knowledge corpus; postmortem + proposed-runbook generation; runbook fan-out over `hosts:` with a cap; `requires_review` gate. | 6–8 |
+| **M31** | **Code hygiene** *(inserted 2026-10-25; former M31–M32 renumbered M32–M33)* | No production file over 800 lines, tests in sibling files, no function over 150 lines, `execute_tool_call` and `run_conversation_loop` decomposed per family; enforced by `tests/hygiene.rs`. No behaviour change. See `docs/dev/milestones/M31-code-hygiene/`. | 12–14 |
+| **M32** | **MCP surface** *(renumbered from M31 on 2026-10-25)* | `daemoneye mcp serve` (rmcp, stdio) with the § 2.8 tools; installed smoke test from Claude Code and from rexyMCP; `[mcp.servers]` client side as deferred tool groups. | 6–8 |
+| **M33** | **Knowledge & fleet follow-ons** *(renumbered from M32)* | Shell logs as a knowledge corpus; postmortem + proposed-runbook generation; runbook fan-out over `hosts:` with a cap; `requires_review` gate. | 6–8 |
 
 Ordering rationale: M20–M23 are the substrate and the user-facing
 requirement; they can ship as `v2.0.0-alpha` on the flag. M24–M25 are the
 rexyMCP ports and are deliberately *after* the tool surface settles so the
 governor classifies the final tool set, not the transitional one. M26 lands
 the sandbox on the substrate before tmux goes. M27 is the point of no return.
-M28 closes the TUI hazard hit live on 2026-10-13; M29 fixes what the 2.0 and 2.1 live closes found; M30–M32 are additive.
+M28 closes the TUI hazard hit live on 2026-10-13; M29 fixes what the 2.0 and 2.1 live closes found; M30 is additive; M31 pays down the tree's readability debt before the MCP surface grows it; M32–M33 are additive.
 
 ---
 

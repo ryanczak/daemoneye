@@ -1,13 +1,15 @@
 # NEXT
 
-**Active milestone:** none. M30 (Telemetry & dashboard) closed
-2026-10-25 as `2.3.0`; the retrospective and two fold proposals awaiting
-PE sign-off are in [`README.md`](milestones/M30-telemetry-dashboard/README.md).
+**Active milestone: M31 — Code hygiene** (release `2.4.0`), scoped
+2026-10-25 from the long-file audit. See
+[`README.md`](milestones/M31-code-hygiene/README.md) for the caps, the
+exemptions and the plan. MCP surface is now M32, Knowledge M33.
 
-**Active phase:** none. The next milestone needs the PE's sign-off.
+**Active phase:** none drafted yet. Next: `/rexymcp:architect next` drafts
+phase 01, the hygiene gate.
 
 M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
-(`v2.2.0`, pushed). M31 (MCP surface) and M32
+(`v2.2.0`, pushed). M32 (MCP surface) and M33
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
 foreground) remain unscheduled.
 
