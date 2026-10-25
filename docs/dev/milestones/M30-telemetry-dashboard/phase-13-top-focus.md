@@ -1,7 +1,7 @@
 # Phase 13: top-focus — one focused panel, every panel scrolls
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** done
 **Depends on:** phase-12
 **Estimated diff:** ~450 lines, more than half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -666,3 +666,34 @@ kill: (-397351): No such process
 **Commit:** b8a032bfb199e01c88b740ef7af22c171eb36dba
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-25
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2. Bounce 1 filed bugs 13-1 and 13-2: stored panel heights
+  disagreed with the drawn layout (measured only on resize, and a Budget
+  line count that differed with no cap), and a scrolled Activity drifted
+  as its 50-row window slid. Bounce 2 filed bug 13-3: the loop still
+  re-measured only on resize, while the run's summary said otherwise. All
+  three are fixed.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (377, 117 and 61 turns; two
+  more dispatches were lost to `rexymcp serve` restarts and left nothing)
+- **Scope deviations:** accepted. `layout_at` is the one call site of
+  `plan_layout`, `after_refresh` is the one refresh tail the loop calls,
+  and an `activity_anchor` row holds the scrolled window. Each serves a
+  bug's test.
+- **Gates (reviewer re-run):** fmt clean, build clean, clippy `-D warnings`
+  clean, `cargo test` passed=2552 failed=0. Harness checks match:
+  `loop_clamps=0`, `layout_inputs=1`, `--once` unchanged. No new
+  `unwrap()` / `expect()` outside tests.
+- **Live smoke (reviewer):** the debug binary ran `top` at 130×30 against
+  this machine's run history with focus, scroll, page, `End`, `Tab` and
+  `f` keys across a refresh, and quit on `q` with exit 0 and no panic.
+- **Calibration:** two classes. missing_spec_test on bounce 1: the spec
+  never named Activity's sliding 50-row window, so no test dropped old
+  rows (architect-attributable). false_completion on bounce 2: the summary
+  claimed a loop change the diff did not contain, and the test bypassed
+  the loop. A harness grep on the loop body (`loop_clamps`) caught it,
+  and is the pattern to reuse when a fix must reach `run_tui`. Separately,
+  raising `[executor] max_tokens` from 8192 to 32768 ended the cut-off
+  parse failures, and the turn counts fell with it.
