@@ -1,7 +1,7 @@
 # Phase 13: top-focus — one focused panel, every panel scrolls
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** review
+**Status:** in-progress
 **Depends on:** phase-12
 **Estimated diff:** ~450 lines, more than half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -128,6 +128,9 @@ expectations only where they pinned the old titles or footer.
   and `scrolled_activity_holds_its_rows_as_the_window_slides` each ⇒
   `test result: ok. 1 passed` (today neither exists), and the harness
   prints `layout_inputs=1` (today `2`).
+- [ ] Bounce 2 (bug 13-3): `content_refresh_re_measures_heights` ⇒
+  `test result: ok. 1 passed` (today it does not exist), and the harness
+  prints `loop_clamps=0` (today `2`).
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` clean,
   `cargo fmt --all --check` exit 0, `cargo test` ⇒ `failed=0`. Report the
   passed count; do not pin it.
@@ -140,12 +143,13 @@ entry. It fabricates no events and does not depend on the clock.
 
 ```sh
 A=/tmp/e2e-m30-13.txt; : > "$A"
-for t in focus_cycles_with_tab_and_wraps number_keys_jump_focus number_keys_type_into_the_filter_while_editing arrows_move_only_the_focused_panel shells_scroll_clamps_at_both_ends activity_tails_until_scrolled activity_scrolling_to_the_bottom_resumes_tailing f_resumes_follow_and_tailing page_and_home_keys_move_by_a_page empty_panels_ignore_scroll_keys offsets_clamp_when_content_or_size_shrinks visible_range_never_leaves_the_content screen_names_the_focused_panel screen_draws_scrolled_shells stored_heights_match_the_drawn_layout scrolled_activity_holds_its_rows_as_the_window_slides; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
+for t in focus_cycles_with_tab_and_wraps number_keys_jump_focus number_keys_type_into_the_filter_while_editing arrows_move_only_the_focused_panel shells_scroll_clamps_at_both_ends activity_tails_until_scrolled activity_scrolling_to_the_bottom_resumes_tailing f_resumes_follow_and_tailing page_and_home_keys_move_by_a_page empty_panels_ignore_scroll_keys offsets_clamp_when_content_or_size_shrinks visible_range_never_leaves_the_content screen_names_the_focused_panel screen_draws_scrolled_shells stored_heights_match_the_drawn_layout scrolled_activity_holds_its_rows_as_the_window_slides content_refresh_re_measures_heights; do cargo test "$t" 2>&1 | grep -E '^test result: ok. 1 passed' | head -1 | sed "s/^/$t: /; s/[0-9]* filtered out/<n> filtered out/; s/finished in [0-9.]*s/finished in <t>s/" >> "$A"; done
 cargo build -q 2>/dev/null
 H=$(mktemp -d); mkdir -p "$H/.daemoneye/var/log/events" "$H/.daemoneye/var/log/runs"
 F=$(TZ=Etc/GMT+5 HOME="$H" ./target/debug/daemoneye top --once)
 echo "once_order=$(echo "$F" | grep -xE 'Runs|Budget|Shells|Activity' | paste -sd, -)" >> "$A"
 echo "once_rate=$(echo "$F" | grep -c '^rate (60 s): ')" >> "$A"
+echo "loop_clamps=$(sed -n '/^pub async fn run_tui/,/^}/p' src/cli/commands/top_tui.rs | grep -c 'clamp_offsets()')" >> "$A"
 echo "layout_inputs=$(sed '/^#\[cfg(test)\]/q' src/cli/commands/top_tui.rs | grep -c 'plan_layout(')" >> "$A"
 find "$H" -type f -delete; find "$H" -depth -type d -empty -delete
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1 | sed 's/in [0-9.]*s/in <t>s/' >> "$A"
@@ -513,3 +517,21 @@ kill: (-341062): No such process
 **Commit:** 7f53ba847ad5c91a8cab982c640cd0da081f3024
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-25 (architect: bounce 2)
+
+**Architect:** Claude
+
+Bug 13-2 is fixed: the Activity anchor holds the visible rows as the
+window slides. Bug 13-1 is half fixed. `plan_layout` now has one call site
+(`layout_at`), but the loop still re-measures heights only on resize, and
+the new test calls `refresh_heights` itself, so it cannot see that. Filed
+as bug 13-3. Gates clean, `passed=2551 failed=0`.
+
+**Notes for executor:** read bug 13-3 and keep the rest of the diff. Move
+what the loop does after each refresh into one function that holds the
+anchor, re-measures heights and clamps, have the loop call only that, and
+write `content_refresh_re_measures_heights` against that function. Rerun
+the harness as now written from a scratch file outside the repo and paste
+its output. Keep reasoning short: emit a tool call early in each turn, and
+do not sleep.
