@@ -195,6 +195,10 @@ enum Commands {
         /// Keep only the activity events whose name contains this
         #[arg(long, value_name = "NAME")]
         filter: Option<String>,
+        /// Open the live view (or the `--once` frame) on this run's detail.
+        /// The id's turn log must be on disk, or the command exits 1.
+        #[arg(long, value_name = "ID")]
+        run: Option<String>,
     },
     /// Audit installed prompt and knowledge memory files for stale path references.
     ///
@@ -542,8 +546,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Commands::AuditPrompts => {
             cli::run_audit_prompts();
         }
-        Commands::Top { once, filter } => {
-            cli::run_top(once, filter).await?;
+        Commands::Top { once, filter, run } => {
+            cli::run_top(once, filter, run).await?;
         }
         Commands::Reindex => {
             cli::run_reindex();

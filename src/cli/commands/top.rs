@@ -11,7 +11,6 @@ use chrono::{DateTime, FixedOffset, Local, Utc};
 use ratatui::layout::Rect;
 use serde::Serialize;
 
-use crate::cli::commands::top_tui::run_tui;
 use crate::daemon::run::{list_runs, read_turn_log};
 use crate::daemon::spend::local_day_bounds;
 use crate::daemon::utils::for_each_event_between;
@@ -974,8 +973,8 @@ const CHROME_ROWS: usize = 2;
 
 /// A rect inside `area` at `x`,`y` sized `w`×`h`, clamped to lie inside
 /// `area` when the numbers would not fit — a too-small terminal clamps
-/// instead of panicking.
-fn rect_or_area(area: Rect, x: u16, y: u16, w: usize, h: usize) -> Rect {
+/// instead of panicking. Shared with the detail view's panel rect.
+pub(crate) fn rect_or_area(area: Rect, x: u16, y: u16, w: usize, h: usize) -> Rect {
     let w = (w as u16).min(area.width);
     let h = (h as u16).min(area.height);
     let rx = x.min(area.right().saturating_sub(w));
@@ -1105,13 +1104,52 @@ pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
         .join("\n")
 }
 
-/// `daemoneye top [--once] [--filter <name>]`.
+/// `daemoneye top [--once] [--filter <name>] [--run <id>]`.
 ///
 /// Read-only: nothing is written, the daemon is asked only to list its
-/// shells. `--once` prints one frame and exits 0. Without it, a stdout that
-/// is not a terminal is refused with exit 2; otherwise the live ratatui
-/// screen runs until `q`.
-pub async fn run_top(once: bool, filter: Option<String>) -> Result<()> {
+/// shells. `--once` prints one frame and exits 0. `--run <id>` prints that
+/// run's detail (`--once`) or opens the live screen on it; an id with no
+/// turn log is refused with exit 1. Without `--once`, a stdout that is not a
+/// terminal is refused with exit 2; otherwise the live ratatui screen runs
+/// until `q`.
+pub async fn run_top(once: bool, filter: Option<String>, run: Option<String>) -> Result<()> {
+    if let Some(id) = run {
+        let run_id = match crate::daemon::run::RunId::parse(&id) {
+            Ok(id) => id,
+            Err(_) => {
+                eprintln!("run {id} not found");
+                std::process::exit(1);
+            }
+        };
+        let Some(detail) = load_run_detail(&run_id) else {
+            eprintln!("run {id} not found");
+            std::process::exit(1);
+        };
+        let Some(row) = detail_row(&run_id, &detail.log, Utc::now()) else {
+            eprintln!("run {id} not found");
+            std::process::exit(1);
+        };
+        if once {
+            println!(
+                "{}",
+                run_detail_text(&row, detail.record.as_ref(), &detail.log)
+            );
+            return Ok(());
+        }
+        if !std::io::stdout().is_terminal() {
+            eprintln!("daemoneye top: not a terminal; use --once");
+            std::process::exit(2);
+        }
+        let cap = crate::config::Config::load()
+            .map(|c| c.budget.max_cost_per_day)
+            .unwrap_or(0.0);
+        return crate::cli::commands::top_tui::run_tui(
+            cap,
+            filter.unwrap_or_default(),
+            Some(run_id),
+        )
+        .await;
+    }
     if once {
         let needle = filter.unwrap_or_default();
         let cap = crate::config::Config::load()
@@ -1128,7 +1166,230 @@ pub async fn run_top(once: bool, filter: Option<String>) -> Result<()> {
     let cap = crate::config::Config::load()
         .map(|c| c.budget.max_cost_per_day)
         .unwrap_or(0.0);
-    run_tui(cap, filter.unwrap_or_default()).await
+    crate::cli::commands::top_tui::run_tui(cap, filter.unwrap_or_default(), None).await
+}
+
+// ── Run detail ───────────────────────────────────────────────────────────────
+
+/// The turn-log records a detail view shows: the log's last this-many,
+/// oldest first.
+const DETAIL_LOG_TAIL: usize = 200;
+
+/// What [`load_run_detail`] read for one run: its `run` record, when the run
+/// has finished and left one, and its turn log, oldest first.
+pub struct RunDetail {
+    /// The run's `run` record from the dated events segments; `None` when
+    /// the run has not finished (or left no record).
+    pub record: Option<crate::daemon::run::RunRecord>,
+    /// The run's turn log, oldest first.
+    pub log: Vec<crate::daemon::run::TurnLogRecord>,
+}
+
+/// Read one run's turn log and its `run` record, searching the event
+/// segments from the run's start instant to now. `None` when the run has no
+/// turn log on disk — or one that names no start. The disk reads go through
+/// the phase-02a log reader and the phase-03 record reader; nothing new is
+/// parsed here.
+pub fn load_run_detail(id: &crate::daemon::run::RunId) -> Option<RunDetail> {
+    let log = read_turn_log(id);
+    if log.is_empty() {
+        return None;
+    }
+    let start = started_at_of(&log)?;
+    let record = super::scorecard::run_records_between(Some(start), Some(Utc::now()))
+        .into_iter()
+        .rfind(|r| r.run_id == id.as_str());
+    Some(RunDetail { record, log })
+}
+
+/// The instant the records' first `RunStarted` carries, or `None`. Pure, so
+/// `load_run_detail` and the row builder read one log, not two.
+fn started_at_of(records: &[crate::daemon::run::TurnLogRecord]) -> Option<DateTime<Utc>> {
+    let ts = records.iter().find_map(|r| match &r.event {
+        crate::daemon::run::TurnLogEvent::RunStarted { .. } => Some(r.timestamp.clone()),
+        _ => None,
+    })?;
+    DateTime::parse_from_rfc3339(&ts)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
+
+/// The Runs row one run's detail heading is built from: kind, subject, state
+/// and age from its turn log, the same words the Runs panel prints. `None`
+/// when the log names no kind or start — the rule `list_runs` applies.
+pub(crate) fn detail_row(
+    id: &crate::daemon::run::RunId,
+    log: &[crate::daemon::run::TurnLogRecord],
+    now: DateTime<Utc>,
+) -> Option<TopRunRow> {
+    let summary = crate::daemon::run::summarize(id, log)?;
+    let started = started_at_of(log)?;
+    let mtime = std::fs::metadata(crate::daemon::run::turn_log_file(id))
+        .and_then(|m| m.modified())
+        .ok()
+        .map(DateTime::<Utc>::from);
+    let running = !summary.state.is_terminal();
+    Some(TopRunRow {
+        id: id.as_str().to_string(),
+        kind: summary.kind.label().to_string(),
+        subject: run_subject(&summary.kind),
+        state: state_word(&summary.state),
+        turns: summary.turns,
+        age_s: (now - started).num_seconds(),
+        liveness: liveness(running, mtime, now),
+    })
+}
+
+/// One `RunFinished` record's state, or `None` when the log shows no finish.
+fn finished_state(
+    log: &[crate::daemon::run::TurnLogRecord],
+) -> Option<&crate::daemon::run::RunState> {
+    log.iter().rev().find_map(|r| match &r.event {
+        crate::daemon::run::TurnLogEvent::RunFinished { state } => Some(state),
+        _ => None,
+    })
+}
+
+/// A turn-log record's `HH:MM:SS` in `offset`, `--:--:--` when the stamp
+/// does not parse. Pure.
+fn log_time(ts: &str, offset: FixedOffset) -> String {
+    DateTime::parse_from_rfc3339(ts)
+        .ok()
+        .map(|dt| dt.with_timezone(&offset).format("%H:%M:%S").to_string())
+        .unwrap_or_else(|| "--:--:--".to_string())
+}
+
+/// One turn-log record as the detail's tail shows it: the time in `offset`,
+/// then the event — `started <kind label>`, `turn <n>`, `note <text>` or
+/// `finished <state word>`. A note's later lines follow it indented by two
+/// spaces, and every note is masked. Pure.
+fn log_line(rec: &crate::daemon::run::TurnLogRecord, offset: FixedOffset) -> String {
+    use crate::daemon::run::TurnLogEvent;
+    let time = log_time(&rec.timestamp, offset);
+    match &rec.event {
+        TurnLogEvent::RunStarted { kind } => format!("{time} started {}", kind.label()),
+        TurnLogEvent::TurnStarted { turn } => format!("{time} turn {turn}"),
+        TurnLogEvent::Note { text } => {
+            let masked = crate::ai::filter::mask_sensitive(text);
+            let mut lines = masked.lines();
+            let first = lines.next().unwrap_or_default();
+            let mut out = format!("{time} note {first}");
+            for line in lines {
+                out.push_str(&format!("\n  {line}"));
+            }
+            out
+        }
+        TurnLogEvent::RunFinished { state } => {
+            format!("{time} finished {}", state_word(state))
+        }
+    }
+}
+
+/// The state word the log tail prints for a `RunFinished` — the Runs panel's
+/// words, on the log's own state.
+/// A run's detail text: the heading (the Runs row's fields), the `run`
+/// record's fields when there is one or the running state, how the run
+/// ended, and the turn log's tail. Pure: takes the row, the record, the log
+/// and the zone the log times render in.
+pub fn run_detail_text_in(
+    row: &TopRunRow,
+    record: Option<&crate::daemon::run::RunRecord>,
+    log: &[crate::daemon::run::TurnLogRecord],
+    offset: FixedOffset,
+) -> String {
+    let mut lines = vec![format!(
+        "{}  {}  {}  {}  {}",
+        row.id,
+        row.kind,
+        row.subject,
+        row.state,
+        format_age(row.age_s)
+    )];
+    match record {
+        Some(r) => {
+            lines.push(format!("status: {}", r.status.as_str()));
+            let failure = if r.is_model_attributable {
+                r.failure_class.as_str().to_string()
+            } else {
+                format!("{} (not the model)", r.failure_class.as_str())
+            };
+            lines.push(format!("failure: {failure}"));
+            let model = match (&r.provider, &r.model) {
+                (Some(p), Some(m)) => format!("{p}/{m}"),
+                _ => "-".to_string(),
+            };
+            lines.push(format!("model: {model}"));
+            lines.push(format!("turns: {}", r.turns));
+            let rate = match r.tool_success_rate {
+                Some(v) => format!("{:.1}% ok", v * 100.0),
+                None => "-".to_string(),
+            };
+            lines.push(format!("tool calls: {} · {rate}", r.tool_calls));
+            let parse = match r.parse_failure_rate {
+                Some(v) => format!("{:.1}%", v * 100.0),
+                None => "-".to_string(),
+            };
+            lines.push(format!("parse failures: {parse}"));
+            lines.push(format!(
+                "tokens: {} in · {} out · {} cache read · {} cache write",
+                r.tokens.input_tokens,
+                r.tokens.output_tokens,
+                r.tokens.cache_read_tokens,
+                r.tokens.cache_write_tokens
+            ));
+            lines.push(format!("cost: ${:.4}", r.cost_usd));
+            lines.push(format!("wall clock: {}", format_age(r.wall_clock_s as i64)));
+        }
+        None => {
+            lines.push("no run record yet".to_string());
+            let turns = log
+                .iter()
+                .filter_map(|r| match &r.event {
+                    crate::daemon::run::TurnLogEvent::TurnStarted { turn } => Some(*turn),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0);
+            lines.push(format!("turns: {turns}"));
+        }
+    }
+    match finished_state(log) {
+        Some(crate::daemon::run::RunState::HardFail(b))
+        | Some(crate::daemon::run::RunState::BudgetExceeded(b)) => {
+            if !b.goal.is_empty() {
+                lines.push(format!("goal: {}", b.goal));
+            }
+            if let Some(blocker) = &b.blocker
+                && !blocker.is_empty()
+            {
+                lines.push(format!("blocker: {blocker}"));
+            }
+            if let Some(dim) = &b.budget_left {
+                lines.push(format!("budget left: {}", dim.label()));
+            }
+        }
+        Some(crate::daemon::run::RunState::Cancelled { stage, turns }) => {
+            lines.push(format!("stage: {stage}"));
+            lines.push(format!("turns: {turns}"));
+        }
+        _ => {}
+    }
+    lines.push("turn log".to_string());
+    let start = log.len().saturating_sub(DETAIL_LOG_TAIL);
+    for rec in &log[start..] {
+        lines.push(log_line(rec, offset));
+    }
+    lines.join("\n")
+}
+
+/// The detail text in the process's local zone — what `top --once --run`
+/// prints and the live screen draws.
+pub fn run_detail_text(
+    row: &TopRunRow,
+    record: Option<&crate::daemon::run::RunRecord>,
+    log: &[crate::daemon::run::TurnLogRecord],
+) -> String {
+    run_detail_text_in(row, record, log, *Local::now().offset())
 }
 
 #[cfg(test)]
@@ -2067,6 +2328,314 @@ mod tests {
         assert!(
             text.contains("s2 chat:deadbeef - -"),
             "missing facts print as -: {text}"
+        );
+    }
+
+    // ── run detail text ──────────────────────────────────────────────────────
+
+    use crate::daemon::run::{
+        Briefing, BudgetDimension, RunKind, RunState, TurnLogEvent, TurnLogRecord,
+    };
+
+    fn detail_run_id() -> crate::daemon::run::RunId {
+        crate::daemon::run::RunId::parse("7eb9151d45fa49f1").expect("a valid fixture id")
+    }
+
+    fn utc_offset() -> FixedOffset {
+        FixedOffset::east_opt(0).expect("utc")
+    }
+
+    fn detail_row(state: &str) -> TopRunRow {
+        TopRunRow {
+            id: "7eb9151d45fa49f1".to_string(),
+            kind: "ghost".to_string(),
+            subject: "disk-full-l4 ← webhook".to_string(),
+            state: state.to_string(),
+            turns: 7,
+            age_s: 120,
+            liveness: Liveness::Done,
+        }
+    }
+
+    fn detail_record() -> crate::daemon::run::RunRecord {
+        crate::daemon::run::RunRecord {
+            run_id: "7eb9151d45fa49f1".to_string(),
+            kind: "ghost".to_string(),
+            agent: None,
+            provider: Some("ollama".to_string()),
+            model: Some("glm-test".to_string()),
+            status: crate::daemon::run::RunStatus::HardFail,
+            failure_class: crate::daemon::run::FailureClass::Stall,
+            is_model_attributable: true,
+            turns: 7,
+            tool_calls: 12,
+            tool_success_rate: Some(0.9166),
+            parse_failure_rate: Some(0.0),
+            tokens: crate::ai::types::TokenBreakdown {
+                input_tokens: 1000,
+                output_tokens: 234,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+            },
+            cost_usd: 0.0123,
+            wall_clock_s: 83.0,
+            tags: Default::default(),
+        }
+    }
+
+    fn detail_log(ts: &str, event: TurnLogEvent) -> TurnLogRecord {
+        TurnLogRecord {
+            timestamp: ts.to_string(),
+            run_id: detail_run_id(),
+            event,
+        }
+    }
+
+    #[test]
+    fn detail_text_names_the_record_fields() {
+        let row = detail_row("hard-fail");
+        let record = detail_record();
+        let text = run_detail_text_in(&row, Some(&record), &[], utc_offset());
+        let heading = text.lines().next().expect("a heading line");
+        assert_eq!(
+            heading, "7eb9151d45fa49f1  ghost  disk-full-l4 ← webhook  hard-fail  2m",
+            "the heading is the Runs row's fields: {text}"
+        );
+        for line in [
+            "status: hard_fail",
+            "failure: stall",
+            "model: ollama/glm-test",
+            "turns: 7",
+            "tool calls: 12 · 91.7% ok",
+            "parse failures: 0.0%",
+            "tokens: 1000 in · 234 out · 0 cache read · 0 cache write",
+            "cost: $0.0123",
+            "wall clock: 1m",
+        ] {
+            assert!(text.contains(line), "missing {line:?} in:\n{text}");
+        }
+        assert!(
+            !text.contains("no run record yet"),
+            "a recorded run never says it: {text}"
+        );
+    }
+
+    #[test]
+    fn detail_text_names_a_non_attributable_failure() {
+        let row = detail_row("hard-fail");
+        let mut record = detail_record();
+        record.failure_class = crate::daemon::run::FailureClass::BackendError;
+        record.is_model_attributable = false;
+        let text = run_detail_text_in(&row, Some(&record), &[], utc_offset());
+        assert!(
+            text.contains("failure: backend_error (not the model)"),
+            "a non-attributable failure is marked: {text}"
+        );
+    }
+
+    #[test]
+    fn detail_text_without_tool_calls_prints_dashes() {
+        let row = detail_row("complete");
+        let mut record = detail_record();
+        record.tool_calls = 0;
+        record.tool_success_rate = None;
+        record.parse_failure_rate = None;
+        let text = run_detail_text_in(&row, Some(&record), &[], utc_offset());
+        assert!(
+            text.contains("tool calls: 0 · -"),
+            "the dash stands in for the rate: {text}"
+        );
+        assert!(
+            text.contains("parse failures: -"),
+            "the dash stands in for the parse rate: {text}"
+        );
+        assert!(
+            !text.contains("NaN"),
+            "a None rate never prints NaN: {text}"
+        );
+    }
+
+    #[test]
+    fn detail_text_for_a_running_run_has_no_record() {
+        let row = detail_row("running");
+        let log = vec![
+            detail_log(
+                "2026-01-01T14:00:00Z",
+                TurnLogEvent::RunStarted {
+                    kind: RunKind::Ghost {
+                        runbook: "disk-full-l4".into(),
+                        trigger: "webhook".into(),
+                    },
+                },
+            ),
+            detail_log(
+                "2026-01-01T14:00:10Z",
+                TurnLogEvent::TurnStarted { turn: 1 },
+            ),
+            detail_log(
+                "2026-01-01T14:00:20Z",
+                TurnLogEvent::TurnStarted { turn: 2 },
+            ),
+            detail_log(
+                "2026-01-01T14:00:30Z",
+                TurnLogEvent::Note {
+                    text: "checking df".into(),
+                },
+            ),
+        ];
+        let text = run_detail_text_in(&row, None, &log, utc_offset());
+        assert!(
+            text.contains("no run record yet"),
+            "a running run says so: {text}"
+        );
+        assert!(
+            text.contains("turns: 2"),
+            "the turns the log shows are named: {text}"
+        );
+        assert!(
+            !text.contains("status:"),
+            "no record, no record fields: {text}"
+        );
+        assert!(!text.contains("cost:"), "no record, no cost: {text}");
+        assert!(
+            text.contains("checking df"),
+            "the log is still shown: {text}"
+        );
+    }
+
+    #[test]
+    fn detail_text_names_the_briefing_and_the_cancel() {
+        let row = detail_row("hard-fail");
+        let hard = detail_log(
+            "2026-01-01T14:00:00Z",
+            TurnLogEvent::RunFinished {
+                state: RunState::HardFail(Briefing::new(
+                    "free disk on /var",
+                    None,
+                    vec![],
+                    vec![],
+                    Some("df still at 99%".into()),
+                    None,
+                )),
+            },
+        );
+        let text = run_detail_text_in(&row, None, &[hard], utc_offset());
+        assert!(text.contains("goal: free disk on /var"), "goal: {text}");
+        assert!(text.contains("blocker: df still at 99%"), "blocker: {text}");
+        assert!(
+            !text.contains("budget left"),
+            "no dimension, no budget-left line: {text}"
+        );
+
+        let budget = detail_log(
+            "2026-01-01T14:00:00Z",
+            TurnLogEvent::RunFinished {
+                state: RunState::BudgetExceeded(Briefing::new(
+                    "sweep the alerts",
+                    None,
+                    vec![],
+                    vec![],
+                    None,
+                    Some(BudgetDimension::Turns),
+                )),
+            },
+        );
+        let text = run_detail_text_in(&row, None, &[budget], utc_offset());
+        assert!(
+            text.contains("budget left: turns"),
+            "the dimension is named: {text}"
+        );
+        assert!(
+            !text.contains("blocker:"),
+            "no blocker, no blocker line: {text}"
+        );
+
+        let row = detail_row("cancelled");
+        let cancel = detail_log(
+            "2026-01-01T14:00:00Z",
+            TurnLogEvent::RunFinished {
+                state: RunState::Cancelled {
+                    stage: "awaiting_model".into(),
+                    turns: 3,
+                },
+            },
+        );
+        let text = run_detail_text_in(&row, None, &[cancel], utc_offset());
+        assert!(text.contains("stage: awaiting_model"), "stage: {text}");
+        assert!(text.contains("turns: 3"), "the cancel's turns: {text}");
+    }
+
+    #[test]
+    fn detail_tail_keeps_the_last_200_records() {
+        let row = detail_row("running");
+        let log: Vec<TurnLogRecord> = (1..=300)
+            .map(|i| {
+                detail_log(
+                    "2026-01-01T14:00:00Z",
+                    TurnLogEvent::Note {
+                        text: format!("rec-{i:03}"),
+                    },
+                )
+            })
+            .collect();
+        let text = run_detail_text_in(&row, None, &log, utc_offset());
+        assert!(
+            !text.contains("rec-001") && !text.contains("rec-100"),
+            "the first 100 records fall off the tail: {text}"
+        );
+        assert!(
+            text.contains("rec-101"),
+            "record 101 is the first the tail shows: {text}"
+        );
+        assert!(text.contains("rec-300"), "record 300 is the last: {text}");
+        let first = text.find("rec-101").expect("101 present");
+        let last = text.find("rec-300").expect("300 present");
+        assert!(first < last, "the tail is oldest first");
+    }
+
+    #[test]
+    fn detail_masks_notes_and_indents_their_lines() {
+        let row = detail_row("running");
+        let log = vec![detail_log(
+            "2026-01-01T14:00:00Z",
+            TurnLogEvent::Note {
+                text: "found key AKIAIOSFODNN7EXAMPLE in env\nsecond line of the note".into(),
+            },
+        )];
+        let text = run_detail_text_in(&row, None, &log, utc_offset());
+        assert!(text.contains("<AWS_KEY"), "the key is masked: {text}");
+        assert!(!text.contains("AKIA"), "no key leaks: {text}");
+        let second = text
+            .lines()
+            .find(|l| l.contains("second line"))
+            .expect("the note's second line");
+        assert!(
+            second.starts_with("  "),
+            "the note's later line is indented two spaces: {second:?}"
+        );
+    }
+
+    #[test]
+    fn detail_times_use_the_given_zone() {
+        let row = detail_row("running");
+        let log = vec![detail_log(
+            "2026-10-25T14:36:20Z",
+            TurnLogEvent::RunStarted {
+                kind: RunKind::Ghost {
+                    runbook: "disk-full-l4".into(),
+                    trigger: "webhook".into(),
+                },
+            },
+        )];
+        let offset = FixedOffset::west_opt(5 * 3600).expect("a west offset");
+        let text = run_detail_text_in(&row, None, &log, offset);
+        assert!(
+            text.contains("09:36:20 started ghost"),
+            "the time is rendered in the given zone: {text}"
+        );
+        assert!(
+            !text.contains("14:36:20"),
+            "the UTC clock does not leak: {text}"
         );
     }
 }

@@ -1,7 +1,7 @@
 # Phase 14: top-detail — open a run
 
 **Milestone:** M30 — Telemetry & dashboard
-**Status:** todo
+**Status:** in-progress
 **Depends on:** phase-13
 **Estimated diff:** ~450 lines, more than half of it tests
 **Tags:** language=rust, kind=feature, size=m
@@ -208,3 +208,80 @@ the wall clock or sleep; nothing in this phase needs it.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-25 13:35 (progress)
+
+Started phase 14. Wrote the 15 named tests first against the current tree and confirmed each fails to compile or fails outright (no `run_detail_text`, no `RunDetail`, no `--run` flag yet), then began the implementation: detail text in `top.rs`, loading and the `--run` flag, then the live screen in `top_tui.rs`.
+
+### Update — 2026-10-25 13:36 (progress)
+
+**Executor note on status:** the phase doc and the milestone README already said `in-progress` when I arrived (the prompt echoed `todo`; the tree held `in-progress` — the previous run's start flip, committed in `b8a032bf`'s neighbourhood). I left both as they are, appended this started entry, and am proceeding with the code.
+
+### Update — 2026-10-25 14:05 (progress)
+
+Detail text shipped in `top.rs`: `run_detail_text_in` / `run_detail_text`, `load_run_detail` (turn log + the run's `run` record from the event segments, bounded by the log's start), the heading row built from the log (`detail_row`), log-time rendering in the given zone, note masking and two-space indent, the last-200 tail, and the `--run <id>` CLI path in `run_top` (`--once` prints the text and exits 0; no turn log prints `run <id> not found` to stderr and exits 1). The eight text tests pass. Next: the live screen in `top_tui.rs`.
+
+### Update — 2026-10-25 14:40 (end-to-end verification)
+
+Ran the phase doc's E2E block verbatim (`sh /tmp/e2e-m30-14.sh`), writing to `/tmp/e2e-m30-14.txt`. Verbatim output:
+
+```
+detail_text_names_the_record_fields: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_text_without_tool_calls_prints_dashes: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_text_for_a_running_run_has_no_record: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_text_names_the_briefing_and_the_cancel: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_tail_keeps_the_last_200_records: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_masks_notes_and_indents_their_lines: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_times_use_the_given_zone: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+enter_opens_the_selected_runs_detail: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+enter_does_nothing_off_runs_with_no_runs_or_while_editing: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+esc_restores_focus_selection_and_offsets: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_scroll_clamps_at_both_ends: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_refresh_keeps_the_scroll_and_survives_a_vanished_run: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+panel_keys_do_nothing_in_the_detail: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_draws_the_detail_view: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+screen_detail_on_a_tiny_terminal: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; <n> filtered out; finished in <t>s
+detail_status=1
+detail_failure=1
+detail_tools=1
+detail_cost=1
+detail_blocker=1
+detail_masked=1
+detail_leak=0
+detail_time=1
+missing_exit=1
+once_order=Runs,Budget,Shells,Activity
+layout_inputs=1
+loop_clamps=0
+requests=Request::ShellList,Request::Status
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2568 failed=0
+```
+
+The real detail frame the block's fixture produced (re-run of the block's binary invocation, quoted from that run):
+
+```
+=== detail frame ===
+7eb9151d45fa49f1  ghost  disk-full-l4 ← webhook  hard-fail  2m
+status: hard_fail
+failure: stall
+model: ollama/glm-test
+turns: 7
+tool calls: 12 · 91.7% ok
+parse failures: 0.0%
+tokens: 1000 in · 234 out · 0 cache read · 0 cache write
+cost: $0.0123
+wall clock: 1m
+goal: free disk on /var
+blocker: df still at 99%
+turn log
+10:31:42 started ghost
+10:31:42 turn 1
+10:31:42 note found key <AWS_KEY> in env
+10:32:42 finished hard-fail
+=== exit: 0 ===
+=== missing run ===
+run 0000000000000000 not found
+exit: 1
+```

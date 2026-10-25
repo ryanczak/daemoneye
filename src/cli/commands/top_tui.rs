@@ -24,7 +24,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use crate::cli::commands::top::{
     ActivityRow, BarLevel, Liveness, PanelRects, TopFingerprint, TopRunRow, activity_text,
     budget_bar, budget_text, collapse_activity, filter_activity, fingerprint, header_text,
-    plan_layout, run_fades, runs_text, shells_text,
+    plan_layout, rect_or_area, run_fades, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
 /// Poll the disk fingerprint every this long.
@@ -134,6 +134,23 @@ pub struct TopModel {
     pub editing: bool,
     /// The loop saw a quit key.
     pub quit: bool,
+    /// The run whose detail is open, when one is.
+    pub detail: Option<OpenDetail>,
+    /// The detail view's scroll: the index of the detail text's first
+    /// visible line. Clamped through [`Self::clamp_offsets`].
+    pub detail_top: usize,
+}
+
+/// The open detail view: which run it shows and the text it draws — the
+/// heading, the record or running state, the end state and the log tail, or
+/// the vanished line when the run's turn log is no longer on disk. The text
+/// is rendered once per load, so scroll clamping and drawing read the same
+/// lines.
+pub struct OpenDetail {
+    /// The open run's id.
+    pub id: crate::daemon::run::RunId,
+    /// The text the detail panel draws, line-broken.
+    pub text: String,
 }
 
 /// The inner heights of the scrollable panels, from `plan_layout` for the
@@ -146,6 +163,8 @@ pub struct PanelHeights {
     pub shells: usize,
     /// The Activity panel's inner height.
     pub activity: usize,
+    /// The detail view's panel inner height.
+    pub detail: usize,
 }
 
 impl TopModel {
@@ -164,7 +183,45 @@ impl TopModel {
             filter: String::new(),
             editing: false,
             quit: false,
+            detail: None,
+            detail_top: 0,
         }
+    }
+
+    /// Open the detail view on one run: load its record and log from disk,
+    /// render the detail text, and start scrolled to the top. The loop and
+    /// the `--run` argument both open through this, so they cannot drift.
+    pub fn open_detail(&mut self, id: crate::daemon::run::RunId) {
+        self.detail = Some(self.load_detail(id));
+        self.detail_top = 0;
+    }
+
+    /// Re-read an open detail from disk: the fresh row, record and log, the
+    /// text re-rendered. The scroll offset is left for
+    /// [`Self::clamp_offsets`] to clamp. A run whose turn log has gone off
+    /// disk draws the vanished line instead of panicking.
+    pub fn reload_detail(&mut self) {
+        let Some(d) = &self.detail else { return };
+        let id = d.id.clone();
+        self.detail = Some(self.load_detail(id));
+    }
+
+    /// Load one run's detail text from disk. Private: opening and reloading
+    /// differ only in whether the scroll resets.
+    fn load_detail(&self, id: crate::daemon::run::RunId) -> OpenDetail {
+        let loaded = crate::cli::commands::top::load_run_detail(&id);
+        let row = loaded
+            .as_ref()
+            .and_then(|d| crate::cli::commands::top::detail_row(&id, &d.log, chrono::Utc::now()));
+        let text = match (row, loaded) {
+            (Some(row), Some(loaded)) => crate::cli::commands::top::run_detail_text(
+                &row,
+                loaded.record.as_ref(),
+                &loaded.log,
+            ),
+            _ => format!("run {id} is no longer on disk"),
+        };
+        OpenDetail { id, text }
     }
 
     /// Apply one key. Ctrl-C quits in every mode, because raw mode swallows
@@ -194,6 +251,28 @@ impl TopModel {
             self.clamp_offsets();
             return;
         }
+        if self.detail.is_some() {
+            match key.code {
+                KeyCode::Esc => self.detail = None,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.detail_top = self.detail_top.saturating_sub(1)
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.detail_top = self.detail_top.saturating_add(1)
+                }
+                KeyCode::PageUp => self.detail_top = self.detail_top.saturating_sub(self.page()),
+                KeyCode::PageDown => self.detail_top = self.detail_top.saturating_add(self.page()),
+                KeyCode::Home => self.detail_top = 0,
+                KeyCode::End => {
+                    let lines = self.detail_lines();
+                    self.detail_top = self.last_window_top(lines, self.heights.detail);
+                }
+                KeyCode::Char('q') => self.quit = true,
+                _ => {}
+            }
+            self.clamp_offsets();
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Tab => self.focus = self.focus.next(),
@@ -205,6 +284,13 @@ impl TopModel {
             KeyCode::PageDown => self.scroll_down(self.page()),
             KeyCode::Home => self.scroll_home(),
             KeyCode::End => self.scroll_end(),
+            KeyCode::Enter if self.focus == Panel::Runs => {
+                if let Some(row) = self.snapshot.runs.get(self.selected)
+                    && let Ok(id) = crate::daemon::run::RunId::parse(&row.id)
+                {
+                    self.open_detail(id);
+                }
+            }
             KeyCode::Char('f') => {
                 self.follow = true;
                 self.tailing = true;
@@ -221,6 +307,9 @@ impl TopModel {
 
     /// A page of the focused panel: its inner height minus one, at least 1.
     fn page(&self) -> usize {
+        if self.detail.is_some() {
+            return self.heights.detail.saturating_sub(1).max(1);
+        }
         let h = match self.focus {
             Panel::Runs => self.heights.runs,
             Panel::Budget => 0,
@@ -339,6 +428,21 @@ impl TopModel {
         self.shells_top = self
             .shells_top
             .min(self.last_window_top(shells, self.heights.shells));
+        if let Some(detail) = &self.detail {
+            let lines = detail.text.lines().count();
+            self.detail_top = self
+                .detail_top
+                .min(self.last_window_top(lines, self.heights.detail));
+        }
+    }
+
+    /// The detail text's line count — the same lines the detail panel
+    /// windows. Zero when no detail is open.
+    fn detail_lines(&self) -> usize {
+        self.detail
+            .as_ref()
+            .map(|d| d.text.lines().count())
+            .unwrap_or(0)
     }
 
     /// Put the not-tailing Activity window back on the row it showed: the
@@ -436,10 +540,9 @@ fn focus_of(c: char) -> Panel {
     }
 }
 
-/// The rects and the three scrollable panels' inner heights the model's
-/// current content and terminal give. The one call site of the layout
-/// planner in this file, so the drawn panels and the stored heights cannot
-/// disagree again.
+/// The rects and the four panel inner heights the model's current content
+/// and terminal give. The one call site of the layout planner in this file,
+/// so the drawn panels and the stored heights cannot disagree again.
 fn layout_at(model: &TopModel, area: ratatui::layout::Rect) -> (PanelRects, PanelHeights) {
     let rects = plan_layout(
         area,
@@ -451,8 +554,22 @@ fn layout_at(model: &TopModel, area: ratatui::layout::Rect) -> (PanelRects, Pane
         runs: inner_height(rects.runs),
         shells: inner_height(rects.shells),
         activity: inner_height(rects.activity),
+        detail: inner_height(detail_rect(&rects, area)),
     };
     (rects, heights)
+}
+
+/// The one panel the detail view draws: the full span between the header
+/// and the footer, at the area's width. Derived from the laid-out rects, so
+/// `plan_layout` stays the single layout call site.
+fn detail_rect(rects: &PanelRects, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
+    rect_or_area(
+        area,
+        area.x,
+        rects.header.bottom(),
+        area.width as usize,
+        rects.footer.y.saturating_sub(rects.header.bottom()) as usize,
+    )
 }
 
 /// Re-measure the stored heights for `size` and the model's current content.
@@ -507,9 +624,17 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
 /// Activity its newest rows, Runs a window that keeps the selected row (and
 /// the column header) on screen. The clock is a parameter, so the drawn
 /// header time is testable without racing the wall clock.
+///
+/// With a detail open the four panels are replaced by one bordered panel
+/// over the run's detail text, still under the header line and above the
+/// footer, with the detail's own footer naming `esc back`.
 pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<FixedOffset>) {
     let area = frame.area();
     let (rects, _heights) = layout_at(model, area);
+    if let Some(detail) = &model.detail {
+        draw_detail_at(frame, model, detail, &rects, area, now);
+        return;
+    }
     let runs_body = runs_text(&model.snapshot.runs);
     let budget_body = budget_text(&model.snapshot.budget);
     let shells_body = shells_text(&model.snapshot.shells);
@@ -636,6 +761,35 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
 /// A panel's title text: ` <n> <Name> `.
 fn panel_title(panel: Panel) -> String {
     format!(" {} {} ", panel.index() + 1, panel.label())
+}
+
+/// The detail view: the header line, one bordered panel titled ` Run <id> `
+/// over the detail text's visible window, and a footer naming `esc back`.
+/// Scroll and the clamped window use the same helpers the panels do.
+fn draw_detail_at(
+    frame: &mut ratatui::Frame<'_>,
+    model: &TopModel,
+    detail: &OpenDetail,
+    rects: &PanelRects,
+    area: ratatui::layout::Rect,
+    now: DateTime<FixedOffset>,
+) {
+    let host = crate::daemon::utils::daemon_hostname();
+    let header = header_text(model.snapshot.daemon.as_ref(), &host, now);
+    Paragraph::new(Line::raw(header)).render(rects.header, frame.buffer_mut());
+    let panel = detail_rect(rects, area);
+    let body = window_text(&detail.text, model.detail_top, inner_height(panel));
+    draw_panel(
+        frame,
+        panel,
+        &format!(" Run {} ", detail.id),
+        &body,
+        None,
+        &[],
+        true,
+    );
+    let footer = "esc back \u{b7} \u{2191}\u{2193} scroll \u{b7} q quit".to_string();
+    Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
 }
 
 /// A panel's title line, cyan on the focused panel.
@@ -767,7 +921,11 @@ fn draw_panel(
 /// terminal. A thread reads keys into a channel; the tokio loop waits on it
 /// and a 500 ms tick, re-reading only what [`plan_refresh`] asked for, and
 /// redraws after every key and every tick.
-pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
+pub(crate) async fn run_tui(
+    config_cap: f64,
+    filter: String,
+    open_run: Option<crate::daemon::run::RunId>,
+) -> Result<()> {
     enable_raw_mode()?;
     let teardown = || {
         let _ = crossterm::execute!(
@@ -822,6 +980,15 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut last_size = None;
+    if let Some(id) = open_run {
+        model.open_detail(id);
+        model.after_refresh(Some(ratatui::layout::Rect::new(
+            0,
+            0,
+            terminal.size().map(|s| s.width).unwrap_or(80),
+            terminal.size().map(|s| s.height).unwrap_or(24),
+        )));
+    }
     let result = loop {
         let size = terminal
             .size()
@@ -858,6 +1025,7 @@ pub async fn run_tui(config_cap: f64, filter: String) -> Result<()> {
                     if model.follow {
                         model.selected = follow_target(&model.snapshot.runs);
                     }
+                    model.reload_detail();
                     model.after_refresh(size);
                     since_disk = Duration::ZERO;
                     last_fp = Some(now_fp);
@@ -1553,6 +1721,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Shells;
         model.clamp_offsets();
@@ -1611,6 +1780,7 @@ mod tests {
             runs: 3,
             shells: 6,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Shells;
         press(&mut model, KeyCode::Up);
@@ -1630,6 +1800,7 @@ mod tests {
             runs: 3,
             shells: 6,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Shells;
         press(&mut model, KeyCode::End);
@@ -1651,6 +1822,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Activity;
         model.clamp_offsets();
@@ -1695,6 +1867,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Activity;
         model.clamp_offsets();
@@ -1728,6 +1901,7 @@ mod tests {
             runs: 3,
             shells: 6,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Runs;
         press(&mut model, KeyCode::Down);
@@ -1762,6 +1936,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Activity;
         model.clamp_offsets();
@@ -1791,6 +1966,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 10,
+            detail: 0,
         };
         for focus in [Panel::Runs, Panel::Budget, Panel::Shells, Panel::Activity] {
             model.focus = focus;
@@ -1829,6 +2005,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 10,
+            detail: 0,
         };
         model.focus = Panel::Activity;
         model.clamp_offsets();
@@ -1997,6 +2174,7 @@ mod tests {
             runs: inner_height(rects.runs),
             shells: inner_height(rects.shells),
             activity: inner_height(rects.activity),
+            detail: inner_height(detail_rect(&rects, size)),
         }
     }
 
@@ -2082,6 +2260,7 @@ mod tests {
             runs: 3,
             shells: 4,
             activity: 8,
+            detail: 0,
         };
         model.focus = Panel::Activity;
         model.clamp_offsets();
@@ -2140,5 +2319,316 @@ mod tests {
             !end.iter().any(|l| l.contains("model05")),
             "End left the scrolled window: {end:?}"
         );
+    }
+
+    // ── run detail ───────────────────────────────────────────────────────────
+
+    use crate::daemon::run::{RunId, TurnLogEvent, TurnLogRecord, turn_log_file};
+
+    /// RAII-guarded HOME pointing at a fresh tempdir, so a detail test that
+    /// loads from disk never touches the developer's real `~/.daemoneye`.
+    struct HomeGuard {
+        _lock: crate::TestHomeGuard,
+        _tmp: tempfile::TempDir,
+    }
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let _lock = crate::test_home_guard();
+            let tmp = tempfile::tempdir().expect("a tempdir");
+            unsafe { std::env::set_var("HOME", tmp.path()) };
+            HomeGuard { _lock, _tmp: tmp }
+        }
+    }
+
+    const DETAIL_ID: &str = "7eb9151d45fa49f1";
+
+    fn detail_id() -> RunId {
+        RunId::parse(DETAIL_ID).expect("a valid fixture id")
+    }
+
+    fn write_detail_log(notes: usize) {
+        let id = detail_id();
+        crate::daemon::run::append_turn_event(&TurnLogRecord {
+            timestamp: "2026-10-25T09:00:00Z".to_string(),
+            run_id: id.clone(),
+            event: TurnLogEvent::RunStarted {
+                kind: crate::daemon::run::RunKind::Ghost {
+                    runbook: "disk-full-l4".into(),
+                    trigger: "webhook".into(),
+                },
+            },
+        });
+        for i in 0..notes {
+            crate::daemon::run::append_turn_event(&TurnLogRecord {
+                timestamp: "2026-10-25T09:00:01Z".to_string(),
+                run_id: id.clone(),
+                event: TurnLogEvent::Note {
+                    text: format!("note-{i:03}"),
+                },
+            });
+        }
+    }
+
+    fn open_detail_on(model: &mut TopModel) {
+        model.open_detail(detail_id());
+    }
+
+    #[test]
+    fn enter_opens_the_selected_runs_detail() {
+        let _g = HomeGuard::new();
+        write_detail_log(2);
+        let mut model = TopModel::new(snapshot(vec![row(DETAIL_ID, Liveness::Done)]));
+        model.selected = 0;
+        press(&mut model, KeyCode::Enter);
+        let detail = model.detail.as_ref().expect("the detail opened");
+        assert_eq!(detail.id, detail_id(), "the detail names the selected run");
+        assert!(
+            detail.text.contains(DETAIL_ID),
+            "the heading names the run: {:?}",
+            detail.id
+        );
+        assert!(
+            detail.text.contains("note-000") && detail.text.contains("note-001"),
+            "the log tail is in the text: {:?}",
+            detail.id
+        );
+        assert_eq!(model.detail_top, 0, "the view opens at the top");
+    }
+
+    #[test]
+    fn enter_does_nothing_off_runs_with_no_runs_or_while_editing() {
+        let mut model = TopModel::new(snapshot(vec![]));
+        model.selected = 0;
+        press(&mut model, KeyCode::Enter);
+        assert!(model.detail.is_none(), "no runs, no detail");
+
+        let mut model = TopModel::new(snapshot(vec![
+            row("r01", Liveness::Live),
+            row("r02", Liveness::Done),
+        ]));
+        model.focus = Panel::Shells;
+        press(&mut model, KeyCode::Enter);
+        assert!(model.detail.is_none(), "Enter off Runs does nothing");
+
+        model.focus = Panel::Runs;
+        press(&mut model, KeyCode::Char('/'));
+        assert!(model.editing, "setup: the filter is being edited");
+        press(&mut model, KeyCode::Enter);
+        assert!(
+            model.detail.is_none() && !model.editing,
+            "while editing, Enter ends editing and opens nothing"
+        );
+    }
+
+    #[test]
+    fn esc_restores_focus_selection_and_offsets() {
+        let _g = HomeGuard::new();
+        write_detail_log(1);
+        let activity: Vec<crate::cli::commands::top::ActivityRow> = (0..30)
+            .map(|i| activity_row(&format!("09:00:{i:02}"), "event", &format!("row-{i:02}")))
+            .collect();
+        let mut model = TopModel::new(snapshot_with_all(
+            vec![row("r01", Liveness::Live), row("r02", Liveness::Done)],
+            activity,
+            vec![shell("s1"), shell("s2"), shell("s3")],
+        ));
+        model.focus = Panel::Shells;
+        model.selected = 1;
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 2,
+            activity: 10,
+            detail: 4,
+        };
+        model.activity_top = 2;
+        model.tailing = false;
+        model.clamp_offsets();
+        model.shells_top = 1;
+        let (focus, selected, shells_top, activity_top) = (
+            model.focus,
+            model.selected,
+            model.shells_top,
+            model.activity_top,
+        );
+        assert_eq!(activity_top, 2, "setup: the Activity window sat at row 2");
+        open_detail_on(&mut model);
+        assert!(model.detail.is_some(), "setup: the detail opened");
+        press(&mut model, KeyCode::Esc);
+        assert!(model.detail.is_none(), "Esc closes the detail");
+        assert_eq!(model.focus, focus, "Esc restores the focus");
+        assert_eq!(model.selected, selected, "Esc restores the selection");
+        assert_eq!(model.shells_top, shells_top, "Esc restores Shells' offset");
+        assert_eq!(
+            model.activity_top, activity_top,
+            "Esc restores Activity's offset"
+        );
+    }
+
+    #[test]
+    fn detail_scroll_clamps_at_both_ends() {
+        let text = (0..50)
+            .map(|i| format!("line-{i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut model = TopModel::new(snapshot(vec![row(DETAIL_ID, Liveness::Done)]));
+        model.detail = Some(OpenDetail {
+            id: detail_id(),
+            text,
+        });
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 4,
+            activity: 10,
+            detail: 10,
+        };
+        model.detail_top = 5;
+        press(&mut model, KeyCode::End);
+        assert_eq!(model.detail_top, 40, "End stops at the last full window");
+        press(&mut model, KeyCode::Down);
+        assert_eq!(model.detail_top, 40, "↓ past the end stays 40");
+        press(&mut model, KeyCode::Up);
+        assert_eq!(model.detail_top, 39, "one ↑ moves one line back");
+
+        model.detail = Some(OpenDetail {
+            id: detail_id(),
+            text: "one\ntwo\nthree".to_string(),
+        });
+        press(&mut model, KeyCode::End);
+        assert_eq!(
+            model.detail_top, 0,
+            "three lines in a ten-line window: End is 0"
+        );
+    }
+
+    #[test]
+    fn detail_refresh_keeps_the_scroll_and_survives_a_vanished_run() {
+        let _g = HomeGuard::new();
+        let size = ratatui::layout::Rect::new(0, 0, 80, 24);
+        write_detail_log(30);
+        let mut model = TopModel::new(snapshot(vec![row(DETAIL_ID, Liveness::Live)]));
+        open_detail_on(&mut model);
+        model.after_refresh(Some(size));
+        press(&mut model, KeyCode::End);
+        let top = model.detail_top;
+        assert!(top > 0, "setup: 30 notes overflow a 20-line panel");
+
+        write_detail_log(40);
+        model.reload_detail();
+        model.after_refresh(Some(size));
+        assert_eq!(
+            model.detail_top, top,
+            "a refresh that grew the log keeps the scroll offset"
+        );
+
+        std::fs::remove_file(turn_log_file(&detail_id())).expect("removing the log");
+        model.reload_detail();
+        let detail = model.detail.as_ref().expect("the detail stays open");
+        assert!(
+            detail
+                .text
+                .contains(&format!("run {DETAIL_ID} is no longer on disk")),
+            "a vanished run draws the message, not a panic: {}",
+            detail.text
+        );
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|f| draw(f, &model))
+            .expect("the vanished run still draws");
+    }
+
+    #[test]
+    fn panel_keys_do_nothing_in_the_detail() {
+        let mut model = TopModel::new(snapshot(vec![
+            row("r01", Liveness::Live),
+            row("r02", Liveness::Done),
+        ]));
+        model.focus = Panel::Shells;
+        model.detail = Some(OpenDetail {
+            id: detail_id(),
+            text: "heading\nbody".to_string(),
+        });
+        let (focus, filter, follow, tailing) = (
+            model.focus,
+            model.filter.clone(),
+            model.follow,
+            model.tailing,
+        );
+        for code in [
+            KeyCode::Tab,
+            KeyCode::Char('3'),
+            KeyCode::Char('f'),
+            KeyCode::Char('/'),
+        ] {
+            press(&mut model, code);
+        }
+        assert_eq!(
+            model.focus, focus,
+            "Tab does not move the focus in the detail"
+        );
+        assert_eq!(model.filter, filter, "'f' and '/' leave the filter alone");
+        assert!(!model.editing, "'/' does not start editing in the detail");
+        assert_eq!(
+            model.follow, follow,
+            "'f' does not change follow in the detail"
+        );
+        assert_eq!(
+            model.tailing, tailing,
+            "'f' does not change tailing in the detail"
+        );
+    }
+
+    #[test]
+    fn screen_draws_the_detail_view() {
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        let mut model = TopModel::new(snapshot(vec![
+            row("r01", Liveness::Live),
+            row("r02", Liveness::Done),
+        ]));
+        model.detail = Some(OpenDetail {
+            id: detail_id(),
+            text:
+                "7eb9151d45fa49f1  ghost  disk-full-l4 ← webhook  hard-fail  2m\nstatus: hard_fail"
+                    .to_string(),
+        });
+        let draw_time = "2026-10-22T09:00:00+00:00"
+            .parse::<DateTime<FixedOffset>>()
+            .expect("a fixed time");
+        terminal
+            .draw(|f| draw_at(f, &model, draw_time))
+            .expect("a draw");
+        let text: String = terminal
+            .backend()
+            .to_string()
+            .lines()
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert!(
+            text.contains(&format!(" Run {DETAIL_ID} ")),
+            "the panel is titled with the run id: {text}"
+        );
+        assert!(
+            text.contains("esc back"),
+            "the footer names esc back: {text}"
+        );
+        assert!(
+            !text.contains(" 1 Runs "),
+            "the panels are not drawn behind the detail: {text}"
+        );
+    }
+
+    #[test]
+    fn screen_detail_on_a_tiny_terminal() {
+        let mut model = TopModel::new(snapshot(vec![row(DETAIL_ID, Liveness::Done)]));
+        model.detail = Some(OpenDetail {
+            id: detail_id(),
+            text: "7eb9151d45fa49f1  ghost  disk-full-l4\nno run record yet".to_string(),
+        });
+        for (w, h) in [(40u16, 6u16), (1u16, 1u16)] {
+            let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            terminal
+                .draw(|f| draw(f, &model))
+                .unwrap_or_else(|_| panic!("the detail draws at {w}x{h}"));
+        }
     }
 }

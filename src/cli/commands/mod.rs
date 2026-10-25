@@ -35,7 +35,6 @@ pub use setup::run_setup;
 pub use top::{
     DaemonHeader, TopFingerprint, TopRunRow, fingerprint, header_text, plan_layout, run_top,
 };
-pub use top_tui::run_tui;
 
 use chat::run_chat_inner;
 
