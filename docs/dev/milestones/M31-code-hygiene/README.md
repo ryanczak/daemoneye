@@ -75,8 +75,21 @@ under `src/`. 42 files are over 1000 lines. They fall into three groups:
    count, `git diff --stat` shows moved lines, and no symbol changes name
    or visibility except the `pub(super)`/`pub(crate)` the move requires.
 6. **No behaviour change.** M31 adds no feature and fixes no bug. A defect
-   found while splitting is recorded in the Notes and deferred to a
-   follow-on, so that every M31 diff is reviewable as a move.
+   found while splitting is reported, not fixed, so that every M31 diff is
+   reviewable as a move.
+7. **Every phase audits what it touches** (PE decision 2026-10-25). The
+   executor reads every line it moves, which is the one time this code
+   gets read end to end, so each phase carries a standing obligation: an
+   `### Findings — <date>` entry in its Update Log listing every suspected
+   bug, every optimisation opportunity and every smell seen in the code the
+   phase handled, or the single line `none`. Each finding names the file and
+   symbol, its kind (`bug` / `perf` / `smell`), what was seen, why it
+   matters, and a severity (`blocker` / `major` / `minor` / `nit`). The
+   executor does **not** act on a finding; the phase stays a move. At
+   review the architect triages each one into
+   [`FINDINGS.md`](FINDINGS.md) as `act` (a follow-on phase or bug doc,
+   named) or `defer` (carried to a later milestone), with the PE's say on
+   anything `major` or above. A phase with no Findings entry is bounced.
 
 **Exit criteria:**
 
@@ -88,6 +101,10 @@ under `src/`. 42 files are over 1000 lines. They fall into three groups:
 - `cargo test` passes with at least the 2570 tests of 2.3.0, and no test
   was deleted or weakened to make a split land.
 - The CLAUDE.md "Key files" table names the new modules.
+- Every phase's Update Log has a Findings entry, and every finding in
+  `FINDINGS.md` carries a triage: `act` with the phase or bug doc that took
+  it, or `defer` with the milestone it waits for. Nothing is untriaged at
+  the close.
 - Live close on pinky per the M14 convention: the L1–L8 blocks of M30's
   phase 10 pass unchanged on the refactored tree. `2.4.0` is released per
   `REXYMCP.md` § Versioning.

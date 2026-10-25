@@ -3,7 +3,9 @@
 **Active milestone: M31 — Code hygiene** (release `2.4.0`), scoped
 2026-10-25 from the long-file audit. See
 [`README.md`](milestones/M31-code-hygiene/README.md) for the caps, the
-exemptions and the plan. MCP surface is now M32, Knowledge M33.
+exemptions and the plan, and [`FINDINGS.md`](milestones/M31-code-hygiene/FINDINGS.md)
+for the bug and optimisation audit every phase reports into. MCP surface
+is now M32, Knowledge M33.
 
 **Active phase:** none drafted yet. Next: `/rexymcp:architect next` drafts
 phase 01, the hygiene gate.
