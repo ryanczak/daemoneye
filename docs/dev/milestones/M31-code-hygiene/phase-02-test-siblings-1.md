@@ -147,3 +147,70 @@ the file's last-but-one `#[cfg(test)]` line; none of the eight siblings
 exists yet; `src/ipc.rs` / `src/ipc_tests.rs` taken as the convention
 reference. Test inventory captured to `/tmp/m31-02-before.txt` (2599 test
 lines). Beginning the eight moves.
+
+### Update — 2026-10-26 00:09 (end-to-end verification)
+
+The moves were committed first as `d1f02c26`, so the diff checks in the
+phase script use the pre-phase commit `c4467208` in place of `HEAD`, as the
+phase doc anticipates. Transcript (commands per the phase doc, run with
+`bash`; output redirected to `/tmp/e2e-m31-02.txt` and pasted byte-exact):
+
+```
+src/daemon/server/shells.rs inline=0 decl=1
+src/shell/session.rs inline=0 decl=1
+src/ai/tools/dispatch.rs inline=0 decl=1
+src/shell/backend.rs inline=0 decl=1
+src/config/mod.rs inline=0 decl=1
+src/shell/client.rs inline=0 decl=1
+src/daemon/executor/sbx.rs inline=0 decl=1
+src/daemon/session.rs inline=0 decl=1
+8
+list_diff_lines=0
+files_changed= 16 files changed, 9364 insertions(+), 9372 deletions(-)
+foreign_added_lines=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every expected value matches the phase doc: eight `inline=0 decl=1` lines,
+`8` siblings listed, `list_diff_lines=0` (2599-entry inventory identical
+before and after, `/tmp/m31-02-before.txt` vs `/tmp/m31-02-after.txt`),
+16 files changed under `src/`, zero foreign added lines in the eight
+parents, hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`, and
+`passed=2586 failed=0` (the 13 ignored tests are the pre-existing ones —
+verified by stashing the moves and re-running: identical counts).
+
+### Findings — 2026-10-26
+
+Read nothing but test bodies as they moved (9,356 sibling lines, 293
+`#[test]`/`#[tokio::test]` items). Entries, most useful first:
+
+- **Sixth copy of the temp-HOME fixture.** `shell_test_home()` in
+  `shells_tests.rs` and `test_home()` in `session_tests.rs` are byte-for-byte
+  the same 7-line fixture (guard + tempdir + `set_var("HOME")` +
+  `Config::ensure_dirs()`), and `grep` shows four more inline copies of
+  `fn test_home()` with the same shape in `shell/launch.rs`,
+  `daemon/executor/{ghost_remote,bg_shell,shell_exec,foreground}.rs`,
+  `ghost_sandbox.rs` — the crate-level helper `crate::test_home_guard()`
+  already exists; a single `pub(crate) fn test_home()` wrapping it would
+  retire eight copies. Good candidate for a later hygiene phase.
+- **Wall-clock poll loops that a channel would replace.** The PTY-backed
+  tests (`shell/backend_tests.rs`, `shell/client_tests.rs`,
+  `shell/session_tests.rs`, `daemon/server/shells_tests.rs`) wait on real
+  output with `Instant::now()` deadline loops at 10–50 ms granularity — 50+
+  such loops. They are bounded and fail with a message (not hangs), and the
+  underlying subject is a real process, so they are not the sleep-based-wait
+  anti-pattern in its worst form, but a `tokio::sync::Notify`/channel keyed
+  on the cast-file line count would make them deterministic and faster.
+- **Two bare sleeps worth flagging:** `client_tests.rs:1041,1047` sleeps
+  300 ms then 3 s to prove paused time does not count against a 2 s
+  deadline (semantic — the pause really must outlast the deadline — but it
+  makes the test 3.3 s); `backend_tests.rs:869,880` sleeps 300 ms after
+  `Int` before probing, twice, with no deadline loop.
+- **`dispatch_tests.rs` would read better split by subject** (`schema`,
+  `defs`, `select_tools`, `render_*` sections are already delimited by
+  banner comments) — relevant to the later 2000-line splitting phase.
+- No test asserts nothing; every test in the eight siblings contains at
+  least one assertion, `.expect()` with a message, or a `panic!` in a helper.
