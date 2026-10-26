@@ -138,7 +138,7 @@ Expected count: 12–14. Each may split at drafting.
 | 04 | config-split ([phase-04-config-split.md](phase-04-config-split.md)) — `config/types.rs` (1466) into `types`, `sandbox`, `shells` and `models` by whole section; the first group-2 split | done |
 | 05 | handlers-split ([phase-05-handlers-split.md](phase-05-handlers-split.md)) — the five named-session handlers leave `server/handlers.rs` (877) for a new `server/sessions.rs` | done |
 | 06 | daemon-startup ([phase-06-daemon-startup.md](phase-06-daemon-startup.md)) — `run_daemon` and its two startup helpers leave `daemon/mod.rs` (901) for a new `daemon/startup.rs`, re-exported | done |
-| 07 | epoch-extract ([phase-07-epoch-extract.md](phase-07-epoch-extract.md)) — memory extraction leaves `context/epochs.rs` (840) for a child module `epoch_extract.rs`, re-exported | in-progress |
+| 07 | epoch-extract ([phase-07-epoch-extract.md](phase-07-epoch-extract.md)) — memory extraction leaves `context/epochs.rs` (840) for a child module `epoch_extract.rs`, re-exported | review      |
 
 ## Notes
 
