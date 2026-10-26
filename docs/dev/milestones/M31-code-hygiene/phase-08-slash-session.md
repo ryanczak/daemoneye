@@ -1,6 +1,6 @@
 # Phase 08 — Move the `/session` and `/runs` commands out of `slash.rs`
 
-**Status:** review
+**Status:** in-progress (bounced: bug-08-1, the End-to-end transcript)
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -58,6 +58,28 @@ four functions, through a `use`.
    note its natural seams.
 
 ## Acceptance criteria
+
+> **Re-dispatch after bug-08-1. Green gates and a clean tree are expected
+> here and are NOT evidence this phase is done.** The move, the four
+> `pub(super)` edits, the allowlist, the CLAUDE.md row and the Findings are
+> all **approved and committed** (`71169cd2`): do not redo or touch them.
+> **There is exactly one edit left**: run the End-to-end block below
+> unchanged, then append its output to this Update Log as a new entry
+> **with the write or patch tool**, shaped exactly like this:
+>
+> ````markdown
+> ### Update — 2026-10-26 (end-to-end verification)
+>
+> ```
+> <the contents of /tmp/e2e-m31-08.txt, pasted byte-exact>
+> ```
+> ````
+>
+> **Finish condition:** `grep -c '^lost_other=0$'` on this file prints 1,
+> `git status --short` lists only this file before you commit, and
+> `cargo test` reports exactly 2586 passing (a higher count means you
+> changed code). Then commit it as `docs:` and stop.
+
 
 - [ ] `src/cli/commands/slash_session.rs` defines `cmd_session`, `cmd_runs`,
       `cmd_run` and `cmd_stop`; `slash.rs` defines none of them and has at
