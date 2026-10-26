@@ -1,6 +1,6 @@
 # Phase 04 — Split `config/types.rs` by section
 
-**Status:** todo
+**Status:** in-progress (refined re-dispatch after a stall, 2026-10-26)
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -66,6 +66,51 @@ identical.
    `default_*` function, a section no code reads, a validation that is
    missing. `none` is a valid entry.
 
+**The recipe — run it as written (verified 2026-10-26 on a scratch
+worktree of `b52feec3`: build, clippy and fmt clean, 2586 passed).** It
+computes every boundary from an anchor, so there is nothing to look up
+first. Do **not** read `types.rs` section by section to find boundaries:
+the first dispatch spent 200 turns doing that and cut nothing.
+
+```bash
+F=src/config/types.rs
+# First line of an item's doc comment / attributes, found from its `pub struct` line.
+docstart() { awk -v pat="$1" '{l[NR]=$0} $0 ~ pat {s=NR-1; while (s>0 && (l[s] ~ /^\/\/\// || l[s] ~ /^#\[/)) s--; print s+1; exit}' $F; }
+S1=$(docstart '^pub struct SandboxLimits'); S2=$(docstart '^pub struct ShellsConfig')
+S3=$(docstart '^pub struct NotificationsConfig'); S4=$(docstart '^pub struct HostEntry')
+T=$(grep -n '^#\[cfg(test)\]' $F | tail -1 | cut -d: -f1)
+echo "S1=$S1 S2=$S2 S3=$S3 S4=$S4 T=$T"   # at b52feec3: 476 786 985 1116 1467
+# Blocks: sandbox S1..S2-2, shells S2..S3-2, models S4..T-2 (each ends on `}` before a blank line).
+hdr() { printf '//! %s\n\nuse super::*;\nuse serde::{Deserialize, Serialize};\n\n' "$1"; }
+{ hdr "Config sections: [hosts.*], [models.*] and pricing, [ai], prompts."; sed -n "${S4},$((T-2))p" $F; } > src/config/models.rs
+{ hdr "Config sections: [shells] and [limits]."; sed -n "${S2},$((S3-2))p" $F; } > src/config/shells.rs
+{ hdr "Config sections: [sandbox] and [execution]."; sed -n "${S1},$((S2-2))p" $F; } > src/config/sandbox.rs
+# Delete bottom-up so earlier numbers stay valid.
+sed -i "${S4},$((T-2))d" $F; sed -i "${S2},$((S3-2))d" $F; sed -i "${S1},$((S2-2))d" $F
+```
+
+Then these edits, each one line, which the compiler asks for in this
+order:
+
+1. `src/config/mod.rs`: declare `mod models; mod sandbox; mod shells;`
+   beside `mod types;` and add `pub use models::*; pub use sandbox::*;
+   pub use shells::*;` beside `pub use types::*;`.
+2. `src/config/load.rs`: `use super::types::*;` becomes `use super::*;`
+   (it names `ModelEntry` and `PromptDef`, which now live in `models`).
+3. `src/config/types.rs`: add `use super::*;` as its first line (it names
+   `AiConfig`, `SandboxConfig` and the rest), and make `fn default_true`
+   `pub(super) fn default_true` (sandbox's serde attributes name it).
+4. `src/config/models.rs`: make `fn default_models` `pub(super)` (`Config`
+   names it), and delete its `use super::*;` line, and the same line from
+   `shells.rs` (both unused; clippy denies the warning).
+5. `tests/doc_truth.rs` reads `src/config/types.rs` by path to collect
+   config fields (the `CONFIG_TYPES` constant and two
+   `read_to_string(CONFIG_TYPES)` calls). Make `CONFIG_TYPES` the list of
+   the four files and read them joined into one string, so
+   `seeded_config_template_documents_every_config_field` and
+   `seeded_config_template_has_no_phantom_keys` see every section again.
+6. `cargo fmt --all`, delete the allowlist line, and the gates.
+
 **Gotchas.**
 - `pub use sandbox::*;` and `pub use types::*;` re-export each other's
   names through `config`; a `use super::*;` in a child is fine and is not
@@ -83,8 +128,9 @@ identical.
       is 0, and `cargo test --test hygiene` passes.
 - [ ] The block contents are unchanged: concatenating the four files with
       whitespace removed and sorting their lines gives the same multiset as
-      the pre-phase `types.rs` plus only `use`, `mod`, `//!` and
-      `pub(super)` lines (the End-to-end block checks this).
+      the pre-phase `types.rs`, except the two helpers that gain
+      `pub(super)` and the new `use` and `//!` lines (the End-to-end block
+      checks this).
 - [ ] Preservation: `cargo test` passes with 2586 passing tests;
       `cargo test --test doc_truth` passes; `src/config/tests.rs` is
       unchanged.
@@ -120,16 +166,19 @@ cat "$A"
 ```
 
 Expected: four line counts each at most 800, `allowlisted=0`,
-`lost_lines=0`, `added_other=0` (any `#[serde(default = …)]` line whose
+`lost_lines=2` (the old `fn default_true` and `fn default_models` lines,
+which now begin `pub(super)`), `added_other=0` (any `#[serde(default = …)]` line whose
 helper path changed shows as `#[serde` and is allowed; list each such line
 in the Update Log), `tests_rs_changed=0`, two `ok.` lines, clippy clean,
 `fmt_exit=0`, `passed=2586 failed=0`.
 
 ## Authorizations
 
-- Edit `src/config/types.rs` and `src/config/mod.rs`; create the three new
-  files. Edit `tests/hygiene_allowlist.txt` (the one deletion) and
-  `CLAUDE.md` (the `src/config/` row).
+- Edit `src/config/types.rs`, `src/config/mod.rs` and the one import in
+  `src/config/load.rs`; create the three new files. Edit
+  `tests/doc_truth.rs` (`CONFIG_TYPES` and its two readers only),
+  `tests/hygiene_allowlist.txt` (the one deletion) and `CLAUDE.md` (the
+  `src/config/` row).
 
 ## Out of scope
 
@@ -140,3 +189,24 @@ in the Update Log), `tests_rs_changed=0`, two `ok.` lines, clippy clean,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-10-26
+
+The first dispatch stalled after 203 turns (`NoProgressStall`, 120
+consecutive read-only turns) without writing a file: it read `types.rs` 10
+to 20 lines at a time with `awk`, mapping every section boundary by hand.
+The Spec now carries a recipe that computes the boundaries from anchors
+and cuts all three blocks, plus the six follow-up edits it needs, every one
+verified on a scratch worktree of `b52feec3`: 2586 passed, clippy and fmt
+clean. Run the recipe first, then the edits in order, then the gates. The
+Findings entry is still yours: read each new file once it exists.
+
+### Update — 2026-10-26 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** the Spec named the blocks by symbol but left finding their
+lines to the executor, which explored instead of cutting; phases 02 and 03,
+whose specs computed every cut line with one command, went through first
+try. The refinement gives the computed recipe and the edits the dry run
+found (`load.rs`'s import, `default_models`, `doc_truth.rs` reading
+`types.rs` by path), none of which the original Spec named.
