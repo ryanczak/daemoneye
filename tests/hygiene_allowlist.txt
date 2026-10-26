@@ -23,7 +23,6 @@ file src/daemon/executor/knowledge/shell.rs 2627
 file src/daemon/executor/mod.rs 2121
 file src/daemon/executor/shell_exec.rs 1129
 file src/daemon/ghost.rs 1677
-file src/daemon/mod.rs 901
 file src/daemon/stream.rs 1613
 file src/ipc.rs 966
 file src/memory/index/mod.rs 1135
@@ -59,7 +58,7 @@ fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
 fn src/daemon/ghost.rs do_ghost_turn 896
 fn src/daemon/ghost.rs trigger_ghost_turn 172
-fn src/daemon/mod.rs run_daemon 598
+fn src/daemon/startup.rs run_daemon 598
 fn src/daemon/scheduled.rs run_scheduled_job_inner 193
 fn src/daemon/server/ask.rs handle_ask 573
 fn src/daemon/server/handlers.rs handle_status 200

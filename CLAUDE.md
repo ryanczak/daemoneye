@@ -42,6 +42,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 | `src/main.rs` | CLI entry point; forks daemon, routes subcommands |
 | `src/ipc.rs` | `Request` / `Response` enums — the full wire protocol |
 | `src/daemon/instance.rs` | `InstanceLock` — flock-based single-instance enforcement + PID payload |
+| `src/daemon/startup.rs` | `run_daemon()`, the daemon's startup and accept loop; with `tmux_wanted()` / `startup_session()`, the tmux-session choice |
 | `src/daemon/mod.rs` | Window-prefix constants + D6 predicates (`is_daemon_window`, `is_ghost_window`, `is_targetable_pane`) |
 | `src/daemon/ready.rs` | Fork readiness handshake — child reports `READY` / `ERR <msg>` to the parent over a pipe |
 | `src/daemon/server/` | IPC server, split by concern: `mod.rs` client dispatch (`handle_client`), `ask.rs` the `handle_ask` orchestrator, `handlers.rs` the simple request handlers (`handle_ping`, `handle_shutdown`, `handle_refresh`, `handle_set_model`), `sessions.rs` the named-session handlers (`handle_save_session`, `handle_load_session`, `handle_list_saved_sessions`, `handle_delete_saved_session`, `handle_rename_saved_session`), `shells.rs` the shell IPC relay (`handle_shell_list`, `handle_shell_input`, `handle_shell_resize`), `catchup.rs` the catch-up brief (`build_catchup_brief`, `is_valid_pane_id`) |

@@ -1,6 +1,6 @@
 # Phase 06 — Move `run_daemon` out of `daemon/mod.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -118,3 +118,76 @@ src/daemon/startup.rs`, `allowlisted=0 fn_moved=1`, `lost_other=0`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-26 09:05 (cuts done)
+
+Ran the phase-06 cut script as written against the working tree (base commit
+`5a6ecbcd`): `S=270 T=930` matched the expected anchors exactly. Created
+`src/daemon/startup.rs` (676 lines: module doc, `use super::*`, the use block,
+`run_daemon`, `tmux_wanted`, `startup_session`, `mod startup_session_tests`)
+and trimmed `src/daemon/mod.rs` to 618 lines. Both file writes went through a
+temp file and `mv` — no `sed -i`, per the phase doc.
+
+### Findings — 2026-10-26
+
+Read all 598 lines of `run_daemon` as it moved (decision 7). Recorded for the
+later split phase:
+
+1. **Six pieces of shared state cross the sections.** `startup_config`
+   (loaded once, then re-cloned into the scheduler, webhook and session-cleanup
+   supervisors), `shutdown: Arc<AtomicBool>` (every `supervise` block),
+   `cache: Arc<SessionCache>` (N7 viewport seed, poller, scheduler, webhook,
+   accept loop), `sessions: SessionStore` (scheduler, webhook, cleanup, accept
+   loop), `schedule_store` (scheduler, webhook, accept loop) and
+   `initial_session` (cache construction, N7, scheduler, `daemon_start` event).
+   A split will need either a context struct or per-section builder functions
+   taking all of these; threading them one at a time through four or five
+   extractions is the slow part, not the cutting.
+2. **The four `tokio::spawn(supervise(...))` blocks are the natural seam.**
+   Each is self-contained behind clones of the shared state; extracting them as
+   `spawn_cache_poller` / `spawn_scheduler` / `spawn_webhook` /
+   `spawn_session_cleanup` free functions would remove ~250 lines with no
+   behaviour change and leave a much smaller linear prologue.
+3. **`startup.rs` now leans on `use super::*` for `supervise`, `log_event`,
+   `handle_client` and `SessionStore`** — all glob re-exports from `mod.rs`
+   (`pub use server::*`, `pub use utils::*`). Nothing broke in the move, but the
+   module's real dependency set is implicit; a follow-up that lists the imports
+   explicitly would make future moves cheap to review.
+4. **The startup ordering is load-bearing and undocumented in one place:**
+   `startup_config` is loaded *before* the tmux detection and API-key check but
+   *after* the instance lock and log redirect, and `cache` must exist before
+   the N7 viewport seed. Any extraction must preserve
+   lock → config → tmux-detect → cache → supervisors → bind order.
+5. No surprises that would block a split; nothing inside the function was
+   touched (out of scope per this phase).
+
+### Update — 2026-10-26 09:17 (end-to-end verification)
+
+Ran the phase doc's E2E block with `bash` against the finished tree. The first
+run printed `added_other=1`: the stray line was `pubmodstartup;` — I had
+declared `pub mod startup;` where the spec's edit list says `mod startup;` (the
+module has no external users; `run_daemon` is re-exported from `mod.rs` and
+`mod.rs`'s test module reaches `tmux_wanted` via `crate::daemon::startup::`,
+which works for a private sibling module). Changed it to `mod startup;` and
+re-ran the whole block in one pass. Verbatim transcript of the second run:
+
+```
+617 src/daemon/mod.rs
+672 src/daemon/startup.rs
+1289 total
+allowlisted=0 fn_moved=1
+lost_other=0
+added_other=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+`cargo clippy --all-targets --all-features -- -D warnings` printed zero
+warnings/errors (grep -c over its output: 0). Acceptance criteria checked:
+`startup.rs` holds all four items and `mod.rs` holds none of them (grep counts
+4 and 0); `mod.rs` is 617 lines (cap 800); allowlist greps give 0 and 1;
+`cargo test --test hygiene` ok; E2E `lost_other=0 added_other=0`;
+`cargo test` passes with exactly 2586 passing, 0 failed.
+
