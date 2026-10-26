@@ -1,6 +1,6 @@
 # Phase 02 — Test modules to sibling files, batch 1
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-25
 
@@ -349,3 +349,21 @@ kill: (-616912): No such process
 **Commit:** 6617eeaee97a591688c43b5f24a9c86381d9a2e1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. rustfmt rejoined a few lines after the dedent
+  and dropped one trailing comma in `client_tests.rs`; the reviewer
+  compared every sibling to its pre-phase body with whitespace removed:
+  seven identical, the eighth differs by that comma alone.
+- **Calibration:** the review re-ran the four gates (fmt 0, build and
+  clippy clean, 2586 passed / 0 failed / 13 ignored, as before) and the
+  criteria against `c4467208`: each parent's diff is one hunk after its
+  `#[cfg(test)]` line, 16 files, no foreign added line. The narrow spec (a
+  named shell recipe per move, an inventory diff as the proof) went through
+  first try where phase 01's open-ended one stalled twice. The executor's
+  "started" entry again names itself as a Claude model ("Claude Opus 4.6");
+  second occurrence after phase 01, data.
