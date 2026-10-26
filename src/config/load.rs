@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 use super::seeds::SRE_PROMPT_TOML;
-use super::types::*;
+use super::*;
 
 /// Returns `~/.daemoneye/` (or `/tmp/.daemoneye/` if HOME is unset).
 pub fn config_dir() -> PathBuf {

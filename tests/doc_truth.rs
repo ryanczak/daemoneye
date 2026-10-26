@@ -563,10 +563,24 @@ fn approval_gated_tools_all_exist() {
 // there that no longer exists is worse than silence: `Config` sets no
 // `deny_unknown_fields`, so setting it fails quiet. Both directions are gated.
 
-const CONFIG_TYPES: &str = "src/config/types.rs";
+/// The files that declare the config section structs, read as one text.
+const CONFIG_TYPES: &[&str] = &[
+    "src/config/types.rs",
+    "src/config/sandbox.rs",
+    "src/config/shells.rs",
+    "src/config/models.rs",
+];
+
+fn config_types_src() -> String {
+    CONFIG_TYPES
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| panic!("read {p}: {e}")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 const CONFIG_TEMPLATE: &str = "assets/etc/config.toml";
 
-/// Body of `pub struct <name> { ... }` in `src/config/types.rs`.
+/// Body of `pub struct <name> { ... }` in the config type sources.
 fn struct_body<'a>(src: &'a str, name: &str) -> Option<&'a str> {
     let start = src.find(&format!("pub struct {name} {{"))?;
     let open = src[start..].find('{')? + start + 1;
@@ -640,7 +654,7 @@ fn template_keys(template: &str) -> Vec<(String, String)> {
 
 #[test]
 fn seeded_config_template_documents_every_config_field() {
-    let src = std::fs::read_to_string(CONFIG_TYPES).expect("read config types");
+    let src = config_types_src();
     let template = std::fs::read_to_string(CONFIG_TEMPLATE).expect("read config template");
     let present: std::collections::BTreeSet<String> = template_keys(&template)
         .into_iter()
@@ -676,7 +690,7 @@ fn seeded_config_template_documents_every_config_field() {
 
 #[test]
 fn seeded_config_template_has_no_phantom_keys() {
-    let src = std::fs::read_to_string(CONFIG_TYPES).expect("read config types");
+    let src = config_types_src();
     let template = std::fs::read_to_string(CONFIG_TEMPLATE).expect("read config template");
 
     let sections = config_sections(&src);
