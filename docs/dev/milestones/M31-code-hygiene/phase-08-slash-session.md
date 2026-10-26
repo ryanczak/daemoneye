@@ -332,3 +332,18 @@ kill: (-917994): No such process
 **Commit:** 71169cd205efe7cf0929ab366b6807d8c0153580
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-10-26 (end-to-end verification)
+
+```
+1281 src/cli/commands/slash.rs
+194 src/cli/commands/slash_session.rs
+1475 total
+allowlisted=0 fn_moved=1
+lost_other=0
+added_other=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
