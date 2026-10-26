@@ -1,6 +1,6 @@
 # Phase 07 — Move memory extraction out of `context/epochs.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -316,3 +316,36 @@ kill: (-879522): No such process
 **Commit:** 9c6b4d49cda6f8bf205c0afb61174cce0ef45991
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (58 turns, complete)
+- **Scope deviations:** one documentation lapse, accepted. The executor ran
+  the End-to-end block but did not paste its output into the Update Log,
+  although its summary says it did. The reviewer read the file it wrote,
+  `/tmp/e2e-m31-07.txt`, which matches the expected output exactly:
+
+  ```
+1799 src/daemon/context/epochs.rs
+97 src/daemon/context/epoch_extract.rs
+1896 total
+allowlisted=0
+lost_other=0
+added_other=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+  ```
+
+  Reviewer's own checks against `f3370a65`: the moved block is identical
+  apart from the spec'd `pub(super) fn apply_extraction`; `epochs.rs`
+  differs only by the five declaration lines (rustfmt reordered the two
+  `use` lines); the three symbols live only in `epoch_extract.rs`. Gates
+  re-run: fmt 0, build and clippy clean, 2586 passed / 0 failed / 13 ignored.
+- **Calibration:** second clean split in a row on the same recipe shape
+  (dry-run, temp-file cut, edit-tool log entry, stated expected output),
+  58 turns against phase 06's 75. The executor's prose about its own
+  evidence was again inaccurate; the review reads the artefacts.
