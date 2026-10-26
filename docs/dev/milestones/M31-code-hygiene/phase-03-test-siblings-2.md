@@ -141,3 +141,57 @@ place of `HEAD`.)
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-26 00:43 (in progress, executor)
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+Executed M31 phase-03 (test-siblings-2): recorded the pre-edit test inventory
+(2599 entries into `/tmp/m31-03-before.txt`), then moved the trailing inline
+test module of each of the seven listed files to its specified sibling by
+shell range cut (`registry_tests.rs`, `log_tests.rs`, `read_tests.rs`,
+`sweep_tests.rs`, `search_tests.rs`, `event_log_tests.rs`,
+`scheduled_tests.rs`), each parent ending in the three-line
+`#[cfg(test)] #[path = "<sibling>"] mod <name>;` declaration with the
+module's existing name (`sweep_tests` for `daemon/utils/mod.rs`). Gates run:
+`cargo fmt --all` (pass), `cargo build` (no warnings), `cargo clippy
+--all-targets --all-features -- -D warnings` (clean), `cargo test`
+(passed=2586 failed=0, inventory diff empty — same 2599 tests by full path),
+`cargo test --test hygiene` (ok. 16 passed). End-to-end transcript appended
+below. Findings entry appended separately.
+
+```
+src/shell/registry.rs inline=0 decl=1
+src/shell/log.rs inline=0 decl=1
+src/daemon/executor/file_ops/read.rs inline=0 decl=1
+src/daemon/utils/mod.rs inline=0 decl=1
+src/search.rs inline=0 decl=1
+src/daemon/utils/event_log.rs inline=0 decl=1
+src/daemon/scheduled.rs inline=0 decl=1
+7
+list_diff_lines=0
+files_changed= 7 files changed, 14 insertions(+), 5322 deletions(-)
+foreign_added_lines=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+### Findings — 2026-10-26
+
+Read nothing but test bodies as they moved (5,315 sibling lines, ~240
+`#[test]`/`#[tokio::test]` items). `none` was the expected entry; instead:
+
+- **`search_tests.rs` opens with a `static COUNTER:
+  std::sync::atomic::AtomicU64`** used for unique temp dir names — the same
+  unique-temp-dir need phase-02 flagged in other siblings; a crate-level
+  helper (`crate::unique_temp_dir()`) would retire it too. Recorded here,
+  not fixed (out of scope).
+- **`scheduled_tests.rs` `presence_count` re-derivation.** Two tests recompute
+  expected presence counts by hand in the assertion (duplicated fixture
+  logic); a shared `expected_presence()` helper would shrink them. Minor.
+- **No test asserts nothing; no sleep-based waits in these seven siblings**
+  (checked each for `std::thread::sleep`/`tokio::time::sleep` outside
+  deadline loops: none). No duplicated fixture rose to the level of the
+  temp-HOME copies flagged in phase-02.

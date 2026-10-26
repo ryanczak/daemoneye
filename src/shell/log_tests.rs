@@ -1,0 +1,822 @@
+use super::*;
+use tempfile::tempdir;
+
+fn cast(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("s7-1788470000-build.cast")
+}
+fn meta(dir: &std::path::Path) -> std::path::PathBuf {
+    dir.join("s7-1788470000-build.meta.json")
+}
+
+#[test]
+fn cast_header_is_valid_asciicast_v2() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    CastWriter::create(&path, 80, 24, 1_788_470_000)
+        .unwrap()
+        .byte_len();
+    let mut contents = String::new();
+    File::open(&path)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    let first_line = contents.lines().next().unwrap();
+    assert!(contents.as_bytes().starts_with(b"{"));
+    let v: serde_json::Value = serde_json::from_str(first_line).unwrap();
+    assert_eq!(v["version"], 2);
+    assert_eq!(v["width"], 80);
+    assert_eq!(v["height"], 24);
+    assert_eq!(v["timestamp"], 1_788_470_000);
+}
+
+#[test]
+fn cast_event_line_shape() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    w.write_output(Duration::from_secs_f64(5.0), b"hello")
+        .unwrap();
+    w.write_output(Duration::from_secs_f64(0.123456789), b"x")
+        .unwrap();
+    let mut contents = String::new();
+    File::open(&path)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    let event = contents.lines().nth(1).unwrap();
+    let v: serde_json::Value = serde_json::from_str(event).unwrap();
+    let array = v.as_array().unwrap();
+    assert_eq!(array.len(), 3);
+    assert!(array[0].is_number());
+    assert!(array[0].as_f64().is_some());
+    assert_eq!(array[1], "o");
+    assert_eq!(array[2], "hello");
+    let second = contents.lines().nth(2).unwrap();
+    let v: serde_json::Value = serde_json::from_str(second).unwrap();
+    assert_eq!(v[0], 0.123457);
+}
+
+#[test]
+fn cast_marker_and_input_events_use_their_codes() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    w.mark(Duration::from_secs_f64(10.0), "Configuration")
+        .unwrap();
+    w.mark(Duration::from_secs_f64(11.0), "").unwrap();
+    w.write_input(Duration::from_secs_f64(12.0), b"h").unwrap();
+    let mut contents = String::new();
+    File::open(&path)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    let lines: Vec<_> = contents.lines().collect();
+    assert_eq!(lines[1], r#"[10, "m", "Configuration"]"#);
+    assert_eq!(lines[2], r#"[11, "m", ""]"#);
+    assert_eq!(lines[3], r#"[12, "i", "h"]"#);
+}
+
+#[test]
+fn cast_preserves_ansi_and_unit_separator_bytes() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    let payload = b"a\x1fb\r\n\x1b[31mred\x1b[0m";
+    let first_byte = w.byte_len();
+    w.write_output(Duration::from_secs_f64(1.0), payload)
+        .unwrap();
+    w.mark(Duration::from_secs_f64(2.0), "end").unwrap();
+    let end_byte = w.byte_len();
+    drop(w);
+    let meta = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: path.file_name().unwrap().to_string_lossy().into_owned(),
+        started_unix: 0,
+        commands: vec![CommandRecord {
+            index: 0,
+            command: "echo".into(),
+            started: 0.0,
+            ended: 1.0,
+            exit_code: 0,
+            first_byte,
+            end_byte,
+        }],
+    };
+    let out = read_command_output(&path, &meta, 0).unwrap();
+    assert_eq!(out, payload);
+}
+
+#[test]
+fn cast_carries_a_split_multibyte_character() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let bytes = "é世界😀".as_bytes();
+    for cut in [1usize, 3, 8] {
+        let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+        w.write_output(Duration::ZERO, &bytes[..cut]).unwrap();
+        w.write_output(Duration::ZERO, &bytes[cut..]).unwrap();
+        let mut contents = String::new();
+        File::open(&path)
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        let mut whole = Vec::new();
+        for line in contents.lines().skip(1) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            let arr = v.as_array().unwrap();
+            if arr[1] == "o" {
+                whole.extend_from_slice(arr[2].as_str().unwrap().as_bytes());
+            }
+        }
+        assert_eq!(whole, bytes, "cut point {cut}");
+    }
+    // a call whose input was entirely carried emits no line at all
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    let before = w.byte_len();
+    w.write_output(Duration::ZERO, &bytes[..1]).unwrap();
+    assert_eq!(
+        w.byte_len(),
+        before,
+        "carried-only write must not emit a line"
+    );
+}
+
+#[test]
+fn cast_does_not_carry_genuinely_invalid_bytes() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    w.write_output(Duration::from_secs_f64(1.0), &[0xff, 0x41])
+        .unwrap();
+    w.write_output(Duration::from_secs_f64(2.0), b"ok").unwrap();
+    let mut contents = String::new();
+    File::open(&path)
+        .unwrap()
+        .read_to_string(&mut contents)
+        .unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "two events after the header, no endless carries"
+    );
+    let v: serde_json::Value = serde_json::from_str(lines[2]).unwrap();
+    assert_eq!(v[2], "ok");
+}
+
+#[test]
+fn meta_round_trips_through_save_and_load() {
+    let dir = tempdir().unwrap();
+    let path = meta(dir.path());
+    let m = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: "x.cast".into(),
+        started_unix: 1_788_470_000,
+        commands: vec![
+            CommandRecord {
+                index: 0,
+                command: "echo hi".into(),
+                started: 0.0,
+                ended: 1.5,
+                exit_code: 0,
+                first_byte: 78,
+                end_byte: 188,
+            },
+            CommandRecord {
+                index: 1,
+                command: "ls".into(),
+                started: 2.0,
+                ended: 2.25,
+                exit_code: 2,
+                first_byte: 188,
+                end_byte: 300,
+            },
+        ],
+    };
+    m.save(&path).unwrap();
+    let loaded = MetaIndex::load(&path).unwrap();
+    assert_eq!(loaded, m);
+}
+
+#[test]
+fn meta_path_for_replaces_and_appends() {
+    assert_eq!(
+        meta_path_for(Path::new("/x/s7-1-build.cast")),
+        PathBuf::from("/x/s7-1-build.meta.json")
+    );
+    assert_eq!(
+        meta_path_for(Path::new("/x/deploy.log")),
+        PathBuf::from("/x/deploy.log.meta.json")
+    );
+}
+
+#[test]
+fn read_command_output_rejects_an_unknown_index() {
+    let dir = tempdir().unwrap();
+    let cast_path = cast(dir.path());
+    CastWriter::create(&cast_path, 80, 24, 0).unwrap();
+    let meta = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: cast_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        started_unix: 0,
+        commands: vec![CommandRecord {
+            index: 0,
+            command: "echo".into(),
+            started: 0.0,
+            ended: 0.0,
+            exit_code: 0,
+            first_byte: 0,
+            end_byte: 0,
+        }],
+    };
+    let err = read_command_output(&cast_path, &meta, 7).unwrap_err();
+    assert!(err.to_string().contains("7"));
+}
+
+#[test]
+fn read_command_output_skips_a_malformed_line() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    // hand-build a cast with a garbage line inside the command's range
+    let header = r#"{"version":2,"width":80,"height":24,"timestamp":0}"#;
+    let before = r#"[0, "o", "before"]"#;
+    let garbage = "this is not json";
+    let marker = r#"[0, "m", "m0"]"#;
+    let after = r#"[0, "o", "after"]"#;
+    let file = format!("{header}\n{before}\n{garbage}\n{marker}\n{after}\n");
+    std::fs::write(&path, file).unwrap();
+    let first_byte = (header.len() + 1) as u64;
+    let end_byte = (header.len()
+        + 1
+        + before.len()
+        + 1
+        + garbage.len()
+        + 1
+        + marker.len()
+        + 1
+        + after.len()
+        + 1) as u64;
+    let meta = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: path.file_name().unwrap().to_string_lossy().into_owned(),
+        started_unix: 0,
+        commands: vec![CommandRecord {
+            index: 0,
+            command: "echo".into(),
+            started: 0.0,
+            ended: 1.0,
+            exit_code: 0,
+            first_byte,
+            end_byte,
+        }],
+    };
+    let out = read_command_output(&path, &meta, 0).unwrap();
+    assert_eq!(out, b"beforeafter");
+}
+
+#[test]
+fn cast_and_meta_round_trip_a_three_command_session() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let meta_path = meta(dir.path());
+    let mut w = CastWriter::create(&path, 100, 30, 1_788_470_000).unwrap();
+    let sessions: [(&str, Vec<u8>, i32); 3] = [
+        ("echo one", b"one\r\n"[..].to_vec(), 0),
+        ("printf no-trail", b"".to_vec(), 0),
+        (
+            "ls /missing",
+            b"ls: /missing: No such file or directory\r\n"[..].to_vec(),
+            2,
+        ),
+    ];
+    let mut records = Vec::new();
+    for (i, (cmd, out, exit)) in sessions.iter().enumerate() {
+        let t = 1.0 + i as f64;
+        let label = format!("cmd {i}");
+        w.mark(Duration::from_secs_f64(t), &label).unwrap();
+        let first_byte = w.byte_len();
+        w.write_output(Duration::from_secs_f64(t + 0.5), out)
+            .unwrap();
+        let end_byte = w.byte_len();
+        let end_label = format!("end {i}");
+        w.mark(Duration::from_secs_f64(t + 1.0), &end_label)
+            .unwrap();
+        records.push(CommandRecord {
+            index: i as u32,
+            command: cmd.to_string(),
+            started: t,
+            ended: t + 0.5,
+            exit_code: *exit,
+            first_byte,
+            end_byte,
+        });
+    }
+    let meta = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: path.file_name().unwrap().to_string_lossy().into_owned(),
+        started_unix: 1_788_470_000,
+        commands: records,
+    };
+    meta.save(&meta_path).unwrap();
+    drop(w);
+    let meta_loaded = MetaIndex::load(&meta_path).unwrap();
+    assert_eq!(meta_loaded, meta, "meta index round-trips");
+    for i in 0..3u32 {
+        let got = read_command_output(&path, &meta_loaded, i).unwrap();
+        assert_eq!(got, sessions[i as usize].1, "command {i} output");
+    }
+}
+
+#[test]
+fn cast_flushes_a_dangling_carry_before_a_marker() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    w.mark(Duration::ZERO, "start 0").unwrap();
+    let first_byte = w.byte_len();
+    // "é" is 2 bytes; feeding only the first two bytes of "ABéZ" leaves
+    // the "é" second byte dangling.
+    let raw = b"AB\xc3".to_vec();
+    w.write_output(Duration::from_secs_f64(1.0), &raw).unwrap();
+    let mid = w.byte_len();
+    w.mark(Duration::from_secs_f64(1.1), "end 0").unwrap();
+    assert!(mid < w.byte_len(), "mark must emit the carried bytes");
+    let end_byte = w.byte_len();
+    w.mark(Duration::from_secs_f64(2.0), "start 1").unwrap();
+    let first_byte1 = w.byte_len();
+    w.write_output(Duration::from_secs_f64(2.1), b"ZZZ")
+        .unwrap();
+    let end_byte1 = w.byte_len();
+    drop(w);
+    let meta = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: path.file_name().unwrap().to_string_lossy().into_owned(),
+        started_unix: 0,
+        commands: vec![
+            CommandRecord {
+                index: 0,
+                command: "dangling".into(),
+                started: 0.0,
+                ended: 1.0,
+                exit_code: 0,
+                first_byte,
+                end_byte,
+            },
+            CommandRecord {
+                index: 1,
+                command: "next".into(),
+                started: 2.0,
+                ended: 2.1,
+                exit_code: 0,
+                first_byte: first_byte1,
+                end_byte: end_byte1,
+            },
+        ],
+    };
+    let got = read_command_output(&path, &meta, 0).unwrap();
+    let mut want = b"AB".to_vec();
+    want.extend_from_slice("\u{FFFD}".as_bytes());
+    assert_eq!(got, want, "command 0 must keep all its bytes");
+    let next = read_command_output(&path, &meta, 1).unwrap();
+    assert_eq!(next, b"ZZZ", "command 1 must not be polluted");
+}
+
+#[test]
+fn log_cast_and_meta_are_created_mode_0600() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempdir().unwrap();
+    let cast_path = cast(dir.path());
+    let meta_path = meta(dir.path());
+    {
+        let w = CastWriter::create(&cast_path, 80, 24, 0).unwrap();
+        let meta = MetaIndex {
+            owner: None,
+            host: None,
+            shell_id: "s7".into(),
+            cast: cast_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            started_unix: 0,
+            commands: vec![],
+        };
+        meta.save(&meta_path).unwrap();
+        drop(w);
+    }
+    for (path, label) in [(&cast_path, "cast"), (&meta_path, "meta")] {
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "{label} file must carry the explicit 0600 mode, regardless of umask"
+        );
+    }
+}
+
+/// Write one raw cast event line (`kind` = `"o"`, `"i"`, `"m"`), through
+/// the writer's real event path.
+fn event(w: &mut CastWriter, t: f64, kind: &str, data: &str) {
+    let bytes = data.as_bytes();
+    match kind {
+        "o" => w.write_output(Duration::from_secs_f64(t), bytes).unwrap(),
+        "i" => w.write_input(Duration::from_secs_f64(t), bytes).unwrap(),
+        _ => w.mark(Duration::from_secs_f64(t), data).unwrap(),
+    }
+}
+
+/// Append one raw line to `path` — a cast line the way a host would emit
+/// it, or any arbitrary bytes. The trailing newline is supplied only when
+/// `line` does not end with one.
+fn appender(path: &std::path::Path, line: String) {
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(line.as_bytes()).unwrap();
+    f.write_all(b"\n").unwrap();
+}
+
+/// Append raw bytes to `path` with no newline appended.
+fn appender_raw(path: &std::path::Path, bytes: &[u8]) {
+    let mut f = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    f.write_all(bytes).unwrap();
+}
+
+#[test]
+fn read_output_since_returns_only_new_output() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    event(&mut w, 1.0, "o", "first\n");
+    event(&mut w, 2.0, "o", "second\n");
+    drop(w);
+    let (first, offset) = read_output_since(&path, 0).unwrap();
+    assert!(
+        first.windows(5).any(|w| w == b"first"),
+        "the first event's payload is in the read: {first:?}"
+    );
+    assert!(
+        first.windows(6).any(|w| w == b"second"),
+        "the second event's payload is in the read: {first:?}"
+    );
+
+    // Append a third event after the first read: reading from the
+    // returned offset sees only the third.
+    appender(
+        &path,
+        format!("[3.0, \"o\", {}]", serde_json::json!("third")),
+    );
+    let (again, _next) = read_output_since(&path, offset).unwrap();
+    assert!(
+        again.windows(5).any(|w| w == b"third"),
+        "the appended event's payload comes back from the new offset: {again:?}"
+    );
+    assert!(
+        !again.windows(5).any(|w| w == b"first"),
+        "already-consumed bytes are never returned again: {again:?}"
+    );
+}
+
+#[test]
+fn read_output_since_stops_at_the_last_complete_line() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    event(&mut w, 1.0, "o", "whole line\n");
+    drop(w);
+    let (_, after_first) = read_output_since(&path, 0).unwrap();
+
+    appender(&path, r#"[2.0, "o", "complete\n"]"#.to_string());
+    // No trailing newline: the final cast line is still being written.
+    appender_raw(&path, b"[2.1, \"o\", \"partX");
+
+    let (got, offset) = read_output_since(&path, after_first).unwrap();
+    assert!(
+        got.windows(8).any(|w| w == b"complete"),
+        "the complete line's payload is returned: {got:?}"
+    );
+    assert!(
+        !got.windows(4).any(|w| w == b"part"),
+        "the unterminated final line must stay unconsumed: {got:?}"
+    );
+    let len = std::fs::metadata(&path).unwrap().len();
+    assert!(
+        offset <= len,
+        "the offset must not exceed the file length: {offset} > {len}"
+    );
+    assert_ne!(
+        offset, len,
+        "a partial final line's bytes must be left unconsumed: {offset} == {len}"
+    );
+    assert!(
+        offset > after_first,
+        "the complete line before the partial one was consumed: {offset} vs {after_first}"
+    );
+
+    // Now complete the line: the appended text finishes the partial JSON.
+    appender(&path, r#"ial line"]"#.to_string());
+    let (more, _) = read_output_since(&path, offset).unwrap();
+    assert!(
+        more.windows(10).any(|w| w == b"partXial l"),
+        "a line assembled across two reads comes back whole: {more:?}"
+    );
+    let (_, off2) = read_output_since(&path, offset).unwrap();
+    assert_eq!(
+        off2,
+        std::fs::metadata(&path).unwrap().len(),
+        "after completion a read consumes to the new end"
+    );
+}
+
+#[test]
+fn read_output_since_skips_input_and_marker_events() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    event(&mut w, 1.0, "o", "out-1\n");
+    event(&mut w, 2.0, "i", "keystrokes");
+    event(&mut w, 3.0, "m", "a marker");
+    event(&mut w, 4.0, "o", "out-2\n");
+    drop(w);
+    appender(&path, "not json at all".to_string());
+    appender(&path, "[5.0, \"o\", \"out-3\\\\n\"]".to_string());
+    let (got, _) = read_output_since(&path, 0).unwrap();
+    let text = String::from_utf8_lossy(&got).into_owned();
+    assert!(text.contains("out-1"), "first output kept: {text:?}");
+    assert!(text.contains("out-2"), "second output kept: {text:?}");
+    assert!(
+        text.contains("out-3"),
+        "output after the bad line kept, newline decoded: {text:?}"
+    );
+    assert!(
+        !text.contains("keystrokes") && !text.contains("a marker"),
+        "input and marker events are this tool's blind spot: {text:?}"
+    );
+    assert!(
+        !text.contains("not json"),
+        "a malformed line is skipped, not fatal: {text:?}"
+    );
+}
+
+#[test]
+fn read_output_since_past_the_file_end_returns_unmoved_offset() {
+    let dir = tempdir().unwrap();
+    let path = cast(dir.path());
+    let mut w = CastWriter::create(&path, 80, 24, 0).unwrap();
+    event(&mut w, 1.0, "o", "short\n");
+    drop(w);
+    let len = std::fs::metadata(&path).unwrap().len();
+    let (got, offset) = read_output_since(&path, len + 9).unwrap();
+    assert!(got.is_empty(), "nothing beyond the end: {got:?}");
+    assert_eq!(offset, len + 9, "the offset is returned unchanged");
+}
+
+/// Assemble the cast bytes one command's window would hold: the echoed
+/// command line, then BEGIN, the body and END, all through `CastWriter` so
+/// the encoding matches what a real cast stores (the marker's `0x1f`
+/// escapes as `\u001f`, never a raw byte).
+fn framed(nonce: &Nonce, echoed_line: &str, body: &[u8], exit: u32) -> Vec<u8> {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("framed.cast");
+    let mut w = CastWriter::create(&path, 80, 24, 1).unwrap();
+    if !echoed_line.is_empty() {
+        w.write_output(Duration::ZERO, echoed_line.as_bytes())
+            .unwrap();
+    }
+    w.write_output(Duration::ZERO, &begin_marker(nonce))
+        .unwrap();
+    w.write_output(Duration::ZERO, body).unwrap();
+    w.write_output(Duration::ZERO, &{
+        let mut e = end_marker(nonce);
+        e.extend_from_slice(exit.to_string().as_bytes());
+        e.push(0x1f);
+        e
+    })
+    .unwrap();
+    drop(w);
+    std::fs::read(&path).unwrap()
+}
+
+/// The `"o"` payloads `read_command_output` would return for the recorded
+/// range: decode each complete cast line in `[first, end)` the same way the
+/// reader does. The same `extend_output_line` the shippers use, so a test
+/// cannot drift from production's decoding.
+fn decoded_range(slice: &[u8], first: u64, end: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    for line in String::from_utf8_lossy(&slice[first as usize..end as usize])
+        .lines()
+        .map(|l| l.to_string())
+        .collect::<Vec<_>>()
+    {
+        extend_output_line(Some(line), &mut out);
+    }
+    out
+}
+
+#[test]
+fn marked_inner_range_excludes_the_marker_framing() {
+    let nonce = Nonce::new();
+    let body: &[u8] = b"stdout line one\nstdout line two\n";
+    let slice = framed(&nonce, "", body, 0);
+    let (first, end) = marked_inner_range(&slice, &nonce).expect("both markers present");
+    let decoded = decoded_range(&slice, first, end);
+    assert_eq!(decoded, body, "the range decodes to exactly the body");
+    let text = String::from_utf8_lossy(&decoded).into_owned();
+    assert!(
+        !text.contains("DE_"),
+        "no marker text in the range: {text:?}"
+    );
+    let range_text = String::from_utf8_lossy(&slice[first as usize..end as usize]).into_owned();
+    let mut stripped = Vec::new();
+    for line in range_text.lines() {
+        let mut d = Vec::new();
+        extend_output_line(Some(line.to_owned()), &mut d);
+        stripped.extend_from_slice(&d);
+    }
+    assert_eq!(
+        stripped, body,
+        "after the reader's framing strip the range is exactly the body"
+    );
+}
+
+#[test]
+fn marked_inner_range_is_none_when_a_marker_is_missing() {
+    let nonce = Nonce::new();
+    // BEGIN present, END absent: the command has not completed.
+    let begin_only = {
+        let mut b = begin_marker(&nonce);
+        b.extend_from_slice(b"\r\nbody\r\n");
+        b
+    };
+    assert!(
+        marked_inner_range(&begin_only, &nonce).is_none(),
+        "no END marker, no range"
+    );
+    // END present, BEGIN absent: an echoed indicator with no real start.
+    let end_only = {
+        let mut e = end_marker(&nonce);
+        e.push(0x1f);
+        e.extend_from_slice(b"0\r\n");
+        e
+    };
+    assert!(
+        marked_inner_range(&end_only, &nonce).is_none(),
+        "no BEGIN marker, no range"
+    );
+}
+
+#[test]
+fn marked_inner_range_ignores_the_echoed_command_line() {
+    let nonce = Nonce::new();
+    let echoed = "model$ printf '\\x1fDE_BEG 3f9c2a1f\\x1f\\n'; cargo build; printf ...\r\n";
+    let body: &[u8] = b"cargo build output\n";
+    let slice = framed(&nonce, echoed, body, 0);
+    let (first, end) = marked_inner_range(&slice, &nonce).expect("the real markers are present");
+    let decoded = decoded_range(&slice, first, end);
+    assert_eq!(decoded, body, "the range decodes to exactly the body");
+    let text = String::from_utf8_lossy(&decoded).into_owned();
+    assert!(
+        !text.contains("printf"),
+        "the echoed command line must not leak into the range: {text:?}"
+    );
+}
+
+#[test]
+fn meta_index_append_numbers_commands_from_zero() {
+    let dir = tempdir().unwrap();
+    let cast = cast(dir.path());
+    let meta = meta(dir.path());
+    CastWriter::create(&cast, 80, 24, 1_788_470_000)
+        .unwrap()
+        .byte_len();
+    for expected in 0u32..2 {
+        MetaIndex::append(
+            &meta,
+            &cast,
+            "s7",
+            1_788_470_000,
+            None,
+            None,
+            CommandRecord {
+                index: 0,
+                command: format!("cmd-{expected}"),
+                started: 1_788_470_000.0,
+                ended: 1_788_470_001.0,
+                exit_code: 0,
+                first_byte: expected as u64 * 10,
+                end_byte: expected as u64 * 10 + 5,
+            },
+        )
+        .expect("append succeeds");
+        let loaded = MetaIndex::load(&meta).expect("the index round-trips");
+        assert_eq!(loaded.commands.len(), (expected + 1) as usize);
+        let last = loaded.commands.last().expect("just pushed one");
+        assert_eq!(last.index, expected, "commands number from zero");
+        assert_eq!(last.command, format!("cmd-{expected}"));
+    }
+    let loaded = MetaIndex::load(&meta).unwrap();
+    assert_eq!(loaded.shell_id, "s7");
+    assert_eq!(loaded.started_unix, 1_788_470_000);
+    assert_eq!(loaded.commands[0].index, 0);
+    assert_eq!(loaded.commands[1].index, 1);
+}
+
+fn record(command: &str) -> CommandRecord {
+    CommandRecord {
+        index: 0,
+        command: command.to_string(),
+        started: 0.0,
+        ended: 0.0,
+        exit_code: 0,
+        first_byte: 0,
+        end_byte: 1,
+    }
+}
+
+#[test]
+fn meta_index_append_records_owner_and_host_once() {
+    let dir = tempdir().unwrap();
+    let (cast, meta) = (cast(dir.path()), meta(dir.path()));
+    MetaIndex::append(
+        &meta,
+        &cast,
+        "s7",
+        17,
+        Some("ghost:job-1"),
+        Some("pinky"),
+        record("a"),
+    )
+    .unwrap();
+    MetaIndex::append(
+        &meta,
+        &cast,
+        "s7",
+        17,
+        Some("chat:other"),
+        Some("local"),
+        record("b"),
+    )
+    .unwrap();
+    let loaded = MetaIndex::load(&meta).unwrap();
+    assert_eq!(
+        loaded.owner.as_deref(),
+        Some("ghost:job-1"),
+        "the first owner stays"
+    );
+    assert_eq!(
+        loaded.host.as_deref(),
+        Some("pinky"),
+        "the first host stays"
+    );
+    assert_eq!(loaded.commands.len(), 2);
+}
+
+#[test]
+fn meta_index_without_owner_or_host_still_loads() {
+    let dir = tempdir().unwrap();
+    let meta = meta(dir.path());
+    std::fs::write(
+        &meta,
+        r#"{"shell_id":"s1","cast":"s1-17.cast","started_unix":17,"commands":[]}"#,
+    )
+    .unwrap();
+    let loaded = MetaIndex::load(&meta).expect("an older index loads");
+    assert_eq!((loaded.owner, loaded.host), (None, None));
+    let mut ok = MetaIndex::load(&meta).unwrap();
+    ok.owner = Some("chat:x".into());
+    ok.save(&meta).unwrap();
+    MetaIndex::append(
+        &meta,
+        &cast(dir.path()),
+        "s1",
+        17,
+        Some("ghost:y"),
+        Some("local"),
+        record("c"),
+    )
+    .unwrap();
+    let loaded = MetaIndex::load(&meta).unwrap();
+    assert_eq!(
+        loaded.owner.as_deref(),
+        Some("chat:x"),
+        "a recorded owner is kept"
+    );
+    assert_eq!(
+        loaded.host.as_deref(),
+        Some("local"),
+        "a missing host is filled"
+    );
+}

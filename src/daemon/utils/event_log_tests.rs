@@ -1,0 +1,641 @@
+use super::*;
+use std::io::Write;
+
+fn with_test_home<F: FnOnce()>(f: F) {
+    let _lock = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let saved_home = std::env::var("HOME").ok();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+    f();
+    if let Some(h) = saved_home {
+        unsafe { std::env::set_var("HOME", h) };
+    } else {
+        unsafe { std::env::remove_var("HOME") };
+    }
+}
+
+fn last_event_line(path: &std::path::Path) -> serde_json::Value {
+    let content = std::fs::read_to_string(path).expect("the events file was written");
+    let last = content.lines().last().expect("at least one line");
+    serde_json::from_str(last).expect("the last line is valid JSON")
+}
+
+fn last_written_event() -> serde_json::Value {
+    let seg = crate::config::current_event_segment_path();
+    let legacy = crate::config::events_path();
+    let path = if seg.exists() { seg } else { legacy };
+    last_event_line(&path)
+}
+
+fn write_event(path: &std::path::Path, event: &str, ts: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    let record = serde_json::json!({"ts": ts, "event": event});
+    writeln!(file, "{}", record).unwrap();
+}
+
+fn write_cost_event(path: &std::path::Path, ts: &str, agent: &str, cost: f64) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    let record = serde_json::json!({
+        "ts": ts,
+        "event": "ai_cost",
+        "agent_name": agent,
+        "cost": {"total_cost_usd": cost},
+        "pricing_source": "Known"
+    });
+    writeln!(file, "{}", record).unwrap();
+}
+
+#[test]
+fn segments_enumerate_legacy_first() {
+    with_test_home(|| {
+        let legacy = crate::config::events_path();
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        // Write legacy file
+        write_event(&legacy, "test", "2024-01-01T00:00:00+00:00");
+        // Write two dated segments
+        let seg1 = events_dir.join("events-20240115.jsonl");
+        let seg2 = events_dir.join("events-20240116.jsonl");
+        write_event(&seg1, "test", "2024-01-15T00:00:00+00:00");
+        write_event(&seg2, "test", "2024-01-16T00:00:00+00:00");
+
+        let paths = event_segment_paths_between(None, None);
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0].file_name().unwrap(), "events.jsonl");
+        assert_eq!(paths[1].file_name().unwrap(), "events-20240115.jsonl");
+        assert_eq!(paths[2].file_name().unwrap(), "events-20240116.jsonl");
+    });
+}
+
+#[test]
+fn segments_window_excludes_out_of_range() {
+    with_test_home(|| {
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        // Three dated segments
+        let seg1 = events_dir.join("events-20240114.jsonl");
+        let seg2 = events_dir.join("events-20240115.jsonl");
+        let seg3 = events_dir.join("events-20240116.jsonl");
+
+        // seg2 has a line whose ts is inside the window but seg1/seg3 are outside
+        write_cost_event(&seg1, "2024-01-14T12:00:00+00:00", "a", 1.0);
+        write_cost_event(&seg2, "2024-01-15T12:00:00+00:00", "b", 2.0);
+        write_cost_event(&seg3, "2024-01-16T12:00:00+00:00", "c", 3.0);
+
+        // Window covering only Jan 15
+        let from = chrono::NaiveDate::from_ymd_opt(2024, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let to = from + chrono::Duration::days(1);
+
+        let paths = event_segment_paths_between(Some(from), Some(to));
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].file_name().unwrap(), "events-20240115.jsonl");
+    });
+}
+
+#[test]
+fn for_each_streams_across_segments_in_order() {
+    with_test_home(|| {
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        let seg1 = events_dir.join("events-20240115.jsonl");
+        let seg2 = events_dir.join("events-20240116.jsonl");
+        write_event(&seg1, "first", "2024-01-15T00:00:00+00:00");
+        write_event(&seg2, "second", "2024-01-16T00:00:00+00:00");
+
+        let mut events = Vec::new();
+        for_each_event_between(None, None, &mut |v| {
+            events.push(v.get("event").unwrap().as_str().unwrap().to_string());
+        });
+
+        assert_eq!(events, vec!["first", "second"]);
+    });
+}
+
+#[test]
+fn for_each_skips_unparseable_lines() {
+    with_test_home(|| {
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        let seg = events_dir.join("events-20240115.jsonl");
+        // Write a valid line, a garbage line, then another valid line
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&seg)
+            .unwrap();
+        writeln!(
+            file,
+            "{{\"ts\": \"2024-01-15T00:00:00+00:00\", \"event\": \"good1\"}}"
+        )
+        .unwrap();
+        writeln!(file, "THIS IS NOT JSON").unwrap();
+        writeln!(
+            file,
+            "{{\"ts\": \"2024-01-15T01:00:00+00:00\", \"event\": \"good2\"}}"
+        )
+        .unwrap();
+
+        let mut events = Vec::new();
+        for_each_event_between(None, None, &mut |v| {
+            events.push(v.get("event").unwrap().as_str().unwrap().to_string());
+        });
+
+        assert_eq!(events, vec!["good1", "good2"]);
+    });
+}
+
+#[test]
+fn sum_cost_between_spans_segments() {
+    with_test_home(|| {
+        let legacy = crate::config::events_path();
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        // Legacy file has a cost event
+        write_cost_event(&legacy, "2024-01-14T12:00:00+00:00", "agent-a", 1.5);
+        // Dated segment has a cost event
+        let seg = events_dir.join("events-20240115.jsonl");
+        write_cost_event(&seg, "2024-01-15T12:00:00+00:00", "agent-b", 2.5);
+
+        let from = chrono::NaiveDate::from_ymd_opt(2024, 1, 14)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+        let to = chrono::NaiveDate::from_ymd_opt(2024, 1, 16)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        let summary = sum_cost_between(from, to);
+        assert!((summary.total_cost_usd - 4.0).abs() < f64::EPSILON);
+        assert_eq!(summary.call_count, 2);
+        assert_eq!(summary.by_agent.len(), 2);
+    });
+}
+
+#[test]
+fn sweep_deletes_only_expired_segments() {
+    with_test_home(|| {
+        let events_dir = crate::config::events_dir();
+        let _ = std::fs::create_dir_all(&events_dir);
+
+        let today = chrono::Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(100);
+        let recent_date = today - chrono::Duration::days(5);
+
+        let old_seg = events_dir.join(format!("events-{}.jsonl", old_date.format("%Y%m%d")));
+        let recent_seg = events_dir.join(format!("events-{}.jsonl", recent_date.format("%Y%m%d")));
+        let legacy = crate::config::events_path();
+
+        write_event(&old_seg, "old", "2020-01-01T00:00:00+00:00");
+        write_event(&recent_seg, "recent", "2024-06-01T00:00:00+00:00");
+        write_event(&legacy, "legacy", "2019-01-01T00:00:00+00:00");
+
+        // retention_days = 90: old_seg should be deleted, recent_seg and legacy kept
+        sweep_event_segments(90);
+        assert!(!old_seg.exists());
+        assert!(recent_seg.exists());
+        assert!(legacy.exists());
+
+        // retention_days = 0: no-op
+        let old_seg2 = events_dir.join(format!("events-{}.jsonl", old_date.format("%Y%m%d")));
+        write_event(&old_seg2, "old2", "2020-01-01T00:00:00+00:00");
+        sweep_event_segments(0);
+        assert!(old_seg2.exists());
+    });
+}
+
+#[test]
+fn log_event_writes_today_segment() {
+    with_test_home(|| {
+        log_event("test_event", serde_json::json!({"key": "value"}));
+
+        let seg = crate::config::current_event_segment_path();
+        assert!(seg.exists());
+
+        // Legacy file should NOT have been created
+        let legacy = crate::config::events_path();
+        assert!(!legacy.exists());
+
+        // Verify content
+        let content = std::fs::read_to_string(&seg).unwrap();
+        let line = content.lines().next().unwrap();
+        let value: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(value["event"], "test_event");
+        assert_eq!(value["key"], "value");
+        assert!(value.get("ts").is_some());
+    });
+}
+
+#[test]
+fn log_event_stamps_emitting_pid() {
+    with_test_home(|| {
+        log_event("pid_test", serde_json::json!({}));
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap();
+        let line = content.lines().next().unwrap();
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(record["pid"], serde_json::Value::from(std::process::id()));
+    });
+}
+
+#[test]
+fn log_event_always_stamps_ts_event_and_pid() {
+    with_test_home(|| {
+        log_event("presence_test", serde_json::json!({"custom": "val"}));
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap();
+        let line = content.lines().next().unwrap();
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        // Presence, not position: serde_json::Map is a BTreeMap here
+        // (no `preserve_order`), so serialized key order is alphabetical
+        // and insertion order is not observable in the output.
+        assert!(record.get("ts").is_some(), "ts missing");
+        assert!(record.get("event").is_some(), "event missing");
+        assert!(record.get("pid").is_some(), "pid missing");
+        assert_eq!(record["event"], "presence_test");
+        assert_eq!(record["custom"], "val");
+    });
+}
+
+#[test]
+fn log_event_caller_pid_overrides_stamp() {
+    with_test_home(|| {
+        log_event("override_test", serde_json::json!({"pid": 999_999}));
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap();
+        let line = content.lines().next().unwrap();
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(record["pid"], 999_999);
+    });
+}
+
+#[test]
+fn test_log_event_masks_caller_fields() {
+    with_test_home(|| {
+        let canary = "AKIAIOSFODNN7EXAMPLE";
+        log_event(
+            "mask_test",
+            serde_json::json!({
+                "top_level": canary,
+                "nested": { "inner": canary },
+                "arr": [canary]
+            }),
+        );
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap();
+        let line = content.lines().next().unwrap();
+        // All canary instances replaced
+        assert!(
+            line.contains("<AWS_KEY>"),
+            "expected masked value in: {line}"
+        );
+        assert!(!line.contains(canary), "canary still present in: {line}");
+        // Line still parses as valid JSON with daemon fields
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert!(record.get("ts").is_some(), "ts missing");
+        assert!(record.get("event").is_some(), "event missing");
+        assert!(record.get("pid").is_some(), "pid missing");
+    });
+}
+
+#[test]
+fn test_log_event_leaves_daemon_fields_and_numbers() {
+    with_test_home(|| {
+        log_event(
+            "numbers_test",
+            serde_json::json!({
+                "prompt_tokens": 123,
+                "label": "safe"
+            }),
+        );
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap();
+        let line = content.lines().next().unwrap();
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(record["event"], "numbers_test");
+        assert_eq!(record["prompt_tokens"], 123);
+        assert_eq!(record["label"], "safe");
+    });
+}
+
+#[test]
+fn sweeping_a_segment_removes_its_events_rows() {
+    let _lock = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_home = std::env::var("HOME").ok();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    let events_dir = crate::config::events_dir();
+    std::fs::create_dir_all(&events_dir).unwrap();
+
+    let seg_name = "events-20260101";
+    let seg_path = events_dir.join(format!("{}.jsonl", seg_name));
+    write_event(
+        &seg_path,
+        "unique sweep event target",
+        "2026-01-01T00:00:00Z",
+    );
+
+    crate::memory::index::index_event_segment(seg_name).unwrap();
+
+    let conn = crate::memory::index::open_index().unwrap();
+    let events_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events WHERE events MATCH 'unique sweep event'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(events_count, 1, "events should be indexed before sweep");
+
+    let map_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events_map WHERE segment = ?1",
+            (seg_name,),
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(map_count, 1, "events_map should have a row before sweep");
+
+    sweep_event_segments(14);
+
+    assert!(!seg_path.exists(), "expired segment should be deleted");
+
+    let conn = crate::memory::index::open_index().unwrap();
+    let events_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events WHERE events MATCH 'unique sweep event'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        events_count, 0,
+        "events FTS rows should be removed after sweep"
+    );
+
+    let map_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events_map WHERE segment = ?1",
+            (seg_name,),
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        map_count, 0,
+        "events_map rows should be removed after sweep"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+#[test]
+fn sweeping_a_segment_leaves_other_segments_indexed() {
+    let _lock = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_home = std::env::var("HOME").ok();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    let events_dir = crate::config::events_dir();
+    std::fs::create_dir_all(&events_dir).unwrap();
+
+    // Relative dates keep the test independent of the wall clock: `old`
+    // is > retention and `new` is recent, so only `old` is swept no
+    // matter what the machine's date is.
+    let today = chrono::Utc::now().date_naive();
+    let old = (today - chrono::Duration::days(100)).format("%Y%m%d");
+    let new = (today - chrono::Duration::days(2)).format("%Y%m%d");
+
+    let seg_path_old = events_dir.join(format!("events-{old}.jsonl"));
+    write_event(
+        &seg_path_old,
+        "old segment alpha event",
+        "2026-01-01T00:00:00Z",
+    );
+    crate::memory::index::index_event_segment(&format!("events-{old}")).unwrap();
+
+    let seg_path_new = events_dir.join(format!("events-{new}.jsonl"));
+    write_event(
+        &seg_path_new,
+        "new segment beta event",
+        "2026-08-03T00:00:00Z",
+    );
+    crate::memory::index::index_event_segment(&format!("events-{new}")).unwrap();
+
+    sweep_event_segments(14);
+
+    assert!(!seg_path_old.exists(), "old segment should be deleted");
+    let conn = crate::memory::index::open_index().unwrap();
+    let old_events: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events WHERE events MATCH 'old segment alpha'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(old_events, 0, "old events should be removed");
+
+    assert!(seg_path_new.exists(), "new segment should survive");
+    let new_events: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events WHERE events MATCH 'new segment beta'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(new_events, 1, "new events should survive");
+
+    let new_map: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events_map WHERE segment = ?1",
+            (format!("events-{new}"),),
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(new_map, 1, "new map rows should survive");
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+#[test]
+fn sweep_event_segments_zero_retention_removes_nothing() {
+    let _lock = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_home = std::env::var("HOME").ok();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    let events_dir = crate::config::events_dir();
+    std::fs::create_dir_all(&events_dir).unwrap();
+
+    let seg_path = events_dir.join("events-20260101.jsonl");
+    write_event(&seg_path, "zero retention event", "2026-01-01T00:00:00Z");
+    crate::memory::index::index_event_segment("events-20260101").unwrap();
+
+    sweep_event_segments(0);
+
+    assert!(
+        seg_path.exists(),
+        "segment should survive with retention_days=0"
+    );
+
+    let conn = crate::memory::index::open_index().unwrap();
+    let events_count: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM events WHERE events MATCH 'zero retention'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        events_count, 1,
+        "events should survive with retention_days=0"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+#[test]
+fn sweep_event_segments_survives_unwritable_index() {
+    let _lock = crate::test_home_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let old_home = std::env::var("HOME").ok();
+    unsafe { std::env::set_var("HOME", tmp.path()) };
+
+    let events_dir = crate::config::events_dir();
+    std::fs::create_dir_all(&events_dir).unwrap();
+
+    let seg_path = events_dir.join("events-20260101.jsonl");
+    write_event(&seg_path, "unwritable event sweep", "2026-01-01T00:00:00Z");
+    crate::memory::index::index_event_segment("events-20260101").unwrap();
+
+    let index_path = crate::config::memory_index_path();
+    let index_dir = index_path.parent().unwrap();
+    let original_perms = std::fs::metadata(index_dir).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(index_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    sweep_event_segments(14);
+
+    assert!(
+        !seg_path.exists(),
+        "segment should be deleted even when index is unwritable"
+    );
+
+    std::fs::set_permissions(index_dir, original_perms).unwrap();
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+#[test]
+fn log_shell_command_writes_the_exit_code() {
+    with_test_home(|| {
+        log_shell_command(
+            Some("sess-1"),
+            "s0",
+            true,
+            "printf 'HELLO\n'; exit 3",
+            "approved",
+            3,
+            "body line one\nbody line two",
+        );
+        let record = last_written_event();
+        assert_eq!(record["event"], "command", "event kind");
+        assert_eq!(record["mode"], "shell", "mode marks the shell substrate");
+        assert_eq!(record["pane"], "s0", "pane carries the shell id");
+        assert_eq!(record["wait"], true, "the call was a waited run");
+        assert_eq!(record["shell"], "s0", "shell carries the shell id");
+        assert_eq!(record["exit"], 3, "the real exit code");
+        assert_eq!(
+            record["out"], "body line one body line two",
+            "the excerpt folds newlines like log_command"
+        );
+        assert_eq!(record["cmd"], "printf 'HELLO '; exit 3");
+    });
+}
+
+#[test]
+fn log_shell_command_records_wait_and_shell() {
+    with_test_home(|| {
+        log_shell_command(Some("sess-1"), "s3", false, "cmd", "approved", 0, "out");
+        let record = last_written_event();
+        assert_eq!(record["event"], "command", "event kind");
+        assert_eq!(record["wait"], false, "wait: false run");
+        assert_eq!(record["shell"], "s3", "shell carries the shell id");
+        assert_eq!(record["mode"], "shell", "mode marks the shell substrate");
+        assert_eq!(record["pane"], "s3", "pane kept for existing readers");
+    });
+}
+
+#[test]
+fn log_command_derives_wait_from_mode() {
+    with_test_home(|| {
+        log_command(Some("sess-1"), "foreground", "", "cmd", "denied", "out");
+        let record = last_written_event();
+        assert_eq!(record["wait"], true, "foreground is a waited decision");
+        assert_eq!(record["shell"], serde_json::Value::Null);
+        assert_eq!(record["mode"], "foreground");
+        assert_eq!(record["pane"], "");
+
+        log_command(Some("sess-1"), "background", "h1", "cmd", "approved", "out");
+        let record = last_written_event();
+        assert_eq!(record["wait"], false, "background is wait: false");
+        assert_eq!(record["shell"], serde_json::Value::Null);
+        assert_eq!(record["mode"], "background");
+        assert_eq!(record["pane"], "h1");
+
+        log_command(Some("sess-1"), "other", "", "cmd", "denied", "out");
+        let record = last_written_event();
+        assert_eq!(record["wait"], serde_json::Value::Null, "unknown mode");
+        assert_eq!(record["shell"], serde_json::Value::Null);
+        assert_eq!(record["mode"], "other");
+        assert_eq!(record["pane"], "");
+    });
+}
+
+#[test]
+fn log_shell_command_truncates_the_excerpt_at_200_chars() {
+    with_test_home(|| {
+        let long = "x".repeat(300);
+        log_shell_command(Some("sess-1"), "s1", true, "cmd", "approved", 0, &long);
+        let record = last_written_event();
+        assert_eq!(record["out"].as_str().unwrap().chars().count(), 200);
+    });
+}
