@@ -1,6 +1,6 @@
 # Phase 06 — Move `run_daemon` out of `daemon/mod.rs`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -191,3 +191,138 @@ warnings/errors (grep -c over its output: 0). Acceptance criteria checked:
 `cargo test --test hygiene` ok; E2E `lost_other=0 added_other=0`;
 `cargo test` passes with exactly 2586 passing, 0 failed.
 
+### Update — 2026-10-26 16:19 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Moved `run_daemon` (598 lines), `tmux_wanted`, `startup_session` and the `startup_session_tests` module from `src/daemon/mod.rs` (901 lines) to a new `src/daemon/startup.rs` (672 lines), leaving `mod.rs` at 617 lines — under the 800 cap — with `pub use startup::run_daemon;` preserving the public path, so `src/main.rs` is untouched. The cut script ran as written with anchors matching the spec exactly (`S=270 T=930`); `cargo fix --lib` pruned the imports on both sides, and the allowlist edit, CLAUDE.md row, and Findings entry (six pieces of shared state crossing sections, the four `supervise` blocks as the natural seam for the later split) are all in place. E2E verification ran the phase doc's block byte-exact and passed on the second run — the first run caught `added_other=1` because I had written `pub mod startup;` where the spec pins `mod startup;` (nothing external uses the module; the re-export and the `crate::daemon::startup::tmux_wanted` test import both work with a private sibling), fixed and re-verified: `lost_other=0`, `added_other=0`, hygiene `ok.` (16 passed), clippy zero warnings, `fmt_exit=0`, and `cargo test` passes with exactly 2586 passing / 0 failed. One deviation to note: `cargo fix` left `mod.rs` at 617 lines rather than the dry run's 619 (it pruned one import more), which the spec explicitly permits; status is left `in-progress` per the contract, and the working tree is clean with everything in commit `e8718e00`.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+.. ok
+test functions_in_a_test_module_are_not_measured ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g6_agent_config_roundtrip ... ok
+test event_log_append_read ... ok
+test g6_agent_namespace_field_persisted ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (829291): No such process
+kill: (-829987): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-06-daemon-startup.md` — +74 -1
+- `src/daemon/mod.rs` — +3 -0
+- `src/daemon/startup.rs` — +2 -3
+- `tests/hygiene_allowlist.txt` — +1 -2
+
+**Commit:** e8718e007fd040e30c3c9cc6ed6ab6cb858f5a83
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
