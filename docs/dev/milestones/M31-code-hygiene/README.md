@@ -136,7 +136,7 @@ Expected count: 12–14. Each may split at drafting.
 | 02 | test-siblings-1 ([phase-02-test-siblings-1.md](phase-02-test-siblings-1.md)) — eight files' inline `mod tests` move to sibling `*_tests.rs` files by shell range cut; same test inventory, same pass count | done |
 | 03 | test-siblings-2 ([phase-03-test-siblings-2.md](phase-03-test-siblings-2.md)) — seven more inline test modules to sibling files (`registry`, `log`, `file_ops/read`, `utils/mod`, `search`, `event_log`, `scheduled`); same inventory, same pass count | done |
 | 04 | config-split ([phase-04-config-split.md](phase-04-config-split.md)) — `config/types.rs` (1466) into `types`, `sandbox`, `shells` and `models` by whole section; the first group-2 split | done |
-| 05 | handlers-split ([phase-05-handlers-split.md](phase-05-handlers-split.md)) — the five named-session handlers leave `server/handlers.rs` (877) for a new `server/sessions.rs` | todo |
+| 05 | handlers-split ([phase-05-handlers-split.md](phase-05-handlers-split.md)) — the five named-session handlers leave `server/handlers.rs` (877) for a new `server/sessions.rs` | in-progress |
 
 ## Notes
 

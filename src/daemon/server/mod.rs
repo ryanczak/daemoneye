@@ -6,6 +6,7 @@ mod ask;
 mod catchup;
 mod chat_presence;
 mod handlers;
+mod sessions;
 mod shells;
 
 // Re-exported for the webhook side's presence-push test (M27 phase 03b): the
@@ -15,6 +16,7 @@ pub(crate) use chat_presence::handle_chat_attach;
 
 use ask::handle_ask;
 use handlers::*;
+use sessions::*;
 
 use crate::config::Config;
 use crate::daemon::session::*;

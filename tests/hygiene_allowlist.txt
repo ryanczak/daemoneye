@@ -24,7 +24,6 @@ file src/daemon/executor/mod.rs 2121
 file src/daemon/executor/shell_exec.rs 1129
 file src/daemon/ghost.rs 1677
 file src/daemon/mod.rs 901
-file src/daemon/server/handlers.rs 877
 file src/daemon/stream.rs 1613
 file src/ipc.rs 966
 file src/memory/index/mod.rs 1135
