@@ -7,9 +7,9 @@ exemptions and the plan, and [`FINDINGS.md`](milestones/M31-code-hygiene/FINDING
 for the bug and optimisation audit every phase reports into. MCP surface
 is now M32, Knowledge M33.
 
-**Active phase:** [phase-02-test-siblings-1](milestones/M31-code-hygiene/phase-02-test-siblings-1.md)
-— todo. Eight inline test modules move to sibling files. Phase 01 (the
-gate) is done; the allowlist holds 66 entries.
+**Active phase:** [phase-03-test-siblings-2](milestones/M31-code-hygiene/phase-03-test-siblings-2.md)
+— todo. Seven more inline test modules move to sibling files. Phases 01
+(the gate) and 02 (the first eight moves) are done.
 
 M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M32 (MCP surface) and M33
