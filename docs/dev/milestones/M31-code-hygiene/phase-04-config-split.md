@@ -230,7 +230,9 @@ alone:
   decision 5 does, never resets the counter, so this run was "read-only"
   from turn 1 to turn 120 although it had cut every file. Phases 02 and
   03 survived only because their Update Log writes went through a
-  `Write` tool. Raised to the PE as a rexyMCP issue.
+  `Write` tool. Tracked as rexyMCP issue #14
+  (https://github.com/ryanczak/rexyMCP/issues/14), where the M31 evidence
+  was added 2026-10-26.
 - **Architect error: the End-to-end block was locale-unsafe.** `sort`
   and `comm` disagree under the host locale ("file 1 is not in sorted
   order"), so the multiset check printed false losses. The executor found
