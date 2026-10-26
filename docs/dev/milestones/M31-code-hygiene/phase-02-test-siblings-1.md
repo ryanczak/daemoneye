@@ -1,6 +1,6 @@
 # Phase 02 — Test modules to sibling files, batch 1
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-25
 
@@ -138,3 +138,12 @@ place of `HEAD`.)
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-25 23:50 (started, executor: Claude Opus 4.6)
+
+Pre-flight confirmed: all four gates green at HEAD `c4467208`; the eight
+target files each end in exactly one `mod tests {` whose `#[cfg(test)]` is
+the file's last-but-one `#[cfg(test)]` line; none of the eight siblings
+exists yet; `src/ipc.rs` / `src/ipc_tests.rs` taken as the convention
+reference. Test inventory captured to `/tmp/m31-02-before.txt` (2599 test
+lines). Beginning the eight moves.
