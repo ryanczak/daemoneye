@@ -10,7 +10,6 @@
 
 file src/ai/tools/defs.rs 1398
 file src/cli/commands/chat.rs 1147
-file src/cli/commands/slash.rs 958
 file src/cli/commands/stream.rs 1520
 file src/cli/commands/top.rs 1394
 file src/cli/commands/top_tui.rs 1050
@@ -37,7 +36,7 @@ fn src/cli/commands/chat.rs read_input_line_inner_ratatui 183
 fn src/cli/commands/chat.rs run_chat_ratatui 500
 fn src/cli/commands/costs.rs aggregate_costs 159
 fn src/cli/commands/setup.rs run_setup 256
-fn src/cli/commands/slash.rs cmd_session 155
+fn src/cli/commands/slash_session.rs cmd_session 155
 fn src/cli/commands/stream.rs ask_with_session_ratatui 673
 fn src/cli/commands/top.rs activity_row_in 163
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219

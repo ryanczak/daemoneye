@@ -1,6 +1,6 @@
 # Phase 08 — Move the `/session` and `/runs` commands out of `slash.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -110,3 +110,67 @@ clippy clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-26 17:24 — started (executor 7f0a)
+
+Status flipped to in-progress in this doc and in the milestone README phase
+table. Beginning the cut: running the spec's shell sequence as written, then
+the four `pub(super)` edits, the allowlist and CLAUDE.md edits, findings, and
+the end-to-end block.
+
+### Update — 2026-10-26 17:26 (cuts done)
+
+Ran the spec's shell sequence as written: `S=768 T=959` matched the expected
+markers exactly. `sed -n '768,957p'` (lines between the `// ── /session ──`
+banner and the `#[cfg(test)]` header) was redirected through the temp file
+into the new `src/cli/commands/slash_session.rs`, headed with the `//!`
+module doc and `use super::*;`; `head -n 767` + the three-line module
+declaration + `tail -n +959` were redirected into `slash.rs` via `slash.rs.tmp`
+and `mv`. No in-place edit of a source file — the rewrite went through a temp
+file and `mv`, per the spec's note. Result: `slash.rs` 1281 lines,
+`slash_session.rs` 194 lines. The moved block is byte-identical to the source
+range (verified below in the end-to-end `lost_other=0 added_other=0` check).
+
+### Findings — 2026-10-26
+
+Read the whole of the moved section once (`cmd_session` lines 8–160 and the
+three short `/runs` `/run` `/stop` functions of the new
+`slash_session.rs`). Four findings, all in `cmd_session`'s load arm or
+cosmetic elsewhere; nothing acted on, per decision 6.
+
+1. `src/cli/commands/slash_session.rs` · `cmd_session`, `"load" | "resume"`
+   arm — **bug, minor.** After the daemon replies `SessionLoaded` (having put
+   only `sessions.load_recent_turns` messages — default 10 — into its store),
+   the client rehydrates its transcript from
+   `session_store::load_session_messages(&name, usize::MAX)`, i.e. the full
+   history. Two consequences: (a) the displayed transcript shows turns the
+   model's context does not contain, while the adjacent
+   `✓ loaded '{name}' ({message_count} messages)` note prints the truncated
+   daemon-side count, so the two numbers on screen can disagree (same family
+   as finding 13 of phase 05, banner counts); (b) the rehydrate reads the
+   session file on the **client's** filesystem — on a client that is not the
+   daemon's host the file is absent, `load_session_messages` returns `Ok([])`,
+   the current transcript is cleared and replaced by a lone
+   `rehydrated 0 blocks from session '<name>'` line, silently destroying the
+   visible conversation of a load the daemon actually performed.
+
+2. `src/cli/commands/slash_session.rs` · `cmd_session` load arm — **smell,
+   nit.** `ctx.transcript.clear()` followed by `for block in blocks {
+   ctx.transcript.push(block); }` is a clear-then-push loop; `extend` says it
+   directly.
+
+3. `src/cli/commands/slash_session.rs` · `cmd_session` — **smell, nit.** The
+   six `match sub` arms repeat the same
+   `request_once → Ok(expected) / Ok(other) → render_error / Err → note`
+   triple. The natural seams for the later split are one function per
+   subcommand (`session_help`, `session_list`, `session_save`,
+   `session_load`, `session_delete`, `session_rename`), plus a
+   `rehydrate_transcript(ctx, name)` for the load arm's tail, which is the
+   largest single piece (~45 lines). The arms' shared shape means each
+   sub-function is 15–45 lines, well under the 150-line cap, and the match
+   body reduces to dispatch.
+
+4. `src/cli/commands/slash_session.rs` · `cmd_stop` — **smell, nit.** Discards
+   the sentinel `PathBuf` that `daemon::run::request_stop` returns;
+   `daemoneye stop <run>` (`cli/commands/lifecycle.rs` `run_stop_run`) prints
+   it. Parity only — the slash command's shorter note is deliberate-looking.
