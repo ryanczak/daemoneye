@@ -57,6 +57,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 | `src/shell/sbx_backend.rs` | `SbxBackend`: a shell host whose child is `sbx exec`, routing STOP/CONT/close into the VM and sending INT/TERM as a PTY `^C` |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
+| `src/daemon/context/epoch_extract.rs` | `extract_memories_from_epoch()`, best-effort memory extraction from a finished epoch; a child module of `context/epochs.rs`, re-exported from it |
 | `src/daemon/ghost.rs` | `GhostManager::start_session()` — autonomous remediation runs headless in the daemon; briefing generation on clean exit |
 | `src/daemon/briefing.rs` | G4 briefing generation: `generate_and_save_briefing()`, `read_briefing()`, `clear_briefing()`; AI summarization + masking + file I/O |
 | `src/daemon/policy.rs` | `GhostPolicy` — runtime enforcement of `auto_approve_scripts` / `auto_approve_read_only` for ghost shells |

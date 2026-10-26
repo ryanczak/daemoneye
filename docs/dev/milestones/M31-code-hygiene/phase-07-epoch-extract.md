@@ -1,6 +1,6 @@
 # Phase 07 — Move memory extraction out of `context/epochs.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -111,3 +111,53 @@ clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-26 09:42 (cuts done)
+
+**By:** executor (phase-07 run)
+
+Ran the spec's cut script as written. Output `S=747 T=841` (matched the
+expected values). Resulting line counts: `src/daemon/context/epochs.rs` 1799,
+`src/daemon/context/epoch_extract.rs` 97. `epochs.rs` now ends its production
+section with the five-line child-module declaration:
+
+```rust
+#[path = "epoch_extract.rs"]
+mod extract;
+pub use extract::extract_memories_from_epoch;
+#[cfg(test)]
+use extract::apply_extraction;
+```
+
+`epoch_extract.rs` carries the module doc comment, `use super::*;`, and the
+moved `extract_memories_from_epoch` / `apply_extraction` / `ExtractedFact`:
+all three moved byte-identical (the E2E block's `lost_other`/`added_other`
+checks below confirm). Then, with the patch tool, `fn apply_extraction(`
+became `pub(super) fn apply_extraction(` — the single edit spec step 3
+authorizes.
+
+### Findings — 2026-10-26
+
+Read the moved 95-line section (747–841 of the pre-cut file) as it landed in
+`epoch_extract.rs` (decision 7):
+
+1. **`apply_extraction` swallows `add_memory` failures silently.** The
+   `if crate::memory::add_memory(...).is_ok() { count += 1; }` shape means a
+   failed write simply doesn't count; `extract_memories_from_epoch` then
+   reports only the successes, so a disk-full or index failure is invisible
+   except through whatever `add_memory` logs internally. Same for the
+   `read_memory(...).is_ok() { continue; }` create-if-absent check — that one
+   is by design (a `read` error is treated as "absent", overwriting nothing).
+   Best-effort is the documented contract ("never blocks or fails the epoch
+   build"), so this is a smell, not a bug — but a `log::debug!` on the
+   `add_memory` error branch would make the count honest.
+2. **`_session_id` and `_epoch_seq` are accepted and dropped.** The signature
+   takes them for the `memory_extracted` log event, but the event only fires
+   in the caller, so they are unused inside `apply_extraction`. Fine as is;
+   noted in case the extraction path later needs per-fact provenance.
+3. **The strict-JSON contract is enforced only by `facts.len() > 3`.** A model
+   returning a JSON object instead of an array fails deserialization (logged
+   at debug and returns 0) — correct. A model returning 4+ facts skips all of
+   them, also correct per the prompt ("0 to 3 facts"). No parsing surprises.
+
+Nothing here warrants a change inside the moved functions (out of scope);
+finding 1 is the only one worth carrying.
