@@ -18,3 +18,5 @@ the architect's, with the PE's say on `major` and above.
 | 5 | 02 | PTY tests in `shell/{backend,client,session}_tests.rs`, `server/shells_tests.rs` | perf | minor | 50+ wall-clock deadline poll loops (10–50 ms) waiting on real output | defer: a test-speed pass after M31 |
 | 6 | 02 | `client_tests.rs` (3.3 s of sleeps), `backend_tests.rs` (2 × 300 ms after `Int`) | perf | nit | bare sleeps; the client one is semantic (a pause must outlast a deadline) | defer: with #5 |
 | 7 | 02 | `ai/tools/dispatch_tests.rs` | smell | nit | 1295 lines in banner-delimited sections that would read better split | reject: under the 2000-line cap; revisit only if it grows |
+| 8 | 03 | `search_tests.rs` · `static COUNTER: AtomicU64` | smell | nit | hand-rolled unique temp-dir names, same family as #4 | act: with #4, one shared test-helper phase |
+| 9 | 03 | `scheduled_tests.rs` · `presence_count` expectations | smell | nit | two tests recompute expected counts inline | reject: two sites, a helper would not pay for itself |
