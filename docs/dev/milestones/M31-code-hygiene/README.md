@@ -139,7 +139,7 @@ Expected count: 12–14. Each may split at drafting.
 | 05 | handlers-split ([phase-05-handlers-split.md](phase-05-handlers-split.md)) — the five named-session handlers leave `server/handlers.rs` (877) for a new `server/sessions.rs` | done |
 | 06 | daemon-startup ([phase-06-daemon-startup.md](phase-06-daemon-startup.md)) — `run_daemon` and its two startup helpers leave `daemon/mod.rs` (901) for a new `daemon/startup.rs`, re-exported | done |
 | 07 | epoch-extract ([phase-07-epoch-extract.md](phase-07-epoch-extract.md)) — memory extraction leaves `context/epochs.rs` (840) for a child module `epoch_extract.rs`, re-exported | done |
-| 08 | slash-session ([phase-08-slash-session.md](phase-08-slash-session.md)) — the `/session` and `/runs` commands leave `cli/commands/slash.rs` (958) for a child module `slash_session.rs` | review      |
+| 08 | slash-session ([phase-08-slash-session.md](phase-08-slash-session.md)) — the `/session` and `/runs` commands leave `cli/commands/slash.rs` (958) for a child module `slash_session.rs` | done |
 
 ## Notes
 

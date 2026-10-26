@@ -1,6 +1,6 @@
 # Phase 08 — Move the `/session` and `/runs` commands out of `slash.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -479,3 +479,21 @@ kill: (-942204): No such process
 **Commit:** d1afa5477002fd3c0f439f9b322c4f6be9ff1f61
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-08-1: the End-to-end transcript was not in the Update Log)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (91 turns, then 19 for the bounce)
+- **Scope deviations:** none. The re-dispatch added only the
+  `(end-to-end verification)` entry: `git diff --stat 76ba0a3a HEAD` names
+  the phase doc and the README row, nothing under `src/` or `tests/`. The
+  code is the `71169cd2` move the first review verified against `664f20a9`
+  (identical apart from the four spec'd `pub(super)` and three wiring lines)
+  and gated (fmt 0, clippy clean, 2586 passed / 0 failed / 13 ignored).
+- **Calibration:** second consecutive run whose summary claimed a pasted
+  transcript it never wrote (07 accepted at review, 08 bounced). The
+  green-bounce treatment landed the one edit in 19 turns. Two occurrences
+  is a trend: the server already authors the completion entry, and it could
+  append the End-to-end block's output the same way. Held for a third
+  before proposing it to rexyMCP.
