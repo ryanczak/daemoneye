@@ -1,6 +1,6 @@
 # Phase 08 — Move the `/session` and `/runs` commands out of `slash.rs`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -174,3 +174,139 @@ cosmetic elsewhere; nothing acted on, per decision 6.
    the sentinel `PathBuf` that `daemon::run::request_stop` returns;
    `daemoneye stop <run>` (`cli/commands/lifecycle.rs` `run_stop_run`) prints
    it. Parity only — the slash command's shorter note is deliberate-looking.
+
+### Update — 2026-10-26 17:35 (complete, server-authored)
+
+**Summary:** All spec tasks are complete and the tree is clean.
+
+**Summary:** Executed the spec's shell cut as written (S=768, T=959, matching the expected markers exactly): the `/session` section and the `/runs`, `/run`, `/stop` section moved byte-identical into the new `src/cli/commands/slash_session.rs` (194 lines) via temp-file redirect and `mv`, leaving `slash.rs` at 1281 lines with a `#[path = "slash_session.rs"]` child module and a `use session::{cmd_run, cmd_runs, cmd_session, cmd_stop}` import. The four moved functions gained `pub(super)` via patch edits, the allowlist dropped `file …/slash.rs 958` and repointed `fn … cmd_session 155` to the new file, and CLAUDE.md's Key files table gained the `slash_session.rs` row. End-to-end block ran clean and is pasted verbatim into the Update Log: `1281`/`194` line counts, `allowlisted=0 fn_moved=1`, `lost_other=0`, `added_other=0`, hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0` — the exact 2586-test preservation target. Findings entry written: one minor bug (the load arm's transcript rehydrate reads the full session file client-side while the daemon only loads `load_recent_turns` messages into context, and on a remote client a missing file silently clears the transcript to "rehydrated 0 blocks"), plus three nits (clear-then-push loop, the per-subcommand seams for the later `cmd_session` split, `cmd_stop` discarding the sentinel path).
+
+**Notes for review:** No deviations from the spec — the shell sequence produced exactly the dry-run's expected numbers. The moved block landed through `sed -n '768,957p'` redirected into the new file (no in-place edit of a source file; `slash.rs` was rewritten via `slash.rs.tmp` + `mv`). `cargo fmt --all` was run before staging and the commit (`71169cd2`, `refactor:`) contains all six touched files; working tree is clean. Status is left at `in-progress` with no `(complete)` entry, per the lifecycle split.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+t doc_comments_and_attributes_are_not_function_lines ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test function_length_spans_signature_to_closing_brace ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test production_files_fit_the_cap ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (917286): No such process
+kill: (-917994): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-08-slash-session.md` — +65 -1
+- `src/cli/commands/slash_session.rs` — +4 -4
+- `tests/hygiene_allowlist.txt` — +1 -2
+
+**Commit:** 71169cd205efe7cf0929ab366b6807d8c0153580
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
