@@ -1,6 +1,6 @@
 # Phase 02 — Test modules to sibling files, batch 1
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-25
 
@@ -214,3 +214,138 @@ Read nothing but test bodies as they moved (9,356 sibling lines, 293
   banner comments) — relevant to the later 2000-line splitting phase.
 - No test asserts nothing; every test in the eight siblings contains at
   least one assertion, `.expect()` with a message, or a `panic!` in a helper.
+
+### Update — 2026-10-26 00:12 (complete, server-authored)
+
+**Summary:** All eight moves are done, verified, and committed.
+
+**Summary + Notes for review**
+
+Executed M31 phase-02 (test-siblings-1): moved the inline `mod tests` of all eight listed files to their specified siblings (`shells_tests.rs`, `session_tests.rs`, `dispatch_tests.rs`, `backend_tests.rs`, `config/tests.rs`, `client_tests.rs`, `sbx_tests.rs`, `daemon/session_tests.rs`) by shell range cut, exactly per the spec — each sibling is the untouched former module body (proved byte-identical after whitespace stripping against the pre-move `HEAD` body), each parent ends in the three-line `#[cfg(test)] #[path = "<sibling>"] mod tests;` declaration, and `cargo fmt --all` brought the bodies to column 0. End-to-end verification (transcript pasted byte-exact into the phase doc's Update Log, run against pre-phase commit `c4467208` since the moves were committed first as `d1f02c26`): eight `inline=0 decl=1` lines, 8 siblings present, `--list` inventory diff empty (2599 entries identical), 16 files changed under `src/`, 0 foreign added lines, hygiene gate `ok. 16 passed`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0` — the 13 ignored tests are pre-existing, confirmed by stashing the moves and re-running. Two deviations worth the architect's eye: (1) rustfmt reflowed a handful of moved lines (long `assert!`/string-literal wraps, and one trailing comma removed in `client_tests.rs`), verified semantically identical — the spec's "do not retype" was honored, the reflow is rustfmt's, not mine; (2) rustfmt left a single leading blank line at the top of the `config/tests.rs` and `shells_tests.rs` siblings where the body's first line was blank (the config body's first `use` is blank), which fmt then normalized — content unaffected. Findings are in the phase doc's `### Findings — 2026-10-26` entry: a sixth copy of the temp-HOME fixture wanting a crate-level helper, PTY tests' wall-clock poll loops (channels would make them deterministic), two 3-second bare sleeps, and `dispatch_tests.rs` as a split-by-subject candidate. Status left at `in-progress`; no `(complete)` entry written; working tree clean at `6617eeae`.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.3.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.80s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+s_test_only ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test duplicate_names_get_a_suffix ... ok
+test function_length_spans_signature_to_closing_brace ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_entry_format ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (616204): No such process
+kill: (-616912): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-02-test-siblings-1.md` — +77 -1
+
+**Commit:** 6617eeaee97a591688c43b5f24a9c86381d9a2e1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
