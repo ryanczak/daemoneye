@@ -1,6 +1,6 @@
 # Phase 06 — Move `run_daemon` out of `daemon/mod.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -326,3 +326,23 @@ kill: (-829987): No such process
 **Commit:** e8718e007fd040e30c3c9cc6ed6ab6cb858f5a83
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (75 turns, complete)
+- **Scope deviations:** one, accepted. The test-only `tmux_wanted` import
+  went inside `mod.rs`'s `mod tests` (`use crate::daemon::startup::tmux_wanted;`)
+  instead of as a `#[cfg(test)]` import beside the re-export. Same effect,
+  one line. Otherwise the reviewer's diff against `246f8cff`: the moved
+  block is identical apart from the spec'd `pub(super) fn tmux_wanted`, and
+  `mod.rs` differs from the old file minus the block only by five pruned
+  imports, `mod startup;`, the re-export and that test import. Gates
+  re-run: fmt 0, build and clippy clean, 2586 passed / 0 failed / 13 ignored.
+- **Calibration:** the first M31 split to land without a refinement or a
+  takeover, and the fastest phase of the milestone. What changed from 04
+  and 05: a recipe dry-run on a scratch worktree, a temp-file-and-`mv` cut
+  instead of `sed -i`, the cut logged through an edit tool at once, and the
+  multiset check's expected output stated in the doc. The executor's own
+  E2E run caught its one slip (`pub mod startup;`) before reporting.
