@@ -21,3 +21,8 @@ the architect's, with the PE's say on `major` and above.
 | 8 | 03 | `search_tests.rs` · `static COUNTER: AtomicU64` | smell | nit | hand-rolled unique temp-dir names, same family as #4 | act: with #4, one shared test-helper phase |
 | 9 | 03 | `scheduled_tests.rs` · `presence_count` expectations | smell | nit | two tests recompute expected counts inline | reject: two sites, a helper would not pay for itself |
 | 10 | 04 | `types.rs` · `SessionsConfig.auto_name_enabled`, `ApprovalsConfig.commands` | smell | nit | serde names `default_true`, `impl Default` writes a literal `true`; they agree today | defer: a config-defaults tidy after M31 |
+| 11 | 05 | `server/sessions.rs` · `handle_load_session` | bug | minor | an unknown `session_id` makes the write-back a no-op, yet `SessionLoaded` is replied; the client thinks it resumed | defer: with #12, one unknown-session guard for all five handlers, after M31 |
+| 12 | 05 | `server/sessions.rs` · `handle_save_session` | smell | minor | an unknown `session_id` saves an empty session (0 turns, model `default`) instead of an error | defer: with #11 |
+| 13 | 05 | `server/sessions.rs` · `handle_load_session` banner | smell | nit | with `load_recent_turns` set, `turn_count` is the full saved count while `message_count` is the truncated one | defer: with #11 |
+| 14 | 05 | `server/sessions.rs` · `handle_list_saved_sessions`, `handle_rename_saved_session` | perf | nit | one `meta.toml` read per session on list; rename sweeps every store entry | reject: fine at current scale |
+| 15 | 05 | `server/sessions.rs` | smell | nit | `crate::session_store::` full paths beside glob imports | reject: style only |

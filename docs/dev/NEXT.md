@@ -7,9 +7,8 @@ exemptions and the plan, and [`FINDINGS.md`](milestones/M31-code-hygiene/FINDING
 for the bug and optimisation audit every phase reports into. MCP surface
 is now M32, Knowledge M33.
 
-**Active phase:** [phase-05-handlers-split](milestones/M31-code-hygiene/phase-05-handlers-split.md)
-— todo. The named-session handlers move out of `server/handlers.rs`.
-Phases 01–04 are done.
+**Active phase:** none drafted. Phases 01–05 are done. Next:
+`/rexymcp:architect next`.
 
 M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M32 (MCP surface) and M33

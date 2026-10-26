@@ -1,6 +1,6 @@
 # Phase 05 — Move the named-session handlers out of `server/handlers.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -367,3 +367,34 @@ kill: (-753429): No such process
 **Commit:** c2bb982a121e9207055a5fda28c9f27d62d409a2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (120 turns, complete)
+- **Scope deviations:** none in the result. The executor made the cut with
+  `patch_lines` instead of the Spec's `sed -i`, which its contract refuses
+  (see Calibration). The reviewer checked the outcome exactly against the
+  pre-phase commit `7aae2bdd`: `handlers.rs` is the old file with the block
+  and its trailing blank removed, byte for byte, and the block in
+  `sessions.rs` is byte-identical to the old block. The new file keeps 5 of
+  the 16 copied `use` lines; `handlers.rs` keeps all 16. Gates re-run:
+  fmt 0, build and clippy clean, 2586 passed / 0 failed / 13 ignored.
+- **Calibration:**
+  - **Architect error: the recipe used `sed -i`, which the executor's bash
+    classifier refuses** (`Severity::RefuseInPlaceEdit`; phase 04's runs
+    hit it too). The README's decision 5 says "delete the range in place",
+    and phases 02 and 03 only worked because their recipe wrote a temp file
+    and `mv`'d it over the source. Later split recipes rewrite the source
+    as `{ head …; tail …; } > tmp && mv tmp FILE`, never `sed -i`.
+  - The edit-tool log entry did its job: the run wrote through `patch` and
+    `write_file` and finished `complete`, so this run tells nothing new
+    about rexyMCP issue #14.
+  - The executor saw one full-suite run with `passed=2498 failed=1` and
+    did not capture the failing test; two re-runs and the review's run were
+    clean. The low pass count suggests one test binary failed as a whole.
+    Noted; it is chased if it recurs.
+  - The executor's log says both that the import pruning was a no-op and
+    that `sessions.rs` kept 6 of 16 lines. The tree shows 5. Its prose is
+    unreliable about counts; the review reads the tree.
