@@ -1,6 +1,6 @@
 # Phase 04 — Split `config/types.rs` by section
 
-**Status:** in-progress (refined re-dispatch after a stall, 2026-10-26)
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -210,3 +210,90 @@ whose specs computed every cut line with one command, went through first
 try. The refinement gives the computed recipe and the edits the dry run
 found (`load.rs`'s import, `default_models`, `doc_truth.rs` reading
 `types.rs` by path), none of which the original Spec named.
+
+### Update — 2026-10-26 (escalation)
+
+**Chosen lever:** session takeover.
+**Rationale:** the refined re-dispatch stalled again on the same class
+(`NoProgressStall`, 120), the second after one refinement, and the recipe
+was already verified, so a third dispatch would buy no new data.
+
+**What the second run did.** It ran the recipe and wrote all three files
+within its first 20 or so turns, then left `types.rs` mis-cut (1024
+lines, `default_models` duplicated) and spent the rest verifying its own
+multiset in ever-larger Python scripts. Two causes, neither its fault
+alone:
+
+- **The governor cannot see shell writes.** `check_read_only_stall`
+  resets only on `mutates_files`, which is `Category::Write`; `bash` is
+  `Category::Run`. A phase whose spec requires shell cuts, as M31
+  decision 5 does, never resets the counter, so this run was "read-only"
+  from turn 1 to turn 120 although it had cut every file. Phases 02 and
+  03 survived only because their Update Log writes went through a
+  `Write` tool. Raised to the PE as a rexyMCP issue.
+- **Architect error: the End-to-end block was locale-unsafe.** `sort`
+  and `comm` disagree under the host locale ("file 1 is not in sorted
+  order"), so the multiset check printed false losses. The executor found
+  this, switched to `LC_ALL=C`, and lost the thread. The block below was
+  run with `export LC_ALL=C`.
+
+### Update — 2026-10-26 (complete, architect takeover)
+
+**Executor:** Claude (direct). Restored `types.rs` and removed the
+partial files, then ran the Spec's recipe and its six edits unchanged.
+Commit `a445ab53`. End-to-end, with `B=c909e20b` and
+`LC_ALL=C`, the `lost`/`added` lines listed for the record:
+
+```
+626 src/config/types.rs
+314 src/config/sandbox.rs
+202 src/config/shells.rs
+354 src/config/models.rs
+1496 total
+allowlisted=0
+lost_lines=2
+  lost: fndefault_models()->std::collections::HashMap<String,ModelEntry>{
+  lost: fndefault_true()->bool{
+added_other=0
+  added: //!Configsections:[hosts.*],[models.*]andpricing,[ai],prompts.
+  added: //!Configsections:[sandbox]and[execution].
+  added: //!Configsections:[shells]and[limits].
+  added: pub(super)fndefault_models()->std::collections::HashMap<String,ModelEntry>{
+  added: pub(super)fndefault_true()->bool{
+  added: useserde::{Deserialize,Serialize};
+  added: useserde::{Deserialize,Serialize};
+  added: useserde::{Deserialize,Serialize};
+  added: usesuper::*;
+  added: usesuper::*;
+tests_rs_changed=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+`lost_lines=2` is the two helpers that gained `pub(super)`, as the
+criterion allows; no `#[serde` path changed, since `use super::*` brings
+`default_true` into `sandbox.rs`.
+
+### Findings — 2026-10-26
+
+- **`SessionsConfig.auto_name_enabled`, `ApprovalsConfig.commands`**
+  (`types.rs`) · smell · nit. Each names `default_true` for serde but
+  writes a literal `true` in `impl Default`. They agree today; a change
+  to one would not reach the other. A script compared every struct's serde
+  default function with its `impl Default` value across all four files,
+  and these two were the only differences.
+- Otherwise `none`: no default disagrees with its doc comment in the
+  sections the comparison covered.
+
+### Review verdict — 2026-10-26
+
+- **Verdict:** escalated
+- **Bounces:** 1 (refined re-dispatch), then takeover
+- **Executor:** Claude (direct), after two nvidia/GLM-5.3-Flash-FP4-Local runs (203 and 120 turns)
+- **Scope deviations:** none
+- **Calibration:** see the escalation entry. Two items for the PE: the
+  governor's blindness to `bash` writes, and the locale-unsafe check,
+  which every later split phase must write with `LC_ALL=C`.

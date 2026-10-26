@@ -7,9 +7,9 @@ exemptions and the plan, and [`FINDINGS.md`](milestones/M31-code-hygiene/FINDING
 for the bug and optimisation audit every phase reports into. MCP surface
 is now M32, Knowledge M33.
 
-**Active phase:** [phase-04-config-split](milestones/M31-code-hygiene/phase-04-config-split.md)
-— in-progress, refined after a stall. `config/types.rs` split by section.
-Phases 01–03 are done.
+**Active phase:** none drafted. Phases 01–04 are done (04, the
+`config/types.rs` split, by architect takeover after two stalls). Next:
+`/rexymcp:architect next`.
 
 M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M32 (MCP surface) and M33

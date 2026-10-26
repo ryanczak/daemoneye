@@ -20,3 +20,4 @@ the architect's, with the PE's say on `major` and above.
 | 7 | 02 | `ai/tools/dispatch_tests.rs` | smell | nit | 1295 lines in banner-delimited sections that would read better split | reject: under the 2000-line cap; revisit only if it grows |
 | 8 | 03 | `search_tests.rs` · `static COUNTER: AtomicU64` | smell | nit | hand-rolled unique temp-dir names, same family as #4 | act: with #4, one shared test-helper phase |
 | 9 | 03 | `scheduled_tests.rs` · `presence_count` expectations | smell | nit | two tests recompute expected counts inline | reject: two sites, a helper would not pay for itself |
+| 10 | 04 | `types.rs` · `SessionsConfig.auto_name_enabled`, `ApprovalsConfig.commands` | smell | nit | serde names `default_true`, `impl Default` writes a literal `true`; they agree today | defer: a config-defaults tidy after M31 |
