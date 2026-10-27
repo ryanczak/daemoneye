@@ -1,6 +1,6 @@
 # Phase 16 — Move the memory index's tests into two sibling files
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -129,3 +129,101 @@ Expected (from the dry run): `503 …mod.rs`, `1581 …tests.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 20:45 (started)
+
+**Executor:** this run. Phase 16 is in progress. The phase doc's Status is
+`in-progress` and the milestone README's phase-table row matches. No source
+file touched yet; Spec 1's script runs next.
+
+### Update — 2026-10-27 20:47 (cuts done)
+
+**Spec 1 script run once, as written, with `bash`.** Output, byte-exact:
+
+```text
+T=500 P=2086 L=3042
+   503 src/memory/index/mod.rs
+  1581 src/memory/index/tests.rs
+  958 src/memory/index/incremental_tests.rs
+  3042 total
+```
+
+All three counts match the expected values (`T=500 P=2086 L=3042`; 503 /
+1581 / 958). The one-line change inside the moved tests landed: `tests.rs`
+line 2 reads `use std::io::BufRead;` (narrowed from
+`use std::io::{BufRead, Seek};`), while `incremental_tests.rs` keeps the
+original `use std::io::{BufRead, Seek};`. `mod.rs` ends with the two
+`#[cfg(test)] mod …;` declarations and no inline test module.
+`tests/hygiene_allowlist.txt` has zero remaining
+`test src/memory/index/mod.rs ` lines. `cargo fmt --all` ran twice per the
+script; `mod.rs`'s two declarations came out as `mod incremental_tests;`
+then `mod tests;`.
+
+### Findings — 2026-10-27
+
+Skimmed all 64 tests across the two files. Findings, per README decision 7
+(each names file and symbol, kind, what was seen, why it matters, severity;
+none acted on):
+
+1. `src/memory/index/tests.rs` + `src/memory/index/incremental_tests.rs` ·
+   57 test bodies — **smell, minor**. The three-line prologue
+   `let _guard = crate::test_home_guard(); let tmp =
+   tempfile::tempdir().unwrap(); unsafe { std::env::set_var("HOME",
+   tmp.path()) };` is copy-pasted 57 times. A `#[fixture]`-style helper or a
+   plain `fn test_home() -> (TestHomeGuard, TempDir)` would delete ~170
+   lines and centralise the unsafe `set_var` dance in one place.
+2. `src/memory/index/incremental_tests.rs` · `make_test_message` —
+   **smell, nit**. This private helper duplicates
+   `mod.rs::make_test_message_for_index` (which exists for
+   `daemon::utils::sweep_tests`). One of the two should go; the sweep tests
+   could import the same helper.
+3. `src/memory/index/tests.rs` · `reconcile_indexes_archive_turns`,
+   `turns_map_offsets_point_at_the_right_line` — **smell, nit**. Both build
+   the identical three-line JSON transcript fixture
+   (`{"role":"user","content":"hello","turn":0}` …) and write it to the
+   archive; a shared fixture would halve the setup.
+4. `src/memory/index/incremental_tests.rs` · 16 `assert_eq!` calls —
+   **smell, nit**. Sixteen assertions carry no failure message (e.g. in
+   `incremental_and_reconcile_agree`'s count comparisons) where the file's
+   other asserts use per-assertion messages; STANDARDS §3.3 prefers one.
+5. `src/memory/index/incremental_tests.rs` ·
+   `incremental_and_reconcile_agree` (98 lines) — **smell, nit**. The
+   longest test in either file; a candidate for the same fixture-helper
+   tidy as #1. Not over any cap (150), so no action needed this milestone.
+
+No test asserts nothing (a mechanical scan found every test body carries at
+least one `assert`); no `sleep`, no real wall-clock, no unseeded RNG. The
+`unsafe { std::env::set_var("HOME", …) }` pattern appears in all 57 tests
+but predates this phase and is the established pattern across the repo's
+test files (`src/lib.rs::test_home_guard` guards it).
+
+### Update — 2026-10-27 21:00 (end-to-end verification)
+
+The End-to-end block from this phase doc ran once, as a `bash` heredoc,
+exactly as written; its full output (`/tmp/e2e-m31-16.txt`) is below,
+byte-exact:
+
+```text
+503 src/memory/index/mod.rs
+1581 src/memory/index/tests.rs
+958 src/memory/index/incremental_tests.rs
+3042 total
+allowlisted=0
+body_identical=1
+index_tests=64 passed
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Read against the acceptance criteria: line counts match the dry run
+(503 / 1581 / 958, each new file under the 2000-line test cap);
+`allowlisted=0` (the allowlist's `test src/memory/index/mod.rs ` line is
+gone); `body_identical=1` (the moved test bodies are whitespace-identical
+to `ea12993b`'s inline module modulo the two import lines the split
+accounts for); `index_tests=64 passed`; the hygiene test (16 tests)
+passes; clippy is clean (`Finished … target(s)`, no warnings under `-D
+warnings`); `fmt_exit=0`; the full suite is `passed=2586 failed=0`.
+
+
