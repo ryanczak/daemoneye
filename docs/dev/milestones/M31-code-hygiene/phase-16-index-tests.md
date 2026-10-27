@@ -1,6 +1,6 @@
 # Phase 16 — Move the memory index's tests into two sibling files
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -226,4 +226,156 @@ accounts for); `index_tests=64 passed`; the hygiene test (16 tests)
 passes; clippy is clean (`Finished … target(s)`, no warnings under `-D
 warnings`); `fmt_exit=0`; the full suite is `passed=2586 failed=0`.
 
+### Update — 2026-10-27 20:53 (complete, server-authored)
 
+**Summary:** </think>The `git status --short` output shows nothing (empty), which means the working tree is clean. The trailing output shown is from `git log -1 --stat | tail -3`. Good.
+
+Let me verify the completion checklist:
+- [x] Phase doc's Status: line says `in-progress` ✓
+- [x] Milestone README's phase-table row says `in-progress` ✓
+- [x] No hand-written `(complete)` Update Log entry ✓ (I wrote started, cuts done, Findings, end-to-end verification — none marked complete)
+- [x] `cargo fmt --all` run before `git add` ✓
+- [x] All verification commands ran clean ✓
+- [x] Final message will be substantive Summary + Notes for review ✓
+- [x] `git status --short` shows nothing ✓
+- [x] `git log -1 --stat` shows the commit includes every file ✓
+
+All tasks done. Now write the final summary.</think>
+Working tree is clean; the commit includes all six touched files. Phase 16 is complete.
+
+**Summary:** Phase 16 executed as specified. The Spec 1 script ran once, as written, with `bash`: `T=500 P=2086 L=3042` matched the expected values, the 2543-line inline test module split at the Phase 03a banner into `src/memory/index/tests.rs` (1581 lines — schema, FTS5 search, schema v2) and `src/memory/index/incremental_tests.rs` (958 lines — incremental hooks, per-corpus reconcile), `mod.rs` (503) now carries only the two `#[cfg(test)] mod …;` declarations, and the allowlist's `test src/memory/index/mod.rs ` line is gone (0 remaining). The one authorized in-body change landed (`use std::io::BufRead;` in `tests.rs`; `incremental_tests.rs` keeps `{BufRead, Seek}` behind `use super::*`). End-to-end block output, pasted byte-exact into the Update Log from `/tmp/e2e-m31-16.txt`: `body_identical=1`, `index_tests=64 passed`, hygiene `ok.` (16 passed), clippy clean, `fmt_exit=0`, `passed=2586 failed=0`; `grep -c '^body_identical=1$'` on the phase doc prints 1. Committed as `refactor:` (93f28f11); status stays `in-progress` for the server's completion tail.
+
+**Notes for review:**
+- The Findings entry (README decision 7) lists five smells, none acted on: the 57× copy-pasted HOME-guard/tempdir/set_var prologue (minor), `incremental_tests.rs::make_test_message` duplicating `mod.rs::make_test_message_for_index` (nit), one duplicated three-line JSON transcript fixture pair in `tests.rs` (nit), 16 message-less `assert_eq!`s in `incremental_tests.rs` (nit), and `incremental_and_reconcile_agree` at 98 lines (nit, under the 150 cap). A mechanical scan confirmed every test body carries at least one `assert`, and there are no sleeps or clocks.
+- No deviations from the spec. The hygiene allowlist line was removed through the script only; no other file outside the Authorizations list was touched.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.3.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test functions_in_a_test_module_are_not_measured ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.28s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test g4_briefing_injection_block_format ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test resume_run_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test g6_agent_config_roundtrip ... ok
+test event_log_entry_format ... ok
+test g6_agent_namespace_field_persisted ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1474321): No such process
+kill: (-1474982): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-16-index-tests.md` — +99 -1
+- `src/memory/index/incremental_tests.rs` — +958 -0
+- `src/memory/index/mod.rs` — +3 -2542
+- `src/memory/index/tests.rs` — +1581 -0
+- `tests/hygiene_allowlist.txt` — +0 -1
+
+**Commit:** 93f28f11e13c0789f21c9a6db570d7ec74a09b1a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
