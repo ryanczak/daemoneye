@@ -1,6 +1,6 @@
 # Phase 13 — Move `top`'s drawing out of `top_tui.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -356,3 +356,25 @@ kill: (-1308571): No such process
 **Commit:** 1dcd6549a5cb5657784162d93f4a7e77c7d12fc4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (78 turns). The "(Claude)"
+  in the `(started)` entry is the executor mislabelling itself; the run
+  record names GLM.
+- **Scope deviations:** none. `git diff --stat 6a52a37a HEAD` names the six
+  authorized files. The moved block equals `6a52a37a:top_tui.rs` lines
+  615–920 with `inner_height`'s `pub(super)`. The code commit is typed
+  `refactor:`. Reviewer's gates: fmt 0, build and clippy clean, 2586
+  passed / 0 failed / 13 ignored.
+- **Findings:** four perf and style nits, carried to `FINDINGS.md`
+  #41–#44.
+- **Calibration:** the executor's tool shell is `dash`. The End-to-end
+  block's `<(…)` and its shell function failed under it until the
+  executor saved the block to a file and ran that with `bash`, which cost
+  some of the 16 turns over phase 12's 62. From the next phase on, the
+  End-to-end block is wrapped as `bash <<'E2E' … E2E`, so it runs under
+  bash whatever shell the tool uses.
+

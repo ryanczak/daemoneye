@@ -51,3 +51,7 @@ the architect's, with the PE's say on `major` and above.
 | 38 | 12 | `file_ops/ops_delete.rs`, `ops_copy.rs` · remote sentinel scan | smell | nit | the result scan matches `DE_OK:` / `DE_ERROR:` anywhere in the output, so a path containing `DE_ERROR:` misreads a success; `__DE_DONE__` is echoed and never checked | defer: a post-M31 remote-write sentinel tidy |
 | 39 | 12 | `file_ops/ops_delete.rs` · local branch | perf | nit | reads the whole file only to count its lines for the prompt and result | reject: fine at these sizes |
 | 40 | 12 | `file_ops/ops_copy.rs` · `tmp_path` | smell | nit | `with_extension("de_tmp")` is not unique per invocation; a failed rename cleans up | defer: with #38 |
+| 41 | 13 | `cli/commands/top_tui_draw.rs` · `runs_window` | perf | nit | allocates a full index vector every frame in the common, non-overflowing case | reject: a handful of rows per frame |
+| 42 | 13 | `cli/commands/top_tui_draw.rs` · `window_text` | perf | nit | rebuilds each panel body as a fresh `String`, and `lines().nth(i)` makes it quadratic in the body's line count | defer: a post-M31 `top` tidy, if large activity logs ever show up in a profile |
+| 43 | 13 | `cli/commands/top_tui_draw.rs` · `activity_window_text` | smell | nit | a one-line alias of `window_text` | defer: with #42 |
+| 44 | 13 | `cli/commands/top_tui_draw.rs` · `draw_panel` | perf | nit | `fades.contains(&i)` per line is linear | reject: panel row counts are small |
