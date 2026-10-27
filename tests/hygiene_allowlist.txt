@@ -14,7 +14,6 @@ file src/cli/commands/stream.rs 1520
 file src/cli/commands/top.rs 1394
 file src/cli/commands/top_tui.rs 1050
 file src/cli/render_ratatui.rs 1225
-file src/cli/tail.rs 988
 file src/daemon/executor/file_ops/ops.rs 1018
 file src/daemon/executor/knowledge/shell.rs 2627
 file src/daemon/executor/mod.rs 2121

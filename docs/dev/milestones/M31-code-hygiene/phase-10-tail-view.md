@@ -1,6 +1,6 @@
 # Phase 10 — Move the tail and log viewers out of `tail.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -117,3 +117,86 @@ clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 02:05 (cuts done)
+
+Ran the Spec 1 pipeline as written in this checkout (no scratch worktree —
+the spec is already dry-run; see "Work in this checkout"). `S=607 T=989`
+printed exactly as the spec expects. The cut produced `src/cli/tail_view.rs`
+(386 lines) and left `src/cli/tail.rs` at 1442 total lines. The diff against
+`b39b5aff` is a pure move: 381 lines left `tail.rs`, all of them reappearing
+in `tail_view.rs`; the only new lines are the module wiring
+(`#[path = "tail_view.rs"] mod view;` and the one-line
+`pub use view::{…}`) plus the new file's two doc-comment lines and
+`use super::*;`. Nothing inside the moved code changed; every function that
+crossed the boundary (`open_tail`, `open_log`, `run_log_viewer`,
+`run_tail_viewer`, `tail_loop`, `render_tail`) was already `pub`, so no
+visibility edit was needed. The `color`, `attached_status` and
+`replay_status` helpers stay private inside `tail_view.rs`, which uses them;
+`tail.rs`'s inline tests reach the re-exported functions through the `pub
+use` and their existing `use super::*;`.
+
+### Findings — 2026-10-27
+
+Read the whole moved section once (`src/cli/tail_view.rs`, 386 lines:
+`open_tail`, `open_log`, `run_log_viewer`, `run_tail_viewer`, `tail_loop`,
+`attached_status`, `replay_status`, `render_tail`, `color`). Findings, none
+acted on per decision 6:
+
+- **`tail_view.rs` · `run_log_viewer`/`run_tail_viewer` — smell, minor.**
+  The two viewer entry points duplicate eleven lines of alternate-screen
+  plumbing: `EnterAlternateScreen`, the `AltScreenGuard` teardown closure
+  (`LeaveAlternateScreen`, `Show`, `renderer.reanchor()`), the
+  `ratatui::Terminal::new(CrosstermBackend::new(stdout))` and the two
+  `Box::pin(futures_util::stream::unfold(…))` key/resize streams, all
+  identical in the two functions — and `attach.rs`'s `run_attach` repeats
+  the same four pieces a third time. A shared
+  `enter_alt_screen(renderer)` helper would leave each entry point with its
+  stream setup only. Not acted on: three call sites is the
+  abstract-when-the-fourth-appears boundary, and a helper returning three
+  borrowed streams is awkward.
+- **`tail_view.rs` · `run_log_viewer` — smell, nit.** Its frame source is
+  `tokio::io::BufReader::new(tokio::io::empty()).lines()` — an empty reader
+  type-swizzled into `tail_loop`'s `tokio::io::Lines<R>` parameter so a log
+  (which has no stream) can share the loop. It works, but the real contract
+  ("no frame source") is expressed as a fake source that can never yield; a
+  `None`-able frames parameter would say it. Confined to this one call.
+- **`tail_view.rs` · `tail_loop` — smell, nit.** The replay branch resets
+  `last` after every key, so a replay's clock advances only between keys —
+  the in-code comment says so and the skip affordance matches; but nothing
+  in `replay_status` tells a user that a paused replay needs a key to keep
+  counting time. Display choice, not a bug.
+- **`tail_view.rs` · `render_tail` — smell, nit.** The status `match`'s
+  guard ordering is load-bearing and easy to disturb: `model.attached`
+  wins first, then `replay.is_some()`, then `model.log`, then the
+  search/note arms. An attached replay shows the attached status line,
+  which is right, but nothing guards the order; a match over a small
+  ordered enum would.
+- **`tail_view.rs` · `color` — smell, nit.** Two match arms per vt100
+  colour where `Idx(n) → Color::Indexed(n)` plus a 16-entry name table
+  would read shorter; the explicit arms make the theme mapping visible at
+  a glance, which is the stated why. Keep.
+
+No `unwrap`/`expect`/`panic` in the moved production code; the two
+`map_err(|msg| anyhow::anyhow!(msg))` calls are the documented
+`Result<TailModel, String>` → `anyhow` boundary at the viewer's edge. No
+commented-out code, no behaviour change.
+
+### Update — 2026-10-27 (end-to-end verification)
+
+Ran the phase's End-to-end block with `bash` in this checkout; output below,
+captured mechanically (redirected to `/tmp/e2e-m31-10.txt` and pasted
+byte-exact):
+
+```text
+1442 src/cli/tail.rs
+386 src/cli/tail_view.rs
+1828 total
+allowlisted=0
+lost_other=0
+added_other=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
