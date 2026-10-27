@@ -1,6 +1,6 @@
 # Phase 17 — Move `render_ratatui.rs`'s tests into two sibling files
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -395,3 +395,27 @@ kill: (-1523789): No such process
 **Commit:** f9cb864500df99e7f6cd952ed00dde5cd4b8d833
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (53 turns), per the run
+  record. The `(started)` entry's "Claude, Opus 4.6" is the executor
+  mislabelling itself.
+- **Scope deviations:** none. `git diff --stat fc968548 HEAD` names the six
+  authorized files. The two test files equal `fc968548:render_ratatui.rs`
+  lines 1228–3280, whitespace-blind, apart from `make_test_renderer`'s
+  `pub(super)`. Production lines 1–1225 are unchanged. The code commit is
+  typed `refactor:`. Reviewer's gates: fmt 0, build and clippy clean, 2586
+  passed / 0 failed / 13 ignored.
+- **Findings:** no empty tests and no sleeps. Two duplicated fixtures,
+  carried to `FINDINGS.md` #53–#54.
+- **Calibration:** 53 turns against phase 16's 97 for the same kind of
+  move. Scoping Findings to a search (empty asserts, sleeps, repeated
+  fixtures) worked: the executor used grep and awk instead of reading each
+  test. The self-mislabel is now on its second occurrence (13 and 17). The
+  run record is right both times, so it is cosmetic, but it would mislead
+  anyone reading the Update Log alone. Held for a third occurrence before
+  raising it with rexyMCP (the executor prompt's identity line).
+
