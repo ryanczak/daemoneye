@@ -147,7 +147,7 @@ Expected count: 12–14. Each may split at drafting.
 | 13 | top-tui-draw ([phase-13-top-tui-draw.md](phase-13-top-tui-draw.md)) — `top`'s drawing section leaves `cli/commands/top_tui.rs` (1050) for a child module `top_tui_draw.rs` | done |
 | 14 | chat-loop ([phase-14-chat-loop.md](phase-14-chat-loop.md)) — the ratatui chat loop and line reader leave `cli/commands/chat.rs` (1147) for a child module `chat_loop.rs`; both giant functions move unchanged | done |
 | 15 | index-split ([phase-15-index-split.md](phase-15-index-split.md)) — the queries and the rebuild leave `memory/index/mod.rs` (1135) for sibling modules `search.rs` and `reconcile.rs`, glob re-exported | done |
-| 16 | index-tests ([phase-16-index-tests.md](phase-16-index-tests.md)) — `memory/index/mod.rs`'s 2543-line inline tests move into sibling `tests.rs` and `incremental_tests.rs`, each under the test cap | review      |
+| 16 | index-tests ([phase-16-index-tests.md](phase-16-index-tests.md)) — `memory/index/mod.rs`'s 2543-line inline tests move into sibling `tests.rs` and `incremental_tests.rs`, each under the test cap | done |
 
 ## Notes
 

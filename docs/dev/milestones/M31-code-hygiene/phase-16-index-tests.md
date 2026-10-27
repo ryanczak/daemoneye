@@ -1,6 +1,6 @@
 # Phase 16 — Move the memory index's tests into two sibling files
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -379,3 +379,25 @@ kill: (-1474982): No such process
 **Commit:** 93f28f11e13c0789f21c9a6db570d7ec74a09b1a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (97 turns)
+- **Scope deviations:** none. `git diff --stat 5e67ef02 HEAD` names the six
+  authorized files. The two test files equal `5e67ef02:mod.rs` lines
+  502–3041, whitespace-blind, apart from the one narrowed import. `mod.rs`
+  lines 1–499 are unchanged. The code commit is typed `refactor:`.
+  Reviewer's gates: fmt 0, build and clippy clean, 2586 passed / 0 failed /
+  13 ignored.
+- **Findings:** five. The temp-HOME prologue copied 57 times joins #4, the
+  shared `test_home()` phase. The other four are `FINDINGS.md` #49–#52.
+- **Calibration:** 97 turns against 39–41 for the last two code moves. The
+  script and End-to-end block ran as written, so the extra turns went to
+  the Findings step, which here meant 2540 lines of test bodies (the
+  executor reports a mechanical scan of all 64 tests). For a pure test
+  move, the next spec scopes Findings to the test-quality signals that
+  matter (empty asserts, sleeps, duplicated fixtures) and says not to read
+  every test body line by line.
+
