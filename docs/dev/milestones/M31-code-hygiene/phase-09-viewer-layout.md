@@ -1,6 +1,6 @@
 # Phase 09 — Move the transcript layout out of `viewer.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -366,3 +366,28 @@ kill: (-1051256): No such process
 **Commit:** 5220f9ab7a99db4c96104cf59eeb9b6f6a614b26
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (103 turns)
+- **Scope deviations:** none. `git diff --stat 21072fb2 HEAD` names the six
+  authorized files. The moved block equals `e57ece85:src/cli/viewer.rs`
+  lines 203–456, byte for byte, apart from `wrap_words`'s `pub(super)`.
+  Reviewer's gates: fmt 0, build and clippy clean, 2586 passed / 0 failed /
+  13 ignored. The executor dry-ran in its own scratch worktree before
+  applying, which the spec did not ask for and which cost turns, not scope;
+  the worktree is gone.
+- **Findings:** four, carried to `FINDINGS.md` #23–#26. The reviewer probed
+  #23 beyond the executor's width-1 case: a no-space token whose byte length
+  exceeds the width but whose char count fits is **rendered twice**
+  (`"日本語"×10+"x"` at width 80 gives rows `[31, 31]`), because the mid-char
+  `from_utf8` fallback re-pushes the whole token per chunk. Display-only,
+  pre-existing, so minor and deferred.
+- **Calibration:** the Spec 7 treatment worked. The End-to-end output was
+  pasted into the Update Log on the first run, after two runs in a row that
+  claimed the paste and skipped it. The proposal for the server to append
+  the transcript itself stays held; this run is evidence that the spec-side
+  fix is enough.
+

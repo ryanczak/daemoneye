@@ -140,7 +140,7 @@ Expected count: 12–14. Each may split at drafting.
 | 06 | daemon-startup ([phase-06-daemon-startup.md](phase-06-daemon-startup.md)) — `run_daemon` and its two startup helpers leave `daemon/mod.rs` (901) for a new `daemon/startup.rs`, re-exported | done |
 | 07 | epoch-extract ([phase-07-epoch-extract.md](phase-07-epoch-extract.md)) — memory extraction leaves `context/epochs.rs` (840) for a child module `epoch_extract.rs`, re-exported | done |
 | 08 | slash-session ([phase-08-slash-session.md](phase-08-slash-session.md)) — the `/session` and `/runs` commands leave `cli/commands/slash.rs` (958) for a child module `slash_session.rs` | done |
-| 09 | viewer-layout ([phase-09-viewer-layout.md](phase-09-viewer-layout.md)) — the transcript layout section leaves `cli/viewer.rs` (907) for a child module `viewer_layout.rs`, re-exported | review      |
+| 09 | viewer-layout ([phase-09-viewer-layout.md](phase-09-viewer-layout.md)) — the transcript layout section leaves `cli/viewer.rs` (907) for a child module `viewer_layout.rs`, re-exported | done |
 
 ## Notes
 
