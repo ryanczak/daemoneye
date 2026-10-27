@@ -1,6 +1,6 @@
 # Phase 11 — Move the IPC payload structs out of `ipc.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -122,3 +122,77 @@ hygiene `ok.`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-26 20:04 (cuts done)
+
+Executor run (session 2026-10-26). Spec 1 ran as written: the shell block
+computed `S=11 E=256` (matching the expected 11 256), cut lines 11–256 of
+`src/ipc.rs` into a new `src/ipc_types.rs` with the module doc header and
+`use super::*;`, and left the deletion in place via a temp file + `mv` —
+no `sed -i` on source files. Byte-identity of the moved block verified
+against the source range (`diff` of `git show 6b9ee86c:src/ipc.rs`
+lines 11–256 vs `tail -n +6 src/ipc_types.rs` → identical). Line counts
+after the cut: `src/ipc.rs` 726, `src/ipc_types.rs` 251. No edits with
+the edit tool to either file; no import pruning. Spec 2 logged
+immediately with the patch tool.
+
+### Findings — 2026-10-26 20:13
+
+Read of the moved section (lines 11–256 of the pre-cut `ipc.rs`, now
+`ipc_types.rs` in full), decision 7:
+
+1. `ipc_types.rs` · `ContainerInfo.image` — smell, nit. The field is
+   documented as docker detail, but its only producer
+   (`daemon/executor/sbx_lifecycle.rs` `sandbox_rows`) hard-codes
+   `"shell"`, and the sandbox renderer (`cli/status.rs`
+   `sandbox_section`) never prints the per-container `image` — only the
+   report-level `image_detail`, itself the constant "not used by sbx".
+   Dead-ish wire field kept for protocol compatibility. Worth a look if
+   the sbx payload shapes ever change; not a defect today.
+2. `ipc_types.rs` · `ContainerInfo.session` / `is_ghost` doc comments —
+   smell, nit. The docs say the session comes "from the `de.session`
+   label" and the ghost flag "carries `de.ghost=1`" — wording left over
+   from the docker-label era (M18/M19). The actual source is the sandbox
+   name prefix (`de-ghost-` / `de-chat-`, stripped in `sandbox_rows`);
+   no `de.session` or `de.ghost` label exists anywhere else in the
+   codebase. Doc-only drift, no behaviour behind it.
+3. `ipc_types.rs` · `GhostConfig.auto_approve_scripts` doc — smell, nit.
+   The doc references `daemoneye install-sudoers` and `/etc/sudoers.d/`
+   NOPASSWD entries; the struct also carries the newer
+   `auto_approve_commands` / `tool_policy` fields 60 lines later, which
+   the prose predates and does not cross-reference. Doc polish only.
+
+Everything else in the moved block read clean: the `#[serde(default)]`
+placement on the late-added `GhostConfig` / `ShellInfo` /
+`LimitsSummary` fields is consistent, and the summaries are plain
+display-shaped structs with no logic to review.
+
+### Update — 2026-10-26 20:13 (end-to-end verification)
+
+Ran the phase doc's End-to-end block with `bash` (LC_ALL=C, base
+commit `6b9ee86c`); output captured mechanically to
+`/tmp/e2e-m31-11.txt` and pasted below byte-exact:
+
+```text
+726 src/ipc.rs
+251 src/ipc_types.rs
+977 total
+allowlisted=0
+lost_other=0
+added_other=0
+moved_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every expected line matches the dry run: `lost_other=0` (nothing from
+the old file is gone except what moved), `added_other=0` (nothing new
+beyond the module header, the `use super::*;`, and the re-export
+stanzas the block's own grep excludes), `moved_identical=1` (the moved
+block is byte-identical to source lines 11–256), `allowlisted=0`
+(the `file src/ipc.rs 966` allowlist line is deleted), hygiene
+`ok. 16 passed`, clippy clean, `fmt_exit=0`, and the full suite at
+`passed=2586 failed=0`.
+

@@ -41,6 +41,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 |---|---|
 | `src/main.rs` | CLI entry point; forks daemon, routes subcommands |
 | `src/ipc.rs` | `Request` / `Response` enums — the full wire protocol |
+| `src/ipc_types.rs` | The payload structs the wire enums carry (`ContainerInfo`, `PaneInfo`, `ShellInfo`, `GhostConfig`, `SessionSummary`, …) — a child module of `src/ipc.rs`, glob re-exported from it |
 | `src/daemon/instance.rs` | `InstanceLock` — flock-based single-instance enforcement + PID payload |
 | `src/daemon/startup.rs` | `run_daemon()`, the daemon's startup and accept loop; with `tmux_wanted()` / `startup_session()`, the tmux-session choice |
 | `src/daemon/mod.rs` | Window-prefix constants + D6 predicates (`is_daemon_window`, `is_ghost_window`, `is_targetable_pane`) |

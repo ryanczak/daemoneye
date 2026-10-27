@@ -20,7 +20,6 @@ file src/daemon/executor/mod.rs 2121
 file src/daemon/executor/shell_exec.rs 1129
 file src/daemon/ghost.rs 1677
 file src/daemon/stream.rs 1613
-file src/ipc.rs 966
 file src/memory/index/mod.rs 1135
 test src/cli/render_ratatui.rs 2056
 test src/daemon/executor/knowledge/shell.rs 4143
