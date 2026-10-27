@@ -141,7 +141,7 @@ Expected count: 12–14. Each may split at drafting.
 | 07 | epoch-extract ([phase-07-epoch-extract.md](phase-07-epoch-extract.md)) — memory extraction leaves `context/epochs.rs` (840) for a child module `epoch_extract.rs`, re-exported | done |
 | 08 | slash-session ([phase-08-slash-session.md](phase-08-slash-session.md)) — the `/session` and `/runs` commands leave `cli/commands/slash.rs` (958) for a child module `slash_session.rs` | done |
 | 09 | viewer-layout ([phase-09-viewer-layout.md](phase-09-viewer-layout.md)) — the transcript layout section leaves `cli/viewer.rs` (907) for a child module `viewer_layout.rs`, re-exported | done |
-| 10 | tail-view ([phase-10-tail-view.md](phase-10-tail-view.md)) — the tail and log viewers leave `cli/tail.rs` (988) for a child module `tail_view.rs`, re-exported | review      |
+| 10 | tail-view ([phase-10-tail-view.md](phase-10-tail-view.md)) — the tail and log viewers leave `cli/tail.rs` (988) for a child module `tail_view.rs`, re-exported | done |
 
 ## Notes
 

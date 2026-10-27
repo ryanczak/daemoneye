@@ -37,3 +37,8 @@ the architect's, with the PE's say on `major` and above.
 | 24 | 09 | `cli/viewer_layout.rs` · `wrap_words` | smell | nit | `flush` is a closure rebuilt per hard line over three `&mut` locals | defer: with #23 |
 | 25 | 09 | `cli/viewer_layout.rs` · `layout_block_collapsed` | perf | nit | lays out the whole block into a throwaway `Vec` to count its rows | reject: small blocks, one call site |
 | 26 | 09 | `cli/viewer_layout.rs` · `wrap_words` | smell | nit | the whitespace-only line handling (`has_content = true` on a blank body) is load-bearing for the round-trip and undocumented | defer: with #23 |
+| 27 | 10 | `cli/tail_view.rs` · `run_log_viewer`, `run_tail_viewer`; `cli/attach.rs` · `run_attach` | smell | minor | three copies of the alternate-screen setup: enter, `AltScreenGuard` teardown, terminal, key and resize streams | defer: a post-M31 viewer tidy, one `enter_alt_screen` helper |
+| 28 | 10 | `cli/tail_view.rs` · `run_log_viewer` | smell | nit | "no frame source" is expressed as an empty reader passed to `tail_loop` | defer: with #27 |
+| 29 | 10 | `cli/tail_view.rs` · `tail_loop` | smell | nit | a paused replay's clock advances only between keys, and the status line does not say so | reject: documented in code, matches the skip affordance |
+| 30 | 10 | `cli/tail_view.rs` · `render_tail` | smell | nit | the status `match`'s guard order (attached, replay, log, search) is load-bearing and unguarded | defer: with #27 |
+| 31 | 10 | `cli/tail_view.rs` · `color` | smell | nit | one arm per ANSI colour where a table would be shorter | reject: the explicit arms show the theme mapping, as the executor notes |

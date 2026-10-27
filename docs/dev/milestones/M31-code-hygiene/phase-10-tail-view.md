@@ -1,6 +1,6 @@
 # Phase 10 — Move the tail and log viewers out of `tail.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -363,3 +363,19 @@ kill: (-1093087): No such process
 **Commit:** e41e5ba99b16503889441e5e761c06cc6b36da21
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (121 turns)
+- **Scope deviations:** none. `git diff --stat ba90a429 HEAD` names the six
+  authorized files. The moved block equals `ba90a429:src/cli/tail.rs` lines
+  607–987, byte for byte. Reviewer's gates: fmt 0, build and clippy clean,
+  2586 passed / 0 failed / 13 ignored.
+- **Findings:** five, carried to `FINDINGS.md` #27–#31.
+- **Calibration:** the paste landed on the first run, the second in a row
+  since it became its own spec step. The executor worked in the checkout as
+  told, yet took 121 turns against phase 09's 103, so the scratch worktree
+  was not where 09's turns went. One data point; held.
+
