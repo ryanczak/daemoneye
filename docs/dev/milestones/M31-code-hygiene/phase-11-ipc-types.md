@@ -1,6 +1,6 @@
 # Phase 11 — Move the IPC payload structs out of `ipc.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -352,3 +352,24 @@ kill: (-1142228): No such process
 **Commit:** f23f6559d168f7c15fc86166b8e38797d89585c2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (131 turns)
+- **Scope deviations:** none in content. `git diff --stat 2c9fb2ab HEAD`
+  names the six authorized files. The moved block equals
+  `2c9fb2ab:src/ipc.rs` lines 11–256, byte for byte. Reviewer's gates:
+  fmt 0, build and clippy clean, 2586 passed / 0 failed / 13 ignored. One
+  slip, not bounced: the code commit `f23f6559` is typed `feat:`, where a
+  pure move is `refactor:`. History is left as it is.
+- **Findings:** three nits, carried to `FINDINGS.md` #32–#34.
+- **Calibration:** the turn count keeps climbing on dictated-script
+  phases: 103 (09), 121 (10), 131 (11), for a spec whose work is one
+  script, two one-line edits and three log entries. Three occurrences is
+  a trend, but the cause is not yet known. To raise with the PE at the
+  milestone close: is it governor or contract overhead (status flips,
+  checklists), and would one dictated script covering the allowlist and
+  CLAUDE.md edits cut it?
+

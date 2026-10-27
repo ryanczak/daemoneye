@@ -42,3 +42,6 @@ the architect's, with the PE's say on `major` and above.
 | 29 | 10 | `cli/tail_view.rs` · `tail_loop` | smell | nit | a paused replay's clock advances only between keys, and the status line does not say so | reject: documented in code, matches the skip affordance |
 | 30 | 10 | `cli/tail_view.rs` · `render_tail` | smell | nit | the status `match`'s guard order (attached, replay, log, search) is load-bearing and unguarded | defer: with #27 |
 | 31 | 10 | `cli/tail_view.rs` · `color` | smell | nit | one arm per ANSI colour where a table would be shorter | reject: the explicit arms show the theme mapping, as the executor notes |
+| 32 | 11 | `ipc_types.rs` · `ContainerInfo.image` | smell | nit | the only producer (`sbx_lifecycle.rs` `sandbox_rows`) hard-codes `"shell"`, and no renderer prints it | defer: a post-M31 sbx payload tidy; the field is wire format |
+| 33 | 11 | `ipc_types.rs` · `ContainerInfo.session`, `is_ghost` docs | smell | nit | the docs name the docker-era `de.session` / `de.ghost=1` labels; the source is the `de-ghost-` / `de-chat-` sandbox name prefix | defer: with #32 |
+| 34 | 11 | `ipc_types.rs` · `GhostConfig.auto_approve_scripts` doc | smell | nit | the prose predates `auto_approve_commands` and `tool_policy` and does not cross-reference them | reject: doc polish only |
