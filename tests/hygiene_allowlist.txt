@@ -12,7 +12,6 @@ file src/ai/tools/defs.rs 1398
 file src/cli/commands/chat.rs 1147
 file src/cli/commands/stream.rs 1520
 file src/cli/commands/top.rs 1394
-file src/cli/commands/top_tui.rs 1050
 file src/cli/render_ratatui.rs 1225
 file src/daemon/executor/knowledge/shell.rs 2627
 file src/daemon/executor/mod.rs 2121

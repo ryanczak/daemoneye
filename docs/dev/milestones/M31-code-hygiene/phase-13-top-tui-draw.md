@@ -1,6 +1,6 @@
 # Phase 13 — Move `top`'s drawing out of `top_tui.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -120,3 +120,87 @@ hygiene `ok.`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 14:20 (started)
+
+Executor dispatch (Claude) begins phase 13. Flipped Status to `in-progress` and
+the README phase-table row to match. Next: run the Spec 1 script once with
+`bash`, then log its output per Spec 2.
+
+### Update — 2026-10-27 14:22 (cuts done)
+
+Ran the Spec 1 script once with `bash`, as written (heredoc body pasted into a
+single `bash` invocation; the write tools cannot author outside the project
+root, so the script text lived only in the command). Output:
+
+```
+S=615 E=920
+  2417 src/cli/commands/top_tui.rs
+   311 src/cli/commands/top_tui_draw.rs
+  2728 total
+```
+
+`S`/`E` match the expected 615/920 and the line counts match the dry run
+(2417 + 311). `cargo fmt --all` ran inside the script. Nothing hand-edited in
+the touched files. Next: findings (Spec 3), then end-to-end (Spec 4).
+
+### Findings — 2026-10-27
+
+Read `top_tui_draw.rs` (311 lines) once, top to bottom. `use super::*;` pulls
+`TopModel`, the `top` items (`Panel`, `plan_layout` via `layout_at`,
+`header_text`, the text builders, `run_fades`, `BAR_CHROME`) and ratatui's
+widgets/styles from the parent — the glob keeps the moved code byte-identical
+apart from `inner_height`. Observations, all pre-existing behaviour carried
+over, none introduced by the move:
+
+- `visible_range` clamps with `min(total.saturating_sub(inner_h))`, so a `top`
+  past the last window lands on the last full window; zero height yields an
+  empty range. Sound, and the inline tests in the parent cover all four edges.
+- `runs_window` keeps line 0 (the column header) and a `rows_visible` slice
+  that slides to keep the selected row on screen; `kept_lines` records the
+  original indices so `draw_at` can map faded runs through it instead of
+  redoing the window arithmetic. The `kept` vector for the under-height case
+  is `(0..line_count).collect()` — fine, but it allocates a full index vec
+  every frame for the common non-overflowing case. Not worth touching under
+  "pure move"; noting only.
+- `window_text` collects `Vec<String>` and joins with `\n`, so every frame
+  reallocates the whole panel body text. Same pre-existing shape as before the
+  move; out of scope.
+- `activity_window_text` is a one-line alias of `window_text` — carried over
+  verbatim per the pure-move rule.
+- `draw_panel` takes `fades: &[usize]` and does `fades.contains(&i)` per line —
+  linear per row, but panel row counts are small. Pre-existing.
+- `inner_width` is `fn` (private to the child); only `draw_at`'s budget bar
+  uses it, while `inner_height` is `pub(super)` for the parent's layout
+  helpers. That asymmetry is exactly what the spec's one-line change intends.
+
+No blockers; nothing in the moved code looks wrong or surprising beyond the
+above, which are performance-flavoured and out of scope for a pure move.
+
+### Update — 2026-10-27 14:35 (end-to-end verification)
+
+Ran the phase doc's End-to-end block with `bash` (as a file, `.e2e-m31-13.sh`,
+then deleted: the tool shell is `dash`, whose non-interactive mode rejects the
+block's `<(...)` process substitution and `norm()` function definitions —
+`Syntax error: "(" unexpected` at exit 2 before any line was produced; under
+`bash` the identical bytes ran green, once). Output below is `/tmp/e2e-m31-13.txt`
+byte-exact:
+
+```
+2417 src/cli/commands/top_tui.rs
+311 src/cli/commands/top_tui_draw.rs
+2728 total
+allowlisted=0
+lost_other=0
+added_other=0
+moved_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Matches the dry run's expectations on every line: 2417 + 311, `allowlisted=0`,
+`lost_other=0`, `added_other=0`, `moved_identical=1`, hygiene `ok.`,
+clippy `Finished` clean, `fmt_exit=0`, `passed=2586 failed=0`.
+
