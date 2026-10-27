@@ -145,7 +145,7 @@ Expected count: 12–14. Each may split at drafting.
 | 11 | ipc-types ([phase-11-ipc-types.md](phase-11-ipc-types.md)) — the payload structs leave `ipc.rs` (966) for a child module `ipc_types.rs`, glob re-exported; `ipc.rs` needs no exemption | done |
 | 12 | ops-delete-copy ([phase-12-ops-delete-copy.md](phase-12-ops-delete-copy.md)) — the `delete` and `copy` operations leave `file_ops/ops.rs` (1018) for child modules `ops_delete.rs` and `ops_copy.rs`; one script does the code, allowlist and CLAUDE.md edits | done |
 | 13 | top-tui-draw ([phase-13-top-tui-draw.md](phase-13-top-tui-draw.md)) — `top`'s drawing section leaves `cli/commands/top_tui.rs` (1050) for a child module `top_tui_draw.rs` | done |
-| 14 | chat-loop ([phase-14-chat-loop.md](phase-14-chat-loop.md)) — the ratatui chat loop and line reader leave `cli/commands/chat.rs` (1147) for a child module `chat_loop.rs`; both giant functions move unchanged | todo |
+| 14 | chat-loop ([phase-14-chat-loop.md](phase-14-chat-loop.md)) — the ratatui chat loop and line reader leave `cli/commands/chat.rs` (1147) for a child module `chat_loop.rs`; both giant functions move unchanged | in-progress |
 
 ## Notes
 

@@ -1,6 +1,6 @@
 # Phase 14 — Move the ratatui chat loop out of `chat.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -136,3 +136,86 @@ Expected (from the dry run): `645 …chat.rs`, `713 …chat_loop.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 17:46 (started)
+
+Starting phase 14. Status flipped to `in-progress` here and in the milestone
+README's phase table. Next: run the Spec 1 script once with `bash`, then log
+its output per Spec 2.
+
+### Update — 2026-10-27 17:46 (cuts done)
+
+Ran the Spec 1 script once with `bash`. Output:
+
+```
+S=276 E=983
+  645 src/cli/commands/chat.rs
+  713 src/cli/commands/chat_loop.rs
+ 1358 total
+```
+
+`S=276 E=983` matches the script's echo comment (expect 276 983). The `wc -l`
+counts match the dry run's expected `645 …chat.rs` and `713 …chat_loop.rs`.
+Allowlist edit and CLAUDE.md row applied through the script; `cargo fmt --all`
+ran clean.
+
+### Findings — 2026-10-27 17:47
+
+Read `chat_loop.rs` once (713 lines). Decision-7 findings:
+
+- `run_chat_ratatui` is 500 lines. Its natural seams, in order:
+  1. The startup prologue (lines ~7–125): ctx destructure, presence hold,
+     tmux-attach wait, the `redraw` closure, the initial banner and the
+     greeting `ask_with_session_ratatui` block — a setup helper returning the
+     loop's state would cut ~120 lines.
+  2. The per-turn input dispatch inside the main loop: the `/exit`, `/help`,
+     `/shell`, `/attach`, `/log`, `/tail`, `/clear` arms are each a match-arm
+     body followed by an identical `redraw(...)` call — a
+     `dispatch_slash_command` helper returning `Handled`/`Continue`/
+     `SendToModel` would collapse the 11 `redraw` call sites into one tail
+     call and cut ~200 lines.
+  3. The query-send block (~lines 420–460) duplicates the greeting block's
+     `ask_with_session_ratatui` invocation almost line for line — a shared
+     `send_query(...)` helper would serve both.
+- `read_input_line_inner_ratatui` is 183 lines. Natural seams: the
+  `tokio::select!` arms are already one per concern; the `Key` match arm is
+  the big one — `StatusBarState` construction is repeated 5 times inside it
+  and could be a small `status_bar(...)` helper, and the `Key::CtrlO`
+  transcript-viewer arm could become one too. Splitting on select-arm
+  boundaries (input vs pushes vs sigwinch) is harder because all three share
+  every field of `RatatuiInputCtx`.
+- `RatatuiInputCtx` has 16 fields and is constructed exactly once; the
+  `redraw` closure in `run_chat_ratatui` takes 10 positional parameters —
+  both are the shape a later split should collapse first.
+- No other surprises: the file contains only the moved block plus the new
+  module docstring and `use super::*;` (I measure `run_chat_ratatui` at 500
+  and `read_input_line_inner_ratatui` at 183, matching the allowlist).
+  `banner_lines`, `HELP_TEXT`, the slash matchers, `local_user_host`,
+  `echo_body`, `should_echo` and `turn_budget_label` all remain in `chat.rs`
+  and resolve through `super::*`.
+
+### Update — 2026-10-27 17:50 (end-to-end verification)
+
+Ran the End-to-end block as written (a `bash` heredoc, run with `bash`),
+redirecting nothing by hand — the block itself writes `/tmp/e2e-m31-14.txt`
+and cats it. Output, byte-exact from `/tmp/e2e-m31-14.txt`:
+
+```
+645 src/cli/commands/chat.rs
+713 src/cli/commands/chat_loop.rs
+1358 total
+allowlisted=0
+fn_moved=2
+lost_other=0
+added_other=0
+moved_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every value matches the dry run's expectation: `645`/`713` line counts,
+`allowlisted=0`, `fn_moved=2`, `lost_other=0`, `added_other=0`,
+`moved_identical=1`, hygiene `ok.`, clippy clean, `fmt_exit=0`,
+`passed=2586 failed=0`. `grep -c '^lost_other=0$'` on this doc prints 1.
