@@ -1,6 +1,6 @@
 # Phase 09 — Move the transcript layout out of `viewer.rs`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-26
 
@@ -227,3 +227,142 @@ lost is `fn wrap_words(`, the only lines added the module wiring and the
 `pub(super)` the spec authorises), hygiene `ok. 16 passed; 0 failed`,
 clippy clean, `fmt_exit=0`, and the full suite at **`passed=2586
 failed=0`** — the exact count the preservation criterion pins.
+
+### Update — 2026-10-27 01:43 (complete, server-authored)
+
+**Summary:** The phase work is complete and committed. Final state check passes: phase doc at `in-progress`, README row matches, `lost_other=0` pasted once, working tree clean.
+
+**Summary:** Ran the Spec 1 cut pipeline as written on a scratch worktree of `e57ece85` (dry run: fmt no-op, build/clippy clean, full suite `passed=2586 failed=0` after the allowlist line came out), then applied the identical tree to the main checkout — `src/cli/viewer.rs` is now 1503 total lines (656 production, under the 800 cap) with the layout section living in the new child module `src/cli/viewer_layout.rs` (259 lines), wired as `#[path = "viewer_layout.rs"] mod layout;` and re-exported so all `crate::cli::viewer::` paths resolve; the only change inside the moved code is `wrap_words` gaining `pub(super)`. I removed the `file src/cli/viewer.rs 907` allowlist line (temp file + `mv`, `fn_kept=1` verified), added the `viewer_layout.rs` row to CLAUDE.md's Key files, and wrote the three required Update Log entries with edit tools: `(cuts done)`, `### Findings`, and `(end-to-end verification)` carrying the End-to-end block's output captured mechanically to `/tmp/e2e-m31-09.txt` and pasted byte-exact (`grep -c '^lost_other=0$'` = 1; `passed=2586 failed=0`, hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`).
+
+**Notes for review:** (1) The moved code has a pre-existing defect I logged as a Findings item rather than fixing — `wrap_words`'s overlong-token path gates on byte length (`tok.len() > width`) but decrements `space_remaining` by char counts, so `wrap_words("x😀", 1)` panics on `usize` underflow in debug (`space_remaining -= chunk_txt.chars().count()` at viewer_layout.rs:203); I reproduced it with a throwaway probe test in the scratch worktree and reverted the probe, so the committed tree is byte-identical to the spec'd cut (`diff` against the worktree commit `81f0053c` is empty). Recommend a bug report triaging it into the wrap/tidy follow-up. (2) The phase doc's own grep gate (`lost_other`) is the byte-exact paste check from bug-08-1 and passes. (3) A scratch worktree of `e57ece85` was used for the dry run and removed afterwards; the main checkout carries the commit `059047f0`, with the README status flip in `5220f9ab`.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.3.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.05s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+t_a_suffix ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test cfg_all_test_counts_as_test_only ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1050538): No such process
+kill: (-1051256): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-09-viewer-layout.md` — +114 -1
+- `src/cli/viewer.rs` — +5 -254
+- `src/cli/viewer_layout.rs` — +259 -0
+- `tests/hygiene_allowlist.txt` — +0 -1
+
+**Commit:** 5220f9ab7a99db4c96104cf59eeb9b6f6a614b26
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
