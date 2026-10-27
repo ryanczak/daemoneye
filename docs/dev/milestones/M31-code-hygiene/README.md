@@ -143,7 +143,7 @@ Expected count: 12–14. Each may split at drafting.
 | 09 | viewer-layout ([phase-09-viewer-layout.md](phase-09-viewer-layout.md)) — the transcript layout section leaves `cli/viewer.rs` (907) for a child module `viewer_layout.rs`, re-exported | done |
 | 10 | tail-view ([phase-10-tail-view.md](phase-10-tail-view.md)) — the tail and log viewers leave `cli/tail.rs` (988) for a child module `tail_view.rs`, re-exported | done |
 | 11 | ipc-types ([phase-11-ipc-types.md](phase-11-ipc-types.md)) — the payload structs leave `ipc.rs` (966) for a child module `ipc_types.rs`, glob re-exported; `ipc.rs` needs no exemption | done |
-| 12 | ops-delete-copy ([phase-12-ops-delete-copy.md](phase-12-ops-delete-copy.md)) — the `delete` and `copy` operations leave `file_ops/ops.rs` (1018) for child modules `ops_delete.rs` and `ops_copy.rs`; one script does the code, allowlist and CLAUDE.md edits | review      |
+| 12 | ops-delete-copy ([phase-12-ops-delete-copy.md](phase-12-ops-delete-copy.md)) — the `delete` and `copy` operations leave `file_ops/ops.rs` (1018) for child modules `ops_delete.rs` and `ops_copy.rs`; one script does the code, allowlist and CLAUDE.md edits | done |
 
 ## Notes
 

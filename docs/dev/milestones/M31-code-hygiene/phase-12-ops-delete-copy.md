@@ -1,6 +1,6 @@
 # Phase 12 — Move the `delete` and `copy` operations out of `ops.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -420,3 +420,22 @@ kill: (-1191193): No such process
 **Commit:** e953c15f9cdd985dba6e463d66b888f14c29cf1d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (62 turns)
+- **Scope deviations:** none. `git diff --stat b5d77a15 HEAD` names the
+  seven authorized files. Each new file equals its `b5d77a15` source range
+  (606–775, 777–1013) run through the spec's `fix` filter, so the 11 path
+  and visibility rewrites are the only changes. The code commit is typed
+  `refactor:`. Reviewer's gates: fmt 0, build and clippy clean, 2586
+  passed / 0 failed / 13 ignored.
+- **Findings:** six, carried to `FINDINGS.md` #35–#40.
+- **Calibration:** the turn count halved, from 131 (11) to 62, once the
+  dictated script also made the allowlist and CLAUDE.md edits and the
+  executor's own work came down to three log entries and a commit. That
+  answers phase 11's open question: the hand edits around the script were
+  the overhead. Every later mechanical phase uses an all-in-one script.
+
