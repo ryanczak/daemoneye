@@ -1,6 +1,6 @@
 # Phase 15 — Split the memory index's search and rebuild out of `mod.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -138,3 +138,81 @@ clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 19:40 (started)
+
+Started phase 15. Flipped the status to `in-progress` in this doc and in the
+milestone README's phase table. Verified the anchor line numbers in
+`src/memory/index/mod.rs` match the script's expectations (212 / 562 / 843 /
+1198) before running it. — rexyMCP (executor, phase-15 run 1)
+
+### Update — 2026-10-27 19:42 (cuts done)
+
+Ran the Spec 1 script once, as written, with `bash`. Its output, byte-exact:
+
+```
+S1=212 E1=560 S2=843 E2=1196
+  3042 src/memory/index/mod.rs
+   354 src/memory/index/search.rs
+   359 src/memory/index/reconcile.rs
+  3755 total
+```
+
+`S1`/`E1`/`S2`/`E2` match the script's expected anchors (212 / 560 / 843 /
+1196). `mod.rs` is 3042 lines including its inline `mod tests` (Spec 1's
+expected count), `search.rs` 354, `reconcile.rs` 359. `cargo fmt --all` ran
+inside the script and passed. — rexyMCP (executor, phase-15 run 1)
+
+### Findings — 2026-10-27
+
+Read `search.rs` and `reconcile.rs` once, end to end. `search.rs` (354
+lines) holds `fts5_search_in_category`, `fts5_search`, and the four corpus
+searches with their `TurnHit`/`ArtifactHit`/`EventHit`/`EpochHit` structs;
+every function is best-effort and logs a warning on prepare/query failure.
+`reconcile.rs` (359 lines) holds `Corpus`, the five private `rebuild_*`
+helpers, `reconcile_corpus`, `ReconcileReport`, and `reconcile_index`. Both
+files start `use super::*;` and reach `memory` items as
+`super::memory_dir_for_namespace` / `super::parse_memory_frontmatter`,
+which resolve through the `use super::{…}` import the script placed in
+`mod.rs`. Notes worth recording:
+
+- `ArtifactHit.kind` / `.score`, `EventHit.event` / `.score` and
+  `EpochHit.score` carry `#[allow(dead_code)]` — pre-existing in the moved
+  code, not added by this phase.
+- The script placed a one-line comment in `mod.rs` explaining the
+  `use super::{memory_dir_for_namespace, parse_memory_frontmatter}`
+  import; that comment's `why` (the child reaches them as `super::…`) is
+  the non-obvious part, so it earns its place.
+- No change inside the moved code beyond the two `pub(super)` lines on
+  `Corpus::from_table` and `Corpus::table_name`, which the parent's
+  `open_and_reconcile_if_empty` and its tests call.
+
+— rexyMCP (executor, phase-15 run 1)
+
+### Update — 2026-10-27 19:47 (end-to-end verification)
+
+Ran the Spec 4 End-to-end block as a single `bash` heredoc, redirecting to
+`/tmp/e2e-m31-15.txt` and pasting its contents byte-exact below. Every
+acceptance-criterion value matches the dry run's expectations:
+`lost_other=0`, `added_other=0`, `search_identical=1`,
+`reconcile_identical=1`, `passed=2586 failed=0`.
+
+```
+3042 src/memory/index/mod.rs
+354 src/memory/index/search.rs
+359 src/memory/index/reconcile.rs
+3755 total
+allowlisted=0
+lost_other=0
+added_other=0
+search_identical=1
+reconcile_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+`grep -c '^lost_other=0$'` on this doc prints 1 (verified before commit).
+— rexyMCP (executor, phase-15 run 1)
+
