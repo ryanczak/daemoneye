@@ -1,6 +1,6 @@
 # Phase 14 — Move the ratatui chat loop out of `chat.rs`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -219,3 +219,170 @@ Every value matches the dry run's expectation: `645`/`713` line counts,
 `allowlisted=0`, `fn_moved=2`, `lost_other=0`, `added_other=0`,
 `moved_identical=1`, hygiene `ok.`, clippy clean, `fmt_exit=0`,
 `passed=2586 failed=0`. `grep -c '^lost_other=0$'` on this doc prints 1.
+
+### Update — 2026-10-27 17:53 (complete, server-authored)
+
+**Summary:** </think>Everything is done. Let me do the final completion checklist:
+
+- [x] Phase doc Status: in-progress (still — server will flip to review)
+- [x] Milestone README phase-table row says in-progress
+- [x] No hand-written `(complete)` entry
+- [x] cargo fmt --all run before git add (ran as part of script, and fmt --check clean after)
+- [x] All verification commands ran clean (fmt, clippy, hygiene test, full suite)
+- [x] Final message will be substantive Summary + Notes for review
+- [x] git status --short shows nothing
+- [x] git log -1 --stat shows all touched files
+
+All acceptance criteria:
+1. chat_loop.rs defines run_chat_ratatui, RatatuiInputCtx, read_input_line_inner_ratatui ✓; chat.rs defines none and is 645 lines ✓ (hygiene test passed, 16 tests)
+2. Allowlist has no `file src/cli/commands/chat.rs` line (allowlisted=0) and the two fn lines name chat_loop.rs (fn_moved=2) ✓
+3. E2E prints lost_other=0, added_other=0, moved_identical=1, passed=2586 failed=0 ✓
+4. Update Log has (cuts done), Findings, (end-to-end verification) entries, all written with edit tools, all in this file ✓
+5. Committed as refactor: ✓
+
+Now write the Summary + Notes for review.</think>
+Phase 14 is complete. All spec items executed, verified, and committed.
+
+**Summary**
+
+Ran the Spec 1 script once with `bash`: `S=276 E=983` (matching the script's expectation), producing `src/cli/commands/chat_loop.rs` (713 lines) and trimming `chat.rs` to 645 production lines — under the 800 cap with no `file chat.rs` allowlist row left. The script applied both allowlist edits (`run_chat_ratatui 500` and `read_input_line_inner_ratatui 183` now name `chat_loop.rs`) and the CLAUDE.md row, then `cargo fmt`. Logged the cuts, wrote the decision-7 Findings entry (natural seams for both giant functions: a setup helper for the prologue, a `dispatch_slash_command` returning Handled/Continue/SendToModel to collapse the 11 `redraw` call sites, a shared `send_query` for the duplicated `ask_with_session_ratatui` blocks, and a `status_bar` helper for the 5 repeated `StatusBarState` constructions in the key match), and ran the End-to-end block verbatim as a `bash` heredoc. Committed everything as one `refactor:` commit; `git status --short` is clean.
+
+**End-to-end verification** (byte-exact from `/tmp/e2e-m31-14.txt`): `645 chat.rs` / `713 chat_loop.rs`, `allowlisted=0`, `fn_moved=2`, `lost_other=0`, `added_other=0`, `moved_identical=1`, hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0` — every value matches the dry run's expectation. `grep -c '^lost_other=0$'` on the phase doc prints 1.
+
+**Notes for review**
+
+- No deviations from the script; it ran as written and first try, including the `pub(super)` on `run_chat_ratatui` and the `use super::{agents, ipc_client, resume_hint};` import in `chat.rs` (which keeps the moved block byte-identical so the 500-line allowlist count holds).
+- One cosmetic hiccup in the commit flow, not in the code: my first commit message was passed through `-m` with embedded backticks, so the shell executed `` `use super::{agents, ipc_client, resume_hint};` `` as command substitution (printing `sh: 1: use: not found` and dropping that phrase from the message). I amended immediately with a heredoc (`-F -`) — the final commit message on `67729a6` is correct and contains the backticked path. No source or doc content was affected.
+- Findings for the later split phases are in the `### Findings — 2026-10-27 17:47` entry in the phase doc; the highest-leverage seam is the slash-command dispatch (its `redraw` tail call is repeated at 11 sites).
+- Adjacent observation only (not fixed, out of scope): `run_chat_ratatui`'s startup prologue contains a duplicated "Wait for tmux client attachment." comment line that predates this phase.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.3.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test production_lines_exclude_an_inline_test_module ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test functions_fit_the_cap ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.25s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1368060): No such process
+kill: (-1368768): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-14-chat-loop.md` — +84 -1
+- `src/cli/commands/chat.rs` — +5 -708
+- `src/cli/commands/chat_loop.rs` — +713 -0
+- `tests/hygiene_allowlist.txt` — +2 -3
+
+**Commit:** 67729a67a3b829cfb503f3da1e05f0b39aeee708
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
