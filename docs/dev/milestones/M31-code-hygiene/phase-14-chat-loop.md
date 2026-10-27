@@ -1,6 +1,6 @@
 # Phase 14 — Move the ratatui chat loop out of `chat.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -386,3 +386,25 @@ kill: (-1368768): No such process
 **Commit:** 67729a67a3b829cfb503f3da1e05f0b39aeee708
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (41 turns)
+- **Scope deviations:** none. `git diff --stat d52e328d HEAD` names the six
+  authorized files. The moved block equals `d52e328d:chat.rs` lines 276–983
+  apart from `run_chat_ratatui`'s `pub(super)`. The code commit is typed
+  `refactor:`. Reviewer's gates: fmt 0, build and clippy clean, 2586
+  passed / 0 failed / 13 ignored.
+- **Findings:** split seams for both giant functions, carried to
+  `FINDINGS.md` #45–#47 as input to their function-split phases.
+- **Calibration:** 41 turns, the lowest of the milestone (12: 62, 13: 78).
+  Two changes held. The End-to-end block, wrapped as `bash <<'E2E'`, ran
+  as written under the executor's `dash` tool shell, with no workaround
+  this time. And validating the doc's own script and block in a fresh
+  worktree caught a hygiene failure that the clippy-only dry run missed: a
+  `super::super::` path rewrite made rustfmt wrap a line, and
+  `run_chat_ratatui` grew past its allowlisted 500. The fix was an import
+  in the parent instead of a path rewrite.
+
