@@ -1,6 +1,6 @@
 # Phase 15 — Split the memory index's search and rebuild out of `mod.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -371,3 +371,25 @@ kill: (-1420721): No such process
 **Commit:** 2bad8e2d011e93db19a948bb3b811e34c425b322
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-27
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (39 turns)
+- **Scope deviations:** none. `git diff --stat 3c328527 HEAD` names the
+  seven authorized files. `search.rs` equals `3c328527:mod.rs` lines
+  212–560 byte for byte. `reconcile.rs` equals lines 843–1196 apart from
+  the two `pub(super)` lines. The code commit is typed `refactor:`. The five
+  `#[allow(dead_code)]` came with the moved code (five before, five after);
+  none is new. Reviewer's gates: fmt 0, build and clippy clean, 2586 passed
+  / 0 failed / 13 ignored.
+- **Findings:** one, carried to `FINDINGS.md` #48. A small inaccuracy in
+  the executor's entry: only `reconcile.rs` reaches `memory` through
+  `super::`, not both files.
+- **Calibration:** 39 turns for two cuts from one file, against 41 for
+  phase 14's single cut. The script shape (all edits in one script,
+  validated from the doc in a fresh worktree, the End-to-end block as a
+  `bash` heredoc) is now stable at about 40 turns, and the cut count barely
+  moves it.
+

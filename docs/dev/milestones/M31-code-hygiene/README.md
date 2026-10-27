@@ -146,7 +146,7 @@ Expected count: 12–14. Each may split at drafting.
 | 12 | ops-delete-copy ([phase-12-ops-delete-copy.md](phase-12-ops-delete-copy.md)) — the `delete` and `copy` operations leave `file_ops/ops.rs` (1018) for child modules `ops_delete.rs` and `ops_copy.rs`; one script does the code, allowlist and CLAUDE.md edits | done |
 | 13 | top-tui-draw ([phase-13-top-tui-draw.md](phase-13-top-tui-draw.md)) — `top`'s drawing section leaves `cli/commands/top_tui.rs` (1050) for a child module `top_tui_draw.rs` | done |
 | 14 | chat-loop ([phase-14-chat-loop.md](phase-14-chat-loop.md)) — the ratatui chat loop and line reader leave `cli/commands/chat.rs` (1147) for a child module `chat_loop.rs`; both giant functions move unchanged | done |
-| 15 | index-split ([phase-15-index-split.md](phase-15-index-split.md)) — the queries and the rebuild leave `memory/index/mod.rs` (1135) for sibling modules `search.rs` and `reconcile.rs`, glob re-exported | review      |
+| 15 | index-split ([phase-15-index-split.md](phase-15-index-split.md)) — the queries and the rebuild leave `memory/index/mod.rs` (1135) for sibling modules `search.rs` and `reconcile.rs`, glob re-exported | done |
 
 ## Notes
 
