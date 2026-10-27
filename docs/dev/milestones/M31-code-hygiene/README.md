@@ -148,7 +148,7 @@ Expected count: 12–14. Each may split at drafting.
 | 14 | chat-loop ([phase-14-chat-loop.md](phase-14-chat-loop.md)) — the ratatui chat loop and line reader leave `cli/commands/chat.rs` (1147) for a child module `chat_loop.rs`; both giant functions move unchanged | done |
 | 15 | index-split ([phase-15-index-split.md](phase-15-index-split.md)) — the queries and the rebuild leave `memory/index/mod.rs` (1135) for sibling modules `search.rs` and `reconcile.rs`, glob re-exported | done |
 | 16 | index-tests ([phase-16-index-tests.md](phase-16-index-tests.md)) — `memory/index/mod.rs`'s 2543-line inline tests move into sibling `tests.rs` and `incremental_tests.rs`, each under the test cap | done |
-| 17 | render-tests ([phase-17-render-tests.md](phase-17-render-tests.md)) — `cli/render_ratatui.rs`'s 2055-line inline tests move into sibling `render_ratatui_tests.rs` and `render_ratatui_layout_tests.rs` | todo |
+| 17 | render-tests ([phase-17-render-tests.md](phase-17-render-tests.md)) — `cli/render_ratatui.rs`'s 2055-line inline tests move into sibling `render_ratatui_tests.rs` and `render_ratatui_layout_tests.rs` | in-progress |
 
 ## Notes
 
