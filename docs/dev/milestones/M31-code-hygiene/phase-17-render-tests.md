@@ -1,6 +1,6 @@
 # Phase 17 — Move `render_ratatui.rs`'s tests into two sibling files
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -238,3 +238,160 @@ full `cargo test` → `passed=2586 failed=0`. Allowlist re-check:
 `test src/cli/render_ratatui.rs` lines. `render_ratatui.rs` tail is the two
 `#[cfg(test)] #[path]` declarations; `grep -c 'mod tests'` on the file prints 1
 (the declaration, no inline module). Ready to commit.
+
+### Update — 2026-10-27 21:30 (complete, server-authored)
+
+**Summary:** </think>Committed. Working tree clean. Let me verify the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` — yes, I flipped it at start and did not flip to review.
+- [x] Milestone README's phase-table row says `in-progress` — yes.
+- [x] No hand-written `(complete)` Update Log entry — correct; I wrote started, cuts done, Findings, e2e verification, gates re-run entries.
+- [x] `cargo fmt --all` run immediately before `git add` — yes.
+- [x] All verification commands ran clean — yes.
+- [x] Final message is Summary + Notes for review — doing now.
+- [x] `git status --short` clean — confirmed CLEAN.
+- [x] `git log -1 --stat` includes every file touched — yes, 6 files.
+
+All done. Now the final summary message.</think>
+All tasks complete, all gates green, working tree clean.
+
+**Summary**
+
+Phase 17 is done: the 2055-line inline test module in `src/cli/render_ratatui.rs` now lives in two siblings — `render_ratatui_tests.rs` (955 lines: parser, renderer, picker) and `render_ratatui_layout_tests.rs` (1100 lines, module `layout_tests`: spinner row, cursor placement, repaint plans, approval/credential panels) — split at the `// ── Helpers for spinner-row tests` banner, leaving the parent at 1231 lines with two `#[cfg(test)] #[path]` declarations and no inline module. The Spec-1 script ran exactly as written, once, and its output matched the dry-run expectations (`T=1226 H=2185 L=3281`; files 1231/955/1100). I logged a `(cuts done)` entry, a `### Findings` entry, and an `(end-to-end verification)` entry, then re-ran the full gate set before committing as `refactor:` (`f9cb8645`).
+
+**Notes for review**
+
+- End-to-end block output, captured mechanically to `/tmp/e2e-m31-17.txt`: `body_identical=1`, `module_tests=59 passed`, hygiene `ok. 16 passed; 0 failed`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0`; `grep -c '^body_identical=1$'` on the phase doc prints 1.
+- Findings (decision 7, grep-scoped, recorded not fixed): no assert-less test, no `sleep`/wall-clock wait; two inline-fixture patterns — `StatusBarState { … }` literals in 16 tests and a full `Terminal::with_options` + `RatatuiRenderer` construction in 18 tests — are extraction candidates for a later phase.
+- One deviation to note in the `(cuts done)` entry: the script's echo of the `# expect 1226 2185 3281` comment line printed the literal text `T=$H L=$L` because the comment is inside the echoed string; the operative line `T=1226 H=2185 L=3281` matched exactly, so nothing was affected.
+- `make_test_renderer` gained `pub(super)` and the layout file opens with the three specified `use` lines — the only test-body-adjacent changes, per spec.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1523079): No such process
+kill: (-1523789): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-17-render-tests.md` — +108 -1
+- `src/cli/render_ratatui.rs` — +5 -2055
+- `src/cli/render_ratatui_layout_tests.rs` — +1100 -0
+- `src/cli/render_ratatui_tests.rs` — +955 -0
+- `tests/hygiene_allowlist.txt` — +0 -1
+
+**Commit:** f9cb864500df99e7f6cd952ed00dde5cd4b8d833
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
