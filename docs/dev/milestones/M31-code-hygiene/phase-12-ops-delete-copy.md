@@ -1,6 +1,6 @@
 # Phase 12 — Move the `delete` and `copy` operations out of `ops.rs`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -248,3 +248,175 @@ headers, `use super::*;` and the re-export stanzas the grep excludes),
 `rewrites=11/11` (all eleven `super::` reach-ins and both visibility
 lines rewrote), hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`,
 and the full suite at `passed=2586 failed=0`.
+
+### Update — 2026-10-27 03:43 (complete, server-authored)
+
+**Summary:** </think>Wait — the commit includes the phase doc and README changes, which is what the contract says: "Stage and commit your source, tests, and the start-of-phase status flip from step 1". The doc changes present at commit time are the status flips plus my Update Log entries. The contract says "a plain 'stage everything' is fine — the only doc change present at this point is that start flip and your started entry." I also have the findings and e2e entries in there — that's fine, they're required by the spec (Spec 2 says log at once, Spec 4 says paste with write/patch tool).
+
+Everything is committed, working tree clean. Completion checklist:
+
+- [x] Phase doc Status: in-progress ✓
+- [x] README phase-table row: in-progress ✓
+- [x] No (complete) entry written by me ✓
+- [x] cargo fmt --all run before git add ✓
+- [x] All verification commands ran clean ✓
+- [x] Final message: Summary + Notes for review ✓ (this message)
+- [x] git status --short clean ✓
+- [x] git log -1 --stat shows all files ✓
+
+Acceptance criteria:
+1. ops_delete.rs defines run_delete and run_delete_with_spawn ✓ (verified lines 9, 27); ops_copy.rs defines run_copy and run_copy_with_spawn ✓ (lines 9, 29). ops.rs defines none of the four ✓ (grep showed only `use` lines and test call). ops.rs ≤ 800 production lines: hygiene test passes with the file line removed from allowlist ✓ — hygiene measured it at 2270 total lines but production lines = 2270 - test module... wait, actually hygiene counts production lines (everything before #[cfg(test)]? or non-test lines). The allowlist had `file src/daemon/executor/file_ops/ops.rs 1018` which was the production line count. Now hygiene passes with no entry for ops.rs, meaning production count ≤ 800. Let me double check: hygiene test `ok. 16 passed`. And E2E shows wc -l 2270 which includes the tests module (1250 lines mentioned). Production ≈ 2270 - 1250 ≈ 1020? Hmm wait — that doesn't add up. Let me think.
+
+Original ops.rs was 2668 total lines, allowlist said 1018 production lines. 2668 - 1018 = 1650 test lines. After the cut: 2270 total = 2668 - 398. 2270 - 1018 + ... hmm. Production lines after = 1018 - (moved production lines). The moved sections: lines 606-775 (delete, ~170 lines) and 777-1013 (copy, ~237 lines) ≈ 407 lines of which ~398 were production (minus comment banners and blanks). So production ≈ 1018 - 398 ≈ 620 lines. Good, under 800. And hygiene test passes with no allowlist entry for ops.rs, which confirms ≤ 800.
+
+The acceptance criterion says "ops.rs ... has at most 800 production lines (`cargo test --test hygiene` measures it)" — confirmed by hygiene passing.
+
+2. Allowlist has no `file src/daemon/executor/file_ops/ops.rs` line ✓ (allowlisted=0), and run_copy_with_spawn 213 line names ops_copy.rs ✓ (fn_moved=1).
+
+3. E2E block prints lost_other=0, added_other=0, rewrites=11/11, passed=2586 failed=0 ✓.
+
+4. Update Log has (cuts done), Findings, (end-to-end verification) entries, all written with edit tools ✓; grep -c '^lost_other=0$' printed 1 ✓.
+
+Spec 5: committed as refactor: ✓ e953c15f.
+
+Also spec-pinned literals: the E2E block itself greps the literals; grep -c '^lost_other=0$' = 1 per spec 4. Good.
+
+One more check — the contract says don't flip to review, don't write complete entry. Done.
+
+Now write final Summary + Notes for review message.</think>
+All done. Working tree is clean, commit `e953c15f` contains everything.
+
+**Summary:** Spec 1 ran as written, once, with `bash`: the script computed `DS=606 CS=777 CE=1013` (matching the expected values), cut the `operation = "delete"` section into `src/daemon/executor/file_ops/ops_delete.rs` (174 lines) and `operation = "copy"` into `ops_copy.rs` (241 lines), each with the module doc header and `use super::*;` plus the path (`super::` → `super::super::`) and visibility (`pub(in super::super)` for `run_delete`/`run_copy`, `pub(super)` kept for the `_with_spawn` variants) rewrites; `ops.rs` shrank to 2270 total lines (~620 production, hygiene-verified under the 800 cap) with the child modules declared, `run_delete`/`run_copy` re-exported `pub(super)`, and the two `_with_spawn` variants imported under `#[cfg(test)]` — so `write.rs`'s `super::ops::run_delete`/`run_copy` calls resolve unchanged. The allowlist and CLAUDE.md edits landed through the script's own rewrites; no `sed -i` on any source file, no hand edits to anything the script touches. Spec 2's `(cuts done)` entry, Spec 3's `### Findings` entry (6 findings on the moved code — a 213-line `run_copy_with_spawn` with its natural remote/local split seams noted first), and Spec 4's `(end-to-end verification)` entry were all written with edit tools; the E2E block output was captured mechanically to `/tmp/e2e-m31-12.txt` and pasted byte-exact (`PASTE MATCH` verified against the doc). Committed as `e953c15f` (`refactor:`), tree clean.
+
+**Notes for review:** E2E matched the dry run exactly: `2270/174/241` line counts, `allowlisted=0`, `fn_moved=1`, `lost_other=0`, `added_other=0`, `rewrites=11/11`, hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0`; `grep -c '^lost_other=0$'` on the phase doc prints 1. No deviations from the spec. One spec-sketch note for your model of the code: the moved remote branches had one oddity now visible in isolation — `run_copy_with_spawn` builds its remote shell string *before* sending the approval prompt (harmless, but noted as finding 2) — plus a minor dest-validation divergence between the local and remote paths (finding 3) and a `DE_OK:`/`DE_ERROR:` sentinel substring-match nit in both remote result scans (finding 4). All findings are recorded in the phase doc's Findings entry; none acted on, per decision 6.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.28s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1190487): No such process
+kill: (-1191193): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-12-ops-delete-copy.md` — +111 -1
+- `src/daemon/executor/file_ops/ops.rs` — +10 -408
+- `src/daemon/executor/file_ops/ops_copy.rs` — +241 -0
+- `src/daemon/executor/file_ops/ops_delete.rs` — +174 -0
+- `tests/hygiene_allowlist.txt` — +1 -2
+
+**Commit:** e953c15f9cdd985dba6e463d66b888f14c29cf1d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
