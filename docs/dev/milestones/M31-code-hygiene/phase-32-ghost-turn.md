@@ -1,6 +1,6 @@
 # Phase 32 — Move `do_ghost_turn` out of `ghost.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -521,3 +521,34 @@ kill: (-2385102): No such process
 **Commit:** b117da8045e6c84934186c12aca53652a8f2a49c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (42 turns)
+- **Scope deviations:** none.
+  - The diff names the authorized files.
+  - The reviewer's re-run of the checks printed
+    `ghost_file_entries=0`, `segments_present=1` and `routed=1`, with
+    the re-pathed `fn src/daemon/ghost/turn.rs do_ghost_turn 775`.
+  - The one `#[allow(clippy::too_many_arguments)]` in the new files is
+    the attribute `do_ghost_turn` already carried. There is one before
+    the phase and one after, as the spec said.
+  - The code commit is typed `refactor:`.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored.
+- **Findings:** three moved silent defaults, none above low. The
+  executor's count ("4 hits") is off by one; the grep returns three. Two
+  of its descriptions are corrected here, and none is carried, since
+  each is a deliberate default:
+  - `prompt.rs:50`: the fallback tuple's `"none"` is the
+    approved-scripts text, not an agent name.
+  - `prompt.rs:82`: the steps fallback follows a `log::warn!` on an
+    unreadable runbook, so it is logged.
+  - `turn.rs:717`: an empty transcript on a missing session is not
+    related to the IPC sink comment the executor cited. The review
+    found nothing to carry here either.
+- **Calibration:** 42 turns. The thin headroom (782 / 800 in both
+  files) held, because the script does all the editing.
+
