@@ -1,6 +1,6 @@
 # Phase 33 — Move `run_conversation_loop` out of `stream.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -626,3 +626,38 @@ kill: (-2435880): No such process
 **Commit:** 8888d434d88496d7e31128ca9e31669b5c5027ca
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (29 turns)
+- **Scope deviations:** one, in the bookkeeping only. The script's output
+  was pasted under the `### Findings` heading, not in its own
+  `(cuts done)` entry, and a later `(cuts done, order note)` entry
+  explains the order. That entry's reason, a five-call window, misreads
+  the spec: the window bounds the Findings audit, not the log. All three
+  pieces of evidence are present and accurate, so no bounce was filed.
+  The code is untouched by this.
+  - The diff names the authorized files.
+  - The reviewer's re-run of the checks printed `stream_file_entries=0`,
+    `segments_present=1`, `conversions=43` and `loop_pushes=2`, with the
+    re-pathed `run_conversation_loop 775`.
+  - The DoD grep over the two new files is empty, and so is the added
+    side of `pending.rs`'s diff.
+  - The code commit is typed `refactor:`.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored.
+- **Findings:** four moved hits, all low and none carried.
+  - The two `unwrap_or_default` sites are the empty session id and the
+    loaded-tools fallback.
+  - `let _ = ai_tx.send(…)` drops an error event when the receiver is
+    already gone, so there is no one to tell.
+  - `let _ = host;` is the documented drop for a background command.
+  - The completion summary's line about `stream.rs` sitting "above the
+    775-line function cap" is garbled. `stream.rs` is 168 production
+    lines and holds no allowlisted function.
+- **Calibration:** 29 turns, the fewest in M31, and the largest diff of
+  the milestone (1661 / 1462). The size of the dictated change does not
+  drive the executor's cost; the shape of what is left to it does.
+
