@@ -1,6 +1,6 @@
 # Phase 27 — Silent tools that exit early still send `ToolFinished`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -405,3 +405,39 @@ kill: (-2135797): No such process
 **Commit:** 59e8173790e1fb21d8899425fb796d380dd1469b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (205 turns)
+- **Scope deviations:** none.
+  - The production diff is exactly the dictated rewrite: four `'arm: {`
+    openings and ten `break 'arm Ok(…)`, 14 lines changed for 14.
+    `execute_tool_call` keeps its length, and the allowlist is untouched.
+  - The test asserts the exact frame sequence, `ToolStarted` then
+    `ToolFinished`, by id.
+  - The `(red)` entry shows it failing on the unfixed tree with only
+    `[("ToolStarted", "t1")]`, which is #73's shape.
+  - Its `unwrap`, `expect` and `unsafe` set-var are test-only and
+    copy the analogue test's harness.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored. `labeled_arms=4 breaks=10`.
+- **Findings:** written as their own entry, and carried to
+  `FINDINGS.md`:
+  - The `Owner::Chat(unwrap_or_default)` hit joins #75.
+  - The feedback writes' `let _ =`, the duplicated host-refusal
+    prologue and the `read_file` extra-`ToolResult` drift become
+    #77–#79.
+  - One correction to the executor's reading of the drift. Silent
+    tools report to the client through `ToolFinished`, and the caller
+    hands every `Result` to the model. So `read_file`'s connect
+    failure, which sends an explicit `ToolResult` frame, is the odd
+    path. `open_shell` is not missing one.
+- **Calibration:** 205 turns, against 43 for phase 26. The fix itself
+  was dictated. The cost came from the executor writing a new async
+  test, which needed duplex framing, a hermetic `HOME` and parsing the
+  `Response` stream, then proving it red. A phase with a test to write
+  costs several times more than a dictated move. Budget for it, or name
+  the analogue test's helper calls more closely next time.
+
