@@ -163,6 +163,7 @@ Expected count: 12–14. Each may split at drafting.
 | 29 | foreground-split ([phase-29-foreground-split.md](phase-29-foreground-split.md)) — `run_terminal_command`'s 392-line foreground arm leaves `execute_tool_call` for `dispatch_foreground.rs`, split into `dispatch`, `run_approved`, `run_on_named_host` and a shared `finish_run`; `execute_tool_call` goes 797 → 409 | done |
 | 30 | background-split ([phase-30-background-split.md](phase-30-background-split.md)) — `run_terminal_command`'s 163-line background arm leaves `execute_tool_call` for `dispatch_background.rs`, split into `dispatch` and `start_approved`; `execute_tool_call` goes 409 → 250 | done |
 | 31 | route-split ([phase-31-route-split.md](phase-31-route-split.md)) — `execute_tool_call` splits into itself (the policy checks and the feedback frames), `load_snapshot` and `route` (the family match), the last two in a new `route.rs`; `execute_tool_call` 250 → 93, `executor/mod.rs` 944 → 788, and both allowlist entries are deleted | done |
+| 32 | ghost-turn ([phase-32-ghost-turn.md](phase-32-ghost-turn.md)) — `do_ghost_turn` leaves `ghost.rs` for `ghost/turn.rs`, its 126-line prompt assembly becoming `build_ghost_prompt` in `ghost/prompt.rs`; `ghost.rs` 1677 → 782, `do_ghost_turn` 896 → 775 (re-pathed), the file entry deleted | todo |
 
 ## Notes
 
@@ -179,4 +180,5 @@ Expected count: 12–14. Each may split at drafting.
   `pending.rs`'s `to_tool_call` (617) and `summary` (188) left the
   allowlist, which now holds 66 entries.
 
+- **`defs.rs` exempted (PE decision 2026-10-28):** `src/ai/tools/defs.rs` (1398 lines, the flat `TOOLS` table, one `ToolDef` per AI tool) joins `pending.rs` and `args.rs` under decision 2. The split would scatter one table across files that nothing else distinguishes, and `tests/doc_truth.rs` already holds it to the README. The `EXEMPT` entry and the allowlist deletion land in the phase after `stream.rs`.
 - **#73 settled (PE decision 2026-10-28):** four silent-tool arms (`read_file`, `get_shell_context`, `open_shell`, `spawn_ghost_shell`) `return` early and skip `ToolFinished`, so the client's panel for the call is lost or unlabelled; `get_shell_context` hits it on every call from outside tmux. The arms cannot leave `execute_tool_call` without changing that, so the fix comes first as its own `fix:` phase with a test (the one recorded exception to decision 6), and the move follows as a pure move. Options weighed: fix inside the move (mixes a fix into a move diff) and preserving the skip with an early-exit result (plumbing to keep a bug alive into 2.4.0). See [`FINDINGS.md`](FINDINGS.md) #73.
