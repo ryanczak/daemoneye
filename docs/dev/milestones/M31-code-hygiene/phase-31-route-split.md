@@ -1,6 +1,6 @@
 # Phase 31 — Split `execute_tool_call` into policy, snapshot and route
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -326,3 +326,60 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 14:00 (started)
+
+**Executor:** Claude (phase 31, first run)
+
+Status flipped to `in-progress`; README phase-table row updated to match.
+Spec task 1 is next: run the phase script as written, once.
+
+### Update — 2026-10-28 14:01 (cuts done)
+
+Spec task 1 ran the script as written, once. Its complete output:
+
+```
+execute_tool_call split: load_snapshot + route
+ 1852 src/daemon/executor/mod.rs
+  186 src/daemon/executor/route.rs
+ 2038 total
+```
+
+Line counts match the dry run's expectation (1852 / 186). `cargo build`
+then passed clean. Allowlist entries for `mod.rs` and `execute_tool_call`
+are deleted; the `CLAUDE.md` row for `route.rs` is added.
+
+### Findings — 2026-10-28
+
+Command (spec task 3, run exactly as written):
+
+```
+grep -nE '\.(unwrap|expect)\(|panic!|let _ =|\.ok\(\)|unwrap_or_default|unwrap_or_else' src/daemon/executor/route.rs
+```
+
+Result: `none` — zero matches. The new `route.rs` contains no
+error-suppressing idioms.
+
+### Update — 2026-10-28 14:05 (end-to-end verification)
+
+Spec task 4's End-to-end block, output captured to `/tmp/e2e-m31-31.txt` and
+pasted byte-exact from a single run (first run; no flake re-run needed):
+
+```
+1852 src/daemon/executor/mod.rs
+186 src/daemon/executor/route.rs
+2038 total
+allowlist_entries_left=0
+segments_present=1
+routed=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+All four required greps print 1: `segments_present=1`, `routed=1`,
+`allowlist_entries_left=0`, and on this doc
+`grep -c '^### Findings — '` = 1. `passed=2587 failed=0` matches the
+acceptance criterion; the known flake (`read_shell_screen_lines_tails_the_visible_rows`,
+FINDINGS.md #65) did not fire.

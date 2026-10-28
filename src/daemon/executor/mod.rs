@@ -17,6 +17,7 @@ mod foreground;
 pub(crate) mod ghost_remote;
 pub(crate) mod ghost_sandbox;
 pub(crate) mod knowledge;
+mod route;
 pub mod sbx;
 pub mod sbx_lifecycle;
 mod schedule;
@@ -434,48 +435,13 @@ where
 {
     let SessionCtx {
         session_id,
-        session_name: _,
-        chat_pane,
         sessions,
+        ..
     } = ctx;
     // ── Pre-fetch session state in one acquisition ───────────────────────────
-    let snap: DispatchSnapshot = match session_id {
-        Some(sid) => with_sessions(sessions, |store| match store.get(sid) {
-            Some(e) => {
-                let gc = e.ghost_config.as_ref();
-                DispatchSnapshot {
-                    ghost_policy: if e.is_ghost {
-                        gc.map(GhostPolicy::from_config)
-                    } else {
-                        None
-                    },
-                    tool_policy: if e.is_ghost {
-                        gc.and_then(|g| g.tool_policy.clone())
-                    } else {
-                        None
-                    },
-                    is_ghost_shell: e.is_ghost,
-                    spawn_depth: gc.map(|g| g.spawn_depth).unwrap_or(0),
-                    effective_parent_job_id: gc.map(|_| sid.to_string()),
-                    saved_name: e.saved_name.clone(),
-                    turn_count: e.turn_count,
-                }
-            }
-            None => DispatchSnapshot::default(),
-        }),
-        None => DispatchSnapshot::default(),
-    };
-    let DispatchSnapshot {
-        ghost_policy,
-        tool_policy,
-        is_ghost_shell,
-        spawn_depth,
-        effective_parent_job_id,
-        saved_name,
-        turn_count,
-    } = snap;
+    let snap = route::load_snapshot(session_id, sessions);
     // Defensive guard: a ghost shell entry must always have a ghost_config.
-    if is_ghost_shell && ghost_policy.is_none() {
+    if snap.is_ghost_shell && snap.ghost_policy.is_none() {
         let msg = "Error: ghost shell has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
         log::error!("{} for session {:?}", msg, session_id);
         send_response_split(
@@ -488,13 +454,8 @@ where
         .await?;
         return Ok(ToolCallOutcome::Result(msg));
     }
-    let is_ghost = ghost_policy.is_some();
-
-    // ── Delegation depth tracking ────────────────────────────────────────────
-    // (spawn_depth and effective_parent_job_id already loaded in DispatchSnapshot)
-
     // ── Tool Policy Enforcement (agent-level) ────────────────────────────────
-    if let Some(policy) = &tool_policy
+    if let Some(policy) = &snap.tool_policy
         && !policy.permits(call.tool_name())
     {
         let msg = format!(
@@ -518,20 +479,6 @@ where
         return Ok(ToolCallOutcome::Result(msg));
     }
 
-    // ── Build namespace list for memory operations ───────────────────────────
-    let memory_namespaces_owned = build_memory_namespaces(session_id, sessions, is_ghost_shell);
-    let memory_namespaces: Vec<&str> = memory_namespaces_owned.iter().map(|s| s.as_str()).collect();
-    // ── Artifact context for session_origin stamping + tracking ───────────────
-    let artifact_ctx = knowledge::ArtifactCtx {
-        session_id,
-        sessions,
-        saved_name: saved_name.as_deref(),
-        turn_count,
-        is_ghost,
-        namespaces: &memory_namespaces,
-    };
-    // ──────────────────────────────────────────────────────────────────────────
-
     // Emit ToolStarted for silent tools so the client can show a history entry
     // and animate an elapsed timer.  Approval-gated and panel tools are excluded
     // because they have their own richer UI (ToolCallPrompt, EditFilePrompt, …).
@@ -549,110 +496,7 @@ where
     }
     let tool_start = Instant::now();
 
-    let outcome = match call {
-        PendingCall::InvalidArgs { .. }
-        | PendingCall::LoadTools { .. }
-        | PendingCall::SpawnGhost { .. } => {
-            dispatch_meta::dispatch(
-                call,
-                tx,
-                session_id,
-                sessions,
-                &ghost_policy,
-                spawn_depth,
-                &effective_parent_job_id,
-            )
-            .await
-        }
-
-        PendingCall::Foreground { .. } => {
-            dispatch_foreground::dispatch(call, tx, rx, ctx, &ghost_policy, is_ghost).await
-        }
-
-        PendingCall::Background { .. } => {
-            dispatch_background::dispatch(call, tx, rx, ctx, &ghost_policy, is_ghost).await
-        }
-
-        PendingCall::ScheduleCommand { .. }
-        | PendingCall::ListSchedules { .. }
-        | PendingCall::CancelSchedule { .. }
-        | PendingCall::DeleteSchedule { .. } => {
-            dispatch_schedule::dispatch(call, tx, rx, session_id, is_ghost, schedule_store).await
-        }
-
-        PendingCall::WriteScript { .. }
-        | PendingCall::ListScripts { .. }
-        | PendingCall::ReadScript { .. }
-        | PendingCall::DeleteScript { .. }
-        | PendingCall::WriteRunbook { .. }
-        | PendingCall::DeleteRunbook { .. }
-        | PendingCall::ReadRunbook { .. }
-        | PendingCall::ListRunbooks { .. }
-        | PendingCall::CreateAgent { .. }
-        | PendingCall::ReadAgent { .. }
-        | PendingCall::ListAgents { .. }
-        | PendingCall::DeleteAgent { .. } => {
-            dispatch_artifacts::dispatch(
-                call,
-                tx,
-                rx,
-                session_id,
-                is_ghost,
-                schedule_store,
-                &artifact_ctx,
-            )
-            .await
-        }
-
-        PendingCall::ReadFile { .. } | PendingCall::EditFile { .. } => {
-            dispatch_files::dispatch(call, tx, rx, session_id, &ghost_policy, is_ghost).await
-        }
-
-        PendingCall::AddMemory { .. }
-        | PendingCall::UpdateMemory { .. }
-        | PendingCall::DeleteMemory { .. }
-        | PendingCall::ReadMemory { .. }
-        | PendingCall::ListMemories { .. }
-        | PendingCall::SearchRepository { .. }
-        | PendingCall::RecallContext { .. }
-        | PendingCall::AwaitAgentResult { .. } => {
-            dispatch_memory::dispatch(call, tx, session_id, &artifact_ctx, &memory_namespaces).await
-        }
-
-        PendingCall::GetShellContext { .. } => {
-            dispatch_context::dispatch(call, session_id, chat_pane, cache)
-        }
-
-        PendingCall::ListShells { .. }
-        | PendingCall::ReadShell { .. }
-        | PendingCall::ReadShellScreen { .. }
-        | PendingCall::FindInShells { .. }
-        | PendingCall::CloseShell { .. }
-        | PendingCall::WatchShell { .. }
-        | PendingCall::ListShellLogs { .. }
-        | PendingCall::ReadShellLog { .. } => dispatch_shells::dispatch(call, tx, session_id).await,
-
-        PendingCall::OpenShell { .. } => {
-            dispatch_open_shell::dispatch(call, tx, rx, session_id, &ghost_policy, is_ghost).await
-        }
-
-        PendingCall::SendInput { .. } => {
-            dispatch_send_input::dispatch(
-                call,
-                tx,
-                rx,
-                session_id,
-                &ghost_policy,
-                &tool_policy,
-                is_ghost,
-            )
-            .await
-        }
-
-        PendingCall::RunLogTail { .. }
-        | PendingCall::RunLogSearch { .. }
-        | PendingCall::GetTurn { .. } => dispatch_runs::dispatch(call),
-    }?;
+    let outcome = route::route(call, tx, rx, ctx, cache, schedule_store, snap).await?;
 
     if emit_feedback {
         let (ok, detail) = tool_outcome_detail(&outcome);

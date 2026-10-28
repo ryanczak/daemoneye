@@ -162,7 +162,7 @@ Expected count: 12–14. Each may split at drafting.
 | 28 | dispatch-rest ([phase-28-dispatch-rest.md](phase-28-dispatch-rest.md)) — nine more arms move into five family modules (files, context, open_shell, send_input, meta); only `run_terminal_command` stays; `execute_tool_call` goes 1161 → 797 | done |
 | 29 | foreground-split ([phase-29-foreground-split.md](phase-29-foreground-split.md)) — `run_terminal_command`'s 392-line foreground arm leaves `execute_tool_call` for `dispatch_foreground.rs`, split into `dispatch`, `run_approved`, `run_on_named_host` and a shared `finish_run`; `execute_tool_call` goes 797 → 409 | done |
 | 30 | background-split ([phase-30-background-split.md](phase-30-background-split.md)) — `run_terminal_command`'s 163-line background arm leaves `execute_tool_call` for `dispatch_background.rs`, split into `dispatch` and `start_approved`; `execute_tool_call` goes 409 → 250 | done |
-| 31 | route-split ([phase-31-route-split.md](phase-31-route-split.md)) — `execute_tool_call` splits into itself (the policy checks and the feedback frames), `load_snapshot` and `route` (the family match), the last two in a new `route.rs`; `execute_tool_call` 250 → 93, `executor/mod.rs` 944 → 788, and both allowlist entries are deleted | todo |
+| 31 | route-split ([phase-31-route-split.md](phase-31-route-split.md)) — `execute_tool_call` splits into itself (the policy checks and the feedback frames), `load_snapshot` and `route` (the family match), the last two in a new `route.rs`; `execute_tool_call` 250 → 93, `executor/mod.rs` 944 → 788, and both allowlist entries are deleted | in-progress |
 
 ## Notes
 
