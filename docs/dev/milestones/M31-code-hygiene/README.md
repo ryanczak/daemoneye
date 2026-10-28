@@ -157,7 +157,7 @@ Expected count: 12–14. Each may split at drafting.
 | 23 | shell-readers ([phase-23-shell-readers.md](phase-23-shell-readers.md)) — the read/log and find/watch families leave `knowledge/shell.rs` (2627 → 1499) for child modules `shell_read.rs` and `shell_watch.rs`; the first of two | done |
 | 24 | shell-rest ([phase-24-shell-rest.md](phase-24-shell-rest.md)) — input, screen and lifecycle leave `knowledge/shell.rs` (1499) for child modules `shell_input.rs`, `shell_screen.rs` and `shell_life.rs`; its `file` entry goes | done |
 | 25 | shell-tests ([phase-25-shell-tests.md](phase-25-shell-tests.md)) — `knowledge/shell.rs`'s 3940-line inline tests move into `shell_tests.rs` and its two children `shell_lifecycle_tests.rs` and `shell_observer_tests.rs` | done |
-| 26 | dispatch-families ([phase-26-dispatch-families.md](phase-26-dispatch-families.md)) — 35 of `execute_tool_call`'s arms move into five per-family `dispatch_*.rs` modules (schedule, artifacts, memory, shells, runs); the function goes 1439 → 1161 | in-progress |
+| 26 | dispatch-families ([phase-26-dispatch-families.md](phase-26-dispatch-families.md)) — 35 of `execute_tool_call`'s arms move into five per-family `dispatch_*.rs` modules (schedule, artifacts, memory, shells, runs); the function goes 1439 → 1161 | review      |
 
 ## Notes
 
