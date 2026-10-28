@@ -1,6 +1,6 @@
 # Phase 30 — Split `run_terminal_command`'s background arm into stages
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -517,3 +517,35 @@ kill: (-2292456): No such process
 **Commit:** dc366c6f02372b49c6e54caae7edd4443f2d8fa6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (51 turns)
+- **Scope deviations:** none.
+  - The diff names the authorized files.
+  - The reviewer's re-run of the checks printed `segments_present=1` and
+    `routed=1`.
+  - `dispatch` is 72 lines and `start_approved` 121, both within the
+    cap.
+  - The DoD grep over `dispatch_background.rs` is empty.
+  - The code commit is typed `refactor:`.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored.
+- **Findings:** eight hits, all moved verbatim, and the executor named
+  the known families. Two corrections:
+  - The `let _ = close_shell_with(…)` in the spawned closer is not
+    #75's family. It drops a best-effort close result without a log
+    line, which is the shape of #77, so it is carried there.
+  - The `"s?"` fallback in the start-error text is cosmetic. Phase 29
+    left the same idiom uncarried in `finish_run`, so it is not carried
+    here either.
+- **Calibration:** 51 turns, the fewest for a split in M31. The
+  dictated-script pattern with a one-grep Findings step is now settled
+  for production splits.
+- **Cosmetic carry-over:** the two `format!` literals keep their old
+  continuation indentation. A `\` continuation strips leading
+  whitespace and rustfmt does not reflow string literals, so the text
+  and the output are unchanged.
+
