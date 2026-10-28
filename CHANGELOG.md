@@ -8,6 +8,51 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-10-28 — M31 Code hygiene
+
+No source file is too long to read in one sitting, and a test keeps it
+that way. This release changes no behaviour but one: the client's panel
+for four silent tools now closes properly. Everything else is a move,
+each verified identical to the text it replaced. The retrospective is in
+`docs/dev/milestones/M31-code-hygiene/README.md`.
+
+- **The hygiene gate** — `tests/hygiene.rs` parses every `.rs` file and
+  holds the caps: 800 production lines per file, 2000 test lines per
+  file, 150 lines per function. `tests/hygiene_allowlist.txt` lists the
+  remaining offenders, whose counts may only shrink; a function that
+  comes within its cap must leave the list. `src/ai/types/pending.rs`,
+  `src/ai/tools/args.rs` and `src/ai/tools/defs.rs` are exempt as flat
+  data, one entry per AI tool.
+- **Every file within the cap** — 21 production files over 800 lines
+  split along their seams into 45 new child modules, among them
+  `config/{sandbox,shells,models}.rs`, `daemon/startup.rs`,
+  `daemon/server/{sessions,handlers}.rs`, `daemon/stream/{conversation,endings}.rs`,
+  `daemon/ghost/{turn,prompt}.rs`, `executor/dispatch_*.rs` (ten tool
+  families), `executor/route.rs`, `executor/knowledge/shell_*.rs`,
+  `cli/commands/{chat_loop,stream_ask,stream_prompts,slash_session}.rs`,
+  `cli/commands/top_{load,text,detail,tui_draw}.rs`,
+  `cli/{viewer_layout,tail_view,render_ratatui_draw}.rs`,
+  `memory/index/{search,reconcile}.rs`. Every inline test module over the
+  cap moved to a sibling `*_tests.rs` (25 of them). The `CLAUDE.md` key-files table
+  names each new module.
+- **The two 1400-line tool matches are gone** — `execute_tool_call` is 93
+  lines that load a snapshot and route each call to its family module;
+  `run_conversation_loop`'s 43 tool-event arms are
+  `PendingCall::from_tool_event`, so adding a tool touches `pending.rs`,
+  not the loop.
+- **`ToolFinished` for silent tools** — `read_file`, `get_shell_context`,
+  `open_shell` and `spawn_ghost_shell` returned early on some paths and
+  never sent `ToolFinished`, leaving the chat client's panel for the call
+  open or unlabelled (`get_shell_context` did it on every call from
+  outside tmux). Each path now sends it.
+- **Findings ledger** — the executor read every line it moved, and
+  `FINDINGS.md` holds the 85 suspected bugs, optimisations and smells it
+  saw, each triaged; 51 are deferred to a fix milestone.
+
+Not in this release: 40 functions over 150 lines remain on the allowlist,
+`run_conversation_loop` and `do_ghost_turn` (775 each) the largest. The
+gate forbids them from growing; decomposing them is the next milestone.
+
 ## [2.3.0] — 2026-10-25 — M30 Telemetry & dashboard
 
 Every run now leaves one record of which model did what and how well. The

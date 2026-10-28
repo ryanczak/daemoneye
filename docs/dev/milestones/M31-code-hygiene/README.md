@@ -5,7 +5,7 @@ a test keeps it that way: production code is at most 800 lines per file,
 tests live in sibling files, no function is over 150 lines, and the two
 1400-line tool dispatch matches are decomposed into per-family modules.
 
-**Status:** in-progress (scoped 2026-10-25)
+**Status:** done (scoped 2026-10-25, closed 2026-10-28)
 
 **Release:** 2.4.0
 
@@ -114,6 +114,26 @@ under `src/`. 42 files are over 1000 lines. They fall into three groups:
   phase 10 pass unchanged on the refactored tree. `2.4.0` is released per
   `REXYMCP.md` § Versioning.
 
+**Amended at close (PE decisions 2026-10-28).** Two criteria were met in
+part and closed as they stood, so that the file work ships as 2.4.0 and
+the function work gets a milestone of its own:
+
+- **The allowlist is empty of `file` and `test` entries; its 40 `fn`
+  entries carry over.** The gate forbids any of the 40 from growing, so
+  the tree cannot regress while they wait. Decomposing them is the next
+  milestone's scope, giant functions first (`run_conversation_loop` 775,
+  `do_ghost_turn` 775, `ask_with_session_ratatui` 673, `run_daemon` 598,
+  `handle_ask` 573, `run_chat_ratatui` 500, `run_background` 440,
+  `run_status` 435; 32 more between 150 and 321).
+- **`execute_tool_call` dispatches to per-family modules** (93 lines, from
+  1439). `run_conversation_loop`'s 43 tool arms dispatch through
+  `PendingCall::from_tool_event`; the loop body that remains (the `Done`
+  arm's cost, persistence and tool execution) is the carried 775 lines.
+- **The live close is waived.** Every code commit since 2.3.0 is a move
+  whose segment-identity check and unchanged suite count are its
+  evidence, and the one `fix:` (#73, phase 27) carries its own test. The
+  next milestone's live close runs L1–L8 on its tree.
+
 ## Architecture references
 
 - `docs/dev/STANDARDS.md` — the Definition of Done the splits must keep.
@@ -168,6 +188,121 @@ Expected count: 12–14. Each may split at drafting.
 | 33 | conversation-loop ([phase-33-conversation-loop.md](phase-33-conversation-loop.md)) — `run_conversation_loop` leaves `stream.rs` for `stream/conversation.rs`, its 43 field-for-field tool arms becoming `PendingCall::from_tool_event` in the exempt `pending.rs` and three terminal replies becoming `stream/endings.rs`; `stream.rs` 1613 → 168, the loop 1454 → 775 (re-pathed), the file entry deleted | done |
 | 34 | defs-exempt ([phase-34-defs-exempt.md](phase-34-defs-exempt.md)) — `src/ai/tools/defs.rs` joins `EXEMPT` (PE decision 2026-10-28) and its allowlist line is deleted; the allowlist then holds no file entries | done |
 
+## Retrospective (2026-10-28)
+
+**Outcome.** Every source file is within the 800-line production cap or
+exempt as flat data, every inline test module over the cap lives in a
+sibling file, and `tests/hygiene.rs` keeps it so. The two 1400-line tool
+matches are gone: `execute_tool_call` is 93 lines over ten family modules,
+and `run_conversation_loop`'s tool arms are `PendingCall::from_tool_event`.
+The function cap is not met: 40 functions over 150 lines remain on the
+allowlist, carried to the next milestone (see the amendment above). The
+live close was waived.
+
+- `tests/hygiene_allowlist.txt`: 66 entries at the gate (21 `file`, 4
+  `test`, 41 `fn`) → 40, all `fn`.
+- `src/`: 187 files and 139,087 lines at 2.3.0 → 257 files and 139,807
+  lines. The 720 added lines are the new files' module declarations, `use
+  super::*` and doc headers; no production code was retyped.
+- The suite went from 2570 to 2587 tests, and no test was deleted or
+  weakened: every move's test count was a pinned criterion.
+- 85 findings in `FINDINGS.md`, every one triaged: 18 `act`, 51 `defer`,
+  16 `reject`. One was fixed in M31 (#73, as the recorded exception to
+  decision 6); the rest wait for a `fix:` milestone.
+- `src/ai/tools/defs.rs` joined the exemption on 2026-10-28; `src/ipc.rs`,
+  the other candidate, was split instead (phase 11).
+
+**Numbers** (from the telemetry store). 34 phases, 38 recorded runs, 3,136
+executor turns, about 9.5 hours of executor wall clock, 4.4 M input
+tokens, all on `nvidia/GLM-5.3-Flash-FP4-Local`.
+- **30 `approved_first_try`:** 02, 03, 05–07, 09–27, 29–34.
+- **2 `approved_after_1`:** 08 (bug-08-1, a missing End-to-end paste; 19
+  turns to fix) and 28 (a stall during the Findings audit, resumed with
+  dictated commands; 20 turns).
+- **2 `escalated`:** 01 and 04, each after two `NoProgressStall` runs,
+  finished by the architect.
+- **5 hard-failed runs,** all stalls: 01 twice (writing a 400-line file
+  against an unfamiliar crate API), 04 twice (finding its own cut
+  boundaries), 28 once (an open-ended "read the arms" audit).
+- **1 bug doc** (bug-08-1).
+- Turns per phase fell as the spec shape settled: 120–131 for the
+  described moves of 05, 10, 11 and 25; 29–66 for the dictated moves of
+  29–34.
+
+**What worked: the dictated cut.** From phase 12 on, a phase's Spec is one
+script the architect wrote and dry-ran on a scratch worktree: the
+anchors, the Python or sed that turns them into line ranges, the new
+files, the `mod` lines, the allowlist and `CLAUDE.md` edits, then `cargo
+fmt`. The End-to-end block compares every moved segment, whitespace
+removed, with the original at the baseline commit, and is mutation-tested
+before dispatch. The executor's work is the log, the Findings audit and
+the commit. Twenty-three phases ran that way; all passed first try except
+28, whose stall was in the audit, not the cut. The dry runs caught the
+architect's own errors before dispatch: a `usize`/`u32` mismatch (29),
+helpers left in a file that may not grow (31), an `#[allow]` attribute
+not moved with its function (32), a segment check that missed because
+rustfmt drops closure braces (29) or trailing commas (31), and a count of
+43 arms written as 44 (33). Every one would have been a bounce.
+
+**What stalled: discovery.** The five hard fails share one shape: the
+Spec sent GLM to find something (an API, a boundary, a callee) with no
+stopping point. 01's second run re-verified a compiled excerpt by reading
+the crate's source; 04 could not fix its boundaries; 28 followed every
+callee into other modules. In each case the same work, given as exact
+commands with a stated budget, finished in 20–40 turns.
+
+**Architect errors, recorded.**
+- A criterion that contradicted its own Spec: 01's `exempt_listed`.
+- A described move where a dictated one was needed: 04, twice.
+- An open-ended audit step on arms that call into many modules: 28.
+- Two telemetry records with `stall` as the failure class before the
+  fixed vocabulary was checked (01, 04); the store is append-only, so they
+  stand beside the corrected records.
+- Spec steps the executor could satisfy with the wrong tool or heading:
+  log entries appended with `cat >>` (34) or filed under the wrong heading
+  (33). Content complete in each case, so none bounced.
+
+**Process calibration.**
+- **The governor is blind to bash writes** (rexyMCP issue #14, from 04):
+  a run that edits through `python3 - <<'PY'` makes no edit-tool call,
+  so its stall counter never resets. Every dictated-script phase since
+  tells the executor to log with an edit tool at once. Carried to rexyMCP.
+- **Completion summaries claim transcripts the log does not hold** (07
+  accepted, 08 bounced, 33 and 34 filed under other headings). The server
+  now authors the completion entry; it could append the End-to-end
+  block's output the same way. Four occurrences; a rexyMCP product item,
+  not a WORKFLOW rule, and filed there.
+- **`cargo test` in a tree with a failing gate stops at the first failing
+  binary,** so a `passed=` count from such a run is low, not wrong (31).
+- **A dry run's `CARGO_TARGET_DIR` goes on disk,** not in `/tmp`: a 7 GB
+  target directory on the 14 GB tmpfs filled it on 2026-10-26.
+
+**Fold proposals.**
+- **Proposal A — a mechanical move is dictated, not described.** Five
+  stalls on described moves and audits (01 ×2, 04 ×2, 28) against
+  twenty-two first-try dictated ones. Proposed for `WORKFLOW.md` beside
+  § "Executor self-sabotage on delete-heavy rewrites": *"A phase that
+  moves or splits code dictates the cut as one script the architect has
+  dry-run on a scratch worktree: the anchors and the commands that turn
+  them into ranges, every file the move touches (the allowlist, the docs
+  table), then the formatter. The End-to-end block proves the moved text
+  identical to the baseline, whitespace removed, and is mutation-tested
+  before dispatch. The executor's tasks are the log entries, a Findings
+  audit given as exact commands with a call budget, and the commit."*
+  **Pending PE sign-off; not folded.**
+- **Held as data:** the server-appended End-to-end output (rexyMCP), and
+  a one-line "every log entry goes through an edit tool" reminder (two
+  slips, 33 and 34, neither a bounce).
+
+**Deferred.**
+- The 40 function entries: the next milestone's scope.
+- The 51 `defer` findings, #84 (the double `Config::load()` per foreground
+  call) and #85 (the `ai_turn` event's model on tool-call turns) among
+  them: a `fix:` milestone, or folded into the function work where a split
+  exposes the seam.
+- Carried from M30 and earlier, unchanged: the `chat` fresh-root
+  observation, O5, O6, F8, and the M28 `wait: false` note.
+
 ## Notes
 
 - **The gate is in, with 66 entries (phase 01, 2026-10-25):** 21 `file`,
@@ -185,3 +320,6 @@ Expected count: 12–14. Each may split at drafting.
 
 - **`defs.rs` exempted (PE decision 2026-10-28):** `src/ai/tools/defs.rs` (1398 lines, the flat `TOOLS` table, one `ToolDef` per AI tool) joins `pending.rs` and `args.rs` under decision 2. The split would scatter one table across files that nothing else distinguishes, and `tests/doc_truth.rs` already holds it to the README. The `EXEMPT` entry and the allowlist deletion land in the phase after `stream.rs`.
 - **#73 settled (PE decision 2026-10-28):** four silent-tool arms (`read_file`, `get_shell_context`, `open_shell`, `spawn_ghost_shell`) `return` early and skip `ToolFinished`, so the client's panel for the call is lost or unlabelled; `get_shell_context` hits it on every call from outside tmux. The arms cannot leave `execute_tool_call` without changing that, so the fix comes first as its own `fix:` phase with a test (the one recorded exception to decision 6), and the move follows as a pure move. Options weighed: fix inside the move (mixes a fix into a move diff) and preserving the skip with an early-exit result (plumbing to keep a bug alive into 2.4.0). See [`FINDINGS.md`](FINDINGS.md) #73.
+- **M31 retrospective (2026-10-28):** one fold proposed (A, the dictated
+  cut), pending PE sign-off; two items held as data; two rexyMCP product
+  items carried (#14, the server-appended End-to-end output).
