@@ -1,6 +1,6 @@
 # Phase 21 — Split `top.rs` into loaders, text frames and run detail
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -252,3 +252,174 @@ sections byte-identical to their source ranges (`load_identical=1`,
 `text_identical=1`, `detail_identical=1`), the hygiene test green,
 clippy clean, fmt clean, and the full suite `passed=2586 failed=0`. No
 flake: the first run landed on 2586/0.
+
+### Update — 2026-10-28 01:59 (complete, server-authored)
+
+**Summary:** </think>Everything is done. Let me run through the completion checklist:
+
+- [x] Phase doc's Status: line says `in-progress` ✓
+- [x] Milestone README's phase-table row says `in-progress` ✓
+- [x] No hand-written `(complete)` entry ✓ (only cuts done, Findings, end-to-end verification)
+- [x] `cargo fmt --all` was run (inside the script, and `--check` confirms clean) ✓
+- [x] All verification commands ran clean ✓
+- [x] Final message is substantive Summary + Notes for review — this message
+- [x] `git status --short` shows nothing ✓
+- [x] `git log -1 --stat` shows commits include every touched file ✓
+
+Acceptance criteria:
+- [x] top_load.rs defines take_snapshot and fingerprint ✓ (verified in read)
+- [x] top_text.rs defines budget_text and plan_layout ✓
+- [x] top_detail.rs defines load_run_detail and run_detail_text ✓
+- [x] top.rs defines none of them, still defines activity_row_in and run_top ✓
+- [x] at most 800 production lines — hygiene test passed ✓
+- [x] Allowlist has no `file src/cli/commands/top.rs` line, `fn ... activity_row_in 163` stays ✓
+- [x] E2E block prints all expected values ✓
+- [x] Update Log has all three entries, all written with edit tools, all in this file ✓
+
+Grep for spec-pinned literals: `lost_other=0` grep printed 1 ✓.
+
+Now the final summary.</think>
+All work is committed and the tree is clean. Completion checklist verified: phase doc and README both read `in-progress`, no `(complete)` entry written, `grep -c '^lost_other=0$'` on the phase doc prints 1, and both commits (`b4c99468` refactor, `daf89b3f` docs) contain every file touched.
+
+**Summary**
+
+Ran the Spec 1 script once, exactly as written, from a clean tree at `6883e259`: the four banner markers landed on the predicted lines (`L1=553 X1=784 X2=1105 R1=1172 T=1395`), the three cuts produced `top_load.rs` (234), `top_text.rs` (326) and `top_detail.rs` (226) beside `top.rs` (1877 total, ≈620 production), each with a module doc, `use super::*`, and a glob re-export wired into `top.rs` along with the `use super::{ipc_client, scorecard}` import — no `super::` path inside the moved code was rewritten. The allowlist lost its `file src/cli/commands/top.rs 1394` line and kept `fn … activity_row_in 163`; `CLAUDE.md` gained the new module-table row. Logged the `(cuts done)` entry, then read all three files for Findings (Spec 3): no `lock().expect`/`unwrap`, no `expect`/`unwrap`/`panic!`, no *new* swallowed errors (all `.ok()`/`Err(_)=>…` hits are verbatim moves of the panels' "unreadable = blank or zero" file-read pattern), and one pre-existing duplicate — `run_started_at` (top_load) vs `started_at_of` (top_detail), byte-identical bodies that were already separate in old `top.rs`; recorded, not fixed, per Out of scope. Then ran the End-to-end block once and pasted its output byte-exact into an `(end-to-end verification)` entry: `lost_other=0`, `added_other=0`, `load_identical=1`, `text_identical=1`, `detail_identical=1`, `allowlisted=0`, `fn_kept=1`, hygiene `ok.`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0` — the full suite reproduced the dry run's numbers on the first run, no flake. Committed the code as `refactor:` and the doc bookkeeping as `docs:`; `git status` is clean.
+
+**Notes for review**
+
+- No deviations from the spec: the script was used verbatim, nothing hand-edited that it touches, and the E2E diff checks (`lost_other=0`, `added_other=0`, all three `*_identical=1`) prove the move is byte-exact apart from the four authorized `pub(super)` lines and the wiring.
+- `run_tui`'s call sites in `top.rs` reach `top_tui` by its full `crate::cli::commands::top_tui::` path, so no import change was needed there; `top_tui.rs`'s `use crate::cli::commands::top::{…}` resolves through the glob re-exports unchanged (build and clippy both clean with `-D warnings`).
+- The `run_started_at`/`started_at_of` duplication is the only candidate follow-up surfaced by decision 7's findings sweep; it predates this phase and is left for a later hygiene pass.
+- Status left at `in-progress` per the contract — the server authors the `in-progress → review` flip and the completion entry.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+st_only_fn_is_still_counted ... ok
+test test_file_classes ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1763633): No such process
+kill: (-1764334): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-21-top-split.md` — +90 -1
+- `src/cli/commands/top.rs` — +11 -775
+- `src/cli/commands/top_detail.rs` — +226 -0
+- `src/cli/commands/top_load.rs` — +234 -0
+- `src/cli/commands/top_text.rs` — +326 -0
+- `tests/hygiene_allowlist.txt` — +0 -1
+
+**Commit:** daf89b3f7148afa7072b0c6b9a1f0a32e6c3cbdf
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
