@@ -1,6 +1,6 @@
 # Phase 24 — Move input, screen and lifecycle out of `knowledge/shell.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -413,3 +413,25 @@ kill: (-1976145): No such process
 **Commit:** c5eb694e4ab425f818e87805bd2c2ac00ab66d64
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (87 turns), per the run
+  record. The `(started)` entry's "Claude" is the self-mislabel, now on its
+  fifth occurrence.
+- **Scope deviations:** none. `git diff --stat b4e3c105 HEAD` names the
+  eight authorized files. All three moved blocks equal their
+  `b4e3c105:shell.rs` ranges after the ten `pub(super)` lines.
+  `knowledge/shell.rs`'s `file` entry is gone and its `test … 4143` entry
+  stays. The code commit is typed `refactor:`. Reviewer's gates: fmt 0,
+  build and clippy clean, 2586 passed / 0 failed / 13 ignored.
+- **Findings:** written as their own entry this time; the grep check in
+  Spec 4 worked. The reviewer confirmed the concrete claim: the 12-line
+  "no shell with id" refusal is byte-identical in `shell_input.rs:195` and
+  `shell_life.rs:447`. Carried to `FINDINGS.md` #72.
+- **Calibration:** none new. `knowledge/shell.rs`'s production code is
+  now under the cap across two phases, by ratcheting the entry down and
+  then deleting it.
+
