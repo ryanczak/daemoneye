@@ -1,6 +1,6 @@
 # Phase 28 — Move nine more of `execute_tool_call`'s arms into family modules
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -287,3 +287,160 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 11:20 (started)
+
+Started phase 28. Flipped the status to `in-progress` and updated the milestone
+README's phase-table row. Next: run the phase script once as written, then log
+the cuts, the findings, and the end-to-end verification.
+
+### Update — 2026-10-28 11:20 (cuts done)
+
+Ran the phase script once, as written, then `cargo fmt --all` twice. It printed:
+
+```
+  2553 src/daemon/executor/mod.rs
+   135 src/daemon/executor/dispatch_files.rs
+    49 src/daemon/executor/dispatch_context.rs
+    72 src/daemon/executor/dispatch_open_shell.rs
+   145 src/daemon/executor/dispatch_send_input.rs
+   109 src/daemon/executor/dispatch_meta.rs
+  3063 total
+```
+
+Every line count matches the dry run's expectation (2553 / 135 / 49 / 72 / 145
+/ 109). `wc -l` counts `mod.rs` by raw lines, so 2553 raw lines is 1489
+production lines after the hygiene counter strips blanks and comments. The
+allowlist was rewritten to `file …mod.rs 1489` and `fn …execute_tool_call 797`,
+and the `CLAUDE.md` key-files row now lists all ten `dispatch_*.rs` modules.
+
+### Update — 2026-10-28 18:05 (escalation)
+
+**Chosen lever:** resume.
+**Rationale:** the run's `NoProgressStall` (120 read-only calls) came
+after the cuts, which are complete and correct. On the partial tree the
+architect's run of the End-to-end block printed every expected line:
+`bodies_identical=1`, `routing_matches=1`, the allowlist at 1489 and 797,
+hygiene `ok.`, clippy clean, `fmt_exit=0` and `passed=2587 failed=0`.
+
+The stall was the Findings audit. It followed every callee into
+`policy.rs`, `host.rs` and `src/agents/`, and never wrote the entry. The
+spec was fine and only the bookkeeping is left, so resuming is better
+than re-dispatching.
+
+### Notes for executor — 2026-10-28
+
+**The code is done. Do not re-run the script, and do not edit any `.rs`
+file.** Three steps remain, in this order:
+
+1. **Findings, bounded.** Run exactly these two commands, and open no
+   other file:
+   - `grep -nE '\.(unwrap|expect)\(|panic!|let _ =|\.ok\(\)|unwrap_or_default' src/daemon/executor/dispatch_files.rs src/daemon/executor/dispatch_send_input.rs src/daemon/executor/dispatch_meta.rs`
+   - `cat src/daemon/executor/dispatch_send_input.rs src/daemon/executor/dispatch_meta.rs`
+
+   Then read `dispatch_files.rs`'s `EditFile` arm with `sed -n`. Write
+   the `### Findings — 2026-10-28` entry from what those show. Do not
+   look up callees: a finding names what the arm does, not what the
+   function it calls does. Write the entry within your next five calls.
+2. **Run the End-to-end block, then paste its output** as the
+   `(end-to-end verification)` entry, as in Spec 4.
+3. **Check the three pre-commit greps, then commit** as `refactor:`.
+
+### Findings — 2026-10-28
+
+Audit scope per the notes block: the four unaudited arms — `EditFile`
+(`dispatch_files.rs`), `SendInput` (`dispatch_send_input.rs`), `InvalidArgs`
+and `LoadTools` (`dispatch_meta.rs`). Method: the two bounded greps, a full
+read of `dispatch_send_input.rs` and `dispatch_meta.rs`, and a read of
+`dispatch_files.rs`'s `EditFile` arm. Callees not opened.
+
+**`dispatch_send_input.rs` — `PendingCall::SendInput`**
+
+- `session_id.unwrap_or_default()` (the execute step): a missing session id
+  silently attributes the send to `Owner::Chat("")`. Kind: silent default.
+  Severity: low — pre-existing behavior moved unchanged, and every real call
+  path carries a session id.
+- `Err(_) => crate::shell::Foreground::Unknown` (the id-parse branch): a
+  swallowed parse error, but deliberate and commented — an unparseable id is
+  "not a shell at all", the same answer the probe gives an unknown id. Not a
+  finding.
+- `_ => (crate::shell::ShellModes::default(), None)` (the screen-read
+  fallthrough): a swallowed failure, but deliberate and commented — an
+  unreadable or unannotated reply falls back to the defaults, which encode
+  plain bytes for every key. Not a finding.
+- `Ok(_cmd_id) => {}` (the approval arm): the granted command id is dropped.
+  Harmless; it is not needed after approval. Not a finding.
+
+**`dispatch_meta.rs` — `PendingCall::InvalidArgs`, `PendingCall::LoadTools`**
+
+- No `unwrap`/`expect`/`panic!`/`let _ =`/`.ok()`/`unwrap_or_default` hits in
+  the file.
+- `LoadTools`: `crate::ai::tools::tools_in_group(g)` is computed twice per
+  group — once in the persistence pass (building `loaded`/`unknown`), again
+  in the result-parts pass. Kind: duplicated logic. Severity: low; a single
+  pass collecting members per group would serve both, but that is a rewrite,
+  not a move.
+- `InvalidArgs`: sends the `ToolResult` itself and also returns
+  `Ok(ToolCallOutcome::Result(msg))`. Consistent with the established
+  pattern for tools outside `should_emit_tool_feedback`; not a finding.
+
+**`dispatch_files.rs` — `PendingCall::EditFile`**
+
+- `sudo: sudo.unwrap_or(false)`: a missing `sudo` argument silently defaults
+  to off. Kind: silent default. Severity: low — an omitted flag meaning "no
+  sudo" is the documented default, not a swallowed error.
+- The connect-failure branch builds `Error: {msg}`, sends the `ToolResult`
+  and `return`s — no `ssh_connect_failed` `log_event`, while the sibling
+  `ReadFile` arm in the same module logs exactly that event at the same
+  point. Kind: inconsistent observability between the two file arms.
+  Severity: low.
+- The `return Ok(...)` in that branch leaves the family function, not
+  `execute_tool_call`. Equivalent for `edit_file`, which sends no
+  `ToolFinished` either way (the spec's move-safety argument, and the
+  `silent_tool_early_exit_sends_tool_finished` test's subject). Not a
+  finding.
+
+Summary: no hits above low severity. Three low findings (`unwrap_or_default`
+owner attribution, the double `tools_in_group` pass, the missing
+`ssh_connect_failed` log in `EditFile`) plus two silent defaults noted for
+the record. None block the move; none are acted on (out of scope, decision 6).
+
+### Update — 2026-10-28 18:35 (end-to-end verification)
+
+Ran the phase doc's End-to-end block once. It wrote `/tmp/e2e-m31-28.txt`;
+its contents, byte-exact:
+
+```
+2553 src/daemon/executor/mod.rs
+135 src/daemon/executor/dispatch_files.rs
+49 src/daemon/executor/dispatch_context.rs
+72 src/daemon/executor/dispatch_open_shell.rs
+145 src/daemon/executor/dispatch_send_input.rs
+109 src/daemon/executor/dispatch_meta.rs
+3063 total
+file src/daemon/executor/mod.rs 1489
+fn src/daemon/executor/mod.rs execute_tool_call 797
+bodies_identical=1
+routing_matches=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+Every expected line is present: the six line counts match the dry run
+(2553 / 135 / 49 / 72 / 145 / 109), the allowlist reads 1489 and 797,
+`bodies_identical=1`, `routing_matches=1`, hygiene `ok.`, clippy clean,
+`fmt_exit=0`, and `passed=2587 failed=0` — no flake, first run.
+
+Pre-commit greps, each printing 1:
+
+```
+$ grep -c '^bodies_identical=1$' /tmp/e2e-m31-28.txt
+1
+$ grep -c '^routing_matches=1$' /tmp/e2e-m31-28.txt
+1
+$ grep -c '^### Findings — ' docs/dev/milestones/M31-code-hygiene/phase-28-dispatch-rest.md
+1
+```
+

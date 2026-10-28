@@ -1,9 +1,14 @@
 mod bg_shell;
 pub(crate) mod chat_sandbox;
 mod dispatch_artifacts;
+mod dispatch_context;
+mod dispatch_files;
 mod dispatch_memory;
+mod dispatch_meta;
+mod dispatch_open_shell;
 mod dispatch_runs;
 mod dispatch_schedule;
+mod dispatch_send_input;
 mod dispatch_shells;
 mod file_ops;
 mod foreground;
@@ -543,23 +548,21 @@ where
     let tool_start = Instant::now();
 
     let outcome = match call {
-        PendingCall::InvalidArgs {
-            id, name, error, ..
-        } => {
-            let msg = format!(
-                "Error: invalid arguments for {name}: {error}. Fix the arguments and call {name} again."
-            );
-            log::warn!("model sent invalid arguments for tool '{name}': {error}");
-            send_response_split(
+        PendingCall::InvalidArgs { .. }
+        | PendingCall::LoadTools { .. }
+        | PendingCall::SpawnGhost { .. } => {
+            dispatch_meta::dispatch(
+                call,
                 tx,
-                Response::ToolResult {
-                    tool_call_id: id.to_string(),
-                    output: msg.clone(),
-                },
+                session_id,
+                sessions,
+                &ghost_policy,
+                spawn_depth,
+                &effective_parent_job_id,
             )
-            .await?;
-            Ok(ToolCallOutcome::Result(msg))
+            .await
         }
+
         PendingCall::Foreground {
             id,
             cmd,
@@ -1122,48 +1125,6 @@ where
             dispatch_schedule::dispatch(call, tx, rx, session_id, is_ghost, schedule_store).await
         }
 
-        PendingCall::LoadTools { groups, .. } => {
-            let mut loaded: Vec<String> = Vec::new();
-            let mut unknown: Vec<String> = Vec::new();
-            for g in groups {
-                let members = crate::ai::tools::tools_in_group(g);
-                if members.is_empty() {
-                    unknown.push(g.clone());
-                } else {
-                    for m in members {
-                        loaded.push(m.to_string());
-                    }
-                }
-            }
-            // Persist into session state
-            if let Some(sid) = session_id {
-                with_sessions(sessions, |store| {
-                    if let Some(entry) = store.get_mut(sid) {
-                        for name in &loaded {
-                            entry.loaded_tools.insert(name.clone());
-                        }
-                        entry.dirty = true;
-                    }
-                });
-            }
-            let mut result_parts = Vec::new();
-            for g in groups {
-                let members = crate::ai::tools::tools_in_group(g);
-                if !members.is_empty() {
-                    result_parts.push(format!("Loaded group(s): {} → {}", g, members.join(", ")));
-                }
-            }
-            if !unknown.is_empty() {
-                result_parts.push(format!(
-                    "Unknown group(s): {} (valid groups: {})",
-                    unknown.join(", "),
-                    crate::ai::tools::deferred_catalog_text()
-                ));
-            }
-            result_parts.push("They are now available; call them directly.".to_string());
-            Ok(ToolCallOutcome::Result(result_parts.join(". ")))
-        }
-
         PendingCall::WriteScript { .. }
         | PendingCall::ListScripts { .. }
         | PendingCall::ReadScript { .. }
@@ -1188,118 +1149,8 @@ where
             .await
         }
 
-        PendingCall::ReadFile {
-            path,
-            offset,
-            limit,
-            pattern,
-            host,
-            ..
-        } => 'arm: {
-            // A ghost reaching a host its runbook does not name is refused
-            // before the run — the same boundary the foreground arm enforces.
-            let host_id = match host.as_deref() {
-                None => crate::host::HostId::Local,
-                Some(name) => match crate::host::HostId::parse(name) {
-                    Ok(parsed) => parsed,
-                    Err(msg) => break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
-                },
-            };
-            if let Some(policy) = ghost_policy.as_ref()
-                && !policy.may_use_host(&host_id)
-            {
-                let msg = ghost_host_refusal(policy, &host_id);
-                crate::daemon::utils::log_event(
-                    "ghost_host_refused",
-                    serde_json::json!({
-                        "session": session_id.unwrap_or("-"),
-                        "tool": "read_file",
-                        "requested_host": host_id.as_str(),
-                        "allowed_hosts": policy.hosts,
-                    }),
-                );
-                break 'arm Ok(ToolCallOutcome::Result(msg));
-            }
-            if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
-            {
-                crate::daemon::utils::log_event(
-                    "ssh_connect_failed",
-                    serde_json::json!({
-                        "session": session_id.unwrap_or("-"),
-                        "tool": "read_file",
-                        "requested_host": host_id.as_str(),
-                        "error": msg,
-                    }),
-                );
-                let outcome = format!("Error: {msg}");
-                send_response_split(
-                    tx,
-                    Response::ToolResult {
-                        tool_call_id: call.id().to_string(),
-                        output: outcome.clone(),
-                    },
-                )
-                .await?;
-                break 'arm Ok(ToolCallOutcome::Result(outcome));
-            }
-            file_ops::run_read_file(path, *offset, *limit, pattern.as_deref(), host.as_deref())
-                .await
-        }
-
-        PendingCall::EditFile {
-            id,
-            path,
-            operation,
-            old_string,
-            new_string,
-            content,
-            dest_path,
-            host,
-            sudo,
-            ..
-        } => {
-            // The ghost refusal lives inside `run_edit_file`, so the connect
-            // step must not run ahead of it: a ghost's `edit_file` would
-            // otherwise open a BatchMode ControlMaster to any host, listed
-            // or not, before being told file operations are refused (08d's
-            // fence must not be tunnelled through a tool the ghost cannot
-            // even use). Only a chat session connects first.
-            if edit_file_connects_first(is_ghost, host.as_deref())
-                && let Err(msg) =
-                    connect_named_host(host.as_deref(), false, id.as_str(), tx, rx).await
-            {
-                let outcome = format!("Error: {msg}");
-                send_response_split(
-                    tx,
-                    Response::ToolResult {
-                        tool_call_id: id.to_string(),
-                        output: outcome.clone(),
-                    },
-                )
-                .await?;
-                return Ok(ToolCallOutcome::Result(outcome));
-            }
-            file_ops::run_edit_file(
-                file_ops::EditArgs {
-                    id,
-                    path,
-                    operation,
-                    old_string: old_string.as_deref(),
-                    new_string: new_string.as_deref(),
-                    content: content.as_deref(),
-                    dest_path: dest_path.as_deref(),
-                    host: host.as_deref(),
-                    sudo: sudo.unwrap_or(false),
-                },
-                session_id,
-                GhostCtx {
-                    policy: ghost_policy.as_ref(),
-                    is_ghost,
-                },
-                tx,
-                rx,
-            )
-            .await
+        PendingCall::ReadFile { .. } | PendingCall::EditFile { .. } => {
+            dispatch_files::dispatch(call, tx, rx, session_id, &ghost_policy, is_ghost).await
         }
 
         PendingCall::AddMemory { .. }
@@ -1313,35 +1164,8 @@ where
             dispatch_memory::dispatch(call, tx, session_id, &artifact_ctx, &memory_namespaces).await
         }
 
-        PendingCall::GetShellContext { scope, .. } => 'arm: {
-            let breadth = match knowledge::resolve_context_scope(scope.as_deref()) {
-                Ok(b) => b,
-                Err(msg) => break 'arm Ok(ToolCallOutcome::Result(msg)),
-            };
-            if breadth == knowledge::ContextBreadth::ShellsOnly {
-                break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                )));
-            }
-            // PE decision 1: a caller outside tmux gets the daemon's own
-            // shells only — no pane blocks, no pane map.
-            if chat_pane.is_none() {
-                break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                )));
-            }
-            let ctx_scope = match breadth {
-                knowledge::ContextBreadth::All => crate::tmux::cache::ContextScope::All,
-                _ => crate::tmux::cache::ContextScope::Session,
-            };
-            let ctx = cache.get_labeled_context_scoped(chat_pane, ctx_scope);
-            let pane_map = cache.pane_map_summary(chat_pane);
-            let shells_line = knowledge::shell_context_block(&Owner::Chat(
-                session_id.unwrap_or_default().to_string(),
-            ));
-            Ok(ToolCallOutcome::Result(format!(
-                "{shells_line}{ctx}\n{pane_map}"
-            )))
+        PendingCall::GetShellContext { .. } => {
+            dispatch_context::dispatch(call, session_id, chat_pane, cache)
         }
 
         PendingCall::ListShells { .. }
@@ -1353,202 +1177,19 @@ where
         | PendingCall::ListShellLogs { .. }
         | PendingCall::ReadShellLog { .. } => dispatch_shells::dispatch(call, tx, session_id).await,
 
-        PendingCall::OpenShell {
-            host, rows, cols, ..
-        } => 'arm: {
-            if let Some(policy) = ghost_policy.as_ref() {
-                let asked = match host.as_deref() {
-                    None => crate::host::HostId::Local,
-                    Some(name) => match crate::host::HostId::parse(name) {
-                        Ok(parsed) => parsed,
-                        Err(msg) => {
-                            break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
-                        }
-                    },
-                };
-                if !policy.may_use_host(&asked) {
-                    let msg = ghost_host_refusal(policy, &asked);
-                    crate::daemon::utils::log_event(
-                        "ghost_host_refused",
-                        serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "tool": "open_shell",
-                            "requested_host": asked.as_str(),
-                            "allowed_hosts": policy.hosts,
-                        }),
-                    );
-                    break 'arm Ok(ToolCallOutcome::Result(msg));
-                }
-            }
-            if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
-            {
-                crate::daemon::utils::log_event(
-                    "ssh_connect_failed",
-                    serde_json::json!({
-                        "session": session_id.unwrap_or("-"),
-                        "tool": "open_shell",
-                        "requested_host": host.as_deref().unwrap_or("local"),
-                        "error": msg,
-                    }),
-                );
-                break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
-            }
-            Ok(ToolCallOutcome::Result(
-                knowledge::open_shell(
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                    host.as_deref(),
-                    *rows,
-                    *cols,
-                )
-                .await,
-            ))
+        PendingCall::OpenShell { .. } => {
+            dispatch_open_shell::dispatch(call, tx, rx, session_id, &ghost_policy, is_ghost).await
         }
 
-        PendingCall::SendInput {
-            id,
-            shell,
-            text,
-            keys,
-            paste,
-            enter,
-            ..
-        } => {
-            // 1. Policy gate — before anything else, so a ghost the policy
-            //    denies gets this refusal, not the foreground one below.
-            //    Default-deny: the agent `ToolPolicy` must *explicitly* allow
-            //    `send_input`.
-            if !ghost_may_send_input(is_ghost, tool_policy.as_ref()) {
-                return Ok(ToolCallOutcome::Result(
-                    "send_input is denied for ghost shells unless the agent's tool \
-                     policy explicitly allows it."
-                        .to_string(),
-                ));
-            }
-
-            // 2. What actually holds the shell, probed live before any panel
-            //    or send (D9). An id that cannot parse is not a shell at all,
-            //    so it classifies `Unknown` — the same answer the probe gives
-            //    an id the registry does not hold.
-            let fg = match crate::shell::ShellId::parse(shell) {
-                Ok(sid) => {
-                    crate::shell::probe_foreground(
-                        crate::shell::registry(),
-                        &sid,
-                        crate::shell::PROBE_TIMEOUT,
-                    )
-                    .await
-                }
-                Err(_) => crate::shell::Foreground::Unknown,
-            };
-
-            // 3. The ghost gate: a ghost may type only into a shell at its
-            //    prompt, plus into a running program when its runbook opted
-            //    in with `allow_tui_input`. Nothing is sent and no panel is
-            //    shown.
-            let allow_tui_input = ghost_policy.as_ref().is_some_and(|p| p.allow_tui_input);
-            if is_ghost && !ghost_may_type_into(&fg, allow_tui_input) {
-                return Ok(ToolCallOutcome::Result(ghost_input_refusal(shell, &fg)));
-            }
-
-            // 4. The shell's key modes and its screen, in one read. Read
-            //    before the approval prompt so a bad key name or an
-            //    unbracketable paste is the tool result, not a panel followed
-            //    by a failure; an unreadable or unannotated reply falls back
-            //    to the defaults, which encode plain bytes for every key.
-            //    The screen text feeds the panel's TUI tail.
-            let (modes, screen_text) = match crate::shell::screen(
-                &crate::shell::socket_path(shell),
-                false,
-                0,
-                std::time::Duration::from_secs(5),
-            )
-            .await
-            {
-                Ok(crate::shell::ShellResponse::ScreenText {
-                    text: screen,
-                    bracketed_paste,
-                    application_cursor,
-                    ..
-                }) => (
-                    crate::shell::ShellModes {
-                        bracketed_paste,
-                        application_cursor,
-                    },
-                    Some(screen),
-                ),
-                _ => (crate::shell::ShellModes::default(), None),
-            };
-            let input = match knowledge::compose_input(text, *paste, keys, *enter, modes) {
-                Ok(input) => input,
-                Err(e) => {
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error: {} — nothing was sent.",
-                        knowledge::format_err_chain(&e)
-                    )));
-                }
-            };
-
-            // 5. Approval. `ghost_policy` is `None` on purpose: the gates
-            //    above already made the ghost decisions, and passing the live
-            //    policy here would re-enter the helper's auto-approve branch.
-            //    `target_pane_hint` is `None` because this is a PTY shell, not
-            //    a tmux pane.
-            let panel = knowledge::input_panel(shell, text, &input, &fg, screen_text.as_deref());
-            match prompt_and_await_approval(
-                ApprovalRequest {
-                    id: id.as_str(),
-                    cmd: &panel,
-                    background: false,
-                    target_pane_hint: None,
-                    host: None,
-                    user_shell: crate::shell::is_user_shell(crate::shell::registry(), shell)
-                        .then_some(shell.as_str()),
-                    interactive: false,
-                },
-                session_id,
-                None,
+        PendingCall::SendInput { .. } => {
+            dispatch_send_input::dispatch(
+                call,
                 tx,
                 rx,
-            )
-            .await?
-            {
-                Ok(_cmd_id) => {}
-                Err(outcome) => return Ok(outcome),
-            }
-
-            // 6. Execute.
-            Ok(ToolCallOutcome::Result(
-                knowledge::send_input(
-                    shell,
-                    &input,
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                )
-                .await,
-            ))
-        }
-
-        PendingCall::SpawnGhost {
-            runbook,
-            message,
-            agent,
-            host,
-            ..
-        } => 'arm: {
-            if spawn_depth >= 2 {
-                break 'arm Ok(ToolCallOutcome::Result(
-                    "Delegation depth limit reached (max: coordinator + 1 level of specialists)."
-                        .to_string(),
-                ));
-            }
-            knowledge::spawn_ghost(
-                runbook,
-                message,
-                agent.as_deref(),
-                host.as_deref(),
-                ghost_policy.as_ref(),
-                sessions,
-                spawn_depth,
-                effective_parent_job_id.as_deref(),
+                session_id,
+                &ghost_policy,
+                &tool_policy,
+                is_ghost,
             )
             .await
         }
