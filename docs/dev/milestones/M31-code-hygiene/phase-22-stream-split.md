@@ -1,6 +1,6 @@
 # Phase 22 — Split the chat turn and its prompts out of `cli/commands/stream.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -164,3 +164,100 @@ clippy clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 19:27 (cuts done)
+
+Ran the Spec-1 script once with `bash`. Its output, verbatim:
+
+```
+A1=112 A2=789 B1=903 T=1517
+  841 src/cli/commands/stream.rs
+  683 src/cli/commands/stream_ask.rs
+  619 src/cli/commands/stream_prompts.rs
+ 2143 total
+```
+
+`cargo fmt --all` ran clean inside the script. `cargo build` afterwards:
+`Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.23s`, zero
+warnings. Files touched: `src/cli/commands/stream.rs` (rewritten in place by
+the script), new `src/cli/commands/stream_ask.rs` and
+`src/cli/commands/stream_prompts.rs`, `tests/hygiene_allowlist.txt` (the
+`file src/cli/commands/stream.rs 1520` line deleted, the
+`fn … ask_with_session_ratatui 673` line repointed to `stream_ask.rs`),
+`CLAUDE.md` (one row added after the `chat_loop.rs` row).
+
+### Findings — 2026-10-27 19:30 (decision 7)
+
+Read both new files in full. Findings:
+
+- `lock().expect` / `lock().unwrap`: **none** in either file (no `lock()` at
+  all; CLAUDE.md's `.unwrap_or_log()` rule is not triggered).
+- Other `expect` / `unwrap` / `panic!` in production code: **one hit** —
+  `stream_ask.rs:240` `_ => unreachable!()` in the `let msg = match outcome`
+  match after the outer `match outcome` consumed `StreamOutcome::Msg`.
+  Pre-existing (moved verbatim); it is an invariant assertion, not error
+  suppression, but it is the one panic path in the moved code.
+- Swallowed errors: the 41 `let _ = renderer.…` calls in `stream_prompts.rs`
+  and 12 in `stream_ask.rs` (renderer draw/commit failures are ignored
+  wholesale — a TUI redraw is best-effort); `stream_prompts.rs:59`
+  `timeout_at(...).await.ok().flatten()` (the deadline→`None` contract, not a
+  swallow); `stream_ask.rs:46,49` `std::env::var("TMUX_PANE").ok()` (env unset
+  is a normal case); `stream_prompts.rs:436` `.ok()` on
+  `trim().parse::<usize>()` (parse failure falls through to the default-pane
+  fallback). All are intentional model-visible outcomes, not swallowed
+  `Result`s the caller needs. One dead binding:
+  `stream_prompts.rs:587` `let _path_approved = approval.file_edits.contains(path)`
+  is computed and never used (`edit_file_auto_approved` recomputes it).
+- Duplicates: **one obvious pair** — `read_approval_input` (line 75) and
+  `read_approval_input_panel` (line 137) are the same 60-line state machine
+  differing only in the redraw call (`draw_prompt` vs `draw_approval_panel`);
+  a closure taking the redraw fn would collapse them. Same shape smaller-scale:
+  the `StatusBarState { … }` literal is constructed verbatim nine times in
+  `stream_ask.rs` with only `cost_usd`/`has_untracked`/`model` varying, and
+  `prompt_tool_call_ratatui` vs `prompt_edit_file_ratatui` end in the same
+  approved/redirect/skipped commit ladder.
+
+Natural seams in `ask_with_session_ratatui` (673 lines, a later split):
+
+1. **The `Response` match (~lines 250–595)** — the largest block; each
+   `Response::…Prompt` arm is self-contained (build a `StatusBarState`, call a
+   `prompt_*_ratatui`, send a `Request`). It wants an enum→handler dispatch,
+   one handler per prompt kind, all taking a small turn-state struct
+   (`renderer`, `stdin`, `tx`, `approval`, `transcript`, `session_cost`,
+   `session_has_untracked`, `prompt_tokens`, `context_window`, `model`) that
+   replaces the six destructured parameters.
+2. **The spinner/`StatusBarState` animation** — the `Tick` / `Warn` /
+   `KeepAlive` arms duplicate one spinner-draw block three times (verb,
+   dot_period, dot_count, status bar); a `draw_spin(renderer, spin, sb, verb)`
+   helper deletes ~60 lines.
+3. **The outer event loop** (`select_stream` + `StreamOutcome` match, the
+   deadline messages, the viewer detour) — once the Response arms move out,
+   this is a compact ~150-line driver, which is the shape `run_conversation_loop`
+   already has on the daemon side.
+
+### Update — 2026-10-27 19:47 (end-to-end verification)
+
+Ran the Spec-4 `bash` heredoc once. `/tmp/e2e-m31-22.txt`, pasted byte-exact:
+
+```
+841 src/cli/commands/stream.rs
+683 src/cli/commands/stream_ask.rs
+619 src/cli/commands/stream_prompts.rs
+2143 total
+allowlisted=0
+fn_moved=1
+lost_other=0
+added_other=0
+ask_identical=1
+prompts_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+All acceptance criteria in the block met on the first run: `lost_other=0`,
+`added_other=0`, `ask_identical=1`, `prompts_identical=1`, hygiene gate
+`ok.` (16 passed), clippy clean, `fmt_exit=0`, `passed=2586 failed=0` — the
+expected full-suite count with no flake, so no re-run was needed. `wc -l`
+matches the dry run exactly (841 / 683 / 619).

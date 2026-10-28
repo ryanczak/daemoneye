@@ -9,7 +9,6 @@
 # Generated 2026-10-25 from the gate's own measurement (M31 phase 01).
 
 file src/ai/tools/defs.rs 1398
-file src/cli/commands/stream.rs 1520
 file src/daemon/executor/knowledge/shell.rs 2627
 file src/daemon/executor/mod.rs 2121
 file src/daemon/ghost.rs 1677
@@ -24,7 +23,7 @@ fn src/cli/commands/chat_loop.rs run_chat_ratatui 500
 fn src/cli/commands/costs.rs aggregate_costs 159
 fn src/cli/commands/setup.rs run_setup 256
 fn src/cli/commands/slash_session.rs cmd_session 155
-fn src/cli/commands/stream.rs ask_with_session_ratatui 673
+fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 673
 fn src/cli/commands/top.rs activity_row_in 163
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
