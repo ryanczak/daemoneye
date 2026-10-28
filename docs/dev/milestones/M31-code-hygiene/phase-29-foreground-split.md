@@ -1,6 +1,6 @@
 # Phase 29 — Split `run_terminal_command`'s foreground arm into stages
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -632,3 +632,34 @@ kill: (-2250000): No such process
 **Commit:** 37777e534bff8de6954a7ceb52406e57ad36b8d6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (66 turns)
+- **Scope deviations:** none.
+  - The diff names the authorized files.
+  - The reviewer's re-run of the checks printed `segments_present=1` and
+    `result_blocks=1`.
+  - The four stages measure 145, 100, 105 and 67 lines, all within the
+    cap.
+  - The DoD grep over `dispatch_foreground.rs` is empty.
+  - The code commit is typed `refactor:`.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored.
+- **Findings:** written as their own entry within the budget. Four hits,
+  all moved verbatim.
+  - The `Owner::Chat(unwrap_or_default)` site joins #75.
+  - The two `Config::load().unwrap_or_default()` reads become #84, after
+    the reviewer checked what the ghost gate's default means. An
+    unreadable config reads as "sandbox off", which opens the gate for a
+    ghost. Today a ghost session never takes the PTY path and is refused
+    by `refuse_foreground`, so nothing is exposed.
+  - The `"s?"` fallback is cosmetic, so it is not carried.
+- **Calibration:** 66 turns for the first real split. The architect
+  dictated the whole decomposition: anchors, glue code and the `Copy`
+  carrier struct. The executor's part was to run it, audit one bounded
+  grep and paste. The bounded Findings step from phase 28 held: one
+  command, no callee lookups, no stall.
+
