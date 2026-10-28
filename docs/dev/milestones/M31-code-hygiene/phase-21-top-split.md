@@ -1,6 +1,6 @@
 # Phase 21 — Split `top.rs` into loaders, text frames and run detail
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -423,3 +423,26 @@ kill: (-1764334): No such process
 **Commit:** daf89b3f7148afa7072b0c6b9a1f0a32e6c3cbdf
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (62 turns)
+- **Scope deviations:** none. `git diff --stat 6883e259 HEAD` names the
+  eight authorized files. All three moved sections equal their
+  `6883e259:top.rs` ranges after the four `pub(super)` lines. The code
+  commit `b4c99468` is typed `refactor:`, and the docs entries went in a
+  separate `docs:` commit. Reviewer's gates: fmt 0, build and clippy clean,
+  2586 passed / 0 failed / 13 ignored.
+- **Findings:** the checklist worked. The audit covered each item and
+  reported one real duplicate, which the reviewer confirmed:
+  `run_started_at` reads the turn log and then repeats `started_at_of`'s
+  body line for line. Carried to `FINDINGS.md` #64. The swallowed-error
+  hits are the panels' documented "a blank, not a crash" contract, so
+  they are not findings.
+- **Calibration:** both phase 20 fixes held. The End-to-end block ran at
+  turn 49 and its entry was written at turn 52, after the output existed,
+  with no extra "proof" block. The checklist turned phase 19's empty audit
+  into a useful one. Keep both in every remaining production-move spec.
+
