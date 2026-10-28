@@ -1,6 +1,6 @@
 # Phase 18 — Move `RatatuiRenderer`'s drawing methods out of `render_ratatui.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -120,3 +120,109 @@ Expected (from the dry run): `694 …render_ratatui.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 00:08 (started)
+
+**Executor:** headless run.
+Phase doc flipped to in-progress, README phase table updated. Beginning the cut script (Spec 1).
+
+### Update — 2026-10-28 00:09 (cuts done)
+
+Ran the Spec 1 script once with `bash`, exactly as written. Output:
+
+```
+S=401 E=939
+  694 src/cli/render_ratatui.rs
+  545 src/cli/render_ratatui_draw.rs
+ 1239 total
+```
+
+`cargo fmt --all` inside the script reported nothing to change. The moved
+block went into `src/cli/render_ratatui_draw.rs` under the `use super::*;`
+header, `#[path = "render_ratatui_draw.rs"] mod draw;` landed where the impl
+block was, the allowlist lost its `file src/cli/render_ratatui.rs 1225`
+line, and the CLAUDE.md row was inserted after the `viewer_layout.rs` row.
+
+### Findings — 2026-10-28 00:12 (decision 7, scoped per Spec 3)
+
+Method: read `render_ratatui_draw.rs` (545 lines) once, end to end, plus the
+parent-file helpers it calls (`render_ratatui.rs`: `render_live_region`,
+`render_spinner_region`, `render_prompt_region`, `approval_options_line`,
+`credential_hint_line`, `picker_window`, `truncate_with_ellipsis`,
+`short_session`, `fmt_uptime`, `MAX_REPAINT_HISTORY`) to see what the block
+shares. No line changed; findings recorded, not fixed.
+
+**1. (`smell`, minor) Three panel variants duplicate the status-bar tail.**
+`draw_approval_panel` (lines ~247–263), `draw_credential_panel`
+(~332–348) and `draw_picker_panel` (~419–435) each re-declare the identical
+status-bar block: the same `Layout::default()` with
+`[Constraint::Min(1), Constraint::Length(1)]`, the same `fmt_uptime(start_time.elapsed())`,
+the same `session:{short_session} · {model} · up {uptime}` format string, and
+the same dim `DarkGray` status paragraph rendered into `chunks[1]`. The
+closure-boundary (each needs `&mut self` inside `terminal.draw`) makes the
+obvious extraction mildly awkward, but a free fn taking `(frame, area,
+session_id, model, start_time)` would drop ~17 lines per panel. Also a
+third copy of the status text lives in `render_live_region` /
+`render_spinner_region` / `render_prompt_region` in the parent, so the
+format string `" session:{} · {} · up {} "` exists 6+ times across the two
+files.
+
+**2. (`smell`, minor) Two panel variants duplicate the panel shell.**
+`draw_approval_panel` and `draw_credential_panel` build the same
+`Block::default().borders(Borders::ALL).border_type(Rounded).border_style(red)`
++ bold-yellow title span, then differ only in the content paragraph. The
+picker variant omits the red border (default style) — possibly intentional,
+possibly drift; worth a look when these are next touched.
+
+**3. (`smell`, minor) `commit_panel` / `commit_panel_labeled` render into a
+manually-built `Vec<Line>` instead of a `Paragraph` inside the panel Block
+the draw variants use.** The committed shape (top/bottom border strings
+with manual `─.repeat(fill)` arithmetic) is a separate visual dialect from
+the `Block`-based panels; the manual `inner.saturating_sub(title_len + 4)`
+fill math silently mis-frames when the title contains wide (double-width)
+characters, since `chars().count()` is not display width. Severity is
+bounded by the fact that titles here are ASCII tool names today.
+
+**4. (`perf`, nit) `commit` builds the history `Vec<Line>` even when
+`insert_before` fails.** `record_committed_rows` is called unconditionally
+after `self.terminal.insert_before(...)`, so on a backend error the rows are
+still pushed into the repaint history and `inserted_rows` was already
+incremented — committed-count drifts from reality on a failed commit. Not
+user-visible in the current flow (the error propagates and the caller tears
+down), but the accounting is optimistic.
+
+**5. (`smell`, nit) `record_committed_rows` is the only private method in the
+block** — correct per spec (called only by `commit`, `commit_styled`,
+`commit_panel_labeled` inside the child module), and `commit_panel`'s
+`use ratatui::widgets::Clear;` is a fn-local import while everything else
+comes from `use super::*;`; harmless but inconsistent with the file's other
+imports.
+
+**6. (`smell`, nit) The module doc comment's first line has a stray
+backtick** — `` //! `RatatuiRenderer's drawing … `` opens a backtick before
+`RatatuiRenderer` that is never closed (the apostrophe consumed the closing
+one in the spec's printf). Cosmetic; rustdoc renders it literally.
+
+### Update — 2026-10-28 00:20 (end-to-end verification)
+
+Ran the Spec 4 End-to-end block (bash heredoc) as written; `/tmp/e2e-m31-18.txt`
+contents, byte-exact:
+
+```
+694 src/cli/render_ratatui.rs
+545 src/cli/render_ratatui_draw.rs
+1239 total
+allowlisted=0
+lost_other=0
+added_other=0
+moved_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every line matches the dry-run expectation: parent 694 / child 545 (both under
+the 800 cap), no allowlist entry, nothing lost or added beyond the four
+expected new lines, the moved block byte-identical to `d3bc6ad3` lines
+401–939, hygiene `ok.`, clippy clean, `fmt_exit=0`, full suite 2586/0.
