@@ -9,7 +9,7 @@
 # Generated 2026-10-25 from the gate's own measurement (M31 phase 01).
 
 file src/ai/tools/defs.rs 1398
-file src/daemon/executor/knowledge/shell.rs 2627
+file src/daemon/executor/knowledge/shell.rs 1499
 file src/daemon/executor/mod.rs 2121
 file src/daemon/ghost.rs 1677
 file src/daemon/stream.rs 1613
@@ -35,7 +35,7 @@ fn src/daemon/executor/file_ops/ops.rs run_create_with_spawn 164
 fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 271
 fn src/daemon/executor/file_ops/read.rs run_read_file 165
 fn src/daemon/executor/foreground.rs run_background 440
-fn src/daemon/executor/knowledge/shell.rs watch_shell_with 159
+fn src/daemon/executor/knowledge/shell_watch.rs watch_shell_with 159
 fn src/daemon/executor/mod.rs execute_tool_call 1439
 fn src/daemon/executor/mod.rs prompt_and_await_approval 210
 fn src/daemon/executor/schedule.rs run_schedule_command 184

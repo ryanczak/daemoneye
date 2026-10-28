@@ -1,6 +1,6 @@
 # Phase 23 — Move the shell readers and watchers out of `knowledge/shell.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -164,3 +164,56 @@ clippy clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 05:33 (started)
+
+Phase 23 start. Flipped this doc's `Status:` to `in-progress` and the milestone
+README's phase-23 row to match. Executor: Claude (headless run 2026-10-28 05:33 UTC).
+Next: run the Spec-1 script once with `bash`.
+
+### Update — 2026-10-28 05:33 (cuts done)
+
+Ran the Spec-1 script once with `bash`, as written. Its output, verbatim:
+
+```
+R1=420 W1=1049 S1=1555
+  5642 src/daemon/executor/knowledge/shell.rs
+   632 src/daemon/executor/knowledge/shell_read.rs
+   510 src/daemon/executor/knowledge/shell_watch.rs
+ 6784 total
+```
+
+`R1/W1/S1` matched the expected `420 1049 1555` exactly. `cargo fmt --all` ran
+clean inside the script. Files touched: `src/daemon/executor/knowledge/shell.rs`
+(rewritten in place by the script), new `shell_read.rs` and `shell_watch.rs`
+beside it, `tests/hygiene_allowlist.txt` (`file …/shell.rs 2627` → `1499`, the
+`fn … shell.rs watch_shell_with` line repointed to `shell_watch.rs`), `CLAUDE.md`
+(one row added after the `shell_exec_auth.rs` row).
+
+### Update — 2026-10-28 05:39 (end-to-end verification)
+
+Ran the Spec-4 `bash` heredoc once, as written. `/tmp/e2e-m31-23.txt`, pasted
+byte-exact:
+
+```
+5642 src/daemon/executor/knowledge/shell.rs
+632 src/daemon/executor/knowledge/shell_read.rs
+510 src/daemon/executor/knowledge/shell_watch.rs
+6784 total
+allowlist_lines=3
+lost_other=0
+added_other=0
+read_identical=1
+watch_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+All acceptance criteria in the block met on the first run: `allowlist_lines=3`,
+`lost_other=0`, `added_other=0`, `read_identical=1`, `watch_identical=1`,
+hygiene gate `ok.` (16 passed), clippy clean, `fmt_exit=0`,
+`passed=2586 failed=0` — the expected full-suite count with no flake, so no
+re-run was needed. `wc -l` matches the dry run exactly (5642 / 632 / 510), and
+`grep -c '^lost_other=0$'` on this doc prints 1 as required.
