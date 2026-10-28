@@ -1,6 +1,6 @@
 # Phase 29 — Split `run_terminal_command`'s foreground arm into stages
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -406,3 +406,77 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 12:08 (started)
+
+**Executor:** executor (this run).
+
+**Progress:** Flipped the phase and milestone-README status to `in-progress`.
+Next: run the Spec 1 script as written, once, then log its output.
+
+### Update — 2026-10-28 12:17 (cuts done)
+
+**What I ran:** the Spec 1 script, once, as written, via
+`bash /tmp/run_phase29.sh` (the heredoc copied verbatim, unindented).
+
+**Script output (the `wc -l` tail; all Python asserts passed silently):**
+
+```
+  2166 src/daemon/executor/mod.rs
+   447 src/daemon/executor/dispatch_foreground.rs
+  2613 total
+```
+
+Both counts match the dry run's expected `2166 …/mod.rs` and
+`447 …/dispatch_foreground.rs`. Next: the Spec 3 findings grep, then the
+Spec 4 end-to-end block.
+
+### Findings — 2026-10-28
+
+`grep -nE '\.(unwrap|expect)\(|panic!|let _ =|\.ok\(\)|unwrap_or_default|unwrap_or_else' src/daemon/executor/dispatch_foreground.rs`
+
+- L49 `.unwrap_or_default()` — `dispatch`, config-load fallback
+  (`Config::load().unwrap_or_default().sandbox.enabled`), in the ghost gate.
+  Idiomatic default-on-unreadable-config, pre-existing (moved verbatim).
+  Severity: **low**.
+- L189 `.unwrap_or_default()` — `run_approved`,
+  `Owner::Chat(session_id.unwrap_or_default().to_string())`. Owner string
+  degrades to `""` when the session has no id; pre-existing (moved verbatim).
+  Severity: **low**.
+- L191 `.unwrap_or_default()` — `run_approved`, the second
+  `Config::load()` fallback (`shells.max_per_owner`). Same as L49.
+  Severity: **low**.
+- L423 `.unwrap_or_else(|| "s?".to_string())` — `finish_run`, the shell-id
+  fallback in the `Err` arm of the run match, used only to word the
+  shell-error text. Intentional cosmetic fallback, pre-existing (moved
+  verbatim). Severity: **low**.
+
+All four are moved-verbatim lines from the old arm, not new calls. None is an
+error-suppressing idiom in a new production path.
+
+### Update — 2026-10-28 12:21 (end-to-end verification)
+
+Ran the Spec 4 block once (`bash` heredoc as written); first run, no flake
+re-run needed. Output redirected to `/tmp/e2e-m31-29.txt` and pasted
+byte-exact:
+
+```
+2166 src/daemon/executor/mod.rs
+447 src/daemon/executor/dispatch_foreground.rs
+2613 total
+file src/daemon/executor/mod.rs 1102
+fn src/daemon/executor/mod.rs execute_tool_call 409
+segments_present=1
+result_blocks=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+`segments_present=1` — all six original arm segments found verbatim
+(whitespace-normalised, with the three allowed rustfmt rewrites) in
+`dispatch_foreground.rs`. `result_blocks=1` — one `shell_run_error_text(`
+call remains, in the shared `finish_run`. Allowlist at 1102 / 409; hygiene
+test `ok.`; clippy clean; `fmt_exit=0`; full suite `passed=2587 failed=0`,
+matching the dry run.
