@@ -1,6 +1,6 @@
 # Phase 23 — Move the shell readers and watchers out of `knowledge/shell.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -370,3 +370,30 @@ kill: (-1926176): No such process
 **Commit:** 691dbd96d0b886f06d79aa3dbdff6732e355661c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local, per the run record. The
+  `(started)` entry's "Claude" is the self-mislabel, now on its fourth
+  occurrence.
+- **Scope deviations:** one, in the record, not the code. The acceptance
+  criteria ask for a separate `### Findings — <date>` entry, and the run
+  wrote none. The audit is in the Update Log anyway: the completion entry
+  carries the executor's final message, which covers every checklist item
+  and names `watch_shell_with`'s seams. The substance is present and only
+  its form is wrong, so the phase is approved, not bounced. Phase 08's
+  bounce was for evidence missing from the doc altogether.
+- **Code:** `git diff --stat 5b626575 HEAD` names the seven authorized
+  files. Both moved blocks equal their `5b626575:shell.rs` ranges after the
+  ten `pub(super)` lines. The allowlist reads `file …/shell.rs 1499` and
+  `fn …/shell_watch.rs watch_shell_with 159`, with the `test …/shell.rs 4143`
+  line unchanged. The code commit is typed `refactor:`. Reviewer's gates:
+  fmt 0, build and clippy clean, 2586 passed / 0 failed / 13 ignored.
+- **Findings:** carried to `FINDINGS.md` #70–#71.
+- **Calibration:** the next spec moves the Findings requirement into the
+  End-to-end step's checklist ("before you commit: `grep -c '^### Findings'`
+  prints 1"), as the paste rule already is, so a missing entry is caught
+  mechanically.
+
