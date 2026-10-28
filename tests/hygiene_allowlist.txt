@@ -13,7 +13,6 @@ file src/cli/commands/stream.rs 1520
 file src/cli/commands/top.rs 1394
 file src/daemon/executor/knowledge/shell.rs 2627
 file src/daemon/executor/mod.rs 2121
-file src/daemon/executor/shell_exec.rs 1129
 file src/daemon/ghost.rs 1677
 file src/daemon/stream.rs 1613
 test src/daemon/executor/knowledge/shell.rs 4143

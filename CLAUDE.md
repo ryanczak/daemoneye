@@ -76,6 +76,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 | `src/shell/registry.rs` | `ShellRegistry` — `ShellId`/`Owner`/`ShellRecord` (id grammar, per-owner caps), `spawn_for`, startup `adopt_at_startup`, `sweep_stale`, `host_is_alive`, `reap_exited` |
 | `src/shell/session.rs` | `shell_for_owner()` — reuse the owner's live shell or create one (spawn injected for tests); `login_shell()` |
 | `src/daemon/executor/shell_exec.rs` | `run_terminal_command` on the PTY substrate when `[execution] backend = "pty"`: routes through `shell_for_owner`, real exit codes, masked + ANSI-annotated output |
+| `src/daemon/executor/shell_exec_auth.rs` | Credentials and connecting for `run_terminal_command`: the sudo retry bookkeeping, the credential prompt round trip, the cold-host connect step (`drive_connect`, `ensure_connected`) and `run_sudo_command`; a child module of `src/daemon/executor/shell_exec.rs`, which re-exports `ensure_connected` |
 | `src/daemon/executor/file_ops/` | `edit_file` and `read_file`: `write.rs` dispatches by operation, `ops.rs` runs `edit` and `create`, its child modules `ops_delete.rs` and `ops_copy.rs` run `delete` and `copy` (re-exported from `ops`), `read.rs` the paginated read |
 | `src/ai/filter.rs` | Regex-based sensitive-data masking; `init_masking()` at daemon start |
 | `src/tmux/mod.rs` | All `tmux` subprocess calls (one function per operation) |

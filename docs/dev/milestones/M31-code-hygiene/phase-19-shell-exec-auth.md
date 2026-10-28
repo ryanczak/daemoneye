@@ -1,6 +1,6 @@
 # Phase 19 — Move credentials and connecting out of `shell_exec.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -143,3 +143,82 @@ clippy clean, `fmt_exit=0`, `passed=2586 failed=0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 17:40 (started)
+
+**Executor:** executor-19. Flipped Status to `in-progress` (here and in the
+milestone README's phase table). Next: run the Spec 1 script once with `bash`.
+### Update — 2026-10-27 17:41 (cuts done)
+
+Ran the Spec 1 script once with `bash`, as written. It performed the cut
+(lines 655–1013 of `shell_exec.rs` → new `shell_exec_auth.rs`), the two
+visibility rewrites inside the moved code, the child-module wiring
+(`#[path]` mod, glob `use auth::*;`, `pub(super) use auth::ensure_connected;`,
+`use super::USER_PROMPT_TIMEOUT;`), the allowlist `file` line removal, the
+CLAUDE.md table row, and `cargo fmt --all`.
+
+Script output, quoted verbatim:
+
+```
+S=655 E=1013
+  3868 src/daemon/executor/shell_exec.rs
+   365 src/daemon/executor/shell_exec_auth.rs
+  4233 total
+```
+
+`S=655 E=1013` matches the comment's expectation. Line counts match the dry
+run (`3868` / `365`). `cargo fmt --all` inside the script exited 0.
+
+### Findings — 2026-10-27 17:41
+
+Read `src/daemon/executor/shell_exec_auth.rs` once (365 lines) after the cut:
+
+- The file is a clean child module: module doc, `use super::*;`, then the
+  moved section — `SudoAttempts`, the credential prompt round trip,
+  `drive_connect`, `ensure_connected` (now `pub(in super::super)`),
+  `run_sudo_command` (now `pub(super)`) — and nothing else.
+- The two rewritten visibility lines landed exactly as the script's `sed`
+  expressions intended: `pub(in super::super) async fn ensure_connected<`
+  and `pub(super) async fn run_sudo_command<`.
+- The moved code reaches `USER_PROMPT_TIMEOUT` as `super::USER_PROMPT_TIMEOUT`;
+  from the child, `super` is `shell_exec`, which imports the const, so the
+  path resolves unchanged — no `super::super::` rewrite was needed or made.
+- Findings beyond that: none.
+### Update — 2026-10-27 17:46 (end-to-end verification)
+
+Ran the Spec End-to-end block once with `bash` (a heredoc, as it stands) and
+captured `/tmp/e2e-m31-19.txt`. Its contents, pasted byte-exact:
+
+```
+3868 src/daemon/executor/shell_exec.rs
+365 src/daemon/executor/shell_exec_auth.rs
+4233 total
+allowlisted=0
+test_entry_kept=1
+lost_other=0
+added_other=0
+moved_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every expected value matched the dry run on the first pass — no flake, no
+re-run needed. `grep -c '^moved_identical=1$'` on this doc prints 1 (the
+`moved_identical=1` line above is the only occurrence).
+
+Checklist against the acceptance criteria:
+
+- `shell_exec_auth.rs` (365 lines) defines `drive_connect`,
+  `ensure_connected` and `run_sudo_command`; `shell_exec.rs` (3868 lines
+  total, 777 production lines after the inline test modules — under the
+  800-line cap, measured by `cargo test --test hygiene`: `ok.`) defines
+  none of them.
+- The allowlist lost its `file src/daemon/executor/shell_exec.rs` line
+  (`allowlisted=0`) and kept `test src/daemon/executor/shell_exec.rs 3091`
+  unchanged (`test_entry_kept=1`).
+- `lost_other=0`, `added_other=0`, `moved_identical=1`, `passed=2586
+  failed=0` — all four exact.
+- `cargo clippy --all-targets --all-features -- -D warnings` finished
+  clean; `cargo fmt --all --check` exited 0.
