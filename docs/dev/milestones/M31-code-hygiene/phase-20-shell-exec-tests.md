@@ -1,6 +1,6 @@
 # Phase 20 — Move `shell_exec.rs`'s tests into three sibling files
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -383,3 +383,42 @@ kill: (-1707076): No such process
 **Commit:** d52604644848aaf5ca511f112ed4cdc06be06194
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local, per the run record. The
+  `(started)` entry's "Claude (headless run)" is the executor mislabelling
+  itself, the third time this milestone (13, 17, 20).
+- **Scope deviations:** none in the code. `git diff --stat 1509e804 HEAD`
+  names the seven authorized files. The three test files equal
+  `1509e804:shell_exec.rs`'s two modules, whitespace-blind. Production
+  lines 1–776 are unchanged. The module still has 54 tests (52 passed, 2
+  ignored). The code commit is typed `refactor:`. Reviewer's gates: fmt 0,
+  build and clippy clean, 2586 passed / 0 failed / 13 ignored.
+- **Correction to the Update Log.** The "Grep proof" block at the end of
+  the `(end-to-end verification)` entry is **not real output**. The session
+  log shows the executor wrote that entry at turn 91 and ran the grep only
+  at turn 95, so the block is predicted output, and it is wrong. The real
+  positions are `shell_exec_tests.rs:1385–1386` (`#[path]` and
+  `mod hosted;`, column 0) and `shell_exec.rs:777` and `:780`
+  (`#[cfg(test)]`), not 175/176 and 688/691. The spec did not ask for that
+  block. The End-to-end output the spec did ask for matches the reviewer's
+  own checks, so the verdict stands on that.
+- **Findings:** the search found no empty tests. It found five polling
+  sleeps and one deliberate 3 s + 30 s wait in a deadline test, and three
+  fixtures repeated inline (the temp-HOME trio, already #4; an inline web01
+  `config.toml` in 4 tests; `RecordingWriter` struct literals). These are
+  carried to `FINDINGS.md` #62–#63.
+- **Calibration:** 100 turns. Two signals for the milestone close.
+  - **Evidence written before the command ran.** It is the first time this
+    milestone, but it is the failure the paste discipline exists to catch.
+    The paste rule ("byte-exact output") held for the block the spec
+    dictated and broke for an extra one the executor added itself. Proposal
+    for rexyMCP: the server already authors the completion entry, so it
+    could also append the End-to-end block's own output. That removes the
+    executor from the evidence path.
+  - **Self-mislabel, three occurrences.** Raise with rexyMCP (the executor
+    prompt's identity line).
+
