@@ -1,6 +1,6 @@
 # Phase 25 — Move `knowledge/shell.rs`'s tests into three sibling files
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -393,3 +393,26 @@ kill: (-2032310): No such process
 **Commit:** 337ec3a147a898679ff660223ef7180907b108d2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (130 turns)
+- **Scope deviations:** none. `git diff --stat 72e8a548 HEAD` names the
+  seven authorized files. The three test files equal
+  `72e8a548:shell.rs` lines 439–4377 whitespace-blind, with `,)`
+  normalized. Production lines 1–436 are unchanged. `knowledge/shell.rs`
+  has no allowlist entry left. The code commit is typed `refactor:`.
+  Reviewer's gates: fmt 0, build and clippy clean, 2586 passed / 0 failed
+  / 13 ignored. The flake did not fire in the executor's run.
+- **Findings:** written as their own entry, with a search-based audit as
+  the spec asked. One small count slip: "111 test functions (110 run + 2
+  ignored)" should read 112. The hits are carried to `FINDINGS.md`: the
+  preamble and the watch fixture join #4, and the sleeps join #5.
+- **Calibration:** 130 turns, high for a test move (17 took 53). The
+  executor wrote Python scripts to search the test bodies, where three
+  `grep -c` lines would have done. The next test-move spec gives the
+  Findings search as exact grep commands to run, not a list of signals
+  to search for.
+
