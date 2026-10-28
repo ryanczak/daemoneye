@@ -1,6 +1,6 @@
 # Phase 22 — Split the chat turn and its prompts out of `cli/commands/stream.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -415,3 +415,28 @@ kill: (-1823883): No such process
 **Commit:** 63ccf8b010c5251a33c2a56e9c877359b047dff0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (78 turns)
+- **Scope deviations:** none. `git diff --stat 64511de5 HEAD` names the
+  seven authorized files. Both moved blocks equal their
+  `64511de5:stream.rs` ranges after the seven visibility lines. The code
+  commit is typed `refactor:`. Reviewer's gates: fmt 0, build and clippy
+  clean, 2586 passed / 0 failed / 13 ignored. The flake did not fire.
+- **Findings:** carried to `FINDINGS.md` #66–#69. The reviewer confirmed
+  the two concrete claims:
+  - `read_approval_input` and `read_approval_input_panel` differ only in
+    the redraw call;
+  - `let _path_approved = …` at `stream_prompts.rs:587` is computed and
+    never used.
+
+  The seams named for `ask_with_session_ratatui` are input to its
+  function-split phase.
+- **Calibration:** the third run under the checklist and the paste-order
+  rule, and both held: the End-to-end block ran at turn 65 and was pasted
+  at turn 68. The audit is the most useful of the milestone, with
+  concrete, checkable claims and every one verified.
+
