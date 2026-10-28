@@ -1,6 +1,6 @@
 # Phase 27 — Silent tools that exit early still send `ToolFinished`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -154,3 +154,122 @@ Expected:
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 16:50 (in progress, executor)
+
+Starting phase 27: flipping status to in-progress, writing the new test
+first, then proving it red on the unfixed tree before running the fix
+script.
+
+### Update — 2026-10-28 16:55 (red)
+
+`cargo test --lib silent_tool_early_exit_sends_tool_finished` against the
+unfixed tree (the `GetShellContext` arm still ends in `return Ok(...)`):
+
+```
+test daemon::executor::tests::silent_tool_early_exit_sends_tool_finished ... FAILED
+assertion `left == right` failed: an early exit must still emit ToolFinished after ToolStarted for the call's id; the client saw: [("ToolStarted", "t1")]
+  left: [("ToolStarted", "t1")]
+ right: [("ToolStarted", "t1"), ("ToolFinished", "t1")]
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2509 filtered out; finished in <t>s
+```
+
+Exactly the #73 shape: `ToolStarted` leaves, `ToolFinished` does not.
+
+### Findings — 2026-10-28
+
+Decision 7, scoped to the four arms the phase touches — `ReadFile`
+(`mod.rs` 1191–1250), `GetShellContext` (1316–1355), `OpenShell`
+(1357–1400) and `SpawnGhost` (1536–1561), post-fix line numbers. Grepped
+each arm's text for `expect(`, `.unwrap(`, `panic!`, `let _ =` and
+`.ok()`, then read every hit and each arm whole. #73 itself is not a
+finding.
+
+**1. `expect`, `unwrap` or `panic!` — none.** No `expect(`, no bare
+`.unwrap()`, no `panic!` in any of the four arms. The only `unwrap`
+hits are `unwrap_or`/`unwrap_or_default` on `Option`s — `session_id`
+for log fields and the shell owner (10 + 6 sites across the arms) and
+`host.as_deref().unwrap_or("local")` for a log field — value defaults,
+not suppressed errors.
+
+**2. Swallowed errors — two, both pre-existing and both named here for
+the triage:**
+
+- `GetShellContext` arm, `send_response_split` at the top of the
+  function (mod.rs 533) and `ToolFinished` (1563): both are `let _ =
+  send_response_split(...).await` — the two feedback frames' write
+  errors are dropped, while every other `send_response_split` in the
+  function propagates with `?`. If the client pipe is gone, the daemon
+  logs nothing and the call's outcome still returns. This is the
+  exact frame pair #73 is about, so it is in scope to *name*: a
+  `ToolStarted` that fails to write is silently lost the same way a
+  missing `ToolFinished` was. Not fixed here — the spec's change is
+  the labeled blocks only — but a post-M31 candidate: propagate or
+  log both, like the sibling sites.
+- `ReadFile` and `OpenShell` arms' `log_event` calls (mod.rs 1213,
+  1226, 1372, 1386): `log_event` is fire-and-forget by design (its
+  own doc says so), so a refused ghost host or a failed ssh connect
+  is recorded only if the event segment is writable. Design, not a
+  defect — recorded for completeness, no action.
+
+**3. Logic duplicated between `ReadFile` and `OpenShell` — yes, three
+shapes, all pre-existing:**
+
+- The host-parse prologue is near-identical: `ReadFile` builds
+  `host_id` with `match host.as_deref() { None => Local, Some(name) =>
+  match HostId::parse(name) { Ok/Err } }` (1201–1206); `OpenShell`
+  builds `asked` with the same shape one indent deeper, inside
+  `if let Some(policy)` (1359–1365). `OpenShell`'s copy parses only
+  when a policy exists, so the two are not drop-in equal — a shared
+  helper would have to take the parse-always-vs-parse-under-policy
+  difference as a parameter.
+- The `ghost_host_refusal` + `log_event("ghost_host_refused", …)`
+  pair is byte-identical in shape across both arms (1208–1221 vs
+  1367–1381), differing only in the `"tool"` field's value
+  (`"read_file"` vs `"open_shell"`). Same pair again in the
+  `Foreground` arm (591–613) with `"run_terminal_command"`. A
+  `log_ghost_host_refusal(policy, host, tool, session_id)` helper
+  would serve all three.
+- The `ssh_connect_failed` + `ToolResult` send pair (1224–1243 vs
+  1383–1396) differs in one real respect: `ReadFile` sends the
+  `ToolResult` frame itself before returning (1233–1241), `OpenShell`
+  does not (it just breaks with the `Error:` text, letting the
+  post-match path send nothing — the model still gets the text as the
+  tool result, the client just never gets a `ToolResult` frame for
+  this call). That asymmetry looks like drift rather than intent —
+  `OpenShell`'s ssh-connect failure is the only one of the four
+  arms' refusal paths that skips the explicit `ToolResult` write.
+  Flagging as the strongest of the three; the next phase moves these
+  arms and should not carry the asymmetry forward without a look.
+
+**4. Anything else that looks wrong — one, pre-existing:** the
+`GetShellContext` arm's non-early-exit tail builds
+`Owner::Chat(session_id.unwrap_or_default().to_string())` three times
+in twenty lines (1322, 1330, 1341) — `unwrap_or_default` turns a
+sessionless call into the `chat:` owner with the empty id, the same
+shape FINDINGS #75 already records for `dispatch_shells.rs`'s three
+`Owner::Chat(session_id.unwrap_or_default())` sites. Same defect
+family, one more arm. No new defects introduced by this phase's
+change; the labeled blocks and the ten `break 'arm Ok(…)` rewrites are
+mechanical.
+
+### Update — 2026-10-28 17:10 (end-to-end verification)
+
+Spec 5's block, run once as written; first run, no flake re-run needed
+(`read_shell_screen_lines_tails_the_visible_rows` did not fire). The
+block wrote `/tmp/e2e-m31-27.txt`; its contents, byte-exact:
+
+```
+labeled_arms=4
+breaks=10
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2509 filtered out; finished in <t>s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+Every line matches the expected block: `labeled_arms=4`, `breaks=10`,
+the new test `1 passed`, hygiene `16 passed` (`ok.`), clippy clean,
+`fmt_exit=0`, and `passed=2587 failed=0` — 2586 before plus the new
+test.

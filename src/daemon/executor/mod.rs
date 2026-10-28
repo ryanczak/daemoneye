@@ -1195,14 +1195,14 @@ where
             pattern,
             host,
             ..
-        } => {
+        } => 'arm: {
             // A ghost reaching a host its runbook does not name is refused
             // before the run — the same boundary the foreground arm enforces.
             let host_id = match host.as_deref() {
                 None => crate::host::HostId::Local,
                 Some(name) => match crate::host::HostId::parse(name) {
                     Ok(parsed) => parsed,
-                    Err(msg) => return Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
+                    Err(msg) => break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
                 },
             };
             if let Some(policy) = ghost_policy.as_ref()
@@ -1218,7 +1218,7 @@ where
                         "allowed_hosts": policy.hosts,
                     }),
                 );
-                return Ok(ToolCallOutcome::Result(msg));
+                break 'arm Ok(ToolCallOutcome::Result(msg));
             }
             if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
             {
@@ -1240,7 +1240,7 @@ where
                     },
                 )
                 .await?;
-                return Ok(ToolCallOutcome::Result(outcome));
+                break 'arm Ok(ToolCallOutcome::Result(outcome));
             }
             file_ops::run_read_file(path, *offset, *limit, pattern.as_deref(), host.as_deref())
                 .await
@@ -1313,20 +1313,20 @@ where
             dispatch_memory::dispatch(call, tx, session_id, &artifact_ctx, &memory_namespaces).await
         }
 
-        PendingCall::GetShellContext { scope, .. } => {
+        PendingCall::GetShellContext { scope, .. } => 'arm: {
             let breadth = match knowledge::resolve_context_scope(scope.as_deref()) {
                 Ok(b) => b,
-                Err(msg) => return Ok(ToolCallOutcome::Result(msg)),
+                Err(msg) => break 'arm Ok(ToolCallOutcome::Result(msg)),
             };
             if breadth == knowledge::ContextBreadth::ShellsOnly {
-                return Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
+                break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
                     &Owner::Chat(session_id.unwrap_or_default().to_string()),
                 )));
             }
             // PE decision 1: a caller outside tmux gets the daemon's own
             // shells only — no pane blocks, no pane map.
             if chat_pane.is_none() {
-                return Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
+                break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
                     &Owner::Chat(session_id.unwrap_or_default().to_string()),
                 )));
             }
@@ -1355,14 +1355,14 @@ where
 
         PendingCall::OpenShell {
             host, rows, cols, ..
-        } => {
+        } => 'arm: {
             if let Some(policy) = ghost_policy.as_ref() {
                 let asked = match host.as_deref() {
                     None => crate::host::HostId::Local,
                     Some(name) => match crate::host::HostId::parse(name) {
                         Ok(parsed) => parsed,
                         Err(msg) => {
-                            return Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
+                            break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
                         }
                     },
                 };
@@ -1377,7 +1377,7 @@ where
                             "allowed_hosts": policy.hosts,
                         }),
                     );
-                    return Ok(ToolCallOutcome::Result(msg));
+                    break 'arm Ok(ToolCallOutcome::Result(msg));
                 }
             }
             if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
@@ -1391,7 +1391,7 @@ where
                         "error": msg,
                     }),
                 );
-                return Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
+                break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
             }
             Ok(ToolCallOutcome::Result(
                 knowledge::open_shell(
@@ -1533,9 +1533,9 @@ where
             agent,
             host,
             ..
-        } => {
+        } => 'arm: {
             if spawn_depth >= 2 {
-                return Ok(ToolCallOutcome::Result(
+                break 'arm Ok(ToolCallOutcome::Result(
                     "Delegation depth limit reached (max: coordinator + 1 level of specialists)."
                         .to_string(),
                 ));
@@ -2394,6 +2394,78 @@ mod tests {
         assert!(
             !text.contains("[FOREGROUND TARGET]"),
             "no foreground-target line may reach a pane-less caller: {text}"
+        );
+    }
+
+    /// #73: a silent tool whose arm exits early must still emit `ToolFinished`
+    /// after `ToolStarted`, or the client's history entry never gets its ✓/✗
+    /// and timing label. `get_shell_context` from outside tmux is one such
+    /// early exit — the arm returns the shells-only block straight from the
+    /// match. Every frame the daemon wrote is read off the client half of the
+    /// pipe: the daemon's write half is dropped first, or the read never sees
+    /// EOF and never returns.
+    #[tokio::test]
+    async fn silent_tool_early_exit_sends_tool_finished() {
+        use tokio::io::AsyncReadExt;
+
+        let _guard = crate::test_home_guard();
+        let dir = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+        let reg = crate::shell::ShellRegistry::default();
+        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
+        let store: SessionStore = SessionStore::new();
+        let call = PendingCall::GetShellContext {
+            id: "t1".to_string(),
+            thought_signature: None,
+            scope: None,
+        };
+        let (mut daemon_tx, mut client_rx) = tokio::io::duplex(64 * 1024);
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let _outcome = execute_tool_call(
+            &call,
+            &mut daemon_tx,
+            &mut daemon_rx,
+            SessionCtx {
+                session_id: Some("sess-a"),
+                session_name: "sess-a",
+                chat_pane: None,
+                sessions: &store,
+            },
+            &Arc::new(SessionCache::new("home")),
+            &Arc::new(crate::scheduler::ScheduleStore::new_empty()),
+        )
+        .await
+        .expect("get_shell_context must not error");
+        drop(daemon_tx);
+        let mut raw = Vec::new();
+        client_rx
+            .read_to_end(&mut raw)
+            .await
+            .expect("reading the client half of the pipe must not error");
+        let events: Vec<(String, String)> = String::from_utf8(raw)
+            .expect("the daemon writes UTF-8 frames")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<Response>(line)
+                    .expect("every frame the daemon wrote is a Response")
+            })
+            .filter_map(|r| match r {
+                Response::ToolStarted { id, .. } => Some(("ToolStarted".to_string(), id)),
+                Response::ToolFinished { id, .. } => Some(("ToolFinished".to_string(), id)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                ("ToolStarted".to_string(), "t1".to_string()),
+                ("ToolFinished".to_string(), "t1".to_string()),
+            ],
+            "an early exit must still emit ToolFinished after ToolStarted for the \
+             call's id; the client saw: {events:?}"
         );
     }
 
