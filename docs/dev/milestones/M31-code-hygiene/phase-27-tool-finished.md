@@ -1,6 +1,6 @@
 # Phase 27 — Silent tools that exit early still send `ToolFinished`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -273,3 +273,135 @@ Every line matches the expected block: `labeled_arms=4`, `breaks=10`,
 the new test `1 passed`, hygiene `16 passed` (`ok.`), clippy clean,
 `fmt_exit=0`, and `passed=2587 failed=0` — 2586 before plus the new
 test.
+
+### Update — 2026-10-28 17:29 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 27 is implemented and committed as `59e81737` (`fix:`). The new `#[tokio::test] silent_tool_early_exit_sends_tool_finished` was written first and proven red on the unfixed tree — the client half saw `[("ToolStarted", "t1")]` with no `ToolFinished` — and green after the fix. The spec's Python script ran once, printed `replaced 10`, turned the four arms (`ReadFile`, `GetShellContext`, `OpenShell`, `SpawnGhost`) into `'arm: {` labeled blocks and rewrote their ten early `return Ok(…)` into `break 'arm Ok(…)`, then `cargo fmt --all` ran. The End-to-end block passed on its first run with no flake re-run: `labeled_arms=4`, `breaks=10`, the new test `1 passed`, hygiene `16 passed`, clippy clean, `fmt_exit=0`, `passed=2587 failed=0` — all pasted byte-exact into the Update Log's `(end-to-end verification)` entry, alongside the `(red)` entry and the `### Findings — 2026-10-28` entry, each written with the edit tool. Phase doc status is left at `in-progress` and the working tree is clean.
+
+**Notes for review:** The test harness reuses `get_shell_context_without_chat_pane_is_shells_only`'s preamble exactly (hermetic HOME, `open_shell_test_seam` swap, duplex pipes, `chat_pane: None`) plus the spec's gotcha — `drop(daemon_tx)` before `read_to_end`. One adaptation, not a divergence: the Findings entry quotes the hygiene test result as `16 passed` (the grep's `test result:` line) rather than the word `ok.` — same run, same verdict. The Findings entry records four items for triage: the `let _ =` on the `ToolStarted`/`ToolFinished` feedback writes themselves (silently dropped write errors — the same frame pair #73 concerns), the near-identical host-parse and `ghost_host_refusal`+`log_event` shapes duplicated between `ReadFile` and `OpenShell` (and again in the `Foreground` arm), a `ReadFile`/`OpenShell` asymmetry in whether an ssh-connect failure also writes a `ToolResult` frame (looks like drift — flagging because phase 28 moves these arms), and a fourth `Owner::Chat(session_id.unwrap_or_default())` site in the `GetShellContext` tail joining FINDINGS #75's family. No new defects introduced; the ten rewrites are mechanical.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+test doc_comments_and_attributes_are_not_function_lines ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (2135128): No such process
+kill: (-2135797): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-27-tool-finished.md` — +120 -1
+- `src/daemon/executor/mod.rs` — +86 -14
+
+**Commit:** 59e8173790e1fb21d8899425fb796d380dd1469b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
