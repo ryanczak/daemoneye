@@ -1,6 +1,6 @@
 # Phase 30 — Split `run_terminal_command`'s background arm into stages
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -378,3 +378,142 @@ passed=2587 failed=0
 Pre-commit gate checks, all three printing 1: `grep -c
 '^segments_present=1$' /tmp/e2e-m31-30.txt` → 1; `grep -c '^routed=1$'
 /tmp/e2e-m31-30.txt` → 1; `grep -c '^### Findings — '` on this doc → 1.
+
+### Update — 2026-10-28 19:51 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 30 executed as specified: the phase script ran once, unmodified, asserted every anchor, printed `tail returns rewritten: 2`, and produced `src/daemon/executor/dispatch_background.rs` (204 lines, `dispatch` + `start_approved`) with `execute_tool_call`'s `Background` arm reduced to the single `dispatch_background::dispatch(...)` call; `mod.rs` is 2008 wc-lines / 944 production lines and `execute_tool_call` 250. Allowlist now reads `file …mod.rs 944` / `fn …execute_tool_call 250` and the `CLAUDE.md` row points at the new module. The End-to-end block ran once, first try clean: `segments_present=1`, `routed=1`, hygiene `ok. 16 passed`, clippy clean, `fmt_exit=0`, `passed=2587 failed=0` — the #65 flake did not appear, so no re-run was needed. All three pre-commit greps printed 1; committed as `dc366c6f` (`refactor:`), tree clean, status left `in-progress` for the server's completion tail.
+
+**Notes for review:**
+- Findings entry (within five calls, per decision 7): eight grep hits, all in `start_approved`; `dispatch` is clean. Six are the recorded #75/#84 families (three `session_id.unwrap_or_default()` variants plus the `let _ =` on the spawned closer's `close_shell_with`). One hit is **new**: line 178, `registry_lookup(&owner, …).unwrap_or_else(|| "s?")` in the start-error reply — a silent placeholder shell id when the registry misses the owner; low severity (cosmetic in the error text), not fixed per decision 6.
+- The script's `wc -l` output (2008/204) differs from the allowlist's production-line numbers (944/250) because rustfmt expanded a few multi-line constructs in the moved body — the allowlist counts are the ones the hygiene gate enforces, and they match the spec.
+- The end-to-end transcript is the file `/tmp/e2e-m31-30.txt` captured by the phase's own block and pasted verbatim in the `(end-to-end verification)` Update Log entry; it lives outside the repo, so it is not in the commit — only the doc entry and the code are.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.3.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.63s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+est function_length_spans_signature_to_closing_brace ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.28s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test ghost_config_parsing ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test ipc_ask_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_append_read ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (2291754): No such process
+kill: (-2292456): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -1
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-30-background-split.md` — +85 -1
+- `src/daemon/executor/dispatch_background.rs` — +204 -0
+- `src/daemon/executor/mod.rs` — +3 -161
+- `tests/hygiene_allowlist.txt` — +2 -2
+
+**Commit:** dc366c6f02372b49c6e54caae7edd4443f2d8fa6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

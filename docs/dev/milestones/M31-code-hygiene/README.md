@@ -161,7 +161,7 @@ Expected count: 12–14. Each may split at drafting.
 | 27 | tool-finished ([phase-27-tool-finished.md](phase-27-tool-finished.md)) — `fix:` for #73, the one recorded exception to decision 6: the four silent-tool arms that `return` early become labeled blocks, so `ToolFinished` always follows `ToolStarted`; a test pins it | done |
 | 28 | dispatch-rest ([phase-28-dispatch-rest.md](phase-28-dispatch-rest.md)) — nine more arms move into five family modules (files, context, open_shell, send_input, meta); only `run_terminal_command` stays; `execute_tool_call` goes 1161 → 797 | done |
 | 29 | foreground-split ([phase-29-foreground-split.md](phase-29-foreground-split.md)) — `run_terminal_command`'s 392-line foreground arm leaves `execute_tool_call` for `dispatch_foreground.rs`, split into `dispatch`, `run_approved`, `run_on_named_host` and a shared `finish_run`; `execute_tool_call` goes 797 → 409 | done |
-| 30 | background-split ([phase-30-background-split.md](phase-30-background-split.md)) — `run_terminal_command`'s 163-line background arm leaves `execute_tool_call` for `dispatch_background.rs`, split into `dispatch` and `start_approved`; `execute_tool_call` goes 409 → 250 | in-progress |
+| 30 | background-split ([phase-30-background-split.md](phase-30-background-split.md)) — `run_terminal_command`'s 163-line background arm leaves `execute_tool_call` for `dispatch_background.rs`, split into `dispatch` and `start_approved`; `execute_tool_call` goes 409 → 250 | review      |
 
 ## Notes
 
