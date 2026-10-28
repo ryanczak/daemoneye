@@ -1,6 +1,6 @@
 # Phase 21 — Split `top.rs` into loaders, text frames and run detail
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -163,3 +163,92 @@ Expected (from the dry run): `1877 …top.rs`, `234 …top_load.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 18:49 (cuts done)
+
+Ran the Spec 1 script once with `bash`, from a clean tree at `6883e259`
+(`06ae5753`'s successor). The four banner lines landed where the spec's
+echo line predicted — `L1=553 X1=784 X2=1105 R1=1172 T=1395` — and the
+script's tail:
+
+```
+ 1877 src/cli/commands/top.rs
+  234 src/cli/commands/top_load.rs
+  326 src/cli/commands/top_text.rs
+  226 src/cli/commands/top_detail.rs
+ 2663 total
+```
+
+Line counts match the dry run's expectations exactly (`1877 …top.rs`,
+`234 …top_load.rs`, `326 …top_text.rs`, `226 …top_detail.rs`).
+`cargo fmt --all` inside the script exited 0. `git status` after:
+`CLAUDE.md` and `tests/hygiene_allowlist.txt` modified,
+`top_load.rs` / `top_text.rs` / `top_detail.rs` untracked — nothing else
+touched.
+
+### Findings — 2026-10-27 18:57
+
+Read all three new files in full (`top_load.rs` 234, `top_text.rs` 326,
+`top_detail.rs` 226).
+
+- **`lock().expect` / `lock().unwrap` / `.unwrap_or_log()`:** `none` — the
+  three files touch no mutex, RwLock or OnceLock.
+- **Other `expect` / `unwrap` / `panic!` in production code:** `none`.
+- **Swallowed errors:** three kinds, all pre-existing moves, all of them
+  the file-read pattern "a panel row that cannot be read is a blank or a
+  zero, not a crash":
+  - `top_load.rs:21` `.ok()` on the run-log mtime (a run with no log
+    mtime loses only its liveness freshness);
+  - `top_load.rs:82` and `top_detail.rs:46,62,90` `.ok()` on
+    `DateTime::parse_from_rfc3339` for log timestamps (an unparseable
+    stamp renders `--:--:--` or `0s`, the choice the panels already
+    made);
+  - `top_load.rs:195-196` `.ok()`s and `top_load.rs:200`
+    `Err(_) => (0, 0)` in `file_stats`, and the `Err(_) => (0, 0)` /
+    `let Ok(..) else` returns in `runs_dir_stats` (a missing directory
+    or file fingerprints as zeros — the fingerprint's contract, "stats
+    only, never file contents").
+  No new swallowing; every hit was verbatim inside the moved text.
+- **Obvious duplicate of code elsewhere in `top`:** one, pre-existing —
+  `top_load.rs:75` `run_started_at` and `top_detail.rs:40`
+  `started_at_of` are byte-identical bodies (find the first
+  `RunStarted` record, parse its timestamp) with different names. They
+  were separate in `top.rs` before the cut; the move preserves that.
+  Recording it, not fixing it — out of scope per the phase doc.
+
+All findings are moves, not introductions: the diff `added_other=0`
+check in the End-to-end block below proves nothing else changed.
+
+### Update — 2026-10-27 18:56 (end-to-end verification)
+
+Ran the Spec 4 End-to-end block once (`bash` heredoc, as written); its
+output, written by the block itself to `/tmp/e2e-m31-21.txt` and pasted
+byte-exact:
+
+```
+1877 src/cli/commands/top.rs
+234 src/cli/commands/top_load.rs
+326 src/cli/commands/top_text.rs
+226 src/cli/commands/top_detail.rs
+2663 total
+allowlisted=0
+fn_kept=1
+lost_other=0
+added_other=0
+load_identical=1
+text_identical=1
+detail_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every expected value from the dry run reproduced: line counts, the
+allowlist line gone (`allowlisted=0`) with `activity_row_in 163` kept
+(`fn_kept=1`), nothing lost or added beyond the four `pub(super)` lines
+and the wiring (`lost_other=0`, `added_other=0`), all three moved
+sections byte-identical to their source ranges (`load_identical=1`,
+`text_identical=1`, `detail_identical=1`), the hygiene test green,
+clippy clean, fmt clean, and the full suite `passed=2586 failed=0`. No
+flake: the first run landed on 2586/0.
