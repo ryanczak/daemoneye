@@ -1,6 +1,6 @@
 # Phase 34 — Exempt `defs.rs` from the hygiene caps
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -132,3 +132,42 @@ Expected (from the dry run): `file_entries=0`, `defs_exempt=1`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 15:40 (progress)
+
+Started the phase: flipped Status to in-progress here and in the milestone
+README's phase table. Task 1 done — the spec's script ran once, as written,
+and printed:
+
+```
+defs.rs exempt; allowlist file entries left: 0
+```
+
+`tests/hygiene.rs` now lists `src/ai/tools/defs.rs` in `EXEMPT`,
+`tests/hygiene_allowlist.txt` lost its `file src/ai/tools/defs.rs 1398`
+line, and `CLAUDE.md`'s Build & Test paragraph names all three exempt
+files. Logging this entry with an edit tool (`cat >>` via bash is an
+append, not an in-place edit).
+
+### Findings — 2026-10-28
+
+none — the phase changes no production code
+
+### Update — 2026-10-28 15:43 (end-to-end verification)
+
+Ran the phase's End-to-end block once, against the real tree, output
+byte-exact:
+
+```
+file_entries=0
+defs_exempt=1
+claude_md=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+Matches the dry run's expectations: `file_entries=0`, `defs_exempt=1`,
+`claude_md=1`, hygiene `ok.`, clippy clean, `fmt_exit=0`, and
+`passed=2587 failed=0`. No flake — the E2E block ran once, not twice.

@@ -166,7 +166,7 @@ Expected count: 12–14. Each may split at drafting.
 | 31 | route-split ([phase-31-route-split.md](phase-31-route-split.md)) — `execute_tool_call` splits into itself (the policy checks and the feedback frames), `load_snapshot` and `route` (the family match), the last two in a new `route.rs`; `execute_tool_call` 250 → 93, `executor/mod.rs` 944 → 788, and both allowlist entries are deleted | done |
 | 32 | ghost-turn ([phase-32-ghost-turn.md](phase-32-ghost-turn.md)) — `do_ghost_turn` leaves `ghost.rs` for `ghost/turn.rs`, its 126-line prompt assembly becoming `build_ghost_prompt` in `ghost/prompt.rs`; `ghost.rs` 1677 → 782, `do_ghost_turn` 896 → 775 (re-pathed), the file entry deleted | done |
 | 33 | conversation-loop ([phase-33-conversation-loop.md](phase-33-conversation-loop.md)) — `run_conversation_loop` leaves `stream.rs` for `stream/conversation.rs`, its 43 field-for-field tool arms becoming `PendingCall::from_tool_event` in the exempt `pending.rs` and three terminal replies becoming `stream/endings.rs`; `stream.rs` 1613 → 168, the loop 1454 → 775 (re-pathed), the file entry deleted | done |
-| 34 | defs-exempt ([phase-34-defs-exempt.md](phase-34-defs-exempt.md)) — `src/ai/tools/defs.rs` joins `EXEMPT` (PE decision 2026-10-28) and its allowlist line is deleted; the allowlist then holds no file entries | todo |
+| 34 | defs-exempt ([phase-34-defs-exempt.md](phase-34-defs-exempt.md)) — `src/ai/tools/defs.rs` joins `EXEMPT` (PE decision 2026-10-28) and its allowlist line is deleted; the allowlist then holds no file entries | in-progress |
 
 ## Notes
 

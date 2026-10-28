@@ -43,6 +43,10 @@ const EXEMPT: &[(&str, &str)] = &[
         "src/ai/tools/args.rs",
         "one argument struct per AI tool: flat data",
     ),
+    (
+        "src/ai/tools/defs.rs",
+        "the `TOOLS` table, one `ToolDef` per AI tool: flat data",
+    ),
 ];
 
 const ALLOWLIST: &str = "tests/hygiene_allowlist.txt";

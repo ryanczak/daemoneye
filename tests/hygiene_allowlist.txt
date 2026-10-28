@@ -8,7 +8,6 @@
 # deletes its line; the gate fails with "remove it" until it does.
 # Generated 2026-10-25 from the gate's own measurement (M31 phase 01).
 
-file src/ai/tools/defs.rs 1398
 fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
 fn src/ai/backends/openai.rs OpenAiClient::chat 238
