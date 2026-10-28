@@ -9,7 +9,6 @@
 # Generated 2026-10-25 from the gate's own measurement (M31 phase 01).
 
 file src/ai/tools/defs.rs 1398
-file src/daemon/ghost.rs 1677
 file src/daemon/stream.rs 1613
 fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
@@ -36,7 +35,7 @@ fn src/daemon/executor/knowledge/shell_watch.rs watch_shell_with 159
 fn src/daemon/executor/mod.rs prompt_and_await_approval 210
 fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
-fn src/daemon/ghost.rs do_ghost_turn 896
+fn src/daemon/ghost/turn.rs do_ghost_turn 775
 fn src/daemon/ghost.rs trigger_ghost_turn 172
 fn src/daemon/startup.rs run_daemon 598
 fn src/daemon/scheduled.rs run_scheduled_job_inner 193

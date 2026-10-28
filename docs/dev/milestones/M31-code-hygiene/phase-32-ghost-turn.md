@@ -1,6 +1,6 @@
 # Phase 32 — Move `do_ghost_turn` out of `ghost.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -308,3 +308,79 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 21:40 (started)
+
+**Executor:** executor (headless run).
+Flipped the phase status to `in-progress` and the README row to match. Now
+running the Spec 1 script verbatim, once, then the Spec 2/3/4 log entries.
+
+### Update — 2026-10-28 21:42 (cuts done)
+
+Ran the Spec 1 script as written, once. Its full output:
+
+```
+do_ghost_turn moved; prompt assembly is build_ghost_prompt
+ 1419 src/daemon/ghost.rs
+  782 src/daemon/ghost/turn.rs
+  152 src/daemon/ghost/prompt.rs
+ 2353 total
+```
+
+All asserts passed; `cargo fmt --all` ran twice; the line counts match the
+dry run exactly (1419 / 782 / 152). No hand edits to anything the script
+touched.
+
+### Findings — 2026-10-28
+
+Spec 3 grep over `src/daemon/ghost/turn.rs` and `src/daemon/ghost/prompt.rs`
+(4 hits; none new — all moved verbatim from the old `do_ghost_turn` /
+prompt-assembly block in `ghost.rs`):
+
+- `turn.rs:717` — in `do_ghost_turn`'s wrap-up bookkeeping, inside the
+  closure that collects the assistant transcript from the session store:
+  `unwrap_or_default()` on an `Option<Vec<String>>` — degrades to an empty
+  transcript, which `uncovered_steps` then treats as "nothing covered".
+  Kind: silent-default. Severity: low — it is the documented "ghost shells
+  never have a real IPC client" path; a missing session degrades to the
+  empty transcript rather than failing the wrap-up.
+- `prompt.rs:50` — in `build_ghost_prompt`, `unwrap_or_else(|| ("none".to_string(), false, daemon_ceiling, None, false))`
+  on the ghost-config lookup: a ghost session with no `ghost_config` falls
+  back to defaults (`none` agent name, no sudo, the daemon turn ceiling, no
+  SSH target, no auto-approve). Kind: silent-default. Severity: low —
+  pre-existing behaviour carried verbatim; the fallback is the same shape
+  the config defaults produce.
+- `prompt.rs:82` — in `build_ghost_prompt`, `unwrap_or_default()` on the
+  seeded-steps lookup: a session with no stored steps yields an empty list,
+  and the prompt then omits the steps block entirely. Kind:
+  silent-default. Severity: low — an empty steps block is a valid prompt
+  shape (`steps_block` handles it explicitly two lines below).
+
+No `unwrap()`, `expect()`, `panic!()`, `let _ =`, or `.ok()` hits.
+
+### Update — 2026-10-28 21:52 (end-to-end verification)
+
+Ran the Spec 4 End-to-end block once. Its output, byte-exact from
+`/tmp/e2e-m31-32.txt`:
+
+```
+1419 src/daemon/ghost.rs
+782 src/daemon/ghost/turn.rs
+152 src/daemon/ghost/prompt.rs
+2353 total
+ghost_file_entries=0
+fn src/daemon/ghost/turn.rs do_ghost_turn 775
+segments_present=1
+routed=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+No flake: `passed=2587 failed=0` on the first run. Every expected line from
+the dry run is present: 1419/782/152, `ghost_file_entries=0`, the re-pathed
+`fn src/daemon/ghost/turn.rs do_ghost_turn 775` allowlist entry,
+`segments_present=1` (all three segments found, whitespace-normalised,
+against `26d99c07`), `routed=1`, hygiene `ok.`, clippy clean, `fmt_exit=0`
+and `passed=2587 failed=0`.
