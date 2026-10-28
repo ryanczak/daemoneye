@@ -9,6 +9,13 @@ the architect's, with the PE's say on `major` and above.
 **Triage values:** `act: <phase or bug doc>` — fixed in M31 or filed;
 `defer: <milestone>` — carried; `reject: <why>` — not a defect.
 
+**2026-10-28:** the `defer` rows and the untaken fixture rows (#4, #8,
+#49, #50, #62, #63, #60) are scoped into
+[M32 — Findings fixes](../M32-findings-fixes/README.md), whose phase table
+maps each number to a phase. A row's triage changes to `act: M32 phase-NN`
+when that phase lands. The function-split inputs (#1, #2, #16, #21, #35,
+#45–#47, #69, #71) wait for the function milestone.
+
 | # | Phase | File · symbol | Kind | Severity | What | Triage |
 |---|---|---|---|---|---|---|
 | 1 | 01 | `daemon/ghost.rs` · `do_ghost_turn` | smell | major | 896-line function missed by the audit | act: group 3 phase with the dispatch matches |

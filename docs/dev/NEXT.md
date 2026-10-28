@@ -1,18 +1,17 @@
 # NEXT
 
-**Active milestone:** none. M31 (Code hygiene) closed 2026-10-28 as
-`v2.4.0`; its retrospective is in
-[`README.md`](milestones/M31-code-hygiene/README.md) and its 85 triaged
-findings in [`FINDINGS.md`](milestones/M31-code-hygiene/FINDINGS.md). The
-next milestone is the PE's to scope with `/rexymcp:architect`. Candidates:
-the 40 allowlisted functions (M31's carried exit criterion), a `fix:`
-milestone for the 51 deferred findings, MCP surface (M32), Knowledge
-(M33).
+**Active milestone: M32 — Findings fixes** (release `2.5.0`), scoped
+2026-10-28 from the M31 audit ledger: the 51 deferred findings and the
+shared test fixture, fourteen phases, defects first. See
+[`README.md`](milestones/M32-findings-fixes/README.md) for the decisions
+and the phase table. The 40 allowlisted functions are the milestone after
+this one; MCP surface is now M33, Knowledge M34.
 
-**Active phase:** none.
+**Active phase:** none drafted. Next: `/rexymcp:architect next` drafts
+phase 01 (ghost-gate).
 
 M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
-(`v2.2.0`, pushed). M32 (MCP surface) and M33
+(`v2.2.0`, pushed). The function milestone, M33 (MCP surface) and M34
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
 foreground) remain unscheduled.
 
