@@ -151,7 +151,7 @@ Expected count: 12–14. Each may split at drafting.
 | 17 | render-tests ([phase-17-render-tests.md](phase-17-render-tests.md)) — `cli/render_ratatui.rs`'s 2055-line inline tests move into sibling `render_ratatui_tests.rs` and `render_ratatui_layout_tests.rs` | done |
 | 18 | render-draw ([phase-18-render-draw.md](phase-18-render-draw.md)) — `RatatuiRenderer`'s generic impl block leaves `cli/render_ratatui.rs` (1225) for a child module `render_ratatui_draw.rs`; a byte-identical move | done |
 | 19 | shell-exec-auth ([phase-19-shell-exec-auth.md](phase-19-shell-exec-auth.md)) — credentials and connecting leave `executor/shell_exec.rs` (1129) for a child module `shell_exec_auth.rs`; `ensure_connected` re-exported | done |
-| 20 | shell-exec-tests ([phase-20-shell-exec-tests.md](phase-20-shell-exec-tests.md)) — `executor/shell_exec.rs`'s 3091 test lines move into `shell_exec_tests.rs`, its child `shell_exec_hosted_tests.rs`, and `shell_exec_connect_tests.rs` | in-progress |
+| 20 | shell-exec-tests ([phase-20-shell-exec-tests.md](phase-20-shell-exec-tests.md)) — `executor/shell_exec.rs`'s 3091 test lines move into `shell_exec_tests.rs`, its child `shell_exec_hosted_tests.rs`, and `shell_exec_connect_tests.rs` | review      |
 
 ## Notes
 
