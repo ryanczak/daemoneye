@@ -149,7 +149,7 @@ Expected count: 12–14. Each may split at drafting.
 | 15 | index-split ([phase-15-index-split.md](phase-15-index-split.md)) — the queries and the rebuild leave `memory/index/mod.rs` (1135) for sibling modules `search.rs` and `reconcile.rs`, glob re-exported | done |
 | 16 | index-tests ([phase-16-index-tests.md](phase-16-index-tests.md)) — `memory/index/mod.rs`'s 2543-line inline tests move into sibling `tests.rs` and `incremental_tests.rs`, each under the test cap | done |
 | 17 | render-tests ([phase-17-render-tests.md](phase-17-render-tests.md)) — `cli/render_ratatui.rs`'s 2055-line inline tests move into sibling `render_ratatui_tests.rs` and `render_ratatui_layout_tests.rs` | done |
-| 18 | render-draw ([phase-18-render-draw.md](phase-18-render-draw.md)) — `RatatuiRenderer`'s generic impl block leaves `cli/render_ratatui.rs` (1225) for a child module `render_ratatui_draw.rs`; a byte-identical move | in-progress |
+| 18 | render-draw ([phase-18-render-draw.md](phase-18-render-draw.md)) — `RatatuiRenderer`'s generic impl block leaves `cli/render_ratatui.rs` (1225) for a child module `render_ratatui_draw.rs`; a byte-identical move | review      |
 
 ## Notes
 
