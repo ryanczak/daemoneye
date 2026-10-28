@@ -1,6 +1,6 @@
 # Phase 18 — Move `RatatuiRenderer`'s drawing methods out of `render_ratatui.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-27
 
@@ -378,3 +378,26 @@ kill: (-1580690): No such process
 **Commit:** 139ce685bc12780c0281841c31e8cc31f2cc5521
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (41 turns)
+- **Scope deviations:** none. `git diff --stat aebd9e34 HEAD` names the six
+  authorized files. The moved block equals `aebd9e34:render_ratatui.rs`
+  lines 401–939, byte for byte. The code commit is typed `refactor:`.
+  Reviewer's gates: fmt 0, build and clippy clean, 2586 passed / 0 failed /
+  13 ignored.
+- **Findings:** six, carried to `FINDINGS.md` #55–#60. The reviewer
+  confirmed #4 against the code: `commit` raises `inserted_rows` before the
+  insert and records rows whatever `insert_before` returns. #6 is the
+  architect's error, not the executor's. The spec's shell quoting dropped
+  the closing backtick in the new module doc, so it reads
+  `` `RatatuiRenderer's ``.
+- **Calibration:** 41 turns for the simplest move shape (no path or
+  visibility edits), in line with phases 14 and 15. The executor read the
+  moved block in full, as Spec 3 asked, and still stayed at about 40, so a
+  full read is affordable for about 550 lines of production code. The test
+  moves only got expensive because they were 2500 lines.
+
