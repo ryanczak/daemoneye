@@ -1,6 +1,6 @@
 # Phase 29 — Split `run_terminal_command`'s foreground arm into stages
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -480,3 +480,155 @@ passed=2587 failed=0
 call remains, in the shared `finish_run`. Allowlist at 1102 / 409; hygiene
 test `ok.`; clippy clean; `fmt_exit=0`; full suite `passed=2587 failed=0`,
 matching the dry run.
+
+### Update — 2026-10-28 19:25 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Let me run through the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` — yes, I flipped it to in-progress and did not flip to review.
+- [x] Milestone README's phase-table row still says `in-progress` — yes.
+- [x] I did NOT hand-write a `(complete)` Update Log entry — correct; I wrote (started), (cuts done), Findings, (end-to-end verification).
+- [x] `cargo fmt --all` was run immediately before `git add` — yes.
+- [x] All verification commands ran clean — build clean, clippy clean, fmt check exit 0, tests passed=2587 failed=0.
+- [x] Final message is substantive Summary + Notes for review.
+- [x] `git status --short` shows nothing.
+- [x] `git log -1 --stat` shows the commit includes every file I touched.
+
+One check: the spec's grep requirement for pinned literals — the pinned literals here are `segments_present=1`, `result_blocks=1`, which I grepped (all print 1). Also the allowlist literals `1102`/`409` verified in the e2e output. Done.
+
+Now write the final Summary + Notes for review.</think>
+**Summary + Notes for review**
+
+Phase 29 is complete and committed as `37777e53` (`refactor:`), working tree clean. I ran the Spec 1 script once, as written, via a heredoc in `/tmp/run_phase29.sh`; every Python assert passed, producing `dispatch_foreground.rs` at 447 lines with `dispatch` (145), `run_approved` (100), `run_on_named_host` (105) and `finish_run` (67) — all within the 150-line cap — leaving `execute_tool_call` at 409 lines and `mod.rs` at 2166, both matching the dry run. The Update Log has the four required entries (started, cuts done, `### Findings — 2026-10-28`, end-to-end verification), the findings grep hit four `.unwrap_or_default()`/`.unwrap_or_else()` fallbacks, all pre-existing lines moved verbatim and recorded as low severity. The End-to-end block ran once with no flake re-run needed: `segments_present=1`, `result_blocks=1`, allowlist at 1102/409, hygiene `ok.`, clippy clean, `fmt_exit=0`, `passed=2587 failed=0`; the three required greps (`segments_present=1`, `result_blocks=1`, `### Findings — `) each print 1 on the phase doc. Status remains `in-progress` in both the phase doc and the README phase table, with no `(complete)` entry written — the server owns that tail.
+
+**Notes for review:** no deviations from the spec — the script's anchors all matched the tree at `037e8544` and no hand-editing was needed. One observation outside scope: the moved-verbatim comments in `run_approved`/`run_on_named_host` now sit in a narrower indent column, so their wrapping reads slightly ragged; I left them untouched since the spec forbids hand-editing anything the script touches and behaviour-neutral comment reflow is out of scope.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+osing_brace ... ok
+test duplicate_names_get_a_suffix ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test exempt_files_exist ... ok
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (2249324): No such process
+kill: (-2250000): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -1
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-29-foreground-split.md` — +75 -1
+- `src/daemon/executor/dispatch_foreground.rs` — +447 -0
+- `src/daemon/executor/mod.rs` — +3 -390
+- `tests/hygiene_allowlist.txt` — +2 -2
+
+**Commit:** 37777e534bff8de6954a7ceb52406e57ad36b8d6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
