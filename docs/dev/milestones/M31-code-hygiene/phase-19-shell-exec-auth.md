@@ -1,6 +1,6 @@
 # Phase 19 — Move credentials and connecting out of `shell_exec.rs`
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -359,3 +359,24 @@ kill: (-1657346): No such process
 **Commit:** 8568d9e1ed51bdff6bdb7a2a35c8f2d9f4eace78
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (35 turns)
+- **Scope deviations:** none. `git diff --stat 2f1c3c6f HEAD` names the six
+  authorized files. The moved block equals `2f1c3c6f:shell_exec.rs` lines
+  655–1013 after the two visibility edits. The three external callers of
+  `ensure_connected` compile unchanged. The code commit is typed
+  `refactor:`. Reviewer's gates: fmt 0, build and clippy clean, 2586 passed
+  / 0 failed / 13 ignored. The known flake did not fire.
+- **Findings:** the executor reported `none`, which decision 7 allows. Its
+  entry describes the move rather than auditing the code, though. The
+  reviewer found one issue it missed, recorded as `FINDINGS.md` #61.
+- **Calibration:** 35 turns, the lowest of the milestone. Against phase
+  18's six findings, this run's thin audit is one data point. If the next
+  production-code move also comes back with an empty audit, the Findings
+  step needs a checklist (lock sites, `expect` and `unwrap`, error paths)
+  rather than an open "record what you see".
+
