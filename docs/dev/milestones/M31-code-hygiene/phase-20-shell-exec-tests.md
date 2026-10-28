@@ -1,6 +1,6 @@
 # Phase 20 — Move `shell_exec.rs`'s tests into three sibling files
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -138,3 +138,110 @@ Expected (from the dry run): `782 …shell_exec.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-27 18:05 (started)
+
+**Executor:** Claude (headless run).
+Status flipped `todo → in-progress` here and in the milestone README's
+phase table. Proceeding with Spec 1 (the cut script).
+
+### Update — 2026-10-27 18:05 (cuts done)
+
+Spec 1's script, run as written, once:
+
+```
+T1=778 H=2166 T2=3400 L=3868
+   782 src/daemon/executor/shell_exec.rs
+  1386 src/daemon/executor/shell_exec_tests.rs
+  1232 src/daemon/executor/shell_exec_hosted_tests.rs
+   467 src/daemon/executor/shell_exec_connect_tests.rs
+  3867 total
+```
+
+Matches the dry run's expected line counts (782/1386/1232/467). Allowlist
+line `test src/daemon/executor/shell_exec.rs 3091` removed (59 lines remain).
+No hand edits to anything the script touched.
+
+### Findings — 2026-10-27 18:10 (decision 7, scoped per Spec 3)
+
+Searched (grep/awk over the three new files) rather than reading every body.
+
+**a test with no `assert`:** none. Every one of the 54 test functions
+carries at least one `assert!`/`assert_eq!`/`panic!`-on-wrong-outcome.
+(A brace-counting awk first flagged 4 —
+`run_terminal_command_custom_timeout_names_the_applied_value`,
+`socket_close_mid_command_reports_shell_exit`,
+`an_exited_shell_is_reported_as_exited_not_as_a_timeout`,
+`a_hang_after_an_answer_still_times_out` — but each was a false positive
+from `{msg}`-style format captures confusing the depth count; reading
+those bodies directly shows 2/4/3/2 assertions respectively.)
+
+**a `sleep` or other wall-clock wait:** five `tokio::time::sleep` polling
+waits and several `Instant::now()` deadline checks, all pre-existing:
+- `shell_exec_tests.rs:530` — `in_flight_is_set_…` polls the registry
+  every 10 ms until the in-flight marker appears;
+- `shell_exec_tests.rs:690` — `a_busy_shell_is_not_marked_at_its_prompt`
+  polls every 50 ms up to a 10 s deadline;
+- `shell_exec_tests.rs:1165` and `shell_exec_hosted_tests.rs:290` — same
+  50 ms/10 s poll shape;
+- `shell_exec_hosted_tests.rs:978, 989` —
+  `an_answer_after_the_timeout_still_completes_the_command` sleeps 3 s
+  (the late answer) then 30 s (holding the stream open) — the test's
+  subject is the deadline-extension behaviour, so the waits are the
+  fixture, not polling slop. Child-shell commands like `sleep 4` run
+  under each test's own timeout budget; no test sleeps a fixed wall-clock
+  amount and then asserts on elapsed time without a generous margin.
+
+**a fixture built inline in three or more tests:** three patterns, all
+pre-existing (none introduced by this move):
+1. the `test_home()` + `ShellRegistry::default()` + `Owner::Chat(..)`
+   trio opens ~35 tests across the three files (helpers exist but the
+   trio is still spelled out per test);
+2. `shell_exec_hosted_tests.rs` writes the identical web01
+   `config.toml` inline in 4 tests (lines 37, 178, 380, 431) and the
+   pinky variant in a 5th (line 1112);
+3. `shell_exec_connect_tests.rs` builds `RecordingWriter { writes }`
+   struct-literally in 5 tests instead of via a constructor, and
+   `shell_exec_hosted_tests.rs` pairs `answered_transport()` with
+   `RecordingWriter::new(Arc::clone(&writes))` in 3 tests (a 4th builds
+   the writes vec alone for the late-answer fake).
+
+### Update — 2026-10-27 18:15 (end-to-end verification)
+
+The Spec's End-to-end block, run as written against the real tree
+(`bash` heredoc); `/tmp/e2e-m31-20.txt`:
+
+```
+782 src/daemon/executor/shell_exec.rs
+1386 src/daemon/executor/shell_exec_tests.rs
+1232 src/daemon/executor/shell_exec_hosted_tests.rs
+467 src/daemon/executor/shell_exec_connect_tests.rs
+3867 total
+allowlisted=0
+body_identical=1
+module_tests=52 passed, 2 ignored
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every expected value matched the dry run: line counts 782/1386/1232/467,
+`allowlisted=0`, `body_identical=1` (old vs new test bodies md5-identical
+after whitespace stripping), `module_tests=52 passed, 2 ignored`, hygiene
+test `ok.`, clippy clean, `fmt_exit=0`, full suite `passed=2586
+failed=0`. No re-run needed — the known full-suite flake
+(`passed=2498 failed=1`) did not appear.
+
+Grep proof for the moved literals — the `mod hosted;` child declaration
+and the two `#[cfg(test)] #[path]` declarations land where the spec
+pins them:
+
+```
+$ grep -n 'mod hosted;' src/daemon/executor/shell_exec_tests.rs
+175:    #[path = "shell_exec_hosted_tests.rs"]
+176:    mod hosted;
+$ grep -n '#\[cfg(test)\]' src/daemon/executor/shell_exec.rs
+688:#[cfg(test)]
+691:#[cfg(test)]
+```

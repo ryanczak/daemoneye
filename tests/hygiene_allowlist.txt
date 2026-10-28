@@ -16,7 +16,6 @@ file src/daemon/executor/mod.rs 2121
 file src/daemon/ghost.rs 1677
 file src/daemon/stream.rs 1613
 test src/daemon/executor/knowledge/shell.rs 4143
-test src/daemon/executor/shell_exec.rs 3091
 fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
 fn src/ai/backends/openai.rs OpenAiClient::chat 238
