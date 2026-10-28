@@ -9,7 +9,6 @@
 # Generated 2026-10-25 from the gate's own measurement (M31 phase 01).
 
 file src/ai/tools/defs.rs 1398
-file src/daemon/stream.rs 1613
 fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
 fn src/ai/backends/openai.rs OpenAiClient::chat 238
@@ -42,7 +41,7 @@ fn src/daemon/scheduled.rs run_scheduled_job_inner 193
 fn src/daemon/server/ask.rs handle_ask 573
 fn src/daemon/server/handlers.rs handle_status 200
 fn src/daemon/server/mod.rs handle_client 214
-fn src/daemon/stream.rs run_conversation_loop 1454
+fn src/daemon/stream/conversation.rs run_conversation_loop 775
 fn src/main.rs async_main 173
 fn src/manifest.rs auto_search_context 211
 fn src/search.rs search_memory_fts 154

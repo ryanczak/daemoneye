@@ -1,6 +1,6 @@
 # Phase 33 — Move `run_conversation_loop` out of `stream.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -416,3 +416,74 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 22:03 (started)
+
+Executor: executor (phase 33). Status flipped to `in-progress`; beginning
+with Spec 1, the script as written.
+
+### Findings — 2026-10-28
+
+`grep -nE '\.(unwrap|expect)\(|panic!|let _ =|\.ok\(\)|unwrap_or_default|unwrap_or_else' src/daemon/stream/conversation.rs src/daemon/stream/endings.rs`:
+four hits, all in `conversation.rs`; `endings.rs` is clean.
+
+- `run_conversation_loop`, line 42: `session_id.clone().unwrap_or_default()`
+  — `unwrap_or_default`, low. The chat run log's session falls back to an
+  empty string when the ask carried no session id.
+- `run_conversation_loop`, line 141: `.unwrap_or_default()` —
+  `unwrap_or_default`, low. The loaded-tools snapshot falls back to an
+  empty set when the registry is unavailable.
+- `run_conversation_loop`, line 154: `let _ = ai_tx.send(…)` — `let _ =`,
+  low. The chat task's error event is dropped when the receiver is gone,
+  which is fine at teardown.
+- `run_conversation_loop`, line 251: `let _ = host;` — `let _ =`, low.
+  Deliberate drop of a named host on a background command (row 08b, sre.toml).
+
+No `.unwrap()`/`.expect()`/`panic!`/`.ok()`/`unwrap_or_else` hits. #85 is
+recorded already and not repeated. Callees not looked up, per spec.
+
+Ran the Spec 1 script as written, once, unmodified. Its output:
+
+```
+run_conversation_loop -> stream/conversation.rs; 43 conversions -> PendingCall::from_tool_event; 3 endings
+  410 src/daemon/stream.rs
+  781 src/daemon/stream/conversation.rs
+  103 src/daemon/stream/endings.rs
+ 1294 total
+```
+
+No assert fired. `cargo fmt --all` ran twice after it, as in the earlier
+moves. Line counts match the dry run's expectation (`410 …/stream.rs`,
+`781 …/conversation.rs`, `103 …/endings.rs`).
+
+### Update — 2026-10-28 22:08 (cuts done, order note)
+
+The Findings entry above landed before the `(cuts done)` entry because the
+spec's five-tool-call window for findings (decision 7) expires before the
+`(cuts done)` entry's edit-tool call was available. Both are append-only
+and complete; no content was edited after writing.
+
+### Update — 2026-10-28 22:15 (end-to-end verification)
+
+Ran the spec's End-to-end block once, on the first run. The transcript is
+`/tmp/e2e-m31-33.txt`, pasted byte-exact below. Every expected line is
+present: the three line counts (`410`/`781`/`103`), `stream_file_entries=0`,
+the re-pathed `run_conversation_loop 775`, `segments_present=1`,
+`conversions=43`, `loop_pushes=2`, hygiene `ok.`, clippy clean,
+`fmt_exit=0`, `passed=2587 failed=0`. No flake re-run was needed.
+
+```
+410 src/daemon/stream.rs
+781 src/daemon/stream/conversation.rs
+103 src/daemon/stream/endings.rs
+1294 total
+stream_file_entries=0
+fn src/daemon/stream/conversation.rs run_conversation_loop 775
+segments_present=1
+conversions=43
+loop_pushes=2
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
