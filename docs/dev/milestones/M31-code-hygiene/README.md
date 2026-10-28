@@ -173,3 +173,5 @@ Expected count: 12–14. Each may split at drafting.
 - **Exemption settled (2026-10-25):** it covers functions too, so
   `pending.rs`'s `to_tool_call` (617) and `summary` (188) left the
   allowlist, which now holds 66 entries.
+
+- **#73 settled (PE decision 2026-10-28):** four silent-tool arms (`read_file`, `get_shell_context`, `open_shell`, `spawn_ghost_shell`) `return` early and skip `ToolFinished`, so the client's panel for the call is lost or unlabelled; `get_shell_context` hits it on every call from outside tmux. The arms cannot leave `execute_tool_call` without changing that, so the fix comes first as its own `fix:` phase with a test (the one recorded exception to decision 6), and the move follows as a pure move. Options weighed: fix inside the move (mixes a fix into a move diff) and preserving the skip with an early-exit result (plumbing to keep a bug alive into 2.4.0). See [`FINDINGS.md`](FINDINGS.md) #73.
