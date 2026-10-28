@@ -154,7 +154,7 @@ Expected count: 12–14. Each may split at drafting.
 | 20 | shell-exec-tests ([phase-20-shell-exec-tests.md](phase-20-shell-exec-tests.md)) — `executor/shell_exec.rs`'s 3091 test lines move into `shell_exec_tests.rs`, its child `shell_exec_hosted_tests.rs`, and `shell_exec_connect_tests.rs` | done |
 | 21 | top-split ([phase-21-top-split.md](phase-21-top-split.md)) — `cli/commands/top.rs` (1394) splits into child modules `top_load.rs`, `top_text.rs` and `top_detail.rs`, glob re-exported | done |
 | 22 | stream-split ([phase-22-stream-split.md](phase-22-stream-split.md)) — `ask_with_session_ratatui` and the prompt functions leave `cli/commands/stream.rs` (1520) for child modules `stream_ask.rs` and `stream_prompts.rs` | done |
-| 23 | shell-readers ([phase-23-shell-readers.md](phase-23-shell-readers.md)) — the read/log and find/watch families leave `knowledge/shell.rs` (2627 → 1499) for child modules `shell_read.rs` and `shell_watch.rs`; the first of two | in-progress |
+| 23 | shell-readers ([phase-23-shell-readers.md](phase-23-shell-readers.md)) — the read/log and find/watch families leave `knowledge/shell.rs` (2627 → 1499) for child modules `shell_read.rs` and `shell_watch.rs`; the first of two | review      |
 
 ## Notes
 
