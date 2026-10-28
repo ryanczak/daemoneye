@@ -1,6 +1,6 @@
 # Phase 24 — Move input, screen and lifecycle out of `knowledge/shell.rs`
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -166,3 +166,105 @@ Expected (from the dry run): `4378 …shell.rs`, `252 …shell_input.rs`,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 06:02 (started)
+
+**Executor:** Claude (this run).
+
+Phase 24 start: `Status:` flipped `todo` → `in-progress` in this doc and in the
+M31 README phase table. Next: run the Spec-1 cut script once with `bash`, then
+log, findings, end-to-end block, commit.
+
+### Update — 2026-10-28 06:02 (cuts done)
+
+Spec 1's script ran once with `bash`, exactly as written (stdout below, then
+`cargo fmt --all` ran inside it). Line markers matched the spec's expectations
+(`I1=427 C1=676 L1=1145 T=1701`), so no cut had to be retried:
+
+```text
+I1=427 C1=676 L1=1145 T=1701       # expect 427 676 1145 1701
+  4378 src/daemon/executor/knowledge/shell.rs
+   252 src/daemon/executor/knowledge/shell_input.rs
+   472 src/daemon/executor/knowledge/shell_screen.rs
+   559 src/daemon/executor/knowledge/shell_life.rs
+  5661 total
+```
+
+Created `shell_input.rs` (252), `shell_screen.rs` (472), `shell_life.rs` (559);
+`shell.rs` at 4378 lines including its 2676-line `mod tests`. Allowlist
+`file …shell.rs` line removed; CLAUDE.md row for the shell child modules added
+by the script's awk. No hand edits to any file the script touches.
+
+### Findings — 2026-10-28
+
+Read all three new files once (shell_input.rs 252, shell_screen.rs 472,
+shell_life.rs 559 lines). Checks and results:
+
+- `lock().expect` / `lock().unwrap`: **none** in any of the three. The only
+  locks touched are the `#[cfg(test)]` `open_shell_test_seam::REPLACE` mutexes
+  in shell_life.rs, which use
+  `.lock().unwrap_or_else(std::sync::PoisonError::into_inner)` — the
+  CLAUDE.md-required form.
+- other `expect` / `unwrap` / `panic!` in production code: **none**. Every
+  `unwrap` hit is an `unwrap_or` / `unwrap_or_else` / `unwrap_or_default` on a
+  `Result`/`Option` with an explicit fallback (`u16::try_from(v).unwrap_or(u16::MAX)`,
+  `Config::load().unwrap_or_default()` — the same form ghost.rs, bg_shell.rs
+  and foreground.rs already use; `ShellId::parse(id).map(...).unwrap_or(u32::MAX)`;
+  `strip_suffix('\n').unwrap_or(head)`; `saturating_sub(usize::try_from(n).unwrap_or(usize::MAX))`)
+  — none suppress an error the code cares about.
+- swallowed errors: two, both pre-existing and deliberate, moved verbatim from
+  shell.rs with their rationale comments intact —
+  1. `shell_screen.rs:324` `let status = crate::shell::status(&sock, timeout).await.ok();`
+     — the status probe is best-effort by design; a dead host is classified by
+     `classify_record` from `None`, not swallowed silently.
+  2. `shell_screen.rs:175` `Err(_) => {}` inside `wait_screen_change` — the
+     doc comment on the function names exactly why: the change wait runs as
+     the prefix of a launch whose settled read must still happen, so a flaky
+     poll read must not abort it.
+     A third, `shell_life.rs:548` `let _ = crate::shell::serve_until_exit(...)`,
+     is inside `#[cfg(test)]` test support (a spawned host task whose failure
+     surfaces through the socket the test reads), so it is test code, not a
+     production swallow. Nothing new was introduced by the move.
+- obvious duplicates elsewhere in the shell family: **none new**. The moved
+  code reuses the shared helpers rather than copying them — `unknown_shell_error`
+  (shell_watch.rs) and `live_shell_ids` are called by `read_shell_screen_in`,
+  `mask_sensitive`, `format_err_chain` (now defined once in shell_life.rs,
+  `pub(crate)`, used by all three siblings). Two *worded* near-duplicates
+  survive, both pre-existing shapes the phase's out-of-scope rule forbids
+  me from touching: the not-yours ownership refusal
+  (`shell_input.rs:210` "…cannot type into it" vs `shell_life.rs:462`
+  "…cannot close it" — deliberately different verbs, same skeleton) and the
+  no-such-shell refusal (`shell_input.rs:195-206` vs `shell_life.rs:447-457`
+  byte-identical 12 lines, both different from shell_watch.rs's
+  `unknown_shell_error` wording). Worth a later dedup if a third caller
+  appears; noting here per decision 7.
+
+### Update — 2026-10-28 06:11 (end-to-end verification)
+
+The Spec-4 `bash` heredoc block ran once, as written; output redirected to
+`/tmp/e2e-m31-24.txt` and pasted below byte-exact. All acceptance-criterion
+lines hit their expected values: `allowlisted=0`, `test_entry_kept=1`,
+`lost_other=0`, `added_other=0`, all three `_identical=1`, hygiene `ok. 16
+passed; 0 failed`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0` (the
+known `passed=2498 failed=1` flake did **not** occur — first run was clean, so
+no re-run was needed). Line counts match the dry run's expectations
+(4378 / 252 / 472 / 559).
+
+```text
+4378 src/daemon/executor/knowledge/shell.rs
+252 src/daemon/executor/knowledge/shell_input.rs
+472 src/daemon/executor/knowledge/shell_screen.rs
+559 src/daemon/executor/knowledge/shell_life.rs
+5661 total
+allowlisted=0
+test_entry_kept=1
+lost_other=0
+added_other=0
+input_identical=1
+screen_identical=1
+life_identical=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
