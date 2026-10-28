@@ -1,6 +1,6 @@
 # Phase 30 — Split `run_terminal_command`'s background arm into stages
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -294,3 +294,87 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 12:44 (started)
+
+**Executor:** Claude (executor run, phase 30).
+
+Status flipped to `in-progress` and the milestone README's phase-30 row
+updated to match. Running the phase script next.
+
+### Update — 2026-10-28 12:45 (cuts done)
+
+The phase script ran once, as written, unmodified. It asserted every
+anchor and printed:
+
+```
+tail returns rewritten: 2
+ 2008 src/daemon/executor/mod.rs
+  204 src/daemon/executor/dispatch_background.rs
+ 2212 total
+```
+
+2008 and 204 are the `wc -l` counts rustfmt leaves after the two
+`cargo fmt --all` passes; the production-line allowlist entries are 944
+and 250 as specified. The new `mod dispatch_background;` line sits
+directly under `mod dispatch_artifacts;`, the `Background` arm in
+`execute_tool_call` is the single `dispatch_background::dispatch(...)`
+call, the two allowlist numbers are 944/250, and the `CLAUDE.md`
+background-arm row now points at `dispatch_background.rs` (the old
+"stays in `execute_tool_call`" row text replaced). No source file was
+touched by hand.
+
+### Findings — 2026-10-28
+
+`grep -nE '\.(unwrap|expect)\(|panic!|let _ =|\.ok\(\)|unwrap_or_default|unwrap_or_else' src/daemon/executor/dispatch_background.rs`
+
+- 95 `start_approved`: `Owner::Chat(session_id.unwrap_or_default())` —
+  unwrap_or_default — recorded, #75.
+- 97 `start_approved`: `Config::load().unwrap_or_default()` for
+  `max_per_owner` — unwrap_or_default — recorded, #84.
+- 101 `start_approved`: `Config::load().unwrap_or_default()` for the
+  sandbox flag — unwrap_or_default — recorded, #84.
+- 107 `start_approved`: `session_id.unwrap_or_default()` passed as the
+  sandboxed start's session id — unwrap_or_default — same family as #75
+  (dead value behind a gate that guarantees `session_id.is_some()`).
+- 151 `start_approved`: `session_id.map(...).unwrap_or_default()` feeding
+  `await_notify_and_close` — unwrap_or_default — same family as #75.
+- 156 `start_approved`: `let _ = close_shell_with(...)` inside the
+  spawned closer — discarded result — same family as the recorded
+  fire-and-forget closers (#75's arm); the failure it drops is the
+  best-effort shell close on background completion.
+- 168 `start_approved`: `session_id.map(...).unwrap_or_default()` feeding
+  `await_and_notify` — unwrap_or_default — same family as #75.
+- 178 `start_approved`: `registry_lookup(&owner, ...).unwrap_or_else(`
+  `"s?"`)` in the start-error reply — unwrap_or_else fallback string —
+  new (not in the recorded list): the error path fabricates a placeholder
+  shell id `s?` when the registry has no entry for the owner. Severity:
+  low, model-visible only as a cosmetic id in the error text, but it is
+  a silent fallback on a lookup that should not miss.
+
+All hits are in `start_approved`; `dispatch` is clean. No `unwrap()`,
+`expect()`, `panic!` or `.ok()` in the file.
+
+### Update — 2026-10-28 12:49 (end-to-end verification)
+
+`bash /tmp/e2e-m31-30.sh` — the phase doc's End-to-end block, run once,
+unmodified. First run: `segments_present=1`, `routed=1`, `passed=2587
+failed=0` — the known flake (#65) did not appear. `/tmp/e2e-m31-30.txt`:
+
+```
+2008 src/daemon/executor/mod.rs
+204 src/daemon/executor/dispatch_background.rs
+2212 total
+file src/daemon/executor/mod.rs 944
+fn src/daemon/executor/mod.rs execute_tool_call 250
+segments_present=1
+routed=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2587 failed=0
+```
+
+Pre-commit gate checks, all three printing 1: `grep -c
+'^segments_present=1$' /tmp/e2e-m31-30.txt` → 1; `grep -c '^routed=1$'
+/tmp/e2e-m31-30.txt` → 1; `grep -c '^### Findings — '` on this doc → 1.
