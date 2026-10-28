@@ -1,6 +1,6 @@
 # Phase 31 — Split `execute_tool_call` into policy, snapshot and route
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -528,3 +528,32 @@ kill: (-2341985): No such process
 **Commit:** f426f61ef5c395e799aff0bca08d26005c822e41
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (32 turns)
+- **Scope deviations:** none.
+  - The diff names the authorized files.
+  - The reviewer's re-run of the checks printed
+    `allowlist_entries_left=0`, `segments_present=1` and `routed=1`.
+  - The DoD grep over `route.rs` is empty.
+  - The code commit is typed `refactor:`.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored.
+- **Findings:** `none`. The grep over `route.rs` has no hits, which is
+  right: the snapshot read and the family match carry no fallbacks of
+  their own.
+- **Calibration:**
+  - 32 turns, the fewest for any M31 phase. The dictated script, a
+    one-grep Findings step and a pre-validated End-to-end block took
+    the executor's part down to run, log, paste and commit.
+  - `execute_tool_call` went from 1439 lines to 93 over phases 26–31
+    (six phases, one of them the #73 `fix:`). `executor/mod.rs` is off
+    the allowlist.
+- **Telemetry note:** the run's `completion_summary` begins with leaked
+  reasoning text (`</think>All committed…`) before the summary proper.
+  That is a rexyMCP summary-extraction issue, not a phase defect. It is
+  recorded here, and the phase is unaffected.
+
