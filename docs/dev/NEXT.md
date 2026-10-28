@@ -11,7 +11,7 @@ milestone for the 51 deferred findings, MCP surface (M32), Knowledge
 
 **Active phase:** none.
 
-M31 closed 2026-10-28 (`v2.4.0`, not yet pushed). M30 closed 2026-10-25 (`v2.3.0`, not yet pushed). M29 closed 2026-10-20
+M31 closed 2026-10-28 (`v2.4.0`, not yet pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M32 (MCP surface) and M33
 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
 foreground) remain unscheduled.
