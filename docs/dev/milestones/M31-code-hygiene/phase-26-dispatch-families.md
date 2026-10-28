@@ -1,6 +1,6 @@
 # Phase 26 — Move `execute_tool_call`'s simple arms into per-family modules
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -278,3 +278,109 @@ Expected (from the dry run):
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-28 09:16 (cuts done)
+
+Ran the spec-1 script as written, once, with `bash`. Its output:
+
+```
+  2840 src/daemon/executor/mod.rs
+    97 src/daemon/executor/dispatch_artifacts.rs
+   113 src/daemon/executor/dispatch_memory.rs
+    39 src/daemon/executor/dispatch_runs.rs
+    64 src/daemon/executor/dispatch_schedule.rs
+   113 src/daemon/executor/dispatch_shells.rs
+  3266 total
+```
+
+The line counts match the dry run's expectation exactly (2840 / 97 / 113 /
+39 / 64 / 113). `cargo fmt --all` ran twice, as the script's tail does.
+`git diff --stat` names five modified files (`CLAUDE.md`,
+`README.md`, this doc, `src/daemon/executor/mod.rs`,
+`tests/hygiene_allowlist.txt`) and the five new `dispatch_*.rs` files —
+nothing hand-edited, nothing dry-run again.
+
+### Findings — 2026-10-28
+
+Decision 7, scoped to the 426 lines of the five new files
+(`dispatch_schedule.rs` 64, `dispatch_artifacts.rs` 97,
+`dispatch_memory.rs` 113, `dispatch_shells.rs` 113,
+`dispatch_runs.rs` 39). Searched with `grep` for the spec's signals
+(`unwrap`, `expect`, `panic!`, `let _ =`, `.ok()`,
+`unwrap_or_default`), then read each hit's context; the four bodies of
+`dispatch_runs.rs` and the `RecallContext` arm read whole.
+
+**1. `expect`, `unwrap` or `panic!` at a lock site or anywhere else —
+none.** No `expect(`, no `.unwrap()` on a lock or anything else, no
+`panic!` in any of the five files. The only `unwrap`-family hits are
+the three `session_id.unwrap_or_default()` in `dispatch_shells.rs`
+(18, 66, 73), which are `Option<&str>::unwrap_or_default` — a value
+default, not a swallowed error; they are pre-existing and quoted under 2.
+
+**2. Swallowed errors — three hits, all pre-existing `unwrap_or_default`
+on an `Option`, not on a `Result`:**
+
+- `dispatch_shells.rs:18` (`ListShells`),
+- `dispatch_shells.rs:66` (`FindInShells`),
+- `dispatch_shells.rs:73` (`CloseShell`),
+
+each `&Owner::Chat(session_id.unwrap_or_default().to_string())`. When
+`session_id` is `None` the owner becomes the empty-string chat owner
+rather than an error; identical lines exist at 77ec8975:mod.rs 655 and
+975, so the move carried them verbatim (modulo the dropped `&`). Not a
+regression. Flagged as a candidate for the `GetShellContext`/owner
+plumbing pass (decision 6's later phases).
+
+A fourth near-hit, noted not counted: the `RecallContext` arm
+(`dispatch_memory.rs:82-99`) builds `LimitsConfig::default()` instead of
+reading the configured limits — pre-existing at 77ec8975:mod.rs 1410,
+carried verbatim. It is a silent default, though not of a `Result`
+(the `recall` call's own error is converted to a visible
+`Error: …` string, so nothing is swallowed there).
+
+**3. Duplicated logic across arms — one group, pre-existing:**
+
+- `dispatch_runs.rs` repeats, in all three of its arms, the
+  `match crate::daemon::run::RunId::parse(run_id) { Err(e) =>
+  run_log_input_rejected(&e.to_string()), Ok(id) => … }` shape
+  (lines 8-10, 20-22, 32-34), differing only in the `Ok` call. A
+  helper taking the parsed `RunId` closure would collapse it. It came
+  over from 77ec8975:mod.rs verbatim.
+
+No new duplication was introduced by the move.
+
+**4. Anything else that looks wrong — none.** The `other =>
+anyhow::bail!(…)` fallback arm in each module is unreachable for any
+call that reaches its grouped arm in `execute_tool_call` (the End-to-end
+block's `routing_matches=1` proves the grouping covers exactly these
+variants), so it is a compiler-required totality arm, not dead logic.
+#73 (the four `ToolStarted` arms with early `return`) is recorded
+already; none of the 35 moved arms has an early `return`.
+
+### Update — 2026-10-28 09:20 (end-to-end verification)
+
+Spec 4's block, run once as written; first run, no flake re-run needed.
+The block wrote `/tmp/e2e-m31-26.txt`; its contents, byte-exact:
+
+```
+2840 src/daemon/executor/mod.rs
+97 src/daemon/executor/dispatch_artifacts.rs
+113 src/daemon/executor/dispatch_memory.rs
+39 src/daemon/executor/dispatch_runs.rs
+64 src/daemon/executor/dispatch_schedule.rs
+113 src/daemon/executor/dispatch_shells.rs
+3266 total
+file src/daemon/executor/mod.rs 1848
+fn src/daemon/executor/mod.rs execute_tool_call 1161
+bodies_identical=1
+routing_matches=1
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in <t>s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in <t>s
+fmt_exit=0
+passed=2586 failed=0
+```
+
+Every line matches the dry run's expectation: the line counts (2840 /
+97 / 113 / 39 / 64 / 113), the two allowlist lines at 1848 and 1161,
+`bodies_identical=1` and `routing_matches=1`, hygiene `ok.`, clippy
+clean, `fmt_exit=0`, and `passed=2586 failed=0`.

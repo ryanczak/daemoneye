@@ -1,5 +1,10 @@
 mod bg_shell;
 pub(crate) mod chat_sandbox;
+mod dispatch_artifacts;
+mod dispatch_memory;
+mod dispatch_runs;
+mod dispatch_schedule;
+mod dispatch_shells;
 mod file_ops;
 mod foreground;
 pub(crate) mod ghost_remote;
@@ -1110,40 +1115,12 @@ where
             .await
         }
 
-        PendingCall::ScheduleCommand {
-            id: call_id,
-            name,
-            command,
-            is_script,
-            run_at,
-            interval,
-            runbook,
-            ghost_runbook,
-            cron,
-            ..
-        } => {
-            schedule::run_schedule_command(
-                schedule::ScheduleArgs {
-                    call_id,
-                    name,
-                    command,
-                    is_script: *is_script,
-                    run_at: run_at.as_deref(),
-                    interval: interval.as_deref(),
-                    runbook: runbook.as_deref(),
-                    ghost_runbook: ghost_runbook.as_deref(),
-                    cron: cron.as_deref(),
-                },
-                session_id,
-                is_ghost,
-                schedule_store,
-                tx,
-                rx,
-            )
-            .await
+        PendingCall::ScheduleCommand { .. }
+        | PendingCall::ListSchedules { .. }
+        | PendingCall::CancelSchedule { .. }
+        | PendingCall::DeleteSchedule { .. } => {
+            dispatch_schedule::dispatch(call, tx, rx, session_id, is_ghost, schedule_store).await
         }
-
-        PendingCall::ListSchedules { .. } => schedule::list_schedules(schedule_store, tx).await,
 
         PendingCall::LoadTools { groups, .. } => {
             let mut loaded: Vec<String> = Vec::new();
@@ -1187,30 +1164,29 @@ where
             Ok(ToolCallOutcome::Result(result_parts.join(". ")))
         }
 
-        PendingCall::CancelSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
-            schedule::cancel_schedule(schedule_store, job_id, session_id),
-        )),
-
-        PendingCall::DeleteSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
-            schedule::delete_schedule(schedule_store, job_id, session_id),
-        )),
-
-        PendingCall::WriteScript {
-            id,
-            script_name,
-            content,
-            ..
-        } => knowledge::write_script(id, script_name, content, &artifact_ctx, tx, rx).await,
-
-        PendingCall::ListScripts { .. } => knowledge::list_scripts(tx).await,
-
-        PendingCall::ReadScript { script_name, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::read_script(script_name)))
+        PendingCall::WriteScript { .. }
+        | PendingCall::ListScripts { .. }
+        | PendingCall::ReadScript { .. }
+        | PendingCall::DeleteScript { .. }
+        | PendingCall::WriteRunbook { .. }
+        | PendingCall::DeleteRunbook { .. }
+        | PendingCall::ReadRunbook { .. }
+        | PendingCall::ListRunbooks { .. }
+        | PendingCall::CreateAgent { .. }
+        | PendingCall::ReadAgent { .. }
+        | PendingCall::ListAgents { .. }
+        | PendingCall::DeleteAgent { .. } => {
+            dispatch_artifacts::dispatch(
+                call,
+                tx,
+                rx,
+                session_id,
+                is_ghost,
+                schedule_store,
+                &artifact_ctx,
+            )
+            .await
         }
-
-        PendingCall::DeleteScript {
-            id, script_name, ..
-        } => knowledge::delete_script(id, script_name, is_ghost, session_id, tx, rx).await,
 
         PendingCall::ReadFile {
             path,
@@ -1326,96 +1302,15 @@ where
             .await
         }
 
-        PendingCall::WriteRunbook {
-            id, name, content, ..
-        } => knowledge::write_runbook(id, name, content, &artifact_ctx, tx, rx).await,
-
-        PendingCall::DeleteRunbook { id, name, .. } => {
-            knowledge::delete_runbook(id, name, is_ghost, session_id, schedule_store, tx, rx).await
-        }
-
-        PendingCall::ReadRunbook { name, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::read_runbook(name)))
-        }
-
-        PendingCall::ListRunbooks { .. } => knowledge::list_runbooks(tx).await,
-
-        PendingCall::AddMemory {
-            key,
-            value,
-            category,
-            ..
-        } => Ok(ToolCallOutcome::Result(knowledge::add_memory(
-            key,
-            value,
-            category,
-            &artifact_ctx,
-        ))),
-
-        PendingCall::UpdateMemory {
-            key,
-            category,
-            body,
-            append,
-            tags,
-            summary,
-            relates_to,
-            expires,
-            ..
-        } => Ok(ToolCallOutcome::Result(knowledge::update_memory(
-            knowledge::UpdateMemoryRequest {
-                key,
-                category,
-                body: body.as_deref(),
-                append: *append,
-                tags: tags.as_deref(),
-                summary: summary.as_deref(),
-                relates_to: relates_to.as_deref(),
-                expires: expires.as_deref(),
-            },
-            session_id,
-            &memory_namespaces,
-        ))),
-
-        PendingCall::DeleteMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::delete_memory(key, category, session_id, &memory_namespaces),
-        )),
-
-        PendingCall::ReadMemory { key, category, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::read_memory(key, category, &memory_namespaces),
-        )),
-
-        PendingCall::ListMemories { category, .. } => {
-            knowledge::list_memories(category.as_deref(), &memory_namespaces, tx).await
-        }
-
-        PendingCall::SearchRepository { query, kind, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::search_repository(query, kind, artifact_ctx.namespaces),
-        )),
-
-        PendingCall::RecallContext {
-            query,
-            turn_start,
-            turn_end,
-            scope,
-            ..
-        } => {
-            let result = if let Some(sid) = session_id {
-                let args = crate::daemon::context::recall::RecallArgs {
-                    query: query.clone(),
-                    turn_start: *turn_start,
-                    turn_end: *turn_end,
-                    scope: scope.clone(),
-                };
-                let limits = crate::config::LimitsConfig::default();
-                match crate::daemon::context::recall::recall(sid, &args, &limits) {
-                    Ok(r) => r,
-                    Err(e) => format!("Error: {}", e),
-                }
-            } else {
-                "Error: recall_context requires a session".to_string()
-            };
-            Ok(ToolCallOutcome::Result(result))
+        PendingCall::AddMemory { .. }
+        | PendingCall::UpdateMemory { .. }
+        | PendingCall::DeleteMemory { .. }
+        | PendingCall::ReadMemory { .. }
+        | PendingCall::ListMemories { .. }
+        | PendingCall::SearchRepository { .. }
+        | PendingCall::RecallContext { .. }
+        | PendingCall::AwaitAgentResult { .. } => {
+            dispatch_memory::dispatch(call, tx, session_id, &artifact_ctx, &memory_namespaces).await
         }
 
         PendingCall::GetShellContext { scope, .. } => {
@@ -1449,60 +1344,14 @@ where
             )))
         }
 
-        PendingCall::ListShells { scope, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::list_shells(
-                scope.as_deref(),
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-            )))
-        }
-
-        PendingCall::ReadShell {
-            shell,
-            lines,
-            since_command,
-            filter,
-            ..
-        } => Ok(ToolCallOutcome::Result(knowledge::read_shell(
-            shell,
-            *lines,
-            *since_command,
-            filter.as_deref(),
-        ))),
-
-        PendingCall::ReadShellScreen {
-            shell,
-            lines,
-            scrollback,
-            pattern,
-            annotated,
-            wait_for,
-            settle_ms,
-            timeout_secs,
-            ..
-        } => Ok(ToolCallOutcome::Result(
-            crate::daemon::utils::with_keepalive(
-                tx,
-                knowledge::read_shell_screen(
-                    shell,
-                    *lines,
-                    *scrollback,
-                    pattern.as_deref(),
-                    *annotated,
-                    wait_for.as_deref(),
-                    *settle_ms,
-                    *timeout_secs,
-                ),
-            )
-            .await?,
-        )),
-
-        PendingCall::FindInShells { pattern, scope, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::find_in_shells(
-                pattern,
-                scope.as_deref(),
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-            )))
-        }
+        PendingCall::ListShells { .. }
+        | PendingCall::ReadShell { .. }
+        | PendingCall::ReadShellScreen { .. }
+        | PendingCall::FindInShells { .. }
+        | PendingCall::CloseShell { .. }
+        | PendingCall::WatchShell { .. }
+        | PendingCall::ListShellLogs { .. }
+        | PendingCall::ReadShellLog { .. } => dispatch_shells::dispatch(call, tx, session_id).await,
 
         PendingCall::OpenShell {
             host, rows, cols, ..
@@ -1554,27 +1403,6 @@ where
                 .await,
             ))
         }
-
-        PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::close_shell(
-                shell,
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-            )
-            .await,
-        )),
-
-        PendingCall::WatchShell {
-            shell,
-            pattern,
-            timeout_secs,
-            ..
-        } => Ok(ToolCallOutcome::Result(
-            crate::daemon::utils::with_keepalive(
-                tx,
-                knowledge::watch_shell(shell, pattern.as_deref(), *timeout_secs),
-            )
-            .await?,
-        )),
 
         PendingCall::SendInput {
             id,
@@ -1699,23 +1527,6 @@ where
             ))
         }
 
-        PendingCall::ListShellLogs { since, limit, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::list_shell_logs(*since, *limit),
-        )),
-
-        PendingCall::ReadShellLog {
-            log,
-            command_index,
-            lines,
-            filter,
-            ..
-        } => Ok(ToolCallOutcome::Result(knowledge::read_shell_log(
-            log,
-            *command_index,
-            *lines,
-            filter.as_deref(),
-        ))),
-
         PendingCall::SpawnGhost {
             runbook,
             message,
@@ -1742,93 +1553,9 @@ where
             .await
         }
 
-        PendingCall::CreateAgent {
-            id,
-            name,
-            description,
-            prompt,
-            model,
-            memory_namespace,
-            max_turns,
-            auto_approve_read_only,
-            auto_approve_scripts,
-            ..
-        } => {
-            knowledge::create_agent(
-                knowledge::CreateAgentArgs {
-                    id,
-                    name,
-                    description,
-                    prompt,
-                    model: model.as_deref(),
-                    memory_namespace,
-                    max_turns: *max_turns,
-                    auto_approve_read_only: *auto_approve_read_only,
-                    auto_approve_scripts,
-                },
-                &artifact_ctx,
-                tx,
-                rx,
-            )
-            .await
-        }
-
-        PendingCall::ReadAgent { name, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::read_agent(name)))
-        }
-
-        PendingCall::ListAgents { .. } => knowledge::list_agents_tool(tx).await,
-
-        PendingCall::DeleteAgent { id, name, .. } => {
-            knowledge::delete_agent(id, name, is_ghost, session_id, tx, rx).await
-        }
-
-        PendingCall::AwaitAgentResult {
-            job_id,
-            agent_name,
-            timeout_secs,
-            ..
-        } => {
-            crate::daemon::utils::with_keepalive(
-                tx,
-                knowledge::await_agent_result(
-                    job_id,
-                    agent_name,
-                    *timeout_secs,
-                    &memory_namespaces,
-                ),
-            )
-            .await?
-        }
-
-        PendingCall::RunLogTail { run_id, limit, .. } => {
-            let result = match crate::daemon::run::RunId::parse(run_id) {
-                Err(e) => crate::daemon::run::run_log_input_rejected(&e.to_string()),
-                Ok(id) => crate::daemon::run::run_log_tail(&id, *limit),
-            };
-            Ok(ToolCallOutcome::Result(result))
-        }
-
-        PendingCall::RunLogSearch {
-            run_id,
-            query,
-            limit,
-            ..
-        } => {
-            let result = match crate::daemon::run::RunId::parse(run_id) {
-                Err(e) => crate::daemon::run::run_log_input_rejected(&e.to_string()),
-                Ok(id) => crate::daemon::run::run_log_search(&id, query, *limit),
-            };
-            Ok(ToolCallOutcome::Result(result))
-        }
-
-        PendingCall::GetTurn { run_id, turn, .. } => {
-            let result = match crate::daemon::run::RunId::parse(run_id) {
-                Err(e) => crate::daemon::run::run_log_input_rejected(&e.to_string()),
-                Ok(id) => crate::daemon::run::get_turn(&id, *turn),
-            };
-            Ok(ToolCallOutcome::Result(result))
-        }
+        PendingCall::RunLogTail { .. }
+        | PendingCall::RunLogSearch { .. }
+        | PendingCall::GetTurn { .. } => dispatch_runs::dispatch(call),
     }?;
 
     if emit_feedback {
