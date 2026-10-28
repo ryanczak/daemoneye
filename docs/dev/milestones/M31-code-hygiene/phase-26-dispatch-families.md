@@ -1,6 +1,6 @@
 # Phase 26 — Move `execute_tool_call`'s simple arms into per-family modules
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -525,3 +525,25 @@ kill: (-2084403): No such process
 **Commit:** 75f2cae93d02148eb5e1a5cd034258f4cbde90cf
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (43 turns)
+- **Scope deviations:** none. The diff names the authorized files. The
+  moved arms are unchanged apart from the dropped `&`. The reviewer's
+  re-run of the identity and routing checks printed
+  `bodies_identical=1` and `routing_matches=1`. The DoD grep over the five
+  new files (`unwrap`, `expect`, `panic!`, `unsafe`, `#[allow`, `TODO`,
+  `dbg!`, `println!`) is empty. The code commit is typed `refactor:`.
+  Reviewer's gates: fmt 0, build and clippy clean, 2586 passed / 0
+  failed / 13 ignored.
+- **Findings:** written as their own entry, with each hit's file, line
+  and provenance in `77ec8975`. Carried to `FINDINGS.md` as #74–#76.
+- **Calibration:** 43 turns, the lowest of any M31 production move. The
+  architect ran the restructure as a Python script, dry-ran it, and
+  mutation-tested both new checks before dispatch. That left the
+  executor only the Findings read. The first group-3 phase shows the
+  M31 move pattern carries over to a structural change, as long as the
+  spec dictates the code.
