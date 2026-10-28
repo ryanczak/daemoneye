@@ -150,7 +150,7 @@ Expected count: 12–14. Each may split at drafting.
 | 16 | index-tests ([phase-16-index-tests.md](phase-16-index-tests.md)) — `memory/index/mod.rs`'s 2543-line inline tests move into sibling `tests.rs` and `incremental_tests.rs`, each under the test cap | done |
 | 17 | render-tests ([phase-17-render-tests.md](phase-17-render-tests.md)) — `cli/render_ratatui.rs`'s 2055-line inline tests move into sibling `render_ratatui_tests.rs` and `render_ratatui_layout_tests.rs` | done |
 | 18 | render-draw ([phase-18-render-draw.md](phase-18-render-draw.md)) — `RatatuiRenderer`'s generic impl block leaves `cli/render_ratatui.rs` (1225) for a child module `render_ratatui_draw.rs`; a byte-identical move | done |
-| 19 | shell-exec-auth ([phase-19-shell-exec-auth.md](phase-19-shell-exec-auth.md)) — credentials and connecting leave `executor/shell_exec.rs` (1129) for a child module `shell_exec_auth.rs`; `ensure_connected` re-exported | in-progress |
+| 19 | shell-exec-auth ([phase-19-shell-exec-auth.md](phase-19-shell-exec-auth.md)) — credentials and connecting leave `executor/shell_exec.rs` (1129) for a child module `shell_exec_auth.rs`; `ensure_connected` re-exported | review      |
 
 ## Notes
 

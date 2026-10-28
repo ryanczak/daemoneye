@@ -1,6 +1,6 @@
 # Phase 19 — Move credentials and connecting out of `shell_exec.rs`
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -222,3 +222,140 @@ Checklist against the acceptance criteria:
   failed=0` — all four exact.
 - `cargo clippy --all-targets --all-features -- -D warnings` finished
   clean; `cargo fmt --all --check` exited 0.
+
+### Update — 2026-10-28 00:47 (complete, server-authored)
+
+**Summary:** </think>All checks done. Status still `in-progress` in both places, no `(complete)` entry written by me, working tree clean, commit includes all touched files. Final message: Summary + Notes for review.</think>
+**Summary:** Ran the Spec 1 script once with `bash` exactly as written: lines 655–1013 of `src/daemon/executor/shell_exec.rs` (`SudoAttempts`, the credential round trip, `drive_connect`, `ensure_connected`, `run_sudo_command`) moved into the new child module `src/daemon/executor/shell_exec_auth.rs` with only the two authorized visibility rewrites, wired via `#[path]` + glob `use auth::*;` + `pub(super) use auth::ensure_connected;` + `use super::USER_PROMPT_TIMEOUT;`; the allowlist lost its `file` line (kept its `test … 3091` line) and CLAUDE.md gained the new table row. The end-to-end block passed clean on the first run — `3868`/`365` line counts, `allowlisted=0`, `test_entry_kept=1`, `lost_other=0`, `added_other=0`, `moved_identical=1`, hygiene `ok.`, clippy clean, `fmt_exit=0`, `passed=2586 failed=0` — so the known `failed=1` flake never triggered and no re-run was needed. Committed as `8568d9e1` (`refactor:`); the phase doc's Status and the README phase-table row are left at `in-progress` for the server's completion bookkeeping, and the working tree is clean.
+
+**Notes for review:** No deviations from the spec — the script ran unmodified and its `S=655 E=1013` expectation matched. Findings (Spec 3) recorded in the Update Log: the moved file is a clean child module with no edits beyond the two visibility lines, `super::USER_PROMPT_TIMEOUT` resolves unchanged through the parent's import, and no other findings. The three executor callers of `ensure_connected` (`mod.rs` ×2, `foreground.rs`) compile unchanged through the re-export. No out-of-scope code touched; the inline test modules and `run_in_shell_core` remain for later phases.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test functions_in_a_test_module_are_not_measured ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-93da9e6ee623fb89)
+kill: (1656624): No such process
+kill: (-1657346): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-e8cf52a7c32204b4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-e3c81dbbd815c973)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-13504e43862292bc)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-5888a12c4886b465)
+     Running tests/integration.rs (target/debug/deps/integration-9d2755b5d0d87df4)
+     Running tests/isolation.rs (target/debug/deps/isolation-aff2e96eb7fd44a5)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-ed33cf3a0b1b3008)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/README.md` — +1 -1
+- `docs/dev/milestones/M31-code-hygiene/phase-19-shell-exec-auth.md` — +80 -1
+- `src/daemon/executor/shell_exec.rs` — +7 -359
+- `src/daemon/executor/shell_exec_auth.rs` — +365 -0
+- `tests/hygiene_allowlist.txt` — +0 -1
+
+**Commit:** 8568d9e1ed51bdff6bdb7a2a35c8f2d9f4eace78
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
