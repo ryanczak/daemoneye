@@ -1,6 +1,6 @@
 # Phase 34 — Exempt `defs.rs` from the hygiene caps
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -306,3 +306,26 @@ kill: (-2476737): No such process
 **Commit:** 22dde79bda33b7eca9ac782720256ebeb2790b51
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (38 turns)
+- **Scope deviations:** none in the change itself. The diff holds the
+  script's three edits plus the bookkeeping, and the commit is typed
+  `chore:` as the spec asked.
+  - Two small departures in the log: the `(cuts done)` entry is headed
+    `(progress)`, and the entries were appended with `cat >>`, not an
+    edit tool. The executor disclosed both. The content is complete, so
+    neither is worth a re-run.
+  - The completion summary's "39 `fn` entries" is off by one: the
+    allowlist holds 40.
+- **Reviewer's checks:**
+  - `file_entries=0`, `defs_exempt=1` and `claude_md=1`.
+  - Gates: fmt 0, build and clippy clean, 2587 passed / 0 failed / 13
+    ignored, unchanged as the spec required.
+- **Findings:** `none`, as the spec asked. The phase changes no
+  production code.
+- **Calibration:** none.
+
