@@ -289,7 +289,8 @@ commands with a stated budget, finished in 20–40 turns.
   identical to the baseline, whitespace removed, and is mutation-tested
   before dispatch. The executor's tasks are the log entries, a Findings
   audit given as exact commands with a call budget, and the commit."*
-  **Pending PE sign-off; not folded.**
+  **Not folded: the PE declined on 2026-10-28.** It stays architect
+  practice, recorded here and in the phase docs that used it.
 - **Held as data:** the server-appended End-to-end output (rexyMCP), and
   a one-line "every log entry goes through an edit tool" reminder (two
   slips, 33 and 34, neither a bounce).
@@ -321,5 +322,5 @@ commands with a stated budget, finished in 20–40 turns.
 - **`defs.rs` exempted (PE decision 2026-10-28):** `src/ai/tools/defs.rs` (1398 lines, the flat `TOOLS` table, one `ToolDef` per AI tool) joins `pending.rs` and `args.rs` under decision 2. The split would scatter one table across files that nothing else distinguishes, and `tests/doc_truth.rs` already holds it to the README. The `EXEMPT` entry and the allowlist deletion land in the phase after `stream.rs`.
 - **#73 settled (PE decision 2026-10-28):** four silent-tool arms (`read_file`, `get_shell_context`, `open_shell`, `spawn_ghost_shell`) `return` early and skip `ToolFinished`, so the client's panel for the call is lost or unlabelled; `get_shell_context` hits it on every call from outside tmux. The arms cannot leave `execute_tool_call` without changing that, so the fix comes first as its own `fix:` phase with a test (the one recorded exception to decision 6), and the move follows as a pure move. Options weighed: fix inside the move (mixes a fix into a move diff) and preserving the skip with an early-exit result (plumbing to keep a bug alive into 2.4.0). See [`FINDINGS.md`](FINDINGS.md) #73.
 - **M31 retrospective (2026-10-28):** one fold proposed (A, the dictated
-  cut), pending PE sign-off; two items held as data; two rexyMCP product
+  cut) and declined by the PE, so no folds; two items held as data; two rexyMCP product
   items carried (#14, the server-appended End-to-end output).
