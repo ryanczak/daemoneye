@@ -1,6 +1,6 @@
 # Phase 28 — Move nine more of `execute_tool_call`'s arms into family modules
 
-**Status:** review
+**Status:** done
 **Milestone:** M31 — Code hygiene
 **Drafted:** 2026-10-28
 
@@ -574,3 +574,35 @@ kill: (-2192368): No such process
 **Commit:** 5b21e0c54f62fa55b843763de75dfb8cdb376d7e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_after_1.
+  - The first run (133 turns) made the change correctly. It then
+    hard-failed on a `NoProgressStall` during the Findings audit.
+  - The resume (20 turns) wrote Findings from two dictated commands,
+    pasted the End-to-end output and committed.
+- **Bounces:** 1 (the stall). No bug filed, since the code was right
+  the first time.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (133 + 20 turns).
+- **Scope deviations:** none.
+  - The diff names the authorized files.
+  - The reviewer's re-run of the identity and routing checks printed
+    `bodies_identical=1` and `routing_matches=1`.
+  - The DoD grep over the five new files is empty.
+  - The code commit is typed `refactor:`.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2587 passed / 0
+    failed / 13 ignored.
+- **Findings:** carried to `FINDINGS.md`. `send_input`'s
+  `Owner::Chat(unwrap_or_default)` joins #75. `edit_file`'s missing
+  `ssh_connect_failed` log and `load_tools`' doubled `tools_in_group`
+  pass become #80 and #81.
+- **Calibration:** "read the four arms" stalled in 133 turns. The run
+  followed every callee into `policy.rs`, `host.rs` and `src/agents/`.
+  The same audit, given as two exact commands with a five-call budget
+  and "no callees", took 20. Phase 26's open-ended read worked because
+  its arms were one-line delegations. These arms call into many
+  modules, and the open read had no stopping point. Every Findings step
+  in a production-move spec now carries exact commands and a call
+  budget, as test-move specs already do.
+
