@@ -6,6 +6,33 @@
 
 use super::*;
 
+/// The gate's verdict for a foreground call: the refusal text to send when
+/// the call may not go on, `None` when it may. `config` is the same load the
+/// run will use, so a ghost with an unreadable config is refused here
+/// instead of the gate reading "sandbox off" out of the defaults — the gate
+/// fails closed (M32 phase-01).
+fn ghost_foreground_refusal(
+    is_ghost: bool,
+    config: &anyhow::Result<crate::config::Config>,
+) -> Option<String> {
+    match config {
+        Err(e) => is_ghost.then(|| {
+            format!(
+                "Error: foreground execution is refused because the configuration \
+                 could not be read: {e}. Fix or remove {path}, then retry; nothing \
+                 was run.",
+                path = crate::config::etc_dir().join("config.toml").display(),
+            )
+        }),
+        Ok(config) => (!ghost_may_run_foreground(is_ghost, config.sandbox.enabled)).then(|| {
+            "Foreground execution is not sandboxed and is denied for ghost \
+                 shells while the container sandbox is enabled. Re-issue this \
+                 command with `wait: false` so it runs in a container."
+                .to_string()
+        }),
+    }
+}
+
 /// The approved call, carried whole so each stage keeps a short parameter
 /// list. Every field is a borrow or a copy, so stages pass it by value.
 #[derive(Clone, Copy)]
@@ -17,6 +44,7 @@ struct ApprovedRun<'a> {
     interactive: &'a bool,
     cmd_id: usize,
     session_id: Option<&'a str>,
+    max_per_owner: u32,
 }
 
 pub(super) async fn dispatch<W, R>(
@@ -43,19 +71,13 @@ where
             ..
         } => {
             // Ghost gate — a ghost has no unsandboxed door out (M19 phase-03).
-            if !ghost_may_run_foreground(
-                is_ghost,
-                crate::config::Config::load()
-                    .unwrap_or_default()
-                    .sandbox
-                    .enabled,
-            ) {
-                return Ok(ToolCallOutcome::Result(
-                    "Foreground execution is not sandboxed and is denied for ghost \
-                     shells while the container sandbox is enabled. Re-issue this \
-                     command with `wait: false` so it runs in a container."
-                        .to_string(),
-                ));
+            // One load per call feeds both this gate and the approved run's
+            // `max_per_owner`; an unreadable config fails the gate **closed**
+            // for a ghost and reads as the defaults for a non-ghost
+            // (M32 phase-01).
+            let config = crate::config::Config::load();
+            if let Some(r) = ghost_foreground_refusal(is_ghost, &config) {
+                return Ok(ToolCallOutcome::Result(r));
             }
 
             // The host is parsed **before** the approval prompt: a malformed
@@ -138,6 +160,12 @@ where
                             interactive,
                             cmd_id,
                             session_id,
+                            max_per_owner: config
+                                .as_ref()
+                                .map(|c| c.shells.max_per_owner)
+                                .unwrap_or_else(|_| {
+                                    crate::config::Config::default().shells.max_per_owner
+                                }),
                         };
                         let outcome = run_approved(run, host, tx, rx).await?;
                         return Ok(ToolCallOutcome::Result(outcome));
@@ -185,12 +213,9 @@ where
         interactive,
         cmd_id,
         session_id,
+        max_per_owner,
     } = a;
     let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
-    let max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
     // `host` is already parsed above, before the prompt.
     // The permissive lookup runs **after** approval: an
     // unconfigured host resolves to its own ssh
@@ -262,7 +287,7 @@ where
             finish_run(run, owner, a, tx).await?
         }
         crate::host::HostId::Named(name) => {
-            run_on_named_host(a, name, &host, owner, max_per_owner, tx, rx).await?
+            run_on_named_host(a, name, &host, owner, tx, rx).await?
         }
     };
     Ok(outcome)
@@ -275,7 +300,6 @@ async fn run_on_named_host<W, R>(
     name: &str,
     host: &crate::host::HostId,
     owner: Owner,
-    max_per_owner: u32,
     tx: &mut W,
     rx: &mut R,
 ) -> anyhow::Result<String>
@@ -291,6 +315,7 @@ where
         interactive,
         cmd_id,
         session_id,
+        max_per_owner,
     } = a;
     // The permissive lookup: an unconfigured host
     // is its own ssh destination behind the
@@ -444,4 +469,62 @@ where
         }
     };
     Ok(text)
+}
+
+#[cfg(test)]
+mod ghost_foreground_gate_tests {
+    use super::ghost_foreground_refusal;
+
+    /// The unreadable config the `Err` arm is tested with: built in the test,
+    /// never read from a real `config.toml`.
+    fn unreadable() -> anyhow::Result<crate::config::Config> {
+        Err(anyhow::anyhow!("toml parse error at line 3"))
+    }
+
+    fn readable(sandbox_enabled: bool) -> anyhow::Result<crate::config::Config> {
+        let mut c = crate::config::Config::default();
+        c.sandbox.enabled = sandbox_enabled;
+        Ok(c)
+    }
+
+    #[test]
+    fn ghost_foreground_refusal_refuses_a_ghost_when_the_config_is_unreadable() {
+        let r = ghost_foreground_refusal(true, &unreadable());
+        let text = r.expect("a ghost with an unreadable config is refused");
+        assert!(
+            text.contains("toml parse error at line 3"),
+            "the refusal must name the load error, got: {text}"
+        );
+        assert!(
+            text.starts_with("Error:"),
+            "refusals read as errors: {text}"
+        );
+    }
+
+    #[test]
+    fn ghost_foreground_refusal_refuses_a_ghost_when_the_sandbox_is_on() {
+        let r = ghost_foreground_refusal(true, &readable(true));
+        assert!(
+            r.is_some(),
+            "a ghost is refused foreground while the sandbox is enabled"
+        );
+    }
+
+    #[test]
+    fn ghost_foreground_refusal_allows_a_ghost_when_the_sandbox_is_off() {
+        assert_eq!(
+            ghost_foreground_refusal(true, &readable(false)),
+            None,
+            "with the sandbox off, foreground is no worse for a ghost than any other command"
+        );
+    }
+
+    #[test]
+    fn ghost_foreground_refusal_allows_a_non_ghost_when_the_config_is_unreadable() {
+        assert_eq!(
+            ghost_foreground_refusal(false, &unreadable()),
+            None,
+            "a non-ghost keeps today's behaviour: the run falls back to the defaults"
+        );
+    }
 }
