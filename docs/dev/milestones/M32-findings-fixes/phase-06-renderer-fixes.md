@@ -1,6 +1,6 @@
 # Phase 06 — Panel borders fill by display width
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #57 and #60 (#58 is rejected below; #55
@@ -316,3 +316,25 @@ kill: (-3640083): No such process
 **Commit:** c7fa0d36cece987b381a28accfba69b5d584b3fe
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - The production diff is exactly the three specified lines.
+  - The test is the dictated one.
+  - The work is in two commits: `fix:` `01d3d824` for the code and
+    `docs:` `c7fa0d36` for the E2E evidence.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2600 passed / 0 failed.
+  - `bug_tracker` passes, with 6 tests.
+  - `char_counts=0 doc=1`, and one Findings heading.
+- **Tests:** the red run is quoted inline, not as a fenced paste. It
+  shows the assertion message, `left: 62` / `right: 60` and the line,
+  `render_ratatui_tests.rs:968`, all matching the architect's dry run.
+  Accepted.
+- **Findings:** `none`.
+- **Calibration:** the fourth dictated-seam phase in a row first try.
+
