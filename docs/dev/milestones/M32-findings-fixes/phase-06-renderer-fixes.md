@@ -150,3 +150,33 @@ follow in their own entry.
 
 none
 
+### Update — 2026-10-29 12:15 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim, redirected
+to `/tmp/e2e-06.txt`; the file's contents follow, between the fences.
+
+```
+char_counts=0 doc=1
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2517 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.12s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+passed=2600 failed=0
+```
+
+All expected values match: `char_counts=0 doc=1`, `ok. 6 passed` for the
+`commit_panel` tests, hygiene `ok. 16 passed`, bug tracker `ok. 6
+passed`, clippy clean, `passed=2600 failed=0` (2599 + 1). The named M31
+#65 flake did not appear — one run, first pass.
+
+PASTE MATCH self-check:
+
+```
+D=docs/dev/milestones/M32-findings-fixes/phase-06-renderer-fixes.md
+L=$(grep -n '^### Update.*end-to-end verification' "$D" | tail -1 | cut -d: -f1)
+tail -n +"$L" "$D" | awk '/^```/{c++; next} c==1{print} c==2{exit}' > /tmp/pasted-06.txt
+diff /tmp/pasted-06.txt /tmp/e2e-06.txt && echo "PASTE MATCH" || echo "PASTE MISMATCH"
+```
+
+Output: `PASTE MATCH`.
+
