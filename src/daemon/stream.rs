@@ -1,8 +1,9 @@
-use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
+use crate::ai::{AiEvent, Message, PendingCall, TokenBreakdown, ToolResult, make_client};
 use crate::config::{Config, PricingSource};
 use crate::cost::CostAttribution;
 use crate::daemon::auto_name;
 use crate::daemon::executor::{self, SessionCtx};
+use crate::daemon::run::RunLogGuard;
 use crate::daemon::session::{
     SessionStore, append_session_message, with_sessions, write_session_file,
 };
@@ -164,6 +165,76 @@ fn panic_message(e: tokio::task::JoinError) -> String {
             .unwrap_or_else(|| "non-string panic payload".to_string()),
         Err(e) => e.to_string(),
     }
+}
+
+/// The event name for one completed model call's turn record. A constant
+/// rather than a literal at each site so the helper and its tests cannot
+/// drift apart on the name.
+const AI_TURN_EVENT: &str = "ai_turn";
+
+/// The one cost-and-`ai_turn` site a chat turn's `AiEvent::Done` arm runs,
+/// on both its paths (final answer and tool-call continuation): emit the
+/// cost record, tally the model call, accumulate the cost on the session
+/// entry, and log the `ai_turn` event.
+///
+/// The event's `model` is the entry `emit_cost` is given — the session's
+/// active model when one is set, the configured default otherwise — so the
+/// cost line and the event line can no longer disagree about which model
+/// answered (M31 #85).
+fn record_model_call(
+    config: &Config,
+    session_active_model: Option<&str>,
+    usage: &TokenBreakdown,
+    attribution: &CostAttribution,
+    session_id: Option<&str>,
+    run_log: &mut RunLogGuard,
+    sessions: &SessionStore,
+) {
+    let active_entry = config.resolve_model(session_active_model);
+    let record = crate::cost::emit_cost(crate::cost::CostCall {
+        model_entry: active_entry,
+        usage,
+        attribution,
+        session_id: session_id.unwrap_or("-"),
+        run_id: run_log.run_id().as_str(),
+        now: chrono::Utc::now(),
+    });
+    run_log.metrics_mut().record_model_call(
+        active_entry.provider.clone(),
+        active_entry.model.clone(),
+        usage,
+        record.cost.total_cost_usd,
+    );
+
+    // Accumulate cost on the session entry.
+    if let Some(id) = session_id {
+        with_sessions(sessions, |store| {
+            if let Some(entry) = store.get_mut(id) {
+                entry.cost_usd += record.cost.total_cost_usd;
+                *entry
+                    .cost_by_agent
+                    .entry(record.agent_name.clone())
+                    .or_insert(0.0) += record.cost.total_cost_usd;
+                if record.pricing_source == PricingSource::Unknown {
+                    entry.has_untracked_cost = true;
+                }
+            }
+        });
+    }
+
+    log_event(
+        AI_TURN_EVENT,
+        serde_json::json!({
+            "session": session_id.unwrap_or("-"),
+            "model": active_entry.model,
+            "prompt_tokens": usage.input_tokens
+                + usage.cache_read_tokens
+                + usage.cache_write_tokens,
+            "completion_tokens": usage.output_tokens,
+            "cache_read_tokens": usage.cache_read_tokens,
+            "cache_write_tokens": usage.cache_write_tokens,
+        }),
+    );
 }
 
 #[cfg(test)]
@@ -406,5 +477,113 @@ mod tests {
         drop(guard);
         tokio::task::yield_now().await;
         assert!(rx.await.is_err(), "oneshot should be dropped by the abort");
+    }
+
+    /// A config with a `default` model and a second named model whose model
+    /// string differs, so the two `resolve_model` outcomes are tellable apart.
+    fn two_model_config() -> Config {
+        let mut config = Config::default();
+        config.models.insert(
+            "sonnet".to_string(),
+            crate::config::ModelEntry {
+                model: "claude-sonnet-4-6-active".to_string(),
+                ..crate::config::ModelEntry::default()
+            },
+        );
+        config
+    }
+
+    /// The `ai_turn` records written since the run started, read back from
+    /// today's events segment.
+    fn ai_turn_records() -> Vec<serde_json::Value> {
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg).unwrap_or_default();
+        content
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|v| v.get("event").and_then(|e| e.as_str()) == Some(AI_TURN_EVENT))
+            .collect()
+    }
+
+    fn usage() -> TokenBreakdown {
+        TokenBreakdown {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 10,
+            cache_write_tokens: 5,
+        }
+    }
+
+    fn attribution() -> CostAttribution {
+        CostAttribution {
+            agent_name: "chat".to_string(),
+            is_ghost: false,
+            parent_job_id: None,
+        }
+    }
+
+    #[test]
+    fn record_model_call_logs_the_active_model() {
+        let _home = crate::daemon::run::cancel::test_support::HomeGuard::new();
+        let config = two_model_config();
+        let run_id = crate::daemon::run::cancel::test_support::fresh_run_id();
+        let mut run_log = RunLogGuard::start(
+            run_id,
+            crate::daemon::run::RunKind::Chat {
+                session: "sess-1".into(),
+            },
+        );
+        let sessions = SessionStore::new();
+
+        record_model_call(
+            &config,
+            Some("sonnet"),
+            &usage(),
+            &attribution(),
+            Some("sess-1"),
+            &mut run_log,
+            &sessions,
+        );
+
+        let records = ai_turn_records();
+        assert_eq!(records.len(), 1, "one call, one ai_turn record");
+        assert_eq!(
+            records[0]["model"], "claude-sonnet-4-6-active",
+            "the event names the model the cost line names: the session's active model"
+        );
+        assert_eq!(records[0]["session"], "sess-1");
+    }
+
+    #[test]
+    fn record_model_call_logs_the_default_without_an_active_model() {
+        let _home = crate::daemon::run::cancel::test_support::HomeGuard::new();
+        let config = two_model_config();
+        let run_id = crate::daemon::run::cancel::test_support::fresh_run_id();
+        let mut run_log = RunLogGuard::start(
+            run_id,
+            crate::daemon::run::RunKind::Chat {
+                session: "sess-2".into(),
+            },
+        );
+        let sessions = SessionStore::new();
+
+        record_model_call(
+            &config,
+            None,
+            &usage(),
+            &attribution(),
+            None,
+            &mut run_log,
+            &sessions,
+        );
+
+        let records = ai_turn_records();
+        assert_eq!(records.len(), 1, "one call, one ai_turn record");
+        assert_eq!(
+            records[0]["model"],
+            crate::config::ModelEntry::default().model,
+            "no active model resolves the configured default"
+        );
+        assert_eq!(records[0]["session"], "-");
     }
 }

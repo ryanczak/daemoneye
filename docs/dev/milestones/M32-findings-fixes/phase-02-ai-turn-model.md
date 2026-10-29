@@ -1,6 +1,6 @@
 # Phase 02 — The `ai_turn` event names the model that answered
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-28
 **Finding:** M31 `FINDINGS.md` #85
@@ -126,3 +126,54 @@ outputs.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-29 02:28 (started)
+
+Phase 02 dispatched. Plan: write `record_model_call` in `stream.rs` with its
+two tests first (Spec 1), then replace the two blocks in `conversation.rs`
+(Spec 2), run the mutation check (Spec 3), findings (Spec 4), commit as `fix:`
+(Spec 5). Baseline checks before touching code:
+`grep -c 'resolve_model(None)' src/daemon/stream/conversation.rs` → 1,
+`grep -c '"ai_turn"' src/daemon/stream/conversation.rs` → 2,
+`grep -c '"ai_turn"' src/daemon/stream.rs` → 0, matching the phase doc's
+"today" values. — executor: GLM (zepto)
+
+
+### Update — 2026-10-29 04:30 (blocker)
+
+**Blocked on:** `cargo test` cannot report `passed=2593 failed=0`: the
+pre-existing `repository_bug_tracker_is_consistent` failure (M32
+`bugs/bug-01-1.md` is `open` while phase 01 is `done`) sits outside this
+phase's Authorizations, and the phase-02 count arithmetic assumes a green
+baseline.
+
+**What I tried:**
+1. Confirmed the failure is not mine: ran `cargo test --test bug_tracker`
+   in a throwaway worktree at the dispatch commit `d585a1dd` — the same
+   one finding, `OpenBugOnDonePhase: M32-findings-fixes/bugs/bug-01-1.md
+   (phase 01)`. It fails at HEAD before any phase-02 edit.
+2. Confirmed the defect: `bug-01-1.md`'s Definition of done is met on
+   disk (the Findings entry exists, `git diff --stat 0d0d17d3 HEAD --
+   src tests` is empty), but its `**Status:**` line was never flipped
+   when phase 01 was approved in `7cddfcad`. That commit touched five
+   docs and not the bug doc. Every past approval that closed a bug doc
+   flipped the status inside the approve commit itself (M30 `54042446`
+   → `fixed (2026-10-20, 03dcb475)`; M31 `e57ece85` → `fixed
+   (d1afa547)`), so the missed flip is a one-line architect-side edit
+   to `docs/dev/milestones/M32-findings-fixes/bugs/bug-01-1.md`.
+3. Did not edit the bug doc: the phase's Authorizations name exactly two
+   source files (`src/daemon/stream.rs`,
+   `src/daemon/stream/conversation.rs`), and STANDARDS §5 bars touching
+   any other milestone doc without an explicit gate.
+
+**What I need:** flip `bug-01-1.md`'s `**Status:**` line to
+`fixed (0a0ed422)` (the commit that wrote the Findings entry) — one
+line, in the approve/bounce bookkeeping, not executor work — or
+explicitly authorize me to make that one-line doc edit. With the bug doc
+closed, the phase-02 arithmetic holds unchanged: my two new tests take
+the suite from 2591 to 2593 and every other criterion is met and
+verified (see the code's state: helper in `stream.rs`, both call sites
+converted, mutation check run and reverted).
+
+All phase-02 code work is complete and committed separately from this
+blocker; only the count criterion is blocked. — executor: GLM (zepto)

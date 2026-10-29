@@ -309,48 +309,14 @@ where
                             });
                         }
 
-                        let active_entry = config.resolve_model(session_active_model.as_deref());
-                        let record = crate::cost::emit_cost(crate::cost::CostCall {
-                            model_entry: active_entry,
-                            usage: &usage,
-                            attribution: &cost_attribution,
-                            session_id: session_id.as_deref().unwrap_or("-"),
-                            run_id: run_log.run_id().as_str(),
-                            now: chrono::Utc::now(),
-                        });
-                        run_log.metrics_mut().record_model_call(
-                            active_entry.provider.clone(),
-                            active_entry.model.clone(),
+                        record_model_call(
+                            config,
+                            session_active_model.as_deref(),
                             &usage,
-                            record.cost.total_cost_usd,
-                        );
-
-                        // Accumulate cost on the session entry.
-                        if let Some(ref id) = session_id {
-                            with_sessions(&sessions, |store| {
-                                if let Some(entry) = store.get_mut(id) {
-                                    entry.cost_usd += record.cost.total_cost_usd;
-                                    *entry
-                                        .cost_by_agent
-                                        .entry(record.agent_name.clone())
-                                        .or_insert(0.0) += record.cost.total_cost_usd;
-                                    if record.pricing_source == PricingSource::Unknown {
-                                        entry.has_untracked_cost = true;
-                                    }
-                                }
-                            });
-                        }
-
-                        log_event(
-                            "ai_turn",
-                            serde_json::json!({
-                                "session": session_id.as_deref().unwrap_or("-"),
-                                "model": config.resolve_model(session_active_model.as_deref()).model,
-                                "prompt_tokens": usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens,
-                                "completion_tokens": usage.output_tokens,
-                                "cache_read_tokens": usage.cache_read_tokens,
-                                "cache_write_tokens": usage.cache_write_tokens,
-                            }),
+                            &cost_attribution,
+                            session_id.as_deref(),
+                            &mut run_log,
+                            &sessions,
                         );
 
                         // Persist the conversation for the next turn.
@@ -473,48 +439,14 @@ where
                         return Ok(());
                     }
 
-                    let active_entry = config.resolve_model(session_active_model.as_deref());
-                    let record = crate::cost::emit_cost(crate::cost::CostCall {
-                        model_entry: active_entry,
-                        usage: &usage,
-                        attribution: &cost_attribution,
-                        session_id: session_id.as_deref().unwrap_or("-"),
-                        run_id: run_log.run_id().as_str(),
-                        now: chrono::Utc::now(),
-                    });
-                    run_log.metrics_mut().record_model_call(
-                        active_entry.provider.clone(),
-                        active_entry.model.clone(),
+                    record_model_call(
+                        config,
+                        session_active_model.as_deref(),
                         &usage,
-                        record.cost.total_cost_usd,
-                    );
-
-                    // Accumulate cost on the session entry.
-                    if let Some(ref id) = session_id {
-                        with_sessions(&sessions, |store| {
-                            if let Some(entry) = store.get_mut(id) {
-                                entry.cost_usd += record.cost.total_cost_usd;
-                                *entry
-                                    .cost_by_agent
-                                    .entry(record.agent_name.clone())
-                                    .or_insert(0.0) += record.cost.total_cost_usd;
-                                if record.pricing_source == PricingSource::Unknown {
-                                    entry.has_untracked_cost = true;
-                                }
-                            }
-                        });
-                    }
-
-                    log_event(
-                        "ai_turn",
-                        serde_json::json!({
-                            "session": session_id.as_deref().unwrap_or("-"),
-                            "model": config.resolve_model(None).model,
-                            "prompt_tokens": usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens,
-                            "completion_tokens": usage.output_tokens,
-                            "cache_read_tokens": usage.cache_read_tokens,
-                            "cache_write_tokens": usage.cache_write_tokens,
-                        }),
+                        &cost_attribution,
+                        session_id.as_deref(),
+                        &mut run_log,
+                        &sessions,
                     );
 
                     // Update session token tracking so the budget line in the next
