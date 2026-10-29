@@ -152,6 +152,12 @@ fn push_wrapped_hard(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: Ro
 /// single token longer than the width still breaks rather than overflowing.
 /// Leading/trailing whitespace per hard line is preserved so rejoining the
 /// rows with single spaces round-trips the input.
+///
+/// Widths count chars.
+///
+/// A hard line that is only whitespace keeps that whitespace as its one row:
+/// `has_content` is set for it up front, because `flush` writes an empty row
+/// for a line with no content, and that would lose the whitespace.
 pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     for hard_line in text.split('\n') {
@@ -187,24 +193,25 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
             if tok.is_empty() {
                 continue;
             }
-            if tok.len() > width {
+            let token_len = tok.chars().count();
+            if token_len > width {
+                // An overlong token breaks on char boundaries, filling the
+                // current row first.
                 if has_content {
                     flush(&mut line, &mut out, &mut has_content);
                     space_remaining = width;
                 }
-                for chunk in tok.as_bytes().chunks(width) {
-                    let chunk_txt = std::str::from_utf8(chunk).unwrap_or(tok);
-                    if has_content {
+                for ch in tok.chars() {
+                    if space_remaining == 0 {
                         flush(&mut line, &mut out, &mut has_content);
                         space_remaining = width;
                     }
-                    line.push_str(chunk_txt);
+                    line.push(ch);
                     has_content = true;
-                    space_remaining -= chunk_txt.chars().count();
+                    space_remaining -= 1;
                 }
                 continue;
             }
-            let token_len = tok.chars().count();
             let space_needed = if has_content { 1 } else { 0 };
             if space_remaining >= space_needed + token_len {
                 if has_content {

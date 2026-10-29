@@ -1000,6 +1000,34 @@ mod tests {
     }
 
     #[test]
+    fn wrap_words_keeps_a_long_cjk_token_once() {
+        // 30 three-byte chars: 90 bytes but 30 chars, so it fits a width of 80.
+        let token = "漢".repeat(30);
+        let rows = wrap_words(&token, 80);
+        assert_eq!(rows, vec![token], "the token fits and appears exactly once");
+    }
+
+    #[test]
+    fn wrap_words_breaks_an_overlong_multibyte_token_on_char_boundaries() {
+        let token = "é".repeat(25);
+        let rows = wrap_words(&token, 10);
+        let counts: Vec<usize> = rows.iter().map(|r| r.chars().count()).collect();
+        assert_eq!(
+            counts,
+            vec![10, 10, 5],
+            "rows of at most 10 chars: {rows:?}"
+        );
+        assert_eq!(rows.concat(), token, "every char kept once, in order");
+    }
+
+    #[test]
+    fn wrap_words_survives_leading_space_before_an_overlong_token() {
+        let rows = wrap_words(&format!("  {}", "x".repeat(12)), 10);
+        let kept: String = rows.iter().map(|r| r.trim()).collect();
+        assert_eq!(kept, "x".repeat(12), "every char kept once: {rows:?}");
+    }
+
+    #[test]
     fn output_rows_keep_hard_wrap() {
         let token = "y".repeat(30);
         let rows = layout_blocks(&[output_block(&token, 2)], 10);
