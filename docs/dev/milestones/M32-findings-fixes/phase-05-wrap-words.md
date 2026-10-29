@@ -1,6 +1,6 @@
 # Phase 05 — `wrap_words` breaks long tokens on char boundaries
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #23 and #26 (#24 is rejected below)
@@ -290,3 +290,159 @@ Matches the expected values: `byte_chunks=0 doc=1`, `5 passed` for the
 (no diagnostics, only the `Finished` line), full suite `passed=2599 failed=0`
 — the named flake `read_shell_screen_lines_tails_the_visible_rows` did not
 fire, so no re-run was needed.
+
+### Update — 2026-10-29 17:39 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Let me run through the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` — yes (I flipped it there; did not flip to review).
+- [x] Milestone README's phase-table row still says `in-progress` — yes.
+- [x] No `(complete)` Update Log entry hand-written — correct, I wrote started, progress (red run), Findings, and end-to-end verification entries only.
+- [x] `cargo fmt --all` run immediately before `git add` — yes.
+- [x] All verification commands ran clean — yes.
+- [x] Final message will be substantive Summary + Notes for review.
+- [x] `git status --short` shows nothing.
+- [x] `git log -1 --stat` shows all 4 files touched.
+
+Also grep-pinned literals: `as_bytes().chunks` → 0, `only whitespace keeps that` → 1, `### Findings — ` → 1. All verified in the e2e entry.
+
+Now write the final summary.</think>
+Phase 05 complete. Commit `7abae0e5`, working tree clean, status left `in-progress` for the server's `review` flip.
+
+**Summary**
+
+Implemented the `wrap_words` fix (`src/cli/viewer_layout.rs`): the overlong-token path now gates on `tok.chars().count()` instead of byte length and breaks the token char by char, flushing the current row first and re-deriving `space_remaining` from `width`, which removes the underflow panic entirely. Added the three Spec tests to `src/cli/viewer.rs` before `output_rows_keep_hard_wrap`, captured them red exactly as predicted (token doubled in `left:`; `left: [5, 5, 5, 5, 5]` vs `right: [10, 10, 5]`; `attempt to subtract with overflow` at `viewer_layout.rs:203`), then green after the fix — all five `wrap_words_*` tests pass. Appended the two doc-comment sentences ("Widths count chars." and the whitespace-only-line paragraph) and wrote the `### Findings — 2026-10-29` entry from `viewer_layout.rs` alone. E2E block captured mechanically to a file and pasted: `byte_chunks=0 doc=1`, wrap filter `5 passed`, hygiene `16 passed`, bug_tracker `6 passed`, clippy clean, full suite `passed=2599 failed=0` — the M31 #65 flake did not fire, so no re-run was needed. Committed as one `fix:` commit; `cargo fmt --all` ran immediately before `git add`.
+
+**Notes for review**
+
+- No deviation from the Spec's replacement block — it was applied verbatim; `wrap_words` is 77 lines as the dry run predicted.
+- Findings entry has two items and one flagged question: (1) leading/trailing whitespace is measured in **bytes** (`hard_line.len() - trim().len()`) but spent as chars in `space_remaining` — same class as #23, cosmetic, no panic (only visible with non-ASCII whitespace like U+00A0/U+3000); (2) `"output ({n} lines)"` is built identically in two arms and could share a helper; (3) the blank separator row tags `block: i` (the block *below*), which I could not verify without reading the renderer — left unresolved rather than asserted, per the "do not look further" boundary.
+- Out of scope items untouched: display width, `width == 0`, #24.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ill_counted ... ok
+test allowlist_lines_parse_and_malformed_lines_are_kept ... ok
+test cfg_not_test_is_production ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test event_log_append_read ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (3530869): No such process
+kill: (-3531621): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-05-wrap-words.md` — +116 -1
+- `src/cli/viewer.rs` — +28 -0
+- `src/cli/viewer_layout.rs` — +14 -7
+
+**Commit:** 7abae0e594c10647cb67c64b9afd68f8dd7972d4
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
