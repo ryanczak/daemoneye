@@ -7,8 +7,8 @@ shared test fixture, fourteen phases, defects first. See
 and the phase table. The 40 allowlisted functions are the milestone after
 this one; MCP surface is now M33, Knowledge M34.
 
-**Active phase:** [phase 03 — recall-limits](milestones/M32-findings-fixes/phase-03-recall-limits.md)
-(`todo`). Phases 01–02 are done. Next: `/rexymcp:dispatch 03`.
+**Active phase:** none drafted. Phases 01–03 are done. Next:
+`/rexymcp:architect next` drafts phase 04 (session-guard).
 
 M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). The function milestone, M33 (MCP surface) and M34

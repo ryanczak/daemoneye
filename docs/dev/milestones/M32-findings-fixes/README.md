@@ -94,7 +94,7 @@ ledger's. Expected count: 14. Each may split at drafting.
 |----|-------|----------|--------|
 | 01 | ghost-gate ([phase-01-ghost-gate.md](phase-01-ghost-gate.md)) — `dispatch_foreground.rs` loads the config once per call; an unreadable config refuses the ghost (fail closed) instead of defaulting to "sandbox off" | #84 | done |
 | 02 | ai-turn-model ([phase-02-ai-turn-model.md](phase-02-ai-turn-model.md)) — `stream/conversation.rs`'s two cost-and-event blocks become one helper, so the tool-call turn's `ai_turn` event records the model that answered | #85 | done |
-| 03 | recall-limits ([phase-03-recall-limits.md](phase-03-recall-limits.md)) — `dispatch_memory.rs` threads the loaded `[limits]` into `recall_context` instead of `LimitsConfig::default()` | #74 | review      |
+| 03 | recall-limits ([phase-03-recall-limits.md](phase-03-recall-limits.md)) — `dispatch_memory.rs` threads the loaded `[limits]` into `recall_context` instead of `LimitsConfig::default()` | #74 | done |
 | 04 | session-guard — `server/sessions.rs`: one unknown-session check for the five handlers, so load and save of an unknown id are errors, not a silent no-op or an empty save; the banner's two counts agree; `slash_session.rs` rehydrates from the daemon's reply, not the client's filesystem | #11 #12 #13 #20 | todo |
 | 05 | wrap-words — `viewer_layout.rs` chunks overlong tokens on char boundaries (a CJK and an emoji test), documents the blank-line rule, lifts `flush` out of the loop | #23 #24 #26 | todo |
 | 06 | renderer-fixes — `render_ratatui_draw.rs`: `inserted_rows` advances only on `Ok`; borders fill by display width; one `render_status_bar` for the three panels; the picker gets the red border; the module doc's backtick | #55 #56 #57 #58 #60 | todo |

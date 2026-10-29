@@ -1,6 +1,6 @@
 # Phase 03 — `recall_context` honours the configured `[limits]`
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Finding:** M31 `FINDINGS.md` #74
@@ -409,3 +409,28 @@ kill: (-3375768): No such process
 **Commit:** cb037e77e98acf4e3b0bf05b6f005391818e484e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-29
+
+- **Verdict:** approved_after_1. The first run stalled after 120
+  read-only turns with no diff; this is the refined re-dispatch.
+- **Bounces:** 1 (spec_bug: a test harness left for the executor to
+  discover).
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local, 120 turns (stall) then
+  52. The Update Log and the summary are signed "Claude Opus 4.6"; that
+  signature is wrong for the third time in M32.
+- **Scope deviations:** none. The diff touches `dispatch_memory.rs` and
+  the phase docs.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2594 passed / 0 failed.
+  - `bug_tracker` passes, with 6 tests.
+  - `default_limits=0`, and one Findings heading.
+  - The new `unwrap`s are all inside the test module, and they are the
+    dictated test.
+- **Tests:** the step-2 red run is pasted with the pinned message
+  (`4021 chars`), and green follows. Accepted.
+- **Findings:** `none`.
+- **Calibration:** a dictated test seam took the second run from zero
+  edits in 120 turns to done in 52. This is now in the architect's
+  notes.
+
