@@ -1,6 +1,6 @@
 # Phase 06 — Panel borders fill by display width
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #57 and #60 (#58 is rejected below; #55
@@ -180,3 +180,139 @@ diff /tmp/pasted-06.txt /tmp/e2e-06.txt && echo "PASTE MATCH" || echo "PASTE MIS
 
 Output: `PASTE MATCH`.
 
+### Update — 2026-10-29 19:12 (complete, server-authored)
+
+**Summary:** </think>Everything is done. Status is still `in-progress` (I did not flip to review), README row says in-progress, no `(complete)` entry written by me, all verification passed, working tree clean.
+
+Final message: Summary + Notes for review (2–6 sentences).</think>
+**Summary:** Phase 06 is complete. I appended `commit_panel_borders_fill_by_display_width` to `src/cli/render_ratatui_tests.rs` and captured it failing red exactly as the spec predicted (`left: 62` / `right: 60` on the top border), then replaced both `chars().count()` fills in `commit_panel_labeled` with `Span::raw(...).width()` (`Span::raw(padded.as_str()).width()` for the bottom label), fixed the module doc's first line to `` `RatatuiRenderer`'s ``, and filed a `none` Findings entry. The E2E block ran verbatim and matched every expected value: `char_counts=0 doc=1`, `commit_panel` tests `ok. 6 passed`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy clean, full suite `passed=2600 failed=0` (the M31 #65 flake did not appear). Committed as `fix:` `01d3d824` plus a `docs:` E2E-evidence commit `c7fa0d36`; working tree is clean.
+
+**Notes for review:** The new test's bottom-border assertion (`rows[len-2]`, the label row before the trailing blank) also exercises the `Some("ラベル")` path, so both the title and bottom-label fixes are pinned by one test. Status is left at `in-progress` and the README row matches, per the lifecycle split — no `(complete)` entry was hand-written. The PASTE MATCH self-check against the pasted E2E fence prints `PASTE MATCH`.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+k
+test production_after_a_test_only_fn_is_still_counted ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test function_length_spans_signature_to_closing_brace ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (3639358): No such process
+kill: (-3640083): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-06-renderer-fixes.md` — +56 -1
+- `src/cli/render_ratatui_draw.rs` — +3 -3
+- `src/cli/render_ratatui_tests.rs` — +15 -0
+
+**Commit:** c7fa0d36cece987b381a28accfba69b5d584b3fe
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
