@@ -193,3 +193,48 @@ work to resume, and a first failure caused by the spec does not warrant
 a takeover. The refinement replaces the discovery with a dry-run test
 seam.
 
+### Update — 2026-10-29 15:22 (started)
+
+Phase 03 dispatched (refined Spec). I will extract the `RecallContext`
+arm's body into module-level `recall_context` keeping
+`LimitsConfig::default()` (Spec 1), add the given test verbatim and run
+it red (Spec 2), make the one-line fix to
+`Config::load().unwrap_or_default().limits` and run it green (Spec 3),
+then findings, then commit as `fix:`. — executor: Claude Opus 4.6
+
+### Update — 2026-10-29 15:27 (progress)
+
+Specs 1–3 done in `src/daemon/executor/dispatch_memory.rs`. The
+`RecallContext` arm now builds the `RecallArgs` and returns
+`Ok(ToolCallOutcome::Result(recall_context(session_id, &args)))`; the
+body moved into module-level `recall_context` below `dispatch`, which
+still built `LimitsConfig::default()` at extraction time. The given
+test was added verbatim and ran **red** with exactly the pinned message
+(captured below), then the one-line fix landed and the same command ran
+**green** (`test result: ok. 1 passed; 0 failed; … 2516 filtered out`).
+Findings and the E2E capture follow. — executor: Claude Opus 4.6
+
+**Step-2 red run (Spec 2's required output, pasted from the run):**
+
+```
+running 1 test
+test daemon::executor::dispatch_memory::tests::recall_context_uses_the_configured_tool_result_chars ... FAILED
+
+failures:
+
+---- daemon::executor::dispatch_memory::tests::recall_context_uses_the_configured_tool_result_chars stdout ----
+
+thread 'daemon::executor::dispatch_memory::tests::recall_context_uses_the_configured_tool_result_chars' (3355615) panicked at src/daemon/executor/dispatch_memory.rs:160:9:
+the configured cap of 200 must truncate a 4000-char turn: 4021 chars
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::dispatch_memory::tests::recall_context_uses_the_configured_tool_result_chars
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2516 filtered out; finished in 0.02s
+```
+
+### Findings — 2026-10-29
+
+none
+
