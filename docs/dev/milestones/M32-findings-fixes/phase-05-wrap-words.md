@@ -1,6 +1,6 @@
 # Phase 05 — `wrap_words` breaks long tokens on char boundaries
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #23 and #26 (#24 is rejected below)
@@ -446,3 +446,27 @@ kill: (-3531621): No such process
 **Commit:** 7abae0e594c10647cb67c64b9afd68f8dd7972d4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - The production diff is the specified replacement block and the doc
+    comment. "Widths count chars." stands as its own paragraph instead of
+    following the round-trip sentence, which is harmless.
+  - The tests are the dictated three.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2599 passed / 0 failed.
+  - `bug_tracker` passes, with 6 tests.
+  - `byte_chunks=0 doc=1`, and one Findings heading.
+- **Tests:** the step-1 red run is pasted: the CJK token twice,
+  `left: [5, 5, 5, 5, 5]`, and `attempt to subtract with overflow` at
+  `viewer_layout.rs:203`. Green follows. Accepted.
+- **Findings:** three, logged as #7–#9 in the M32 ledger and all
+  deferred. #7 is the most useful: the same bytes-for-chars mistake,
+  one line up, in the leading-whitespace count. It is cosmetic.
+- **Calibration:** the third dictated-seam phase in a row to land first
+  try (03 re-dispatch, 04, 05).
+
