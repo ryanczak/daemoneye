@@ -1,6 +1,6 @@
 # Phase 02 — The `ai_turn` event names the model that answered
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-28
 **Finding:** M31 `FINDINGS.md` #85
@@ -397,3 +397,39 @@ kill: (-2938312): No such process
 **Commit:** eef4506c0a6d5bc7e8fe6d4ce00d954d29033c27
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (355 turns)
+- **Scope deviations:** one, and the architect's fault.
+  - The executor edited `bugs/bug-01-1.md`, outside the phase's two
+    authorized files. The phase-01 approval (`7cddfcad`) never moved
+    that bug's `Status:` to `fixed`. So `repository_bug_tracker_is_consistent`
+    failed at the dispatch commit, and no phase could reach its count
+    criterion until the bug doc was closed.
+  - The executor showed the failure predated its edits, logged a
+    blocker, and made exactly the flip the blocker described. The
+    reviewer accepts the edit.
+  - Every approval that closes a bug doc now flips its status in the
+    approve commit.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2593 passed / 0 failed.
+  - `none_model=0 ai_turn_loop=0 ai_turn_helper=1`.
+  - The added lines have no `unwrap`, `expect`, `panic!`, `#[allow]` or
+    `unsafe`.
+  - `run_conversation_loop` went from 775 to 707 lines; its allowlist
+    entry is unchanged, as specified.
+- **Tests:** both read the logged `ai_turn` record back from the events
+  segment under a temp `HOME`. The mutation check's failing output is in
+  the Update Log: `left: "claude-sonnet-4-6"`,
+  `right: "claude-sonnet-4-6-active"`. Accepted.
+- **Findings:** three, logged as #4–#6 and all rejected. #6's premise
+  does not hold: the write-backs never touch the cost fields.
+- **Calibration:** 355 turns, much of it spent finding and working
+  around the bug-tracker failure. The fix was ~70 lines. A tree that
+  is red at dispatch costs the executor its whole run, so the
+  bookkeeping is now checked at approval: `cargo test --test
+  bug_tracker` runs before the approve commit.
+
