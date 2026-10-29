@@ -456,3 +456,29 @@ doc as `docs:`.
 - `grep -c '^### Findings — ' docs/dev/milestones/M32-findings-fixes/phase-01-ghost-gate.md`
   prints `1`;
 - `git diff --stat 0d0d17d3 HEAD -- src tests` prints nothing.
+
+### Findings — 2026-10-28
+
+From `src/daemon/executor/dispatch_foreground.rs` and the new
+`ghost_foreground_refusal` only, for the M32 ledger; triage at review.
+
+- `daemon/executor/dispatch_foreground.rs` · `ghost_foreground_refusal`
+  (the `Err` arm) | smell | nit — the refusal rebuilds the config path
+  with `crate::config::etc_dir().join("config.toml")`, the same
+  expression `Config::load` builds, and `e`'s `with_context` already
+  carries that path, so a broken-config refusal renders the path twice;
+  move `config.toml` and the remedy line silently names a file that was
+  never read. The error's construction should be the only one.
+- `daemon/executor/dispatch_foreground.rs` · `dispatch` | smell | minor —
+  at 145 of the 150-line cap with the gate, the host parse, the
+  ghost-host refusal and the approval await in one body, so its next edit
+  must split it first. Seams: the host-parse + `ghost_host_refusal`
+  prologue, and the `prompt_and_await_approval` block. Any split has to
+  keep the `foreground::refuse_foreground` fall-through reachable — run
+  1's extraction dropped exactly that guard.
+- `daemon/executor/dispatch_foreground.rs` · `ghost_foreground_refusal` |
+  smell | nit — its two refusals disagree on prefix: the
+  unreadable-config one starts `Error:`, how every other refusal in the
+  file is built, while the sandbox-on one is bare prose. The bare text is
+  pre-existing, carried over unchanged per the spec, but the phase set
+  the two side by side in one function.
