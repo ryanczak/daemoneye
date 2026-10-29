@@ -1,6 +1,6 @@
 # Phase 04 — Save and load refuse an unknown session
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #11 and #12 (#13 is rejected below; #20
@@ -198,3 +198,46 @@ outputs.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-29 15:46 UTC (started)
+
+Phase 04 dispatched. I will append the given `#[cfg(test)] mod tests`
+verbatim to `src/daemon/server/sessions.rs` and run the two tests red
+(Spec 1), add the private `unknown_session_refusal` guard as the first
+statement of both handlers (Spec 2), record findings from
+`sessions.rs` (Spec 3), then commit as `fix:` (Spec 4). — executor:
+GLM (zepto)
+
+
+**Step-1 red run (Spec 1's required output, pasted from the run):**
+
+```
+running 2 tests
+test daemon::server::sessions::tests::save_of_an_unknown_session_is_an_error_and_saves_nothing ... FAILED
+test daemon::server::sessions::tests::load_into_an_unknown_session_is_an_error ... FAILED
+
+failures:
+
+---- daemon::server::sessions::tests::save_of_an_unknown_session_is_an_error_and_saves_nothing stdout ----
+
+thread 'daemon::server::sessions::tests::save_of_an_unknown_session_is_an_error_and_saves_nothing' (3405742) panicked at src/daemon/server/sessions.rs:281:22:
+expected Response::Error, got SessionSaved { name: "saved-name" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- daemon::server::sessions::tests::load_into_an_unknown_session_is_an_error stdout ----
+
+thread 'daemon::server::sessions::tests::load_into_an_unknown_session_is_an_error' (3405741) panicked at src/daemon/server/sessions.rs:322:22:
+expected Response::Error, got SessionLoaded { name: "saved-name", message_count: 0, turn_count: 0, banner: "[Session Resumed — \"saved-name\" | just now | 0 turns | 0 message(s) loaded]" }
+ (x2)
+failures:
+    daemon::server::sessions::tests::load_into_an_unknown_session_is_an_error
+    daemon::server::sessions::tests::save_of_an_unknown_session_is_an_error_and_saves_nothing
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 2517 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+### Findings — 2026-10-29
+
+none
