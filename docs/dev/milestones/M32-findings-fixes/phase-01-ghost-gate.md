@@ -1,6 +1,6 @@
 # Phase 01 — The ghost gate fails closed
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-28
 **Finding:** M31 `FINDINGS.md` #84
@@ -626,3 +626,34 @@ kill: (-2742645): No such process
 **Commit:** 0a0ed4226e076d8a8d237f2001b0e4cfbe0260d4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-28
+
+- **Verdict:** approved_after_1 (bug-01-1, the missing Findings entry).
+  The first dispatch's hard fail on the architect's spec is counted
+  separately, as an escalation.
+- **Bounces:** 1 refined re-dispatch (spec_bug: cap headroom), then 1
+  green bounce (bug-01-1).
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local. 207 turns (hard fail),
+  then 171 (the code), then 39 (the Findings entry).
+- **Scope deviations:** none.
+  - The code is `485505c3`, unchanged since the first review:
+    `git diff --stat 0d0d17d3 HEAD -- src tests` is empty.
+  - Reviewer's gates: fmt 0, build and clippy clean, 2591 passed / 0
+    failed.
+  - The phase's checks: `loads=1`, `refuse=1 allow=0`; `foreground.rs`
+    and `mod.rs` untouched; `dispatch` at 145 lines.
+  - Mutation check (reviewer): with the `Err` arm forced to `None`, the
+    unreadable-config test fails.
+- **Findings:** three, carried to M32 `FINDINGS.md` as #1–#3. The review
+  confirmed #1 and found it worse than reported: `{e}` drops the parse
+  error itself, not just a duplicate path. It goes to phase 14 with a
+  test. #2 becomes a pinned constraint for phase 08.
+- **Calibration:**
+  - A lean spec still has to state cap headroom. The first run hit both
+    caps and dropped a guard trying to fit (see the escalation entry;
+    recorded in the architect's notes).
+  - The executor writes its Findings result in the completion summary
+    instead of the doc unless a criterion greps for the heading. From
+    phase 02 on, the `### Findings` grep is an acceptance criterion.
+
