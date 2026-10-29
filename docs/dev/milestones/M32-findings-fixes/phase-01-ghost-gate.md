@@ -1,6 +1,6 @@
 # Phase 01 — The ghost gate fails closed
 
-**Status:** in-progress (bounced: bug-01-1, the missing Findings entry)
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-28
 **Finding:** M31 `FINDINGS.md` #84
@@ -482,3 +482,147 @@ From `src/daemon/executor/dispatch_foreground.rs` and the new
   file is built, while the sandbox-on one is bare prose. The bare text is
   pre-existing, carried over unchanged per the spec, but the phase set
   the two side by side in one function.
+
+### Update — 2026-10-29 02:15 (complete, server-authored)
+
+**Summary:** </think>All four tasks are done. Let me run the finish-condition checks one more time to be sure, then write my final Summary + Notes.
+
+Finish conditions:
+- `grep -c '^### Findings — ' docs/dev/milestones/M32-findings-fixes/phase-01-ghost-gate.md` prints 1 ✓ (verified: 1)
+- `git diff --stat 0d0d17d3 HEAD -- src tests` prints nothing ✓ (verified: empty, exit 0)
+
+Working tree clean ✓. Committed as 0a0ed422 `docs:`.
+
+Now the final message: Summary + Notes for review, 2–6 sentences, substantive.</think>
+**Summary:** bug-01-1 is cleared. The only edit this run made is the missing `### Findings — 2026-10-28` entry, appended to the phase doc's Update Log and committed as `0a0ed422` (`docs:`) — the approved code in `485505c3` is untouched, and `git diff --stat 0d0d17d3 HEAD -- src tests` still prints nothing. The Findings entry carries three items from `dispatch_foreground.rs` and the new `ghost_foreground_refusal` only: the `Err`-arm refusal rebuilds `etc_dir().join("config.toml")` that `Config::load` already embeds in the error's context, so the path renders twice and a moved config file gets named by a remedy line that never read it; `dispatch` sits at 145 of the 150-line cap, so its next edit must split it first (seams named, with the run-1 warning that any split must keep the `refuse_foreground` fall-through reachable); and the gate's two refusals disagree on the `Error:` prefix, the sandbox-on one being pre-existing bare prose carried over verbatim per spec.
+
+**Notes for review:**
+- Both finish conditions verified: the Findings grep prints `1`; the `src tests` diff against the baseline commit is empty.
+- I signed the entry with my own model id rather than the mis-signed "Claude Opus 4.6" in the two prior entries — I did not edit those, as prior Update Log entries are append-only.
+- Severity on all three findings is mine; the first is a self-observation on the code this phase shipped, the second and third are pre-existing shape the phase pinned in place. Triage is yours.
+- Working tree is clean; the server may now author the completion tail and flip the status.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+uplicate_names_get_a_suffix ... ok
+test cfg_all_test_counts_as_test_only ... ok
+test cfg_not_test_is_production ... ok
+test function_length_spans_signature_to_closing_brace ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (2741893): No such process
+kill: (-2742645): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/phase-01-ghost-gate.md` — +26 -0
+
+**Commit:** 0a0ed4226e076d8a8d237f2001b0e4cfbe0260d4
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

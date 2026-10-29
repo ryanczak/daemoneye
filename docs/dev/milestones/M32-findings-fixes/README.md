@@ -92,7 +92,7 @@ ledger's. Expected count: 14. Each may split at drafting.
 
 | #  | Phase | Findings | Status |
 |----|-------|----------|--------|
-| 01 | ghost-gate ([phase-01-ghost-gate.md](phase-01-ghost-gate.md)) — `dispatch_foreground.rs` loads the config once per call; an unreadable config refuses the ghost (fail closed) instead of defaulting to "sandbox off" | #84 | in-progress |
+| 01 | ghost-gate ([phase-01-ghost-gate.md](phase-01-ghost-gate.md)) — `dispatch_foreground.rs` loads the config once per call; an unreadable config refuses the ghost (fail closed) instead of defaulting to "sandbox off" | #84 | review      |
 | 02 | ai-turn-model — `stream/conversation.rs`'s two cost-and-event blocks become one helper, so the tool-call turn's `ai_turn` event records the model that answered | #85 | todo |
 | 03 | recall-limits — `dispatch_memory.rs` threads the loaded `[limits]` into `recall_context` instead of `LimitsConfig::default()` | #74 | todo |
 | 04 | session-guard — `server/sessions.rs`: one unknown-session check for the five handlers, so load and save of an unknown id are errors, not a silent no-op or an empty save; the banner's two counts agree; `slash_session.rs` rehydrates from the daemon's reply, not the client's filesystem | #11 #12 #13 #20 | todo |
