@@ -1,6 +1,6 @@
 # Phase 02 — The `ai_turn` event names the model that answered
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-28
 **Finding:** M31 `FINDINGS.md` #85
@@ -246,3 +246,154 @@ triage at review.
   sites call the helper before touching the entry. The two write-backs
   are out of scope per the phase doc; noting only that the ordering is
   load-bearing for the session totals.
+
+### Update — 2026-10-29 04:51 (complete, server-authored)
+
+**Summary:** </think>Wait — `grep -c '"ai_turn"' src/daemon/stream.rs` printed 1, and `grep -c '^### Findings — '` printed 1. All good. Working tree clean, both commits in.
+
+Let me do a final check of the completion checklist:
+- [x] Phase doc Status: in-progress (not review) ✓
+- [x] README row in-progress ✓
+- [x] No hand-written (complete) entry ✓
+- [x] fmt run before staging ✓
+- [x] All verification commands ran clean ✓
+- [x] git status clean ✓
+- [x] git log shows commits ✓
+
+Now the final Summary + Notes for review.</think>
+**Summary:** Phase 02 is implemented and committed as `73e616f5`. The two near-identical `AiEvent::Done` cost-and-event blocks in `run_conversation_loop` are replaced by one helper, `record_model_call`, in `src/daemon/stream.rs` (7 parameters, no `#[allow]`); it resolves the model entry once and feeds that same entry to `emit_cost`, the metrics tally and the `ai_turn` event, so a `/model`-switched session's tool-call turns now record the model that answered instead of the configured default. Both new tests pass, the mutation check (`resolve_model(None)`) fails `record_model_call_logs_the_active_model` exactly as expected (`left: String("claude-sonnet-4-6")`, `right: "claude-sonnet-4-6-active"`) and was reverted, and the E2E block prints `none_model=0 ai_turn_loop=0 ai_turn_helper=1`, hygiene `16 passed`, clippy clean, and the full suite `passed=2593 failed=0` — the exact arithmetic the spec pins (2591 + 2).
+
+**Notes for review:**
+- The gate initially failed on a pre-existing `repository_bug_tracker_is_consistent` finding — `bugs/bug-01-1.md` was still `open` though phase 01 was `done` and its Definition of done met since `0a0ed422`. I verified with a worktree run at the dispatch commit `d585a1dd` that the failure predates any phase-02 edit, filed a blocker, and then — under the completion gate's instruction — made the one-line flip the blocker requested (`**Status:** fixed (0a0ed422 …)`) plus ticking the bug doc's two DoD boxes, committed as `eef4506c`. That edit is outside the phase's two-file Authorization list; it is the explicit deviation for your sign-off.
+- I did not touch `tests/hygiene_allowlist.txt`: `run_conversation_loop` shrank to well under its allowlisted 775, but the stale-entry check passes as-is since the file still exists at 713 lines.
+- The Findings entry (three items, all smell/nit: the order-sensitive single resolution in the helper, the module-private `AI_TURN_EVENT` constant, and the load-bearing call-before-write-back ordering at the two call sites) is in the phase doc; triage is yours.
+- Status remains `in-progress`; no hand-written `(complete)` entry — the server authors that tail.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+_is_production ... ok
+test duplicate_names_get_a_suffix ... ok
+test functions_in_a_test_module_are_not_measured ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test allowlist_has_no_stale_entries ... ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (2937617): No such process
+kill: (-2938312): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/bugs/bug-01-1.md` — +8 -4
+- `docs/dev/milestones/M32-findings-fixes/phase-02-ai-turn-model.md` — +127 -7
+- `src/daemon/stream/conversation.rs` — +14 -82
+- `src/daemon/stream.rs` — +180 -1
+
+**Commit:** eef4506c0a6d5bc7e8fe6d4ce00d954d29033c27
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
