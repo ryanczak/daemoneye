@@ -1,6 +1,6 @@
 # Phase 01 — The ghost gate fails closed
 
-**Status:** review
+**Status:** in-progress (bounced: bug-01-1, the missing Findings entry)
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-28
 **Finding:** M31 `FINDINGS.md` #84
@@ -94,6 +94,8 @@ After this phase:
 - [ ] `cargo test` reports **exactly** `passed=2591 failed=0` (2587 +
       the four tests). `tests/hygiene.rs` passes with no allowlist edit.
 - [ ] fmt, build and clippy are clean.
+- [ ] **(bug-01-1)** `grep -c '^### Findings — ' docs/dev/milestones/M32-findings-fixes/phase-01-ghost-gate.md`
+      prints `1`.
 
 ## Test plan
 
@@ -412,3 +414,45 @@ kill: (-2666491): No such process
 **Commit:** 485505c3861510f9cc5f671a6f68899a34ea7b2e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-10-28 (bounced: bug-01-1)
+
+**The code is approved, and does not change.** The reviewer re-ran
+everything:
+- fmt 0, build and clippy clean, 2591 passed / 0 failed / 13 ignored;
+- `loads=1`, `refuse=1 allow=0`;
+- `foreground.rs` and `mod.rs` are untouched;
+- `dispatch` is 145 lines.
+
+The reviewer also ran the mutation check that the Update Log lacked.
+With the `Err` arm forced to `None`, the test
+`ghost_foreground_refusal_refuses_a_ghost_when_the_config_is_unreadable`
+fails and the other three pass, so the tests are real.
+
+The one missing piece is the `### Findings` entry (bug-01-1).
+
+Two notes on the log as it stands:
+- The `(progress)` entry claims a red-first run was not reachable
+  because "the function and its call site share one file". That is not
+  so. The tests could have run against a stub. The reviewer's mutation
+  check stands in for it, and that criterion is accepted as met.
+- Two entries are signed "executor: Claude Opus 4.6". The executor was
+  `nvidia/GLM-5.3-Flash-FP4-Local`.
+
+### Notes for executor — 2026-10-28 (bug-01-1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+that the phase is done.** The code is committed (`485505c3`) and
+approved. Do not touch `src/` or `tests/`.
+
+There is exactly one edit left. Append a `### Findings — 2026-10-28`
+entry to this doc's Update Log, using the patch or write tool. It holds
+what you saw in `src/daemon/executor/dispatch_foreground.rs` and the new
+`ghost_foreground_refusal`, each item with its function, kind and
+severity, or the single line `none`. Open no other file. Then commit the
+doc as `docs:`.
+
+**Finish condition:**
+- `grep -c '^### Findings — ' docs/dev/milestones/M32-findings-fixes/phase-01-ghost-gate.md`
+  prints `1`;
+- `git diff --stat 0d0d17d3 HEAD -- src tests` prints nothing.
