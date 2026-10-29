@@ -1,6 +1,6 @@
 # Phase 07 — Remote delete and copy read their result, not a substring
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Finding:** M31 `FINDINGS.md` #38 (#36, #37 and #40 move to the
@@ -233,3 +233,46 @@ hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy clean,
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-29 20:33 (progress)
+
+Step 1 done and red as predicted: `a_success_line_is_ok` passed, the other
+three failed (`Some(Ok(…))` against `None` for the echoed command and the
+missing-marker cases, `Some(Ok(…))` against `Some(Err(…))` for the
+`DE_OK:`-in-path case). Step 2 swapped the parser body for the
+`__DE_DONE__`-aware version; all four green. Step 3 converted both call
+sites to `match super::super::remote_write_outcome(&snap)` with
+`None => {}` falling through to the existing "result was unclear"
+return; the `DE_OK:`/`DE_ERROR:` message strings are unchanged.
+
+### Findings — 2026-10-29
+
+- `ops_delete.rs` · `remote_delete_with_spawn`: the old failure arm
+  formatted `line.trim()`; the parser already trims each line, so the
+  call site now formats `line` directly and the trim belongs to the
+  parser alone. Nothing else surprising at either site.
+- `mod.rs` · `remote_write_outcome`: `lines.iter().rposition(…)`, not
+  `rev().position(…)` — both would work, but `rposition` on the forward
+  iterator keeps `done` an index into the forward slice, which the
+  `lines[..done]` arithmetic relies on; easy to "simplify" into a bug.
+
+### Update — 2026-10-29 20:47 (end-to-end verification)
+
+Ran the phase doc's E2E block verbatim, redirected to
+`/tmp/phase07-e2e.txt`; the file's contents follow, unedited.
+
+```
+substring=0 parser_calls=2
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2523 filtered out; finished in 0.00s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.13s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+passed=2604 failed=0
+```
+
+Matches the expected values exactly: `substring=0 parser_calls=2`, the
+four parser tests green, hygiene `16 passed`, bug tracker `6 passed`,
+clippy clean, and the full suite `passed=2604 failed=0` (2600 + 4). No
+flake appeared in this run; both named known flakes passed on the first
+try.
+

@@ -83,8 +83,8 @@ where
                     return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
                 }
             };
-            for line in snap.lines().rev() {
-                if line.contains("DE_OK:") {
+            match super::super::remote_write_outcome(&snap) {
+                Some(Ok(_)) => {
                     crate::daemon::stats::finish_command(cmd_id, 0);
                     crate::daemon::utils::log_event(
                         "file_delete",
@@ -95,14 +95,14 @@ where
                         path, name
                     )));
                 }
-                if line.contains("DE_ERROR:") {
+                Some(Err(line)) => {
                     crate::daemon::stats::finish_command(cmd_id, 1);
                     return Ok(ToolCallOutcome::Result(format!(
                         "Error deleting {}: {}",
-                        path,
-                        line.trim()
+                        path, line
                     )));
                 }
+                None => {}
             }
             crate::daemon::stats::finish_command(cmd_id, 1);
             return Ok(ToolCallOutcome::Result(format!(

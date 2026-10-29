@@ -14,6 +14,26 @@ fn to_hex(s: &str) -> String {
     s.bytes().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// The outcome a remote write's shell reported: `Ok` with the `DE_OK:` line,
+/// `Err` with the `DE_ERROR:` line, or `None` when it reported neither. Only
+/// lines before the last line that is exactly `__DE_DONE__` count, and a
+/// result line must start with its sentinel. That keeps the echoed command,
+/// which contains both sentinels as text, and any path that happens to
+/// contain one, from being read as the result.
+fn remote_write_outcome(snap: &str) -> Option<Result<String, String>> {
+    let lines: Vec<&str> = snap.lines().map(str::trim).collect();
+    let done = lines.iter().rposition(|l| *l == "__DE_DONE__")?;
+    lines[..done].iter().rev().find_map(|l| {
+        if l.starts_with("DE_OK:") {
+            Some(Ok(l.to_string()))
+        } else if l.starts_with("DE_ERROR:") {
+            Some(Err(l.to_string()))
+        } else {
+            None
+        }
+    })
+}
+
 /// Shell-escape a single-quoted argument by replacing `'` with `'\''`.
 /// Note: a single-quoted argument may legitimately span lines, so newlines
 /// do NOT break out of the quotes — `'` was the only character needing
@@ -149,4 +169,42 @@ where
     )
     .await?;
     Ok(String::from_utf8_lossy(&outcome.output).into_owned())
+}
+
+#[cfg(test)]
+mod remote_write_outcome_tests {
+    use super::remote_write_outcome;
+
+    /// The echoed command line, as the PTY shows it before the output.
+    const ECHO: &str = "if [ -e '/tmp/a' ]; then rm -- '/tmp/a' && echo 'DE_OK: Deleted /tmp/a'; \
+                        else echo 'DE_ERROR: file not found: /tmp/a'; fi; echo '__DE_DONE__'";
+
+    #[test]
+    fn a_success_line_is_ok() {
+        let snap = format!("{ECHO}\nDE_OK: Deleted /tmp/a\n__DE_DONE__\n");
+        assert_eq!(
+            remote_write_outcome(&snap),
+            Some(Ok("DE_OK: Deleted /tmp/a".to_string()))
+        );
+    }
+
+    #[test]
+    fn an_error_whose_path_contains_the_ok_sentinel_is_an_error() {
+        let snap = format!("{ECHO}\nDE_ERROR: file not found: /tmp/DE_OK:x\n__DE_DONE__\n");
+        assert_eq!(
+            remote_write_outcome(&snap),
+            Some(Err("DE_ERROR: file not found: /tmp/DE_OK:x".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_echoed_command_alone_is_no_outcome() {
+        assert_eq!(remote_write_outcome(&format!("{ECHO}\n")), None);
+    }
+
+    #[test]
+    fn a_result_without_the_done_marker_is_no_outcome() {
+        let snap = format!("{ECHO}\nDE_OK: Deleted /tmp/a\n");
+        assert_eq!(remote_write_outcome(&snap), None);
+    }
 }
