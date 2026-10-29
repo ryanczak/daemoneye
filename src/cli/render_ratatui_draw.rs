@@ -1,4 +1,4 @@
-//! `RatatuiRenderer's drawing and committing methods, for any backend:
+//! `RatatuiRenderer`'s drawing and committing methods, for any backend:
 //! `draw` and its panel variants, `commit` and `commit_panel`, and the repaint
 //! history they keep.
 
@@ -451,7 +451,7 @@ impl<B: Backend> RatatuiRenderer<B> {
 
         let w = self.terminal.size().map(|s| s.width as usize).unwrap_or(80);
         let inner = w.saturating_sub(2).max(2);
-        let title_len = title.chars().count();
+        let title_len = Span::raw(title).width();
         let fill = inner.saturating_sub(title_len + 4);
 
         let border_color = self.palette.red();
@@ -491,7 +491,7 @@ impl<B: Backend> RatatuiRenderer<B> {
         let bottom_line: Line<'static> = match bottom_label {
             Some(label) => {
                 let padded = format!(" {label} ");
-                let label_vis = padded.chars().count();
+                let label_vis = Span::raw(padded.as_str()).width();
                 let dashes = inner.saturating_sub(label_vis + 1);
                 Line::from(vec![
                     Span::styled(format!("╰{}", "─".repeat(dashes)), border_style),

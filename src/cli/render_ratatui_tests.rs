@@ -953,3 +953,18 @@ fn short_session_leaves_short_id_unchanged() {
     assert!(!short_session("short").contains('…'));
     assert!(!short_session("abcdef12").contains('…'));
 }
+
+/// A panel's border rows are as wide as the terminal even when the title
+/// or the bottom label holds double-width characters.
+#[test]
+fn commit_panel_borders_fill_by_display_width() {
+    let mut renderer = make_test_renderer();
+    renderer
+        .commit_panel_labeled("漢字 title", &["body".to_string()], false, Some("ラベル"))
+        .unwrap();
+    let rows: Vec<&Line<'static>> = renderer.history.iter().collect();
+    let top = rows[0];
+    let bottom = rows[rows.len() - 2];
+    assert_eq!(top.width(), 60, "top border: {top:?}");
+    assert_eq!(bottom.width(), 60, "bottom border: {bottom:?}");
+}

@@ -1,6 +1,6 @@
 # Phase 06 — Panel borders fill by display width
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #57 and #60 (#58 is rejected below; #55
@@ -125,3 +125,28 @@ outputs.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-29 12:02 (progress)
+
+Started phase 06 (executor). Plan: append the display-width border test to
+`src/cli/render_ratatui_tests.rs` and capture it failing red with
+`left: 62` / `right: 60`, then switch the two fill computations in
+`commit_panel_labeled` to `Span::width()` and the module doc's first line
+to the fixed `` `RatatuiRenderer`'s ``, then findings, E2E capture and a
+`fix:` commit.
+
+### Update — 2026-10-29 12:07 (progress)
+
+Task 1: the new test ran red as specified —
+`assertion \`left == right\` failed: top border: Line::from_iter([Span::from("╭─ ")…, Span::from("漢字 title")…, Span::from(" ───…──╮")…])`
+with `left: 62` / `right: 60` at `src/cli/render_ratatui_tests.rs:968`.
+Tasks 2–3: swapped both counts to `Span::width()`
+(`Span::raw(title).width()`, `Span::raw(padded.as_str()).width()`) and
+restored the module doc's closing backtick; the test now passes, and
+`grep -c 'chars().count()'` on `render_ratatui_draw.rs` is 0. Findings
+follow in their own entry.
+
+### Findings — 2026-10-29
+
+none
+
