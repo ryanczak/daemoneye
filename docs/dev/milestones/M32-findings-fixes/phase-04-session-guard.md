@@ -1,6 +1,6 @@
 # Phase 04 — Save and load refuse an unknown session
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #11 and #12 (#13 is rejected below; #20
@@ -379,3 +379,28 @@ kill: (-3421152): No such process
 **Commit:** 3613699e2054308f1579b6f610b9115b8b7e02f0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (49 turns)
+- **Scope deviations:** none.
+  - The production diff is the helper and one guard at the top of each
+    handler, exactly as specified.
+  - The helper has no doc comment and sits above the section header.
+    That is a nit, not worth a re-run.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2596 passed / 0 failed.
+  - `bug_tracker` passes, with 6 tests.
+  - `guards=2`, and one Findings heading.
+  - The only `unwrap`s and the `unsafe` `set_var` are inside the
+    dictated test module.
+- **Tests:** the step-1 red run is pasted. Save failed with
+  `SessionSaved`, and load failed with `SessionLoaded` and its "Session
+  Resumed" banner. Green follows. Accepted.
+- **Findings:** `none`. In the M31 ledger, #11 and #12 now read
+  `act: M32 phase-04`, and #13 reads `reject`.
+- **Calibration:** with a dictated test seam the run finished first try
+  in 49 turns, the same shape as phase 03's re-dispatch (52).
+
