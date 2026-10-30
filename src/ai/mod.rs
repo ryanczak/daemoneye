@@ -633,7 +633,19 @@ mod stream_idle_tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             if let Ok((mut sock, _)) = listener.accept().await {
-                use tokio::io::AsyncWriteExt;
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                // Read the whole request before answering. A response that
+                // arrives before the request is written is an
+                // `UnexpectedMessage` to hyper, and under tokio 1.54's
+                // scheduling that race fired on every run.
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match sock.read(&mut chunk).await {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => request.extend_from_slice(&chunk[..n]),
+                    }
+                }
                 let _ = sock
                     .write_all(
                         b"HTTP/1.1 200 OK\r\n\

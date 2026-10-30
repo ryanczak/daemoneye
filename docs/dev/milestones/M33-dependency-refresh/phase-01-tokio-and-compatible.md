@@ -1,6 +1,6 @@
 # Phase 01 — Tokio and compatible updates
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-30
 **Depends on:** M32 (v2.5.0)
@@ -146,3 +146,82 @@ failure, paste that output, run the block once more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 23:13 (started)
+
+Executor rexy (claude-opus-4-6). Status flipped `todo → in-progress` here and in
+the milestone README's phase table. Next: run the phase script once, as the first
+command after this entry, then log its output.
+
+### Update — 2026-10-30 23:13 (cuts done)
+
+Script + `cargo update` + `cargo fmt --all` ran as one command, exit 0. The
+script printed its four anchor lines; full command output captured verbatim
+in `.rexymcp/output/cmd-output-0.log` (the run's own log file — that path
+does not survive the run, so the two excerpts below are copied from it, in
+order, without paraphrase):
+
+```
+Cargo.toml requires the latest of every compatible dependency
+AsyncStdin owns a File registered with AsyncFd::register
+the stream-idle fake server reads the request before it answers
+read_byte_waits_out_a_drained_pipe pins the WouldBlock arm
+```
+
+`cargo update` then printed `Locking 137 packages to latest Rust 1.97.1
+compatible versions` and moved the crates this phase targets, among them:
+
+```
+    Updating clap v4.6.4 -> v4.6.7
+    Updating reqwest v0.13.4 -> v0.13.5
+    Updating serde_json v1.0.151 -> v1.0.154
+    Updating similar v3.1.1 -> v3.2.1
+    Updating tokio v1.53.1 -> v1.54.1
+    Updating toml v1.1.4+spec-1.1.0 -> v1.1.8+spec-1.1.0
+    Updating uuid v1.24.0 -> v1.29.0
+```
+
+and ended with `note: pass `--verbose` to see 4 unchanged dependencies behind
+latest`. `cargo fmt --all` printed nothing. `git diff --stat` after the run:
+`Cargo.lock 709`, `Cargo.toml 50`, `src/ai/mod.rs 14`, `src/cli/input/tty.rs
+112`, plus this doc and the milestone README (my two status edits).
+
+### Findings — 2026-10-30
+
+`git diff --stat`: `Cargo.lock | 709 ++-`, `Cargo.toml | 50 +-`, `src/ai/mod.rs
+| 14 +-`, `src/cli/input/tty.rs | 112 ++--`, `README.md | 2 +-`,
+`phase-01-tokio-and-compatible.md | 8 +-`; 6 files changed, 492 insertions(+),
+403 deletions(-). Beyond that, none.
+
+### Update — 2026-10-30 23:18 (end-to-end verification)
+
+Ran the phase doc's `bash <<'E2E'` block verbatim, unmodified, once. Its
+complete output:
+
+````
+asyncfd_new=0 register=1 libc_io=0 drained_test=1 reads_request=1 tokio_lock=1.54.1 dev_dups=0
+├── clap v4.6.7
+├── reqwest v0.13.5
+├── serde_json v1.0.154
+├── similar v3.2.1
+├── tokio v1.54.1
+├── toml v1.1.8+spec-1.1.0
+├── uuid v1.29.0
+└── tokio v1.54.1 (*)
+allowlist=unchanged
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 30.86s
+fmt_exit=0
+passed=2616 failed=0
+````
+
+Every line matches the expected shape: the criterion line exactly
+(`asyncfd_new=0 register=1 libc_io=0 drained_test=1 reads_request=1
+tokio_lock=1.54.1 dev_dups=0`), the dependency tree at clap 4.6.7, reqwest
+0.13.5, serde_json 1.0.154, similar 3.2.1, tokio 1.54.1 twice, toml 1.1.8,
+uuid 1.29.0; `allowlist=unchanged`; `build_warnings=0`; hygiene and doc_truth
+both `ok. 16 passed`; clippy's tail `Finished` with no diagnostics;
+`fmt_exit=0`; `passed=2616 failed=0`. The suite did not stop early, so there
+is no second paste.
