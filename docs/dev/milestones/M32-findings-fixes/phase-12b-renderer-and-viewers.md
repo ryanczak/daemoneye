@@ -1,6 +1,6 @@
 # Phase 12b — Renderer and viewers
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-12
@@ -180,3 +180,150 @@ All six acceptance criteria read off that output: `status_bars=1
 alert_shells=0 alt_entries=0 order_test=1`; `passed=2610 failed=0`;
 hygiene `ok. 16 passed` with `allowlist=unchanged`; bug tracker
 `ok. 6 passed`; clippy clean; `fmt_exit=0`.
+
+### Update — 2026-10-30 17:01 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 12b executed entirely through the authorized script. Task 1 ran first, before any file read: `python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-12b-renderer-and-viewers.py && cargo fmt --all` exited 0, printing its three lines (ending `render_tail_keeps_the_log_status_line_while_a_note_is_set added`), and touched exactly the six source files the spec names. The started entry, the `git diff --stat` findings entry, and the end-to-end entry are all in the phase doc's Update Log; the end-to-end entry quotes the block's output verbatim, including the `Finished \`dev\` profile` line clippy prints. Committed as `refactor:` (7e3d8d22) plus the start-of-phase README status flip (c5e6f1da); working tree clean. Status left at `in-progress` in both the phase doc and the README row — no `(complete)` entry written, per the contract.
+
+**Notes for review**
+
+- End-to-end block output, unedited: `status_bars=1 alert_shells=0 alt_entries=0 order_test=1`, `allowlist=unchanged`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy `Finished dev profile` (clean, `-D warnings`), `fmt_exit=0`, `passed=2610 failed=0` — matching every expected value, including the exact suite count 2610 (2609 + the one new test, none removed).
+- Acceptance criterion 4 verified mechanically: `grep -c '^### Findings — '` on the phase doc prints `1`, and the findings entry reports `git diff --stat` honestly (doc + six source files, 128 insertions / 146 deletions at that point; final commit is 157 insertions after the doc entries accumulated).
+- No deviations from the spec: the script owned all source edits, nothing was hand-edited, the script was not opened or modified, and #28 remains rejected as the doc directs. `run_transcript_viewer` and `daemoneye top` were left untouched per the out-of-scope list.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.4.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+ok
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (667912): No such process
+kill: (-668637): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-084f36955f09af75)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-12b-renderer-and-viewers.md` — +42 -1
+- `src/cli/attach.rs` — +2 -14
+- `src/cli/render_ratatui.rs` — +42 -42
+- `src/cli/render_ratatui_draw.rs` — +5 -61
+- `src/cli/tail.rs` — +26 -0
+- `src/cli/tail_view.rs` — +4 -28
+- `src/cli/viewer.rs` — +36 -0
+
+**Commit:** c5e6f1dad2a638b6482b86dbc29be33c50ea5b32
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
