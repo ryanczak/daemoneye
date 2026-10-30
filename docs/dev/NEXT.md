@@ -9,8 +9,9 @@ this one; MCP surface is now M33, Knowledge M34.
 
 **Active phase:** [phase-14-small-tidies](milestones/M32-findings-fixes/phase-14-small-tidies.md)
 (`todo`) — drafted 2026-10-30; dispatch with `/rexymcp:dispatch 14`. Phases
-01–13 are done; 04b was dropped (#20 rejected). Phase 14 is the last in the
-table; M32 FINDINGS #16 (the events FTS search) waits on a PE decision.
+01–13 are done; 04b was dropped (#20 rejected). Phase 15 follows it:
+the PE decided 2026-10-30 to fix M32 FINDINGS #16 (the events FTS search)
+in this milestone; it is drafted once phase 14 is done.
 
 M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). The function milestone, M33 (MCP surface) and M34
