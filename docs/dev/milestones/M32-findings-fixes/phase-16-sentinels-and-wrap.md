@@ -1,6 +1,6 @@
 # Phase 16 — Sentinels and wrap
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-15
@@ -300,3 +300,11 @@ kill: (-1113645): No such process
 **Commit:** c52211b3d26004cc9707e82f97ce36a98085ced9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the drafting dry run.
+- **Calibration:** 25 turns, the eighth script-as-repo-file phase in a row to land first try. Gates rerun at review: fmt, build and clippy clean, `passed=2615 failed=0`. The red run was done at drafting. Minor bookkeeping slip: the executor's `(started)` and `(cuts done)` entries have no blank line between them, nor before `### Findings`.
