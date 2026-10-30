@@ -76,15 +76,14 @@ pub(super) fn apply_extraction(json: &str, _session_id: &str, _epoch_seq: u32) -
             chrono::Utc::now().to_rfc3339(),
             fact.content.trim(),
         );
-        if crate::memory::add_memory(
+        match crate::memory::add_memory(
             &fact.name,
             &body,
             crate::memory::MemoryCategory::Knowledge,
             "global",
-        )
-        .is_ok()
-        {
-            count += 1;
+        ) {
+            Ok(_) => count += 1,
+            Err(e) => log::warn!("epoch extraction: memory '{}' not saved: {e}", fact.name),
         }
     }
     count

@@ -153,13 +153,14 @@ where
                     start,
                     handle,
                     move |id: crate::shell::ShellId| async move {
-                        let _ = crate::daemon::executor::knowledge::close_shell_with(
+                        let closed = crate::daemon::executor::knowledge::close_shell_with(
                             crate::shell::registry(),
                             id.as_str(),
                             &close_owner,
                             std::time::Duration::from_secs(5),
                         )
                         .await;
+                        log::debug!("background shell {id} close: {closed}");
                     },
                 ));
             } else {

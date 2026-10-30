@@ -483,8 +483,8 @@ where
     // and animate an elapsed timer.  Approval-gated and panel tools are excluded
     // because they have their own richer UI (ToolCallPrompt, EditFilePrompt, …).
     let emit_feedback = call.should_emit_tool_feedback();
-    if emit_feedback {
-        let _ = send_response_split(
+    if emit_feedback
+        && let Err(e) = send_response_split(
             tx,
             Response::ToolStarted {
                 id: call.id().to_string(),
@@ -492,7 +492,9 @@ where
                 summary: call.summary(),
             },
         )
-        .await;
+        .await
+    {
+        log::debug!("ToolStarted frame not sent: {e}");
     }
     let tool_start = Instant::now();
 
@@ -500,7 +502,7 @@ where
 
     if emit_feedback {
         let (ok, detail) = tool_outcome_detail(&outcome);
-        let _ = send_response_split(
+        if let Err(e) = send_response_split(
             tx,
             Response::ToolFinished {
                 id: call.id().to_string(),
@@ -509,7 +511,10 @@ where
                 detail,
             },
         )
-        .await;
+        .await
+        {
+            log::debug!("ToolFinished frame not sent: {e}");
+        }
     }
 
     Ok(outcome)

@@ -3,6 +3,7 @@
 //! `ensure_connected`) and `run_sudo_command`.
 
 use super::*;
+use crate::util::UnpoisonExt;
 
 /// Prompt round-trip bookkeeping for one sudo run: how many credentials have
 /// been sent. sudo re-prompts with the same sentinel on a wrong password, so
@@ -298,7 +299,7 @@ where
             let host_name = host_name.clone();
             async move {
                 let attempts_used = {
-                    let s = state.lock().expect("sudo attempt state");
+                    let s = state.lock().unwrap_or_log();
                     s.attempts
                 };
                 match classify_prompt(&out, &sentinel) {
@@ -315,7 +316,7 @@ where
                             .await
                         };
                         if matches!(answer, PromptReply::Send(_)) {
-                            state.lock().expect("sudo attempt state").attempts += 1;
+                            state.lock().unwrap_or_log().attempts += 1;
                         }
                         answer
                     }

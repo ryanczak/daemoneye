@@ -1,6 +1,6 @@
 # Phase 09 — No silent drops; a gate holds the lock invariant
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Findings:** M31 `FINDINGS.md` #18, #61 and #77
@@ -346,3 +346,31 @@ paste both outputs.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 01:38 (started)
+
+Started phase 09. Plan: write `tests/lock_invariant.rs` first and run it red
+against the two `shell_exec_auth.rs` sites, apply the four-file diff, re-run
+the gate green, then the greps, findings, and the E2E block.
+
+### Update — 2026-10-30 01:52 (progress)
+
+Wrote `tests/lock_invariant.rs` verbatim from the spec and ran it red:
+`the_gate_sees_both_forms_and_ignores_comments` passed and
+`production_lock_sites_never_unwrap_or_expect` failed naming
+`src/daemon/executor/shell_exec_auth.rs:301` and `…:318`. Applied the
+four-file diff as written; the only addition the verifier forced was the
+`use crate::util::UnpoisonExt;` line in `shell_exec_auth.rs`, which the
+spec's diff also carries but which my first pass at that file dropped —
+`shell_exec_auth.rs` sees only `super::*`, and `executor/mod.rs` does not
+re-export the trait. The gate then passed 2/2, and the greps read
+`silent_sends=1 silent_close=0 extract_warn=1`. fmt and build clean.
+
+### Findings — 2026-10-30
+
+- `executor/mod.rs` · `execute_tool_call`'s two feedback blocks now
+  differ in shape: the started send folds `emit_feedback` into a let-chain
+  while the finished send keeps the `if emit_feedback { if let Err(e) = … }`
+  nest, because the finished arm also binds `tool_outcome_detail` first.
+  Noted only; both compile and clippy-clean as written.
+
