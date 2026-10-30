@@ -3,6 +3,30 @@
 
 use super::*;
 
+/// The status bar each prompt in a turn draws over: the session's model,
+/// approval hint, token count and cost. The daemon is shown as down and no
+/// session id is named while a prompt holds the live region.
+fn prompt_status<'a>(
+    hint: &'a str,
+    model: &'a str,
+    prompt_tokens: u32,
+    context_window: u32,
+    cost_usd: f64,
+    has_untracked: bool,
+) -> crate::cli::render::StatusBarState<'a> {
+    crate::cli::render::StatusBarState {
+        session_id: "",
+        approval_hint: hint,
+        model,
+        prompt_tokens,
+        context_window,
+        daemon_up: false,
+        tools_total: 0,
+        cost_usd,
+        has_untracked,
+    }
+}
+
 /// Stream the AI response through the ratatui renderer.
 ///
 /// Before the first token, animates a spinner in the inline viewport.
@@ -326,17 +350,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 classification,
                 interactive,
             } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let (approved, user_message) = prompt_tool_call_ratatui(
                     renderer,
                     stdin,
@@ -360,47 +382,41 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 .await?;
             }
             Response::CredentialPrompt { id, prompt } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let credential = prompt_credential_ratatui(renderer, stdin, &sb, &prompt).await;
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
             }
             Response::PaneSelectPrompt { id, panes } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let pane_id = prompt_pane_select_ratatui(renderer, stdin, &sb, &panes).await;
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
             }
             Response::ScriptDeletePrompt { id, script_name } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let approved = prompt_yes_no_ratatui(
                     renderer,
                     stdin,
@@ -417,17 +433,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 content,
                 existing_content,
             } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
@@ -452,17 +466,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 kind,
                 action,
             } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let approved =
                     prompt_schedule_write_ratatui(renderer, stdin, &sb, &name, &kind, &action)
                         .await;
@@ -474,17 +486,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 content,
                 existing_content,
             } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
@@ -516,17 +526,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                         active_jobs.join(", ")
                     )
                 };
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let approved = prompt_yes_no_ratatui(
                     renderer,
                     stdin,
@@ -546,17 +554,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 dest_path,
                 sudo,
             } => {
-                let sb = crate::cli::render::StatusBarState {
-                    session_id: "",
-                    approval_hint: &approval.hint(),
-                    model: ctx.model,
-                    prompt_tokens: *prompt_tokens,
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    &hint,
+                    ctx.model,
+                    *prompt_tokens,
                     context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: *session_cost,
-                    has_untracked: *session_has_untracked,
-                };
+                    *session_cost,
+                    *session_has_untracked,
+                );
                 let (approved, user_message) = prompt_edit_file_ratatui(
                     renderer,
                     stdin,

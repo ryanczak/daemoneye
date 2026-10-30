@@ -79,57 +79,10 @@ async fn read_approval_input(
     status: &crate::cli::render::StatusBarState<'_>,
     deadline: tokio::time::Instant,
 ) -> Option<String> {
-    use crate::cli::input::InputLine;
-
-    // Initial draw with empty input.
-    let mut line = InputLine::new();
-    let _ = renderer.draw_prompt(prompt_text, &line, status);
-
-    // Read the first byte to decide: single-key shortcut vs. full line edit.
-    let first = read_byte_by(deadline, stdin.read_byte()).await?;
-    let ch = first as char;
-    match ch.to_ascii_lowercase() {
-        'y' | 'n' | 'a' => {
-            // Show the key the user pressed in the input box, then return.
-            line.insert(ch);
-            let _ = renderer.draw_prompt(prompt_text, &line, status);
-            Some(ch.to_string())
-        }
-        '\r' | '\n' => {
-            // Empty input (Enter pressed immediately)
-            Some(String::new())
-        }
-        _ => {
-            // Start of a typed message — use the input editor.
-            line.insert(ch);
-            let _ = renderer.draw_prompt(prompt_text, &line, status);
-
-            loop {
-                let b = read_byte_by(deadline, stdin.read_byte()).await?;
-                match b {
-                    b'\r' | b'\n' => return Some(line.as_str()),
-                    b'\x7f' | b'\x08' => {
-                        line.backspace();
-                        let _ = renderer.draw_prompt(prompt_text, &line, status);
-                    }
-                    b'\x03' => {
-                        // Ctrl+C — cancel, return empty
-                        return Some(String::new());
-                    }
-                    b'\x1b' => {
-                        // Escape — cancel, return empty
-                        return Some(String::new());
-                    }
-                    b => {
-                        if b >= 0x20 {
-                            line.insert(b as char);
-                            let _ = renderer.draw_prompt(prompt_text, &line, status);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    read_approval_input_with(renderer, stdin, deadline, |r, line| {
+        let _ = r.draw_prompt(prompt_text, line, status);
+    })
+    .await
 }
 
 /// `read_approval_input`, panel edition: identical key semantics, but every
@@ -142,11 +95,31 @@ async fn read_approval_input_panel(
     status: &crate::cli::render::StatusBarState<'_>,
     deadline: tokio::time::Instant,
 ) -> Option<String> {
+    read_approval_input_with(renderer, stdin, deadline, |r, line| {
+        let _ = r.draw_approval_panel(title, session_label, line, status);
+    })
+    .await
+}
+
+/// The approval input state machine both prompt shapes share. `redraw`
+/// paints the current input; it runs once on entry and after every edit.
+/// `y`, `n` or `a` as the first key answers at once; Enter on an empty
+/// line, Ctrl+C and Escape answer with an empty string; anything else
+/// starts a typed message, ended by Enter. `None` when the deadline passes.
+async fn read_approval_input_with(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    deadline: tokio::time::Instant,
+    redraw: impl Fn(
+        &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+        &crate::cli::input::InputLine,
+    ),
+) -> Option<String> {
     use crate::cli::input::InputLine;
 
     // Initial draw with empty input.
     let mut line = InputLine::new();
-    let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+    redraw(renderer, &line);
 
     // Read the first byte to decide: single-key shortcut vs. full line edit.
     let first = read_byte_by(deadline, stdin.read_byte()).await?;
@@ -155,7 +128,7 @@ async fn read_approval_input_panel(
         'y' | 'n' | 'a' => {
             // Show the key the user pressed in the input box, then return.
             line.insert(ch);
-            let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+            redraw(renderer, &line);
             Some(ch.to_string())
         }
         '\r' | '\n' => {
@@ -165,7 +138,7 @@ async fn read_approval_input_panel(
         _ => {
             // Start of a typed message — use the input editor.
             line.insert(ch);
-            let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+            redraw(renderer, &line);
 
             loop {
                 let b = read_byte_by(deadline, stdin.read_byte()).await?;
@@ -173,7 +146,7 @@ async fn read_approval_input_panel(
                     b'\r' | b'\n' => return Some(line.as_str()),
                     b'\x7f' | b'\x08' => {
                         line.backspace();
-                        let _ = renderer.draw_approval_panel(title, session_label, &line, status);
+                        redraw(renderer, &line);
                     }
                     b'\x03' => {
                         // Ctrl+C — cancel, return empty
@@ -186,12 +159,30 @@ async fn read_approval_input_panel(
                     b => {
                         if b >= 0x20 {
                             line.insert(b as char);
-                            let _ =
-                                renderer.draw_approval_panel(title, session_label, &line, status);
+                            redraw(renderer, &line);
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// The tail of a declined approval: a redirect line when the user typed a
+/// message, a skip line otherwise. Returns the message, which goes back to
+/// the daemon with the denial.
+fn commit_declined(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    user_msg: Option<String>,
+) -> Option<String> {
+    match user_msg {
+        Some(msg) => {
+            let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
+            Some(msg)
+        }
+        None => {
+            let _ = renderer.commit("  ✗ skipped\n");
+            None
         }
     }
 }
@@ -291,12 +282,8 @@ pub(super) async fn prompt_tool_call_ratatui(
             let _ = renderer.commit("  ✓ approved\n");
         }
         Ok((true, None))
-    } else if let Some(msg) = user_msg {
-        let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
-        Ok((false, Some(msg)))
     } else {
-        let _ = renderer.commit("  ✗ skipped\n");
-        Ok((false, None))
+        Ok((false, commit_declined(renderer, user_msg)))
     }
 }
 
@@ -584,7 +571,6 @@ pub(super) async fn prompt_edit_file_ratatui(
     }
 
     let all_approved = approval.file_edits_all;
-    let _path_approved = approval.file_edits.contains(path);
 
     if edit_file_auto_approved(approval, path, sudo) {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
@@ -609,11 +595,7 @@ pub(super) async fn prompt_edit_file_ratatui(
             let _ = renderer.commit("  ✓ approved\n");
         }
         (true, None)
-    } else if let Some(msg) = user_msg {
-        let _ = renderer.commit("  ↩ redirecting agent with your message…\n");
-        (false, Some(msg))
     } else {
-        let _ = renderer.commit("  ✗ skipped\n");
-        (false, None)
+        (false, commit_declined(renderer, user_msg))
     }
 }

@@ -1,6 +1,6 @@
 # Phase 12 — Client prompts
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-11b
@@ -117,3 +117,31 @@ more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 08:36 (cuts done)
+
+Ran the phase script once, then `cargo fmt --all`:
+
+```
+one read_approval_input_with; _path_approved gone; commit_declined shared
+nine status literals use prompt_status
+```
+
+Both lines printed, no assert fired, exit 0.
+
+### Findings — 2026-10-30
+
+`git diff --stat`: 4 files, 159 insertions, 160 deletions — README and
+phase doc status flips plus the two files the script names.
+
+### Update — 2026-10-30 08:39 (end-to-end verification)
+
+```
+state_machines=1 dead=0 ladders=1 status_literals=3
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.07s
+fmt_exit=0
+passed=2609 failed=0
+```
