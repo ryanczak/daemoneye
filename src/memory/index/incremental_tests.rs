@@ -883,7 +883,10 @@ fn unknown_table_name_reconciles_nothing() {
     let mem_before: i64 = conn
         .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(mem_before, 1);
+    assert_eq!(
+        mem_before, 1,
+        "the seeded memory is indexed before the reconcile probe"
+    );
 
     // open_and_reconcile_if_empty with an unknown table name must not
     // trigger any reconcile — the memory must survive
@@ -954,5 +957,8 @@ fn category_filter_excludes_other_categories() {
         1,
         "category filter must return only the incident"
     );
-    assert_eq!(filtered[0].1, "zephyr-incident");
+    assert_eq!(
+        filtered[0].1, "zephyr-incident",
+        "the one hit is the incident memory"
+    );
 }

@@ -12,27 +12,12 @@ fn picker_window_keeps_the_selection_visible() {
 
 #[test]
 fn draw_picker_panel_shows_the_window_and_marks_the_selection() {
-    use crate::cli::palette::{ColorDepth, Palette};
-
-    let backend = TestBackend::new(60, 10);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: Palette::for_depth(ColorDepth::Xterm256),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        60,
+        10,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Xterm256,
+    );
     let status = StatusBarState {
         session_id: "abcdef12",
         approval_hint: "",
@@ -75,20 +60,34 @@ fn draw_picker_panel_shows_the_window_and_marks_the_selection() {
 }
 
 pub(super) fn make_test_renderer() -> RatatuiRenderer<TestBackend> {
-    let backend = TestBackend::new(60, 10);
+    test_renderer(
+        60,
+        10,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    )
+}
+
+/// A renderer over a `cols`×`rows` test backend with an inline viewport of
+/// `viewport` rows, drawing in `depth` colours. Every other field starts as
+/// a fresh renderer's does.
+pub(super) fn test_renderer(
+    cols: u16,
+    rows: u16,
+    viewport: u16,
+    depth: crate::cli::palette::ColorDepth,
+) -> RatatuiRenderer<TestBackend> {
     let terminal = Terminal::with_options(
-        backend,
+        TestBackend::new(cols, rows),
         ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
+            viewport: ratatui::Viewport::Inline(viewport),
         },
     )
     .unwrap();
     RatatuiRenderer {
         terminal,
         start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
+        palette: crate::cli::palette::Palette::for_depth(depth),
         origin_row: 0,
         inserted_rows: 0,
         rows_scrolled: 0,
@@ -109,17 +108,7 @@ fn live_region_shows_input_text_and_status_bar() {
     input.insert('l');
     input.insert('o');
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw(&input, &status).unwrap();
 
@@ -165,17 +154,7 @@ fn commit_renders_transcript_line_into_buffer() {
 
     // First draw the live region so the viewport has content.
     let input = InputLine::new();
-    let status = StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = approval_test_status();
     renderer.draw(&input, &status).unwrap();
 
     // Commit a line.
@@ -224,17 +203,7 @@ fn commit_styled_renders_into_buffer_without_escapes() {
 
     // First draw the live region so the viewport has content.
     let input = InputLine::new();
-    let status = StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = approval_test_status();
     renderer.draw(&input, &status).unwrap();
 
     // Commit styled lines.
@@ -316,17 +285,7 @@ fn streaming_tokens_appear_in_scrollback_without_escapes() {
 
     // Draw the live region first.
     let input = InputLine::new();
-    let status = StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = approval_test_status();
     renderer.draw(&input, &status).unwrap();
 
     // Simulate streaming tokens through the markdown renderer.
@@ -444,17 +403,7 @@ fn wrapped_multiline_input_renders_across_rows() {
     let mut input = InputLine::new();
     input.insert_str("the quick brown fox jumps over the lazy dog and continues");
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw(&input, &status).unwrap();
 
@@ -487,17 +436,7 @@ fn multiline_buffer_renders_with_cursor() {
     let mut input = InputLine::new();
     input.insert_str("line one\nline two");
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw(&input, &status).unwrap();
 
@@ -536,17 +475,7 @@ fn tall_body_scrolls_cursor_into_view() {
         input.insert_str(&format!("line {}", i));
     }
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw(&input, &status).unwrap();
 
@@ -571,17 +500,7 @@ fn commit_panel_uses_blood_red_border_and_yellow_title() {
 
     // Draw the live region first so the viewport is active.
     let input = InputLine::new();
-    let status = StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = approval_test_status();
     renderer.draw(&input, &status).unwrap();
 
     // Commit a panel with a known title.
@@ -644,40 +563,15 @@ fn commit_panel_uses_blood_red_border_and_yellow_title() {
 
 #[test]
 fn commit_panel_borders_follow_palette_depth() {
-    use crate::cli::palette::{ColorDepth, Palette};
-
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: Palette::for_depth(ColorDepth::Xterm256),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Xterm256,
+    );
 
     let input = InputLine::new();
-    let status = StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = approval_test_status();
     renderer.draw(&input, &status).unwrap();
 
     renderer
@@ -725,27 +619,12 @@ fn commit_panel_borders_follow_palette_depth() {
 
 #[test]
 fn commit_panel_wraps_long_body_lines() {
-    let backend = TestBackend::new(60, 10);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        60,
+        10,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let long_line = "x".repeat(100);
     renderer
@@ -791,27 +670,12 @@ fn commit_panel_wraps_long_body_lines() {
 
 #[test]
 fn commit_panel_bottom_label_right_justified() {
-    let backend = TestBackend::new(60, 10);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        60,
+        10,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let body = vec!["short line".to_string()];
     renderer
@@ -867,27 +731,12 @@ fn commit_panel_bottom_label_right_justified() {
 
 #[test]
 fn commit_panel_without_label_keeps_plain_rule() {
-    let backend = TestBackend::new(60, 10);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        60,
+        10,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let body = vec!["short".to_string()];
     renderer.commit_panel("Output", &body, false).unwrap();
@@ -967,4 +816,34 @@ fn commit_panel_borders_fill_by_display_width() {
     let bottom = rows[rows.len() - 2];
     assert_eq!(top.width(), 60, "top border: {top:?}");
     assert_eq!(bottom.width(), 60, "bottom border: {bottom:?}");
+}
+
+/// Helper: make a default StatusBarState for tests.
+pub(super) fn default_status() -> StatusBarState<'static> {
+    StatusBarState {
+        session_id: "abcdef12-3456",
+        approval_hint: "cmds: auto",
+        model: "test-model",
+        prompt_tokens: 0,
+        context_window: 200_000,
+        daemon_up: true,
+        tools_total: 0,
+        cost_usd: 0.0,
+        has_untracked: false,
+    }
+}
+
+/// Build the default test status bar state.
+pub(super) fn approval_test_status() -> StatusBarState<'static> {
+    StatusBarState {
+        session_id: "test-session",
+        approval_hint: "",
+        model: "test-model",
+        prompt_tokens: 0,
+        context_window: 200_000,
+        daemon_up: false,
+        tools_total: 0,
+        cost_usd: 0.0,
+        has_untracked: false,
+    }
 }

@@ -1,6 +1,6 @@
 # Phase 11b — Test tidies
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-11
@@ -128,3 +128,50 @@ failure, paste that output, run the block once more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 07:02 (started) — executor-claude
+
+Phase 11b start: status flipped to in-progress. Task 1 next: run
+`phase-11b-test-tidies.py` as the first command, before opening any source file.
+
+### Update — 2026-10-30 07:02 (cuts done) — executor-claude
+
+Ran, once, as the first command after the started entry (with `cargo fmt --all`
+after it, per the spec):
+
+```
+$ python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-11b-test-tidies.py && cargo fmt --all
+one test_renderer builder; 17 inline renderers and 15 status literals replaced
+two assert_eq! messages added
+```
+
+Exit 0, no assert fired. Per the spec I have not opened the script or any source
+file; task 3's `git diff --stat` is next.
+
+### Findings — 2026-10-30 — executor-claude
+
+`git diff --stat`: the script's three files changed as specified —
+`src/cli/render_ratatui_layout_tests.rs` (392), `src/cli/render_ratatui_tests.rs`
+(299), `src/memory/index/incremental_tests.rs` (10) — 160 insertions, 565
+deletions overall, the remainder being this phase doc and the milestone README's
+status flip.
+
+### Update — 2026-10-30 07:02 (end-to-end verification) — executor-claude
+
+Ran the spec's End-to-end block once, verbatim, and pasted its output below
+unmodified:
+
+````
+renderer_literals=1 status_literals=3 builder=1 messages=2
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.18s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.93s
+fmt_exit=0
+passed=2609 failed=0
+````
+
+Matches the spec's expected line-for-line: `renderer_literals=1
+status_literals=3 builder=1 messages=2`, hygiene `ok. 16 passed`, bug tracker
+`ok. 6 passed`, clippy clean, `fmt_exit=0`, and the suite at exactly
+`passed=2609 failed=0`.
+

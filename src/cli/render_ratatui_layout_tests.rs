@@ -1,4 +1,4 @@
-use super::tests::make_test_renderer;
+use super::tests::{approval_test_status, default_status, make_test_renderer, test_renderer};
 use super::*;
 use ratatui::backend::TestBackend;
 
@@ -32,17 +32,7 @@ fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
 fn spinner_renders_above_input_box_not_inside_it() {
     let mut renderer = make_test_renderer();
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw_spinner("(◉)", "scrying", 3, &status).unwrap();
 
@@ -85,17 +75,7 @@ fn spinner_renders_above_input_box_not_inside_it() {
 fn spinner_glyph_renders_at_column_zero() {
     let mut renderer = make_test_renderer();
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw_spinner("(◉)", "scrying", 3, &status).unwrap();
 
@@ -117,17 +97,7 @@ fn spinner_glyph_renders_at_column_zero() {
 fn input_box_row_is_stable_across_draw_modes() {
     let mut renderer = make_test_renderer();
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     let mut input = InputLine::new();
     input.insert('H');
@@ -169,17 +139,7 @@ fn spinner_row_is_blank_when_idle() {
     input.insert('l');
     input.insert('o');
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     renderer.draw(&input, &status).unwrap();
 
@@ -198,39 +158,9 @@ fn spinner_row_is_blank_when_idle() {
 #[test]
 fn short_region_collapses_spinner_row() {
     // Build a renderer with a viewport shorter than MIN_HEIGHT_FOR_SPINNER_ROW.
-    let backend = TestBackend::new(60, 10);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(4),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(60, 10, 4, crate::cli::palette::ColorDepth::Truecolor);
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     let input = InputLine::new();
 
@@ -258,39 +188,9 @@ fn short_region_collapses_spinner_row() {
 #[test]
 fn prompt_region_at_height_four_does_not_lose_prompt() {
     // Build a renderer with a viewport shorter than MIN_HEIGHT_FOR_SPINNER_ROW.
-    let backend = TestBackend::new(60, 10);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(4),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(60, 10, 4, crate::cli::palette::ColorDepth::Truecolor);
 
-    let status = StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
 
     let input = InputLine::new();
 
@@ -308,21 +208,6 @@ fn prompt_region_at_height_four_does_not_lose_prompt() {
         "prompt region at height 4 must render the prompt text, got: {}",
         all_text
     );
-}
-
-/// Helper: make a default StatusBarState for tests.
-fn default_status() -> StatusBarState<'static> {
-    StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    }
 }
 
 /// Cursor sits one cell right of the last glyph on a short (non-wrapped)
@@ -585,27 +470,7 @@ fn repin_rows_content_past_park_clamps() {
 
 #[test]
 fn commit_methods_count_inserted_rows() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(6),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(80, 24, 6, crate::cli::palette::ColorDepth::Truecolor);
 
     // commit("a\nb\nc") → 3 lines
     renderer.commit("a\nb\nc").unwrap();
@@ -623,21 +488,6 @@ fn commit_methods_count_inserted_rows() {
         .commit_styled(&[Line::from("line1"), Line::from("line2")])
         .unwrap();
     assert_eq!(renderer.inserted_rows, 9);
-}
-
-/// Build the default test status bar state.
-fn approval_test_status() -> StatusBarState<'static> {
-    StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        prompt_tokens: 0,
-        context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    }
 }
 
 /// Draw the approval panel on a fresh 80-col test renderer.
@@ -668,27 +518,12 @@ fn buffer_rows(renderer: &RatatuiRenderer<TestBackend>) -> Vec<String> {
 
 #[test]
 fn approval_panel_options_multicolor() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let input = InputLine::new();
     draw_approval_panel_test(&mut renderer, "session", &input);
@@ -755,27 +590,12 @@ fn approval_panel_options_multicolor() {
 
 #[test]
 fn approval_panel_sudo_session_label() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let input = InputLine::new();
     draw_approval_panel_test(&mut renderer, "sudo session", &input);
@@ -791,27 +611,12 @@ fn approval_panel_sudo_session_label() {
 
 #[test]
 fn approval_panel_has_no_command_row() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let input = InputLine::new();
     draw_approval_panel_test(&mut renderer, "session", &input);
@@ -825,27 +630,12 @@ fn approval_panel_has_no_command_row() {
 
 #[test]
 fn approval_panel_shows_typed_input() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(VIEWPORT_ROWS),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
 
     let mut input = InputLine::new();
     input.insert_str("why");
@@ -865,27 +655,7 @@ fn approval_panel_shows_typed_input() {
 
 #[test]
 fn approval_panel_short_region_falls_back() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(3),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(80, 24, 3, crate::cli::palette::ColorDepth::Truecolor);
 
     let input = InputLine::new();
     // Must not panic — falls back to the plain prompt shape.
@@ -912,27 +682,7 @@ fn draw_credential_panel_test(
 
 #[test]
 fn credential_panel_title_and_hint() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(6),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(80, 24, 6, crate::cli::palette::ColorDepth::Truecolor);
 
     let input = InputLine::new();
     draw_credential_panel_test(
@@ -978,27 +728,7 @@ fn credential_panel_title_and_hint() {
 
 #[test]
 fn credential_panel_shows_bullets() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(6),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(80, 24, 6, crate::cli::palette::ColorDepth::Truecolor);
 
     let mut input = InputLine::new();
     input.insert('•');
@@ -1025,27 +755,7 @@ fn credential_panel_shows_bullets() {
 
 #[test]
 fn credential_panel_truncates_long_detail() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(6),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(80, 24, 6, crate::cli::palette::ColorDepth::Truecolor);
 
     let input = InputLine::new();
     let long_detail = format!("[sudo] password required {}", "x".repeat(300));
@@ -1065,27 +775,7 @@ fn credential_panel_truncates_long_detail() {
 
 #[test]
 fn credential_panel_short_region_falls_back() {
-    let backend = TestBackend::new(80, 24);
-    let terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Inline(3),
-        },
-    )
-    .unwrap();
-    let mut renderer = RatatuiRenderer {
-        terminal,
-        start_time: std::time::Instant::now(),
-        palette: crate::cli::palette::Palette::for_depth(
-            crate::cli::palette::ColorDepth::Truecolor,
-        ),
-        origin_row: 0,
-        inserted_rows: 0,
-        rows_scrolled: 0,
-        history: std::collections::VecDeque::new(),
-        last_width: 0,
-        last_height: 0,
-    };
+    let mut renderer = test_renderer(80, 24, 3, crate::cli::palette::ColorDepth::Truecolor);
 
     let input = InputLine::new();
     // Must not panic — falls back to the plain prompt shape.
