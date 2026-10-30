@@ -1,6 +1,6 @@
 # Phase 08 — `edit_file` logs a failed connect; one host lookup per foreground call
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #80 and #82 (#75, #78 and #79 are
@@ -252,3 +252,38 @@ it once more and paste both outputs.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 00:45 (progress)
+
+Started and applied the full spec diff: `log_connect_failure` and its test
+landed in `dispatch_files.rs` (the `read_file` arm now calls the helper,
+logging unchanged); the `EditFile` arm calls it as the first statement of its
+connect-failure branch; `run_approved` no longer destructures `cmd_id` and no
+longer runs `host_entry_or_bare` — the comment above the old lookup shrank to
+the two lines the diff pins, `cmd_id,` became a trailing `..`, and
+`run_on_named_host` is untouched. `dispatch` in `dispatch_foreground.rs` was
+not edited. Findings from the two edited functions are in the M32 ledger as
+`### Findings — 2026-10-30` (#13, #14). All five greps print the expected
+values (`helper_calls=2 lookups=1 refuse=1`, `#[allow` 0/0), the helper test
+passes, fmt/build/clippy are clean, and the full suite reads
+`passed=2605 failed=0`.
+
+### Update — 2026-10-30 00:47 (end-to-end verification)
+
+Ran the phase doc's E2E block verbatim, redirected to
+`/tmp/phase08-e2e.txt`; the file's contents follow, unedited.
+
+```
+helper_calls=2 lookups=1 refuse=1
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2527 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+passed=2605 failed=0
+```
+
+Matches the expected values exactly: `helper_calls=2 lookups=1 refuse=1`,
+the helper test green, hygiene `16 passed`, bug tracker `6 passed`, clippy
+clean, and the full suite `passed=2605 failed=0` (2604 + 1). No flake
+appeared in this run; neither named known flake failed.
+
