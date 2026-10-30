@@ -180,26 +180,24 @@ where
                         )));
                     }
                 };
-                for line in text.lines().rev() {
-                    if line.contains("DE_OK:") {
+                match super::remote_write_outcome(&text) {
+                    Some(Ok(_)) => {
                         crate::daemon::stats::finish_command(cmd_id, 0);
                         crate::daemon::utils::log_event(
                             "file_edit",
                             serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name, "sudo": true }),
                         );
                         return Ok(ToolCallOutcome::Result(format!(
-                            "Edited {} on host {}.",
-                            path, name
+                            "Edited {path} on host {name}."
                         )));
                     }
-                    if line.contains("DE_ERROR:") {
+                    Some(Err(line)) => {
                         crate::daemon::stats::finish_command(cmd_id, 1);
                         return Ok(ToolCallOutcome::Result(format!(
-                            "Error editing {}: {}",
-                            path,
-                            line.trim()
+                            "Error editing {path}: {line}"
                         )));
                     }
+                    None => {}
                 }
                 // No sentinel line at all: the password was refused or the
                 // privilege tool never ran the payload. Loud, never "unclear".
@@ -229,26 +227,24 @@ where
                     return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
                 }
             };
-            for line in snap.lines().rev() {
-                if line.contains("DE_OK:") {
+            match super::remote_write_outcome(&snap) {
+                Some(Ok(_)) => {
                     crate::daemon::stats::finish_command(cmd_id, 0);
                     crate::daemon::utils::log_event(
                         "file_edit",
                         serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name }),
                     );
                     return Ok(ToolCallOutcome::Result(format!(
-                        "Edited {} on host {}.",
-                        path, name
+                        "Edited {path} on host {name}."
                     )));
                 }
-                if line.contains("DE_ERROR:") {
+                Some(Err(line)) => {
                     crate::daemon::stats::finish_command(cmd_id, 1);
                     return Ok(ToolCallOutcome::Result(format!(
-                        "Error editing {}: {}",
-                        path,
-                        line.trim()
+                        "Error editing {path}: {line}"
                     )));
                 }
+                None => {}
             }
             crate::daemon::stats::finish_command(cmd_id, 1);
             return Ok(ToolCallOutcome::Result(format!(
@@ -502,26 +498,24 @@ where
                     return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
                 }
             };
-            for line in snap.lines().rev() {
-                if line.contains("DE_OK:") {
+            match super::remote_write_outcome(&snap) {
+                Some(Ok(_)) => {
                     crate::daemon::stats::finish_command(cmd_id, 0);
                     crate::daemon::utils::log_event(
                         "file_create",
                         serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name }),
                     );
                     return Ok(ToolCallOutcome::Result(format!(
-                        "Created {} on host {}.",
-                        path, name
+                        "Created {path} on host {name}."
                     )));
                 }
-                if line.contains("DE_ERROR:") {
+                Some(Err(line)) => {
                     crate::daemon::stats::finish_command(cmd_id, 1);
                     return Ok(ToolCallOutcome::Result(format!(
-                        "Error creating {}: {}",
-                        path,
-                        line.trim()
+                        "Error creating {path}: {line}"
                     )));
                 }
+                None => {}
             }
             crate::daemon::stats::finish_command(cmd_id, 1);
             return Ok(ToolCallOutcome::Result(format!(
@@ -1415,6 +1409,71 @@ mod tests {
             1,
             "the edit is gated by exactly one EditFilePrompt"
         );
+    }
+
+    /// M32 #10: a create that fails on a path holding `DE_OK:` reports the
+    /// failure. The python branch prints `DE_ERROR: file already exists:
+    /// <path>`, and a bare `contains("DE_OK:")` scan read that as success.
+    #[tokio::test]
+    async fn a_failed_create_on_a_sentinel_path_is_an_error() {
+        let (_home, dir) = remote_write_test_home();
+        let probe = dir.path().join("DE_OK:exists.txt");
+        std::fs::write(&probe, "already here").unwrap();
+        let (mut tx, mut rx, _prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_create_with_spawn(
+            "t10a",
+            probe.to_str().unwrap(),
+            Some("new content\n"),
+            &crate::host::HostId::Named("web01".to_string()),
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_create must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.starts_with("Error creating") && s.contains("file already exists"),
+            "the failed create is reported as a failure: {s:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&probe).unwrap(), "already here");
+    }
+
+    /// M32 #10: an edit that fails on a path holding `DE_OK:` reports the
+    /// failure, not `Edited`.
+    #[tokio::test]
+    async fn a_failed_edit_on_a_sentinel_path_is_an_error() {
+        let (_home, dir) = remote_write_test_home();
+        let probe = dir.path().join("DE_OK:probe.txt");
+        std::fs::write(&probe, "nothing to match").unwrap();
+        let (mut tx, mut rx, _prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t10b",
+                path: probe.to_str().unwrap(),
+                old_string: "an absent string",
+                new_string: "replacement",
+                host: &crate::host::HostId::Named("web01".to_string()),
+                sudo: false,
+            },
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_edit must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.starts_with("Error editing") && s.contains("old_string not found"),
+            "the failed edit is reported as a failure: {s:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&probe).unwrap(), "nothing to match");
     }
 
     /// Test 7, the § Current state 3 negative: a remote write's success

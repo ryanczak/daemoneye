@@ -187,7 +187,8 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
             *has_content = false;
         };
 
-        let mut space_remaining: usize = width.saturating_sub(leading_len);
+        // `leading_len` is bytes, for `split_at`; the row budget is chars.
+        let mut space_remaining: usize = width.saturating_sub(leading.chars().count());
 
         for tok in body.split(' ') {
             if tok.is_empty() {

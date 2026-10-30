@@ -1,6 +1,6 @@
 # Phase 16 — Sentinels and wrap
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-15
@@ -136,3 +136,30 @@ output, run the block once more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 21:09 (started)
+
+**Started by:** executor (phase 16 run)
+### Update — 2026-10-30 21:09 (cuts done)
+
+`python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-16-sentinels-and-wrap.py && cargo fmt --all`:
+
+```
+the remote edit, sudo edit and create read remote_write_outcome
+two tests pin a failure on a sentinel path
+wrap_words counts leading whitespace in chars
+```
+### Findings — 2026-10-30
+
+`git diff --stat`: 5 files changed, 108 insertions(+), 27 deletions(-) — the script's edits to `src/daemon/executor/file_ops/ops.rs`, `src/cli/viewer_layout.rs`, `src/cli/viewer.rs`, plus the phase-doc status flip, the started and cuts-done entries and the README phase-table row.
+### Update — 2026-10-30 (end-to-end verification)
+
+```
+ok_scans=0 outcome_calls=3 sentinel_tests=2 wrap_chars=1 wrap_test=1
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.55s
+fmt_exit=0
+passed=2615 failed=0
+```

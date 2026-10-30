@@ -1063,6 +1063,14 @@ mod tests {
         assert_eq!(kept, "x".repeat(12), "every char kept once: {rows:?}");
     }
 
+    /// M32 #7: a full-width space (3 bytes, 1 char) leaves 9 chars on a
+    /// 10-wide row, so `abcd efgh` still fits on the first row.
+    #[test]
+    fn wrap_words_counts_leading_whitespace_in_chars() {
+        let text = "\u{3000}abcd efgh";
+        assert_eq!(wrap_words(text, 10), vec![text.to_string()]);
+    }
+
     #[test]
     fn output_rows_keep_hard_wrap() {
         let token = "y".repeat(30);
