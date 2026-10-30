@@ -404,27 +404,30 @@ fn search_memory_fts(
     }
 }
 
-/// Search events using FTS index, falling back to the old segment scan.
+/// Search events: the FTS index first, which covers the whole history ranked
+/// by BM25 and finds the query's words as a phrase, then the tail scan's
+/// substring matches the index did not already return. Both keep only lines
+/// that contain the query text. Both paths name a hit by its segment file and render it with
+/// `json_to_readable`, so a line both find is returned once. Every events
+/// result is masked, as the index body is (M32 #16, #17).
 fn search_events_fts(
     query: &str,
     query_lower: &str,
     context_lines: usize,
     results: &mut Vec<SearchResult>,
 ) {
-    // 1. FTS index search
-    let index_hits = crate::memory::index::search_events(query, MAX_RESULTS);
+    let start = results.len();
+    let events_dir = crate::config::events_dir();
+    let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
 
-    for hit in &index_hits {
+    for hit in crate::memory::index::search_events(query, MAX_RESULTS) {
         if results.len() >= MAX_RESULTS {
             break;
         }
-        // Resolve segment path and read the line at offset
-        let events_dir = crate::config::events_dir();
         // `segment` is the file stem the index stores; the file is `<stem>.jsonl`.
-        let seg_path = events_dir.join(format!("{}.jsonl", hit.segment));
-        let matched_line = crate::memory::index::read_line_at_offset(&seg_path, hit.offset);
-
-        if matched_line.is_empty() {
+        let name = format!("{}.jsonl", hit.segment);
+        let raw = crate::memory::index::read_line_at_offset(&events_dir.join(&name), hit.offset);
+        if raw.is_empty() {
             log::warn!(
                 "search_events: could not read line at offset {} in {}",
                 hit.offset,
@@ -432,21 +435,38 @@ fn search_events_fts(
             );
             continue;
         }
-
+        let readable = json_to_readable(&raw);
+        // The scan's rule, so both paths return the same kind of line: the
+        // phrase can also match `idx-0` or `IDX: 0`, which `idx=0` does not.
+        if !readable.to_lowercase().contains(query_lower) {
+            continue;
+        }
+        if !seen.insert((name.clone(), readable.clone())) {
+            continue;
+        }
         results.push(SearchResult {
             kind: "events".to_string(),
-            name: hit.segment.clone(),
+            name,
             line_number: 1,
-            matched_line,
+            matched_line: readable,
             context_before: Vec::new(),
             context_after: Vec::new(),
         });
     }
 
-    // 2. Fallback: old segment scan for any events not in the index
-    // This preserves backward compatibility for unindexed events
     if results.len() < MAX_RESULTS {
-        search_events_in_segments(query_lower, context_lines, results);
+        search_events_in_segments(query_lower, context_lines, &seen, results);
+    }
+
+    for r in &mut results[start..] {
+        r.matched_line = crate::ai::mask_sensitive(&r.matched_line);
+        for line in r
+            .context_before
+            .iter_mut()
+            .chain(r.context_after.iter_mut())
+        {
+            *line = crate::ai::mask_sensitive(line);
+        }
     }
 }
 
@@ -610,6 +630,7 @@ fn search_dir(
 fn search_events_in_segments(
     query_lower: &str,
     context_lines: usize,
+    seen: &std::collections::HashSet<(String, String)>,
     results: &mut Vec<SearchResult>,
 ) {
     // Collect the last EVENTS_TAIL_LINES event lines across all segments.
@@ -671,7 +692,9 @@ fn search_events_in_segments(
         if results.len() >= MAX_RESULTS {
             break;
         }
-        if readable.to_lowercase().contains(query_lower) {
+        if readable.to_lowercase().contains(query_lower)
+            && !seen.contains(&(seg_name.clone(), readable.clone()))
+        {
             let before_start = i.saturating_sub(context_lines);
             let after_end = (i + context_lines + 1).min(all_lines.len());
             results.push(SearchResult {

@@ -168,10 +168,6 @@ pub struct ArtifactHit {
 pub struct EventHit {
     pub segment: String,
     pub offset: u64,
-    #[allow(dead_code)]
-    pub event: String,
-    #[allow(dead_code)]
-    pub score: f64,
 }
 
 /// Search the `artifacts` FTS corpus. Returns up to `limit` hits ordered by
@@ -236,7 +232,7 @@ pub fn search_artifacts(query: &str, limit: usize, kind: Option<&str>) -> Vec<Ar
 ///
 /// Best-effort: any failure logs and returns an empty `Vec`.
 pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
-    let Some(expr) = build_match_expr(query) else {
+    let Some(expr) = build_phrase_expr(query) else {
         return Vec::new();
     };
 
@@ -245,7 +241,10 @@ pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
         None => return Vec::new(),
     };
 
-    let sql = "SELECT m.segment, m.offset, e.event, bm25(events)
+    // Select only `events_map` columns: the `events` table is contentless
+    // (`content=''`), so its own columns read back NULL, and decoding one
+    // into a `String` failed on every row, which `filter_map` then dropped.
+    let sql = "SELECT m.segment, m.offset
                FROM events e JOIN events_map m ON m.id = e.rowid
                WHERE events MATCH ?1
                ORDER BY bm25(events)
@@ -266,8 +265,6 @@ pub fn search_events(query: &str, limit: usize) -> Vec<EventHit> {
             Ok(EventHit {
                 segment: r.get(0)?,
                 offset: r.get::<_, i64>(1)? as u64,
-                event: r.get(2)?,
-                score: r.get(3)?,
             })
         },
     ) {

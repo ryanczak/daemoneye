@@ -112,8 +112,11 @@ fn search_respects_kind_filter() {
     });
 }
 
+/// M32 #16: the index covers the whole history, so a head line outside the
+/// scan's tail window is found; a line both paths find is returned once; and
+/// the scan alone still reads only the tail.
 #[test]
-fn search_events_returns_tail_not_head_when_segment_exceeds_cap() {
+fn search_events_covers_the_whole_history_and_returns_each_line_once() {
     let _lock = crate::test_home_guard();
     let dir = tempfile::tempdir().unwrap();
     unsafe { std::env::set_var("HOME", dir.path()) };
@@ -147,23 +150,61 @@ fn search_events_returns_tail_not_head_when_segment_exceeds_cap() {
 
     std::fs::write(&seg, lines.join("\n") + "\n").unwrap();
 
-    // Search for a high index that only exists in the tail. `search_events`
-    // matches against the `json_to_readable` form, which renders fields as
-    // `key=value` (e.g. `idx=10003`) — not raw JSON — so the query must use
-    // that form.
-    let results = search_repository(&format!("idx={}", EVENTS_TAIL_LINES + 3), "events", 0);
-    assert!(
-        !results.is_empty(),
-        "idx={} should be found in the tail of the segment",
-        EVENTS_TAIL_LINES + 3
+    // Both paths match the `json_to_readable` form, which renders fields as
+    // `key=value` (e.g. `idx=10003`), so the queries use that form.
+    let tail = format!("idx={}", EVENTS_TAIL_LINES + 3);
+    let results = search_repository(&tail, "events", 0);
+    assert_eq!(
+        results.len(),
+        1,
+        "a tail line found by the index and the scan is returned once: {:?}",
+        results.iter().map(|r| &r.matched_line).collect::<Vec<_>>()
     );
+    assert!(results[0].matched_line.contains(&tail));
 
-    // idx=0 is the very first line, outside the last-EVENTS_TAIL_LINES tail
-    // window — it must NOT be surfaced (this is the tail-not-head guarantee).
+    // idx=0 is the first line, outside the scan's tail window: only the
+    // index reaches it.
     let results = search_repository("idx=0", "events", 0);
+    assert_eq!(results.len(), 1, "the index finds a head line");
+    assert!(results[0].matched_line.contains("idx=0 "));
+    assert_eq!(results[0].name, "events-20260101.jsonl");
+
+    // `dx=0` is no FTS token, so only the scan could match it, and the only
+    // line holding it is outside the tail window.
+    let results = search_repository("dx=0", "events", 0);
     assert!(
         results.is_empty(),
-        "idx=0 should not appear — only the last EVENTS_TAIL_LINES lines are searched"
+        "the scan still reads only the last EVENTS_TAIL_LINES lines"
+    );
+}
+
+/// M32 #17: an events hit is masked whichever path found it.
+#[test]
+fn events_search_masks_what_it_returns() {
+    let _lock = crate::test_home_guard();
+    let dir = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("HOME", dir.path()) };
+
+    let events_dir = crate::config::events_dir();
+    std::fs::create_dir_all(&events_dir).unwrap();
+    let seg = events_dir.join("events-20260101.jsonl");
+    let line = r#"{"event":"command","ts":"2026-01-01T00:00:00Z","command":"aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE"}"#;
+    std::fs::write(&seg, format!("{line}\n")).unwrap();
+    crate::memory::index::index_event(
+        "events-20260101",
+        0,
+        "command",
+        &crate::search::json_to_readable(line),
+    )
+    .unwrap();
+
+    let results = search_repository("configure", "events", 0);
+    assert_eq!(results.len(), 1, "one line, found once");
+    assert!(
+        results[0].matched_line.contains("<AWS_KEY>")
+            && !results[0].matched_line.contains("AKIAIOSFODNN7EXAMPLE"),
+        "the key is masked: {}",
+        results[0].matched_line
     );
 }
 
@@ -337,11 +378,25 @@ fn events_kind_finds_webhook_alert_by_free_text() {
     )
     .unwrap();
 
+    // A line the phrase `webhook alert` matches but the query text does
+    // not: the index hit is dropped, as the scan would drop it.
+    let other = r#"{"event":"note","ts":"2026-01-01T00:00:01Z","msg":"webhook-alert drill"}"#;
+    std::fs::write(&seg, format!("{line}\n{other}\n")).unwrap();
+    crate::memory::index::index_event(
+        "events-20260101",
+        (line.len() + 1) as u64,
+        "note",
+        &crate::search::json_to_readable(other),
+    )
+    .unwrap();
+
     let results = search_repository("webhook_alert", "events", 0);
-    assert!(
-        !results.is_empty(),
-        "events search should find webhook_alert by free text"
+    assert_eq!(
+        results.len(),
+        1,
+        "events search finds webhook_alert by free text, once"
     );
+    assert_eq!(results[0].name, "events-20260101.jsonl");
 }
 
 #[test]

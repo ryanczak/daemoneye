@@ -147,6 +147,21 @@ fn build_match_expr(query: &str) -> Option<String> {
     }
 }
 
+/// The query's terms as one FTS5 phrase: the same tokens as
+/// [`build_match_expr`], in order, quoted together so they must appear
+/// adjacent. The events search wants the line holding `idx=0`, not every
+/// line holding `idx` or `0`, which the OR form returns. Tokens are
+/// alphanumeric, so none can close the quotes.
+fn build_phrase_expr(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .take(32)
+        .map(str::to_lowercase)
+        .collect();
+    (!terms.is_empty()).then(|| format!("\"{}\"", terms.join(" ")))
+}
+
 /// Read the single line beginning at `offset` bytes into `path`.
 ///
 /// The inverse of the byte offsets this module stores in `turns_map` and

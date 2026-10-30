@@ -1,6 +1,6 @@
 # Phase 15 — Events search
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-14
@@ -148,3 +148,58 @@ output, run the block once more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 19:36 (cuts done)
+
+Started the phase, flipped the status, then ran the phase script as the first
+command after the started entry, exactly as Spec task 1 requires:
+
+```sh
+python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-15-events-search.py && cargo fmt --all
+```
+
+Its complete output, pasted as-is:
+
+```
+build_phrase_expr quotes the query as one phrase
+search_events reads only the map columns
+the index hits come first, each line once, all masked
+the events tests pin the whole history, one copy and masking
+```
+
+Exit 0; no assert fired. The script's sha256 is
+`7019bfaf531d8e907ce28c675b1fae36e1fb16156156945209bb162c104745fe`, matching
+the `7019bfaf531d8e90` prefix the phase doc records. `cargo fmt --all` followed
+it in the same command and reflowed nothing new. No source file was opened
+before the script ran.
+
+### Findings — 2026-10-30 19:36
+
+`git diff --stat` shows 6 files: the two doc-status flips I made at start
+(README, phase doc) plus the four files the script edits —
+`src/memory/index/mod.rs` (15 insertions), `src/memory/index/search.rs` (13
+changed), `src/search.rs` (57 changed), `src/search_tests.rs` (87 changed) —
+133 insertions, 43 deletions total, close to the estimated ~131/~41.
+
+### Update — 2026-10-30 19:39 (end-to-end verification)
+
+Ran the phase doc's End-to-end verification block verbatim, unmodified. Its
+complete output, pasted as-is:
+
+```
+phrase_fn=1 event_col=0 dead_allows=0 masked=2 old_test=0 mask_test=1
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.13s
+fmt_exit=0
+passed=2612 failed=0
+```
+
+Every line matches the expected shape: the grep line is
+`phrase_fn=1 event_col=0 dead_allows=0 masked=2 old_test=0 mask_test=1`,
+`allowlist=unchanged`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`,
+clippy clean, `fmt_exit=0`, and the full suite reports `passed=2612 failed=0` —
+exactly the 2612 the acceptance criteria pin (up from 2611). The block ran once,
+with no early stop and no re-run.
+
