@@ -1,6 +1,6 @@
 # Phase 13 — Tool tidies
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-12b
@@ -357,3 +357,17 @@ kill: (-749547): No such process
 **Commit:** df713e6ad33f8dcf715b3b90641bcc2120751aa2
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the
+  architect's dry run, whose red runs of the two strengthened unknown-id
+  tests stand as the evidence. The suite holds at 2610 and every shape
+  count moved as specified.
+- **Calibration:** none for the phase. A rexyMCP note: the
+  server-authored `(complete)` entry above copies the executor's raw
+  completion text, including a stray `</think>` tag and its private
+  checklist, into the Summary.
