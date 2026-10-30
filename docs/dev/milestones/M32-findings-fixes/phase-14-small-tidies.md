@@ -1,6 +1,6 @@
 # Phase 14 — Small tidies
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-13
@@ -329,3 +329,11 @@ kill: (-818290): No such process
 **Commit:** 304acad9b20aa63bea66e32227264a4ddabe318b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to a fresh run of the repo script on the pre-phase tree.
+- **Calibration:** 27 turns, the script-as-repo-file pattern again. Gates rerun at review: fmt, build and clippy clean, `passed=2611 failed=0`. The new test's red run is the draft dry run on pre-phase code; the executor's log carries none, which the script pattern makes redundant.
