@@ -1,6 +1,6 @@
 # Phase 10 — One `test_home()` fixture
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Findings:** M31 `FINDINGS.md` #4 (#8, #49, #50, #62 and #63 are
@@ -405,3 +405,26 @@ kill: (-4145456): No such process
 **Commit:** 19e3ce75a64372fb8eebc7ca222e2155f9ed1e2d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - The `src/` diff stat is the dry run's exactly: 15 files, +169
+    / −294.
+  - The executor's Findings line quotes the stat with the phase docs
+    included, which is 17 files.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean.
+  - 2607 passed / 0 failed, unchanged as required.
+  - `bug_tracker` passes, with 6 tests.
+  - `local_defs=0 shared=1 calls=154`, and one Findings heading.
+- **Evidence:** both the script's output and the End-to-end output are
+  pasted as fenced blocks, as the spec asked. That is the first time
+  this milestone without a reminder.
+- **Findings:** `git diff --stat` only, as specified. Nothing to carry.
+- **Calibration:** a mechanical 15-file change dictated as one script
+  went through first try. That matches M31's record for dictated moves.
+
