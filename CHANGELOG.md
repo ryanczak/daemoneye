@@ -8,6 +8,64 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-10-30 — M32 Findings fixes
+
+What the M31 audit found is fixed or retired. Every defect fix landed
+with a test that failed on the 2.4.0 tree first; every tidy changed no
+behaviour, held by the suite count. The retrospective is in
+`docs/dev/milestones/M32-findings-fixes/README.md`.
+
+- **Unknown session ids are refused** — `/session load` and
+  `chat --resume` of an id nothing was saved under reply `unknown
+  session '<id>': nothing was saved or loaded` and write nothing under
+  `var/sessions/`; before, a load claimed a resume and a save stored an
+  empty session.
+- **The viewer wraps by chars** — `wrap_words` breaks a token longer than
+  the row on char boundaries, so a 30-character CJK token at width 80
+  shows once on one row where it showed twice on two, and it budgets
+  leading whitespace in chars, as the row is. Panel borders fill by
+  display width, not char count.
+- **Remote file operations read their result** — remote delete, copy,
+  edit, sudo edit and create share one `remote_write_outcome` parser:
+  only lines above `__DE_DONE__` count, and a line must start with
+  `DE_OK:` or `DE_ERROR:` to be a result, so a failure whose message
+  names a `DE_OK:` path is a failure. `edit_file` logs a failed connect
+  as `ssh_connect_failed`; a named-host foreground command looks the
+  host up once.
+- **The events search works** — `search_repository` over events read
+  an FTS index that had never returned a hit (the table is contentless,
+  so the selected column decoded NULL on every row and every hit was
+  dropped). It now queries the whole history as one phrase, adds what the
+  tail scan finds that the index did not, returns each line once, and
+  masks every result.
+- **The ghost gate fails closed** — the foreground gate loads the config
+  once per call and refuses a ghost when the config is unreadable,
+  naming the parse error, instead of treating it as "sandbox off".
+- **Bookkeeping** — the tool-call turn's `ai_turn` event names the model
+  that answered; `recall_context` reads the configured `[limits]`, not
+  the defaults; the last two `lock().expect` sites are `.unwrap_or_log()`
+  and `tests/lock_invariant.rs` holds the invariant; the tool-feedback
+  sends, the background close and a failed extraction `add_memory` log
+  what they used to drop.
+- **One copy where there were several** — one approval-input state
+  machine (`read_approval_input_with`) and `prompt_status` in the client
+  prompts; one `render_status_bar` for six status bars and one
+  `alert_panel` for the approval and credential shells; one alt-screen
+  entry for the tail, log and attach viewers; one `shell_tool_regex`,
+  one `unknown_shell_error`, a linear `window_text`; `ContainerInfo`'s
+  docs describe the sbx sandbox it carries.
+- **The test suite** — one `crate::test_home()` fixture replaces eleven
+  per-file copies at 154 call sites; `log_event` asserts the HOME lock
+  under `cfg(test)`; the one flaky screen test polls a single read.
+  `cargo test` passed 20 consecutive runs with no failure. The suite
+  grew from 2587 to 2615 tests; the hygiene allowlist is as 2.4.0 left
+  it. `FINDINGS.md` holds the 18 findings the executor made on the way,
+  each triaged.
+
+Not in this release: the 40 functions over 150 lines on the allowlist,
+and the findings pointed at their decomposition (M31 #36, #37, #40, #75,
+#78, #79; M32 #3, #8, #9, #13, #14, #18).
+
 ## [2.4.0] — 2026-10-28 — M31 Code hygiene
 
 No source file is too long to read in one sitting, and a test keeps it
