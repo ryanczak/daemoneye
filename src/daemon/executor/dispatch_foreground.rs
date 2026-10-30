@@ -504,3 +504,162 @@ mod ghost_foreground_gate_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod approved_path_tests {
+    use super::*;
+    use tokio::io::AsyncReadExt as _;
+
+    /// A real in-process PTY host for `id`: bash on a PTY, serving the id's
+    /// socket under the test `HOME`. `spawn_detached_host` cannot run under a
+    /// test binary, so the session's shell is opened here first and the
+    /// approved run reuses it.
+    async fn spawn_in_process_host(id: crate::shell::ShellId) -> anyhow::Result<()> {
+        use anyhow::Context as _;
+        let dir = tempfile::tempdir().context("tempdir for cast")?;
+        let cast = dir.path().join(format!("{}.cast", id.as_str()));
+        let backend = crate::shell::PtyBackend::spawn("bash", &[], 24, 80, 100, &cast, 0)
+            .context("spawning bash")?;
+        let lock =
+            crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
+                .context("holding the per-id instance lock")?;
+        let listener = crate::shell::bind(&crate::shell::socket_path(id.as_str()))
+            .await
+            .context("binding the in-process host's socket")?;
+        tokio::spawn(crate::shell::serve(listener, Arc::clone(&backend)));
+        std::mem::forget(lock);
+        std::mem::forget(dir);
+        Ok(())
+    }
+
+    /// One `run_terminal_command` call through `execute_tool_call` for
+    /// session `sid`, with `reply` as everything the client sends back.
+    /// Returns the frames the daemon wrote, in order.
+    async fn drive(sid: &str, call: &PendingCall, reply: &str) -> Vec<Response> {
+        let store = SessionStore::new();
+        let (mut daemon_tx, mut client_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_rx = std::io::Cursor::new(reply.as_bytes().to_vec());
+        execute_tool_call(
+            call,
+            &mut daemon_tx,
+            &mut daemon_rx,
+            SessionCtx {
+                session_id: Some(sid),
+                session_name: sid,
+                chat_pane: None,
+                sessions: &store,
+            },
+            &Arc::new(SessionCache::new("home")),
+            &Arc::new(ScheduleStore::new_empty()),
+        )
+        .await
+        .expect("run_terminal_command must not error");
+        drop(daemon_tx);
+        let mut raw = Vec::new();
+        client_rx
+            .read_to_end(&mut raw)
+            .await
+            .expect("reading the client half of the pipe");
+        String::from_utf8(raw)
+            .expect("the daemon writes UTF-8 frames")
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<Response>(line).expect("every frame is a Response"))
+            .collect()
+    }
+
+    fn foreground_call(cmd: &str, host: Option<&str>) -> PendingCall {
+        PendingCall::Foreground {
+            id: "fg-83".to_string(),
+            thought_signature: None,
+            cmd: cmd.to_string(),
+            shell: None,
+            host: host.map(str::to_string),
+            timeout_secs: Some(20),
+            interactive: false,
+        }
+    }
+
+    fn tool_result(frames: &[Response]) -> &str {
+        frames
+            .iter()
+            .find_map(|f| match f {
+                Response::ToolResult { output, .. } => Some(output.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a ToolResult frame: {frames:?}"))
+    }
+
+    /// #83: an approved local call runs in the session's PTY shell. The
+    /// frames are the prompt, then a result carrying the command's output
+    /// and naming the shell it ran in.
+    #[tokio::test]
+    async fn an_approved_local_command_runs_in_the_sessions_shell() {
+        let (_home, _dir) = crate::test_home();
+        let sid = "sess-83-run";
+        let id = crate::shell::spawn_for(
+            crate::shell::registry(),
+            Owner::Chat(sid.to_string()),
+            5,
+            false,
+            |id| Box::pin(spawn_in_process_host(id)),
+        )
+        .await
+        .expect("the session's shell opens");
+        let mut reply = serde_json::to_string(&Request::ToolCallResponse {
+            id: "fg-83".to_string(),
+            approved: true,
+            user_message: None,
+        })
+        .expect("ToolCallResponse serialises");
+        reply.push('\n');
+        let frames = drive(
+            sid,
+            &foreground_call("echo DE-M32-83-$((40+3))", None),
+            &reply,
+        )
+        .await;
+        assert!(
+            matches!(
+                frames.first(),
+                Some(Response::ToolCallPrompt {
+                    background: false,
+                    ..
+                })
+            ),
+            "the first frame asks for approval: {frames:?}"
+        );
+        let out = tool_result(&frames);
+        assert!(
+            out.contains("DE-M32-83-43"),
+            "the result carries the command's output: {out}"
+        );
+        assert!(
+            out.contains(&format!("[ran in shell {}]", id.as_str())),
+            "the result names the shell it ran in: {out}"
+        );
+    }
+
+    /// #83: a malformed host name is refused before the prompt — no
+    /// `ToolCallPrompt` is written, and the refusal names the rule.
+    #[tokio::test]
+    async fn a_malformed_host_is_refused_without_asking() {
+        let (_home, _dir) = crate::test_home();
+        let frames = drive("sess-83-host", &foreground_call("true", Some("db 01")), "").await;
+        assert!(
+            !frames
+                .iter()
+                .any(|f| matches!(f, Response::ToolCallPrompt { .. })),
+            "a name that can never be a host is not put to the user: {frames:?}"
+        );
+        let out = tool_result(&frames);
+        assert!(
+            out.starts_with("Error: host name \"db 01\""),
+            "the refusal names the host: {out}"
+        );
+        assert!(
+            out.contains("[A-Za-z0-9._-]"),
+            "the refusal names the rule: {out}"
+        );
+    }
+}

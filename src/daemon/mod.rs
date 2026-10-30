@@ -418,6 +418,7 @@ mod tests {
     /// the factory signals shutdown.
     #[tokio::test(start_paused = true)]
     async fn supervise_restarts_on_panic() {
+        let (_home, _dir) = crate::test_home();
         let shutdown = Arc::new(AtomicBool::new(false));
         let call_count = Arc::new(AtomicU32::new(0));
 

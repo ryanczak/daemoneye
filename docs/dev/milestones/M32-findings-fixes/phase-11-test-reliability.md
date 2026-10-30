@@ -1,6 +1,6 @@
 # Phase 11 — Test reliability
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Depends on:** phase-10
@@ -186,3 +186,38 @@ Green gates are the expected outcome.
 spec-shape problem; moving the script into a file and forbidding the
 read removes it, which resume would carry forward and takeover would
 not test.
+
+### Update — 2026-10-30 13:32 (started)
+
+Executing phase 11 (test reliability). Status flipped to in-progress in
+this doc and in the M32 README phase table. Next: the started entry done,
+running the script per Spec step 1.
+
+### Update — 2026-10-30 13:34 (cuts done)
+
+```
+log_event asserts the HOME lock under cfg(test)
+four tests take crate::test_home()
+read_shell_screen_lines_tails_the_visible_rows reads once per poll
+two approved-path tests added
+```
+
+`python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-11-test-reliability.py && cargo fmt --all` exited 0; all four script lines printed, no assert fired.
+
+### Findings — 2026-10-30
+
+`git diff --stat`: 9 files, 208 insertions, 25 deletions — the seven
+source files the script names, plus this doc and the M32 README's status
+flip. Nothing unexpected.
+
+### Update — 2026-10-30 13:37 (end-to-end verification)
+
+```
+assert=1 guarded=4 approved_tests=2 single_read=1
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.43s
+fmt_exit=0
+passed=2609 failed=0
+```

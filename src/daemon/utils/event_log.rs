@@ -9,6 +9,12 @@
 /// Errors are silently discarded — logging must never crash the daemon.
 pub fn log_event(event: &str, mut fields: serde_json::Value) {
     use std::io::Write;
+    #[cfg(test)]
+    assert!(
+        crate::HOLDS_HOME_GUARD.with(|c| c.get()),
+        "log_event({event:?}) from a test that does not hold the HOME lock: take \
+         crate::test_home() first, or the event lands in another test's HOME (M32 #11)"
+    );
 
     crate::ai::mask_json_value(&mut fields);
 

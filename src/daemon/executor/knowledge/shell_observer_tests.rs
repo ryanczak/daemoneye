@@ -1590,32 +1590,16 @@ async fn read_shell_screen_lines_tails_the_visible_rows() {
     let reg = ShellRegistry::default();
     let id = open_screen_shell(&reg).await;
     type_into(&id, b"printf 'row-a\\nrow-b\\nrow-c\\n'\n").await;
-    // Wait for the output (a row that is exactly `row-c`, not the echoed
-    let full = screen_until(&reg, &id, None, None, |o| {
-        o.lines().any(|l| l.trim() == "row-c") && o.contains("shell prompt")
+    // One read per poll, with the tail under test. Once the prompt is drawn
+    // under `row-c`, the two-row tail is `row-c` and the prompt row. Reading
+    // the whole screen first and the tail second let a late prompt redraw
+    // change the row count between the two reads (M31 #65).
+    let out = screen_until(&reg, &id, Some(2), None, |o| {
+        body_rows(o).first().is_some_and(|l| l.trim() == "row-c")
     })
     .await;
-    let rows = body_rows(&full);
-    let after_c = rows
-        .iter()
-        .rposition(|l| l.trim() == "row-c")
-        .expect("row-c is on screen");
-    let tail_len = rows.len() - after_c;
-    let out = read_shell_screen_in(
-        &reg,
-        &id,
-        Some(tail_len as u64),
-        None,
-        None,
-        false,
-        None,
-        None,
-        None,
-        Duration::from_secs(5),
-    )
-    .await;
     let tailed = body_rows(&out);
-    assert_eq!(tailed.len(), tail_len,);
+    assert_eq!(tailed.len(), 2, "`lines: 2` returns two rows: {out}");
     assert_eq!(tailed[0].trim(), "row-c", "the tail starts at row-c: {out}");
     assert!(
         !tailed.iter().any(|l| l.trim() == "row-a"),

@@ -570,6 +570,7 @@ mod tests {
 
     #[tokio::test]
     async fn ghost_turn_without_a_pty_shell_is_refused() {
+        let (_home, _dir) = crate::test_home();
         let store = SessionStore::default();
         let text = drive_refusal(Some("g1"), &store, None, true, "ls -la").await;
         assert!(
@@ -584,6 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn chat_command_without_session_is_refused() {
+        let (_home, _dir) = crate::test_home();
         let store = SessionStore::default();
         let text = drive_refusal(None, &store, None, false, "systemctl status").await;
         assert!(

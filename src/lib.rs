@@ -34,6 +34,15 @@ pub(crate) mod util;
 /// crate and do not get `#[cfg(test)]` items from the library) can access it.
 pub static TEST_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+#[cfg(test)]
+thread_local! {
+    /// Whether this thread holds a [`TestHomeGuard`]. `log_event` asserts it
+    /// under `cfg(test)`: a lib test that writes an event without the lock
+    /// writes into whichever `HOME` another test has set, and that test — not
+    /// the writer — fails (M32 #11).
+    pub(crate) static HOLDS_HOME_GUARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Acquire [`TEST_HOME_LOCK`], recovering if a previous holder panicked.
 ///
 /// A test that panics while holding the lock poisons it. Every later
@@ -46,6 +55,8 @@ pub static TEST_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// integration tests are a separate crate and do not receive `#[cfg(test)]`
 /// items from the library.
 pub fn test_home_guard() -> TestHomeGuard {
+    #[cfg(test)]
+    HOLDS_HOME_GUARD.with(|c| c.set(true));
     let lock = TEST_HOME_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -89,6 +100,8 @@ pub struct TestHomeGuard {
 
 impl Drop for TestHomeGuard {
     fn drop(&mut self) {
+        #[cfg(test)]
+        HOLDS_HOME_GUARD.with(|c| c.set(false));
         // SAFETY: `set_var`/`remove_var` are unsound only under concurrent env
         // access; we still hold TEST_HOME_LOCK here, which is the lock every
         // HOME-touching test takes.

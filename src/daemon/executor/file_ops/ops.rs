@@ -1210,6 +1210,7 @@ mod tests {
     /// test pins.
     #[tokio::test]
     async fn the_local_write_path_is_unchanged() {
+        let (_home, _dir) = crate::test_home();
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("fresh.txt");
         let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
