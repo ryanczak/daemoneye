@@ -1,6 +1,6 @@
 # Phase 10 — One `test_home()` fixture
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Findings:** M31 `FINDINGS.md` #4 (#8, #49, #50, #62 and #63 are
@@ -257,3 +257,151 @@ Every acceptance criterion reads green off that capture: the shape moved from
 `ok. 16 passed`; bug tracker is `ok. 6 passed`; clippy finished clean;
 `fmt_exit=0`; and the full suite is exactly `passed=2607 failed=0`, the same
 count as before the phase.
+
+### Update — 2026-10-30 02:27 (complete, server-authored)
+
+**Summary:** **Summary:** Ran the spec's script once as written — it added the `#[cfg(test)] pub(crate) fn test_home()` fixture to `src/lib.rs`, deleted the eleven per-file temp-HOME helpers under their four names, retargeted all 154 call sites (including the three `use super::*` callers), removed the ten imports the compiler would have named, and `cargo fmt --all` ran twice. All assertions passed; both summary lines printed. End-to-end block ran once with no flake and captured verbatim: `local_defs=0 shared=1 calls=154`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy clean, `fmt_exit=0`, and the full suite at exactly `passed=2607 failed=0` — the same count as before the phase. Findings entry quotes `git diff --stat` (17 files, +189/−296, net −107 lines, no file outside the authorized set). Committed as `19e3ce75` (`test:`); working tree is clean.
+
+**Notes for review:** Pure tidy, no test added/removed/changed in what it checks — the only new lines in `src/lib.rs` are the fixture itself, and the remaining `fn temp_home() -> TmpHome` helpers in `search_tests.rs`, `agents/mod.rs`, `memory_tests.rs` and `runbook.rs` are a different shape (different return type), explicitly out of scope. Status remains `in-progress` per the contract; the completion flip and `(complete)` entry are yours.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+lowlist_has_no_stale_entries ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (4144729): No such process
+kill: (-4145456): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-084f36955f09af75)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-10-test-home.md` — +46 -1
+- `src/daemon/executor/bg_shell.rs` — +8 -19
+- `src/daemon/executor/foreground.rs` — +2 -15
+- `src/daemon/executor/ghost_remote.rs` — +5 -18
+- `src/daemon/executor/ghost_sandbox.rs` — +4 -14
+- `src/daemon/executor/knowledge/shell_lifecycle_tests.rs` — +17 -17
+- `src/daemon/executor/knowledge/shell_observer_tests.rs` — +24 -24
+- `src/daemon/executor/knowledge/shell_tests.rs` — +2 -14
+- `src/daemon/executor/shell_exec_connect_tests.rs` — +2 -16
+- `src/daemon/executor/shell_exec_hosted_tests.rs` — +17 -17
+- `src/daemon/executor/shell_exec_tests.rs` — +19 -33
+- `src/daemon/server/sessions.rs` — +2 -11
+- `src/daemon/server/shells_tests.rs` — +23 -38
+- `src/lib.rs` — +14 -0
+- `src/shell/launch.rs` — +4 -16
+- `src/shell/session_tests.rs` — +26 -42
+
+**Commit:** 19e3ce75a64372fb8eebc7ca222e2155f9ed1e2d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
