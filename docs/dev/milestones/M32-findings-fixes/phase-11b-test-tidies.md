@@ -1,6 +1,6 @@
 # Phase 11b — Test tidies
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-11
@@ -332,3 +332,14 @@ kill: (-506677): No such process
 **Commit:** 9ede0073a5a788ab910b608791b1a5eed4c1c3f4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the
+  architect's dry run; the suite holds at exactly 2609 and the shape line
+  moved from 18/18/0/0 to 1/3/1/2.
+- **Calibration:** the script-as-file shape from phase 11 held: 27 turns,
+  no source read before the run.
