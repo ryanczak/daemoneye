@@ -1,6 +1,6 @@
 # Phase 08 — `edit_file` logs a failed connect; one host lookup per foreground call
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #80 and #82 (#75, #78 and #79 are
@@ -298,3 +298,140 @@ Matches the expected values exactly: `helper_calls=2 lookups=1 refuse=1`,
 the helper test green, hygiene `16 passed`, bug tracker `6 passed`, clippy
 clean, and the full suite `passed=2605 failed=0` (2604 + 1). No flake
 appeared in this run; neither named known flake failed.
+
+### Update — 2026-10-30 00:52 (complete, server-authored)
+
+**Summary:** **Summary:** Implemented M32 phase 08 exactly as the spec's diff pins it: `log_connect_failure` (plus its `log_connect_failure_records_the_tool_and_host` test) now lives at the end of `dispatch_files.rs`, the `read_file` arm calls the helper with logging unchanged, and the `EditFile` arm calls it as the first statement of its connect-failure branch — closing #80's silent gap. In `dispatch_foreground.rs`, `run_approved` no longer destructures `cmd_id` or runs `shell::host_entry_or_bare` (the comment shrank to the two pinned lines, `cmd_id,` became a trailing `..`), so a named-host foreground call performs its permissive lookup once, in `run_on_named_host`, which is the copy that writes the host-error log line — closing #82. `dispatch` itself was not edited, `refuse_foreground(` still appears exactly once, and no `#[allow]` was added.
+
+**E2E result:** the phase doc's E2E block, run verbatim and redirected to `/tmp/phase08-e2e.txt`, printed `helper_calls=2 lookups=1 refuse=1`, the helper test `ok. 1 passed`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy clean, and the full suite `passed=2605 failed=0` (2604 + 1) — matching expectations exactly, with neither named flake appearing; the transcript is pasted unedited in the phase doc's `### Update — 2026-10-30 00:47 (end-to-end verification)` entry.
+
+**Notes for review:** Two deviations, both documentation-only and self-corrected within the run — I first appended the phase's findings to the milestone `FINDINGS.md` ledger, then realized the acceptance criterion counts `^### Findings — ` on the *phase doc* (as phases 01–07 did) and moved the entries there, reverting the ledger. The two findings, from the edited functions only: (13) the `read_file` and `edit_file` connect-failure arms build the same reply from different id sources and exit differently (`break 'arm` vs `return`) — shape drift to fold into #78's shared prologue at the function milestone; (14) `ApprovedRun.cmd_id` is now named-host-specific but still sits in the shared struct — deferred, since moving it reshapes `ApprovedRun`. Two commits landed: `fix:` d3a57c15 (code + test) and `docs:` 260590d5/b4105770 (status flip, started entry, findings, E2E evidence); `git status --short` is clean, and the phase doc's Status remains `in-progress` for the server's completion tail.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+ ok
+test functions_in_a_test_module_are_not_measured ... ok
+test production_after_a_test_only_fn_is_still_counted ... ok
+test production_lines_exclude_an_inline_test_module ... ok
+test impl_and_trait_methods_are_measured_with_their_type ... ok
+test exempt_files_exist ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.25s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (3970403): No such process
+kill: (-3971120): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/FINDINGS.md` — +0 -1
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-08-host-refusal.md` — +47 -1
+- `src/daemon/executor/dispatch_files.rs` — +44 -9
+- `src/daemon/executor/dispatch_foreground.rs` — +3 -27
+
+**Commit:** b41057703a194842aebc2eadfc3e8778b7453932
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
