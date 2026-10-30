@@ -6,8 +6,8 @@
 (`v2.5.0`, pushed). After M33: the function milestone (the 40 allowlisted
 functions), then MCP surface (M34) and Knowledge (M35).
 
-**Active phase:** none drafted yet — phase 01 (tokio-and-compatible) is
-next, via `/rexymcp:architect next`.
+**Active phase:** [phase 01 — tokio-and-compatible](milestones/M33-dependency-refresh/phase-01-tokio-and-compatible.md)
+(`todo`; dispatch with `/rexymcp:dispatch 01`).
 
 M32 closed 2026-10-30 (`v2.5.0`, pushed). M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). The function milestone, M34 (MCP surface) and M35

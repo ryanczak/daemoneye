@@ -3,7 +3,7 @@
 **Goal:** every DaemonEye dependency is at its latest stable release, and
 `cargo install` builds without a warning.
 
-**Status:** planning (scoped 2026-10-30)
+**Status:** in-progress (scoped 2026-10-30)
 
 **Release:** 2.6.0
 
@@ -39,7 +39,7 @@ latest. The rest:
 `libc` stays on 0.2: its only newer release is `1.0.0-alpha.4`, as the
 manifest comment says.
 
-**Proposed decisions (awaiting PE sign-off):**
+**PE decisions (2026-10-30, signed off by proceeding to phase 01):**
 
 1. **One `unsafe` block is authorized** in `src/cli/input/tty.rs`, for
    `AsyncFd::register`. Every `AsyncFd` constructor is `unsafe` from
@@ -82,7 +82,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 3.
 
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
-| 01 | tokio-and-compatible — `cargo update`; every semver-compatible requirement raised to its latest; `AsyncFd::register` in `tty.rs` (decision 1); the stream-idle test's fake server reads the request before it answers | tokio + 11 compatible crates | todo |
+| 01 | tokio-and-compatible ([phase-01-tokio-and-compatible.md](phase-01-tokio-and-compatible.md)) — `cargo update`; every semver-compatible requirement raised to its latest; `AsyncFd::register` in `tty.rs` (decision 1); the stream-idle test's fake server reads the request before it answers | tokio + 11 compatible crates | todo |
 | 02 | rusqlite-and-syn — rusqlite 0.41 and syn 3, the two breaking upgrades that build clean | rusqlite, syn | todo |
 | 03 | vt100-0.18 — the `NonZeroU16` sizes, the `String` returns, and the resize behaviour (decision 3) | vt100 | todo |
 
