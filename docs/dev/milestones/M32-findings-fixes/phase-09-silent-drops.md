@@ -1,6 +1,6 @@
 # Phase 09 — No silent drops; a gate holds the lock invariant
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Findings:** M31 `FINDINGS.md` #18, #61 and #77
@@ -540,3 +540,29 @@ kill: (-4072278): No such process
 **Commit:** 1d384d8991018e89ce2b21d9c4482afa8642238a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - The source diff is line for line the dictated one, and the gate file
+    is byte-identical to the spec's. The reviewer compared both.
+  - The work is in two commits: `fix:` `71957d30`, then `docs:`
+    `1d384d89` for the evidence.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2607 passed / 0 failed.
+  - `bug_tracker` passes with 6 tests, and `lock_invariant` with 2.
+  - `silent_sends=1 silent_close=0 extract_warn=1`, and one Findings
+    heading.
+- **Tests:** the step-1 red run is described in prose, not pasted. It
+  names `shell_exec_auth.rs:301` and `:318`, exactly as the
+  architect's pre-dispatch dry run showed. Accepted. That is the third
+  phase in a row to describe a red run instead of pasting it (07, 08 had
+  none, 09); the evidence matched the dry run each time.
+- **Findings:** one, logged as M32 #15 and rejected. The two shapes are
+  each what clippy accepts.
+- **Calibration:** the seventh dictated phase first try. M32's defect
+  group (phases 01–09) is complete.
+
