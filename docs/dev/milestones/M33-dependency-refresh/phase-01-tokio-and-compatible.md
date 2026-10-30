@@ -1,6 +1,6 @@
 # Phase 01 — Tokio and compatible updates
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-30
 **Depends on:** M32 (v2.5.0)
@@ -225,3 +225,144 @@ uuid 1.29.0; `allowlist=unchanged`; `build_warnings=0`; hygiene and doc_truth
 both `ok. 16 passed`; clippy's tail `Finished` with no diagnostics;
 `fmt_exit=0`; `passed=2616 failed=0`. The suite did not stop early, so there
 is no second paste.
+
+### Update — 2026-10-30 23:22 (complete, server-authored)
+
+**Summary:** </think>Commit is done. Verify working tree clean (git status --short printed nothing after commit — yes, empty output shown between commit and log). All tasks done. Status left at in-progress; no complete entry written by me.
+
+Now the final Summary + Notes for review, 2–6 sentences. Include: what was built, deviations (none beyond naming the adaptation — the cmd-output-0.log path was ephemeral; and the doc's Findings-criterion semantics note), E2E result, notes for reviewer.</think>
+**Summary:** Phase 01 executed exactly as scripted: the phase script + `cargo update` + `cargo fmt --all` ran as one exit-0 command, lifting every semver-compatible requirement to its latest release (tokio 1.54.1, clap 4.6.7, reqwest 0.13.5, serde_json 1.0.154, similar 3.2.1, toml 1.1.8, uuid 1.29.0), deleting the four duplicate `[dev-dependencies]` entries, replacing the libc-based `TtyFd` with an owned `O_NONBLOCK` `File` registered through the one authorized `unsafe` `AsyncFd::register` block, making the stream-idle fake server read the request before answering, and adding `read_byte_waits_out_a_drained_pipe` to pin the `WouldBlock` arm. The End-to-end block ran verbatim once and printed the criterion line exactly — `asyncfd_new=0 register=1 libc_io=0 drained_test=1 reads_request=1 tokio_lock=1.54.1 dev_dups=0` — with `allowlist=unchanged`, `build_warnings=0`, hygiene and doc_truth both `ok. 16 passed`, clippy clean, `fmt_exit=0`, and `passed=2616 failed=0`. Committed as `chore: raise compatible deps to latest, register tty fd through AsyncFd::register` (059c3252, 6 files); status left at `in-progress` for the server's flip.
+
+**Notes for review:** One adaptation — the script's four anchor lines and the `cargo update` excerpt in the `(cuts done)` entry were copied from `.rexymcp/output/cmd-output-0.log`, the harness's own capture of the run, because that path is ephemeral and was gone when I came back to paste it; the full run's output was therefore never separately redirected by me, so the excerpts are copies of the run's log rather than a paste of a transcript I hand-redirected. Two things to weigh against the acceptance criteria as written: the first `grep -c '^### Findings — '` on this doc prints **1** counting only this dispatch's entry — earlier M33 pre-draft entries apparently carry no Findings heading, so no disambiguation was needed — and the spec's own text acknowledged a second `### Findings — 2026-10-30` entry would exist "within hours," which means the criterion as pinned can only hold while that second entry is absent; flagging in case the reviewer intends the count to survive future entries. The suite-count arithmetic held at exactly 2616 with no early stop, so no second E2E paste exists to include.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f502f01f3e326c7e)
+kill: (1266867): No such process
+kill: (-1267537): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-47e986b931354db9)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2d9df5b6166bbac4)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-088422cff4872702)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-c81cdf2407a95674)
+     Running tests/integration.rs (target/debug/deps/integration-638238049e13d9e4)
+     Running tests/isolation.rs (target/debug/deps/isolation-d8644c3311c798de)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-046da2b88379caa8)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-5b0f258eab5d88e9)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `Cargo.lock` — +384 -325
+- `Cargo.toml` — +23 -27
+- `docs/dev/milestones/M33-dependency-refresh/README.md` — +1 -1
+- `docs/dev/milestones/M33-dependency-refresh/phase-01-tokio-and-compatible.md` — +80 -1
+- `src/ai/mod.rs` — +13 -1
+- `src/cli/input/tty.rs` — +64 -48
+
+**Commit:** 059c3252e20a65258403a512174aa1e6fd905a42
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
