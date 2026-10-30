@@ -262,11 +262,23 @@ connect-failure branch; `run_approved` no longer destructures `cmd_id` and no
 longer runs `host_entry_or_bare` — the comment above the old lookup shrank to
 the two lines the diff pins, `cmd_id,` became a trailing `..`, and
 `run_on_named_host` is untouched. `dispatch` in `dispatch_foreground.rs` was
-not edited. Findings from the two edited functions are in the M32 ledger as
-`### Findings — 2026-10-30` (#13, #14). All five greps print the expected
-values (`helper_calls=2 lookups=1 refuse=1`, `#[allow` 0/0), the helper test
-passes, fmt/build/clippy are clean, and the full suite reads
-`passed=2605 failed=0`.
+not edited. All five greps print the expected values (`helper_calls=2
+lookups=1 refuse=1`, `#[allow` 0/0), the helper test passes, fmt/build/clippy
+are clean, and the full suite reads `passed=2605 failed=0`.
+
+### Findings — 2026-10-30
+
+- `dispatch_files.rs` · the `ReadFile` and `EditFile` connect-failure arms:
+  the two build the same failure reply from different id sources (`read_file`
+  uses `call.id()`, `edit_file` the destructure's own `id`) and exit
+  differently (`break 'arm` vs `return`). Behaviour matches today; noted as
+  shape drift for #78's shared prologue at the function milestone, not fixed
+  here.
+- `dispatch_foreground.rs` · `ApprovedRun.cmd_id`: with `run_approved`'s
+  lookup gone, its only remaining reader is `run_on_named_host`'s
+  `finish_command` — the field is now named-host-specific but still sits in
+  the struct shared with the local arm. Moving it reshapes `ApprovedRun`, so
+  it is deferred to the function milestone.
 
 ### Update — 2026-10-30 00:47 (end-to-end verification)
 
@@ -286,4 +298,3 @@ Matches the expected values exactly: `helper_calls=2 lookups=1 refuse=1`,
 the helper test green, hygiene `16 passed`, bug tracker `6 passed`, clippy
 clean, and the full suite `passed=2605 failed=0` (2604 + 1). No flake
 appeared in this run; neither named known flake failed.
-

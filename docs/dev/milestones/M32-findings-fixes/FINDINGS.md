@@ -19,10 +19,3 @@ decision 5), triaged at review. Same columns and triage values as
 | 10 | 07 (architect) | `file_ops/ops.rs` · `run_edit_with_spawn`, `run_create_with_spawn` | bug | minor | the remote `edit` and `create` paths read their result with the same `line.contains("DE_OK:")` scan that phase 07 replaces for delete and copy, so an echoed command or a sentinel inside a path misreads them too | defer: the function milestone, when those two allowlisted functions are split; switch them to `remote_write_outcome` then |
 | 11 | 07 (architect) | `daemon/utils/event_log_tests.rs` · `for_each_skips_unparseable_lines` | test | minor | failed once in the phase-07 dry run and again at the phase-07 review, passing on re-run both times; it reads the event segments under `HOME` and likely races another test that writes events | act: M32 phase-11 (test-reliability) |
 | 12 | 07 | `file_ops/mod.rs` · `remote_write_outcome` | smell | nit | `rposition` keeps `done` an index into the forward slice, so swapping it for `rev().position` would silently break `lines[..done]` | reject: the four tests pin the behaviour, and a swap that broke it would fail them |
-
-### Findings — 2026-10-30
-
-| # | Phase | File · symbol | Kind | Severity | What | Triage |
-|---|-------|---------------|------|----------|------|--------|
-| 13 | 08 | `executor/dispatch_files.rs` · the `ReadFile` and `EditFile` connect-failure arms | smell | minor | the two arms build the same failure reply with different id sources (`read_file` uses `call.id()`, `edit_file` the destructure's own `id`) and different exit shapes (`break 'arm` vs `return`); behaviour matches, but a third copy would have to pick one shape | defer: the function milestone, with #78's shared host-parse prologue |
-| 14 | 08 | `executor/dispatch_foreground.rs` · `ApprovedRun.cmd_id` | smell | nit | after dropping `run_approved`'s lookup, `cmd_id`'s only remaining reader is `run_on_named_host`'s `finish_command`; the field is now named-host-specific but sits in the shared struct | defer: the function milestone; reshaping `ApprovedRun` is a signature change beyond this phase |
