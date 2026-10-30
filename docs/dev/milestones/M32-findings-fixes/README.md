@@ -5,7 +5,7 @@ retired: the fourteen defects are fixed with a test each, the duplicated
 code the audit named is one copy, and the test suite is fast, reliable
 and built on shared fixtures.
 
-**Status:** in-progress (scoped 2026-10-28; closed 2026-10-30, reopened the same day for phase 16)
+**Status:** done (scoped 2026-10-28, closed 2026-10-30; reopened and re-closed the same day for phase 16)
 
 **Release:** 2.5.0
 
@@ -156,3 +156,9 @@ ledger's. Expected count: 14. Each may split at drafting.
   pulled M32 #10 and #7 forward as phase 16, so the ledger's bug rows
   leave the milestone at zero open. The close above stands for phases
   01–15; phase 16's review re-runs the exit criteria's suite count.
+- **Re-closed (2026-10-30).** Phase 16 landed `approved_first_try` in 25
+  turns: the remote edit, sudo edit and create read `remote_write_outcome`
+  (M32 #10), and `wrap_words` budgets leading whitespace in chars (M32
+  #7). The suite stands at 2615, the allowlist is unchanged, and no bug
+  row in the M32 ledger is open. The carried-out list above loses #7 and
+  #10.
