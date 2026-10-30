@@ -5,7 +5,7 @@ retired: the fourteen defects are fixed with a test each, the duplicated
 code the audit named is one copy, and the test suite is fast, reliable
 and built on shared fixtures.
 
-**Status:** in-progress (scoped 2026-10-28)
+**Status:** done (scoped 2026-10-28, closed 2026-10-30)
 
 **Release:** 2.5.0
 
@@ -118,3 +118,36 @@ ledger's. Expected count: 14. Each may split at drafting.
 - **Triage back-references.** When a phase lands, the review changes the
   source ledger's row from `defer: …` to `act: M32 phase-NN`, so the M31
   ledger stays the one record of where each finding went.
+
+- **M32 retrospective (2026-10-30).** Seventeen phases landed (01–15,
+  with 11b and 12b split at drafting; 04b dropped when #20 was rejected),
+  fourteen `approved_first_try`, three `approved_after_1` (01, 03, 11), no
+  takeover. The suite went from 2587 to 2612 tests; the allowlist is as
+  2.4.0 left it. Exit criteria, checked at close: the lock grep finds
+  only test code; one `test_home` definition; `cargo test` passed 20
+  runs in a row at 2612 with no failure, mean wall 90.4 s against 90.0 s
+  for 2.4.0 (the suite is HOME-lock bound, see M31 #5/#6); hygiene and
+  doc_truth pass. Live on pinky: a `chat --resume` of an unknown
+  well-formed id gets `unknown session … nothing was saved or loaded`
+  from `/session load`, and nothing is written under `var/sessions/`; a
+  30-char CJK token at width 80 shows once on one row in the viewer,
+  where the 2.4.0 client showed it twice on two rows. Of the bug rows
+  named in the exit criteria, #20 and #58 closed as `reject` by PE
+  decision rather than by a test, #13 as `reject`, and #75 is re-deferred
+  to the function milestone. Two defects were found during the
+  milestone and fixed in it (M32 #16, #17). Carried out of M32: M32
+  FINDINGS #3, #7, #8, #9, #10, #13, #14, #18 and the M31 rows #36, #37,
+  #40, #75, #78, #79, all pointed at the function milestone or a viewer
+  tidy.
+- **Calibration (2026-10-30).** Decision 3 ("no dictated scripts") held
+  for the defects (01–09) and was reversed in practice from phase 11 on:
+  phase 11's first dispatch stalled 120 turns verifying a heredoc of new
+  code would compile, and every phase after it carried its change as a
+  Python script in `scripts/`, run as one command with the source
+  unread, dry-run and mutation-checked at drafting. Those seven phases
+  landed in 27–31 turns each, every one first try, and each landed diff
+  was byte-identical to the dry run. Recorded as data: the M31 fold
+  proposal on dictated cuts was declined, so no fold is proposed here.
+  Two rexyMCP product items carried: the server-authored completion
+  entry copies the executor's raw `</think>` text (phases 13 and 15),
+  and the governor's stall counter is blind to bash writes (#14, filed).

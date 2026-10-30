@@ -1,17 +1,12 @@
 # NEXT
 
-**Active milestone: M32 — Findings fixes** (release `2.5.0`), scoped
-2026-10-28 from the M31 audit ledger: the 51 deferred findings and the
-shared test fixture, fourteen phases, defects first. See
-[`README.md`](milestones/M32-findings-fixes/README.md) for the decisions
-and the phase table. The 40 allowlisted functions are the milestone after
-this one; MCP surface is now M33, Knowledge M34.
+**Active milestone:** none. M32 — Findings fixes closed 2026-10-30 (release
+`2.5.0` pending the PE's sign-off; see
+[`README.md`](milestones/M32-findings-fixes/README.md) § Notes for the
+retrospective). The 40 allowlisted functions are the next milestone; MCP
+surface is M33, Knowledge M34.
 
-**Active phase:** [phase-15-events-search](milestones/M32-findings-fixes/phase-15-events-search.md)
-(`todo`) — drafted 2026-10-30; dispatch with `/rexymcp:dispatch 15`. Phases
-01–14 are done; 04b was dropped (#20 rejected). Phase 15 fixes M32
-FINDINGS #16 and #17 in the events search, added by the PE on 2026-10-30,
-and is the last in the table.
+**Active phase:** none.
 
 M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). The function milestone, M33 (MCP surface) and M34
