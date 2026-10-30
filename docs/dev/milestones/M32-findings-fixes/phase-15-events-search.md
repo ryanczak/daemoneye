@@ -1,6 +1,6 @@
 # Phase 15 — Events search
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-14
@@ -203,3 +203,163 @@ clippy clean, `fmt_exit=0`, and the full suite reports `passed=2612 failed=0` �
 exactly the 2612 the acceptance criteria pin (up from 2611). The block ran once,
 with no early stop and no re-run.
 
+### Update — 2026-10-30 19:42 (complete, server-authored)
+
+**Summary:** </think>All tasks done. Completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` — yes, I flipped to in-progress and never touched it again.
+- [x] Milestone README's phase-table row still says `in-progress` — yes.
+- [x] No hand-written `(complete)` entry — correct, my entries are (cuts done), Findings, (end-to-end verification).
+- [x] `cargo fmt --all` run immediately before git add — yes (ran again with fmt in the same command before staging).
+- [x] All verification commands ran clean — yes.
+- [x] Final message substantive Summary + Notes for review.
+- [x] `git status --short` shows nothing.
+- [x] `git log -1 --stat` shows the commit includes every file touched.
+
+Acceptance criteria:
+- E2E prints `phrase_fn=1 event_col=0 dead_allows=0 masked=2 old_test=0 mask_test=1` ✓
+- `passed=2612 failed=0` ✓ exactly
+- hygiene + bug_tracker pass, allowlist unchanged, fmt/build/clippy clean ✓
+- `grep -c '^### Findings — '` prints 1 — the Findings entry. ✓ (one entry)
+
+Now the final Summary.</think>
+All five Spec tasks are done and the tree is clean. Final report:
+
+**Summary:** Executed M32 phase-15 (events search) exactly per its Spec: flipped the phase doc and README row to `in-progress`, then ran `phase-15-events-search.py && cargo fmt --all` as the first command — it exited 0 with its four anchor lines (`build_phrase_expr quotes the query as one phrase` … `the events tests pin the whole history, one copy and masking`) and sha256 `7019bfaf531d8e90…` matching the doc's record, so no assert fired and no hand-edit was needed. The script's change: `search_events` now selects only the `events_map` columns (the contentless table's `e.event` reads NULL, which had silently dropped every index hit), queries the index with the query's words as one FTS5 phrase via the new `build_phrase_expr` instead of the OR-form `build_match_expr`, merges index hits with the tail scan keeping each line once and only lines containing the query text, and masks every returned line with `mask_sensitive`; `EventHit`'s two dead fields and their `#[allow(dead_code)]` are gone. Logged the `(cuts done)` entry, the `### Findings — 2026-10-30` entry (diff stat: 4 source files, 133+/43−, close to the ~131/~41 estimate), and the end-to-end entry, then committed as `fix:` (`f0e5b49b`).
+
+**End-to-end verification:** The phase's block, run verbatim once with no early stop, printed `phrase_fn=1 event_col=0 dead_allows=0 masked=2 old_test=0 mask_test=1`, `allowlist=unchanged`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy clean, `fmt_exit=0`, and the full suite at exactly `passed=2612 failed=0` — matching every acceptance criterion, including the 2612 count (up from 2611).
+
+**Notes for review:** Status is left at `in-progress` per the contract; no `(complete)` entry was written. `grep -c '^### Findings — '` on the phase doc is 1, and the end-to-end entry holds the fenced block output. Nothing was adapted or improvised — the script's anchors held, so there were zero deviations from the spec. Out-of-scope items (the `legacy` segment resolution warning, `build_match_expr`'s OR form for memory recall) were left untouched.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.4.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ok
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test session_index_persistence ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (907061): No such process
+kill: (-907788): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-084f36955f09af75)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-15-events-search.md` — +56 -1
+- `src/memory/index/mod.rs` — +15 -0
+- `src/memory/index/search.rs` — +5 -8
+- `src/search.rs` — +40 -17
+- `src/search_tests.rs` — +71 -16
+
+**Commit:** f0e5b49bfb9fe0de665a15388882bd027e8f94f5
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
