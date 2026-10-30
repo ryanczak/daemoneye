@@ -161,11 +161,7 @@ pub fn search_turns(query: &str, limit: usize, session_id: Option<&str>) -> Vec<
 
 /// A hit from an artifact FTS search.
 pub struct ArtifactHit {
-    #[allow(dead_code)]
-    pub kind: String,
     pub name: String,
-    #[allow(dead_code)]
-    pub score: f64,
 }
 
 /// A hit from an events FTS search.
@@ -222,13 +218,7 @@ pub fn search_artifacts(query: &str, limit: usize, kind: Option<&str>) -> Vec<Ar
 
     let rows = match stmt.query_map(
         rusqlite::params_from_iter(params.iter().map(|b| &**b)),
-        |r| {
-            Ok(ArtifactHit {
-                kind: r.get(0)?,
-                name: r.get(1)?,
-                score: r.get(2)?,
-            })
-        },
+        |r| Ok(ArtifactHit { name: r.get(1)? }),
     ) {
         Ok(rows) => rows,
         Err(e) => {
@@ -297,8 +287,6 @@ pub struct EpochHit {
     pub seq: i64,
     pub kind: String,
     pub body: String,
-    #[allow(dead_code)]
-    pub score: f64,
 }
 
 /// Search the `epochs` FTS corpus. Returns up to `limit` hits ordered by BM25
@@ -339,7 +327,6 @@ pub fn search_epochs(query: &str, limit: usize) -> Vec<EpochHit> {
                 seq: r.get(1)?,
                 kind: r.get(2)?,
                 body: r.get(3)?,
-                score: r.get(4)?,
             })
         },
     ) {

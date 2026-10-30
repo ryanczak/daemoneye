@@ -17,11 +17,13 @@ fn ghost_foreground_refusal(
 ) -> Option<String> {
     match config {
         Err(e) => is_ghost.then(|| {
+            // `{e:#}` prints the whole chain: `Config::load` wraps the parse
+            // error in a `parsing <path>` context, and `{e}` alone would show
+            // only that outer layer, dropping the error the operator needs.
             format!(
                 "Error: foreground execution is refused because the configuration \
-                 could not be read: {e}. Fix or remove {path}, then retry; nothing \
-                 was run.",
-                path = crate::config::etc_dir().join("config.toml").display(),
+                 could not be read: {e:#}. Fix or remove that file, then retry; \
+                 nothing was run."
             )
         }),
         Ok(config) => (!ghost_may_run_foreground(is_ghost, config.sandbox.enabled)).then(|| {
@@ -474,6 +476,26 @@ mod ghost_foreground_gate_tests {
         assert!(
             text.starts_with("Error:"),
             "refusals read as errors: {text}"
+        );
+    }
+
+    /// M32 #1: the refusal names the parse error under the context
+    /// `Config::load` wraps it in, and names the file once.
+    #[test]
+    fn ghost_foreground_refusal_names_the_error_under_its_context() {
+        let config: anyhow::Result<crate::config::Config> =
+            Err(anyhow::anyhow!("expected `=`, found newline at line 3")
+                .context("parsing /home/op/.daemoneye/etc/config.toml"));
+        let text = ghost_foreground_refusal(true, &config)
+            .expect("a ghost with an unreadable config is refused");
+        assert!(
+            text.contains("expected `=`, found newline at line 3"),
+            "the refusal must carry the parse error itself: {text}"
+        );
+        assert_eq!(
+            text.matches("/home/op/.daemoneye/etc/config.toml").count(),
+            1,
+            "the file is named once: {text}"
         );
     }
 

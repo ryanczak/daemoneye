@@ -200,7 +200,7 @@ impl Default for SessionsConfig {
     fn default() -> Self {
         Self {
             auto_name_turn_threshold: default_auto_name_turn_threshold(),
-            auto_name_enabled: true,
+            auto_name_enabled: default_true(),
             load_recent_turns: default_load_recent_turns(),
             archive_retention_days: 0,
             log_retention_days: 0,
@@ -405,7 +405,7 @@ pub struct ApprovalsConfig {
 impl Default for ApprovalsConfig {
     fn default() -> Self {
         Self {
-            commands: true,
+            commands: default_true(),
             sudo: false,
             scripts: false,
             runbooks: false,

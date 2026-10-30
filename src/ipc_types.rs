@@ -3,18 +3,23 @@
 
 use super::*;
 
-/// One sandboxed container this daemon owns (M19 phase-05).
+/// One sbx sandbox this daemon owns, as `daemoneye status` lists it. The
+/// type kept its docker-era name; the fields are filled by
+/// `sbx_lifecycle::sandbox_rows` from `sbx ls --json`.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ContainerInfo {
-    /// Short (12-char) container id, as docker displays it.
+    /// The sandbox name: `de-ghost-<id>` or `de-chat-<id>`.
     pub id: String,
-    /// `running`, `exited`, `created`, …
+    /// The sandbox's status as sbx reports it.
     pub state: String,
+    /// Always `"shell"` under sbx, and no renderer prints it. Kept because it
+    /// is wire format: dropping it would break an older client reading a
+    /// newer daemon's status reply.
     pub image: String,
-    /// Owning session, from the `de.session` label. `None` for a container
-    /// started before the label existed.
+    /// The owning session or job id: the sandbox name after its `de-ghost-`
+    /// or `de-chat-` prefix.
     pub session: Option<String>,
-    /// Carries `de.ghost=1`.
+    /// True for a ghost run's sandbox (the `de-ghost-` prefix).
     pub is_ghost: bool,
 }
 

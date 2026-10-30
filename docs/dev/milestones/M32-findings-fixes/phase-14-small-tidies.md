@@ -1,6 +1,6 @@
 # Phase 14 — Small tidies
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-13
@@ -144,3 +144,49 @@ output, run the block once more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 18:30 (started)
+
+Status flipped to `in-progress` and the milestone README row matches. Next:
+run `phase-14-small-tidies.py` once, before opening any source file.
+
+### Update — 2026-10-30 18:32 (cuts done)
+
+`python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-14-small-tidies.py && cargo fmt --all`
+(sha256 `0a6c5c98fb0f5b6d…`) printed, then exited 0:
+
+```
+the ghost refusal prints the error chain, and a test pins it
+SessionsConfig and ApprovalsConfig defaults call default_true
+ContainerInfo docs describe the sbx sandbox
+the three unread ArtifactHit and EpochHit fields are gone
+startup.rs imports by name
+```
+
+All five anchors asserted; `cargo fmt --all` followed clean.
+
+### Findings — 2026-10-30
+
+`git diff --stat`: 7 files, +67/−28 — the script's five source edits
+(`dispatch_foreground.rs`, `config/types.rs`, `ipc_types.rs`,
+`memory/index/search.rs`, `daemon/startup.rs`) plus the status flip in
+this doc and the README phase-table row.
+
+### Update — 2026-10-30 18:36 (end-to-end verification)
+
+Ran the phase doc's End-to-end block verbatim (`bash <<'E2E' … E2E`,
+output tee'd to `/tmp/phase14-e2e.txt`, pasted below unedited):
+
+```
+chain_fmt=1 chain_test=1 literal_true=0 docker_docs=0 dead_allows=2 glob_import=0
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.96s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.77s
+fmt_exit=0
+passed=2611 failed=0
+```
+
+Shape line matches the acceptance criteria; hygiene and bug tracker pass;
+the allowlist is untouched; clippy and fmt are clean; the suite is
+exactly `passed=2611 failed=0` — one test added, none removed.
