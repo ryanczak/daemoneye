@@ -4,7 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn open_shell_returns_a_new_id() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let out = open_shell_with(
         &reg,
@@ -54,7 +54,7 @@ async fn open_shell_returns_a_new_id() {
 
 #[tokio::test]
 async fn open_shell_refuses_past_the_owner_cap() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert(&reg, 7, Owner::Chat("capped".into()), NOW);
     let ran: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
@@ -89,7 +89,7 @@ async fn open_shell_refuses_past_the_owner_cap() {
 
 #[tokio::test]
 async fn open_shell_removes_the_record_when_readiness_fails() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let out = open_shell_with(
         &reg,
@@ -119,7 +119,7 @@ async fn open_shell_removes_the_record_when_readiness_fails() {
 /// lists the configured ones; the cap sentence names neither.
 #[tokio::test]
 async fn open_shell_on_an_unknown_host_names_the_host_not_the_shell_limit() {
-    let (_home, dir) = lifecycle_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -152,7 +152,7 @@ async fn open_shell_on_an_unknown_host_names_the_host_not_the_shell_limit() {
 /// again through `list_shells` — the plumbing's whole point.
 #[tokio::test]
 async fn open_shell_on_a_named_host_records_the_host() {
-    let (_home, dir) = lifecycle_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -191,7 +191,7 @@ async fn open_shell_on_a_named_host_records_the_host() {
 /// `list_shells` prints exactly as it did before hosts existed.
 #[tokio::test]
 async fn open_shell_without_a_host_records_the_local_host() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let _swap = open_shell_test_seam::swap_in(&reg);
     let out = open_shell(&Owner::Chat("local".into()), None, None, None).await;
@@ -218,7 +218,7 @@ async fn open_shell_without_a_host_records_the_local_host() {
 /// contract now includes it.
 #[tokio::test]
 async fn open_shell_local_result_names_the_size() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let _swap = open_shell_test_seam::swap_in(&reg);
     let out = open_shell(&Owner::Chat("sentinel".into()), None, None, None).await;
@@ -251,7 +251,7 @@ async fn open_shell_local_result_names_the_size() {
 /// the ` × ` between.
 #[tokio::test]
 async fn open_shell_names_the_requested_size() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let _swap = open_shell_test_seam::swap_in(&reg);
     let out = open_shell(&Owner::Chat("sized".into()), None, Some(50), Some(160)).await;
@@ -269,7 +269,7 @@ async fn open_shell_names_the_requested_size() {
 /// advice.
 #[tokio::test]
 async fn open_shell_rejects_a_malformed_host_name_before_any_spawn() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let _swap = open_shell_test_seam::swap_in(&reg);
     let out = open_shell(&Owner::Chat("weird".into()), Some("bad name!"), None, None).await;
@@ -296,7 +296,7 @@ async fn open_shell_rejects_a_malformed_host_name_before_any_spawn() {
 /// `REPLACE` global below is shared with the five `open_shell` seam tests
 /// (`#[test]`s run in parallel threads), and this test both reads it as a
 /// precondition and mutates it twice. The other five serialize on
-/// `lifecycle_home()`, which bundles the same lock; this test needs no
+/// `crate::test_home()`, which bundles the same lock; this test needs no
 /// `$HOME`, so it takes the lock by itself.
 #[test]
 fn swap_in_restores_the_previous_registry_on_drop() {
@@ -333,7 +333,7 @@ fn swap_in_restores_the_previous_registry_on_drop() {
 /// seam is what would make this test order-dependent.
 #[tokio::test]
 async fn open_shell_without_a_swap_uses_the_daemon_registry() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     assert!(
         open_shell_test_seam::swapped().is_none(),
         "precondition: no swap is in scope (this test must not depend on another)"
@@ -369,7 +369,7 @@ async fn open_shell_without_a_swap_uses_the_daemon_registry() {
 #[tokio::test]
 #[ignore = "requires the configured host `pinky` reachable over ssh"]
 async fn open_shell_on_pinky_end_to_end() {
-    let (_home, dir) = lifecycle_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
@@ -494,7 +494,7 @@ async fn run_pinky_via_run_path(
 #[tokio::test]
 #[ignore = "requires the configured host `pinky` reachable over ssh"]
 async fn run_terminal_command_on_pinky_end_to_end() {
-    let (_home, dir) = lifecycle_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
@@ -550,7 +550,7 @@ async fn run_terminal_command_on_pinky_end_to_end() {
 
 #[tokio::test]
 async fn close_shell_ends_the_callers_shell() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let opened = open_shell_with(
         &reg,
@@ -627,7 +627,7 @@ async fn close_shell_ends_the_callers_shell() {
 
 #[tokio::test]
 async fn close_shell_refuses_another_owners_shell() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     // Same inner string, different kind: the point of the `key()` check.
     insert(&reg, 4, Owner::Ghost("cross".into()), NOW);
@@ -654,7 +654,7 @@ async fn close_shell_refuses_another_owners_shell() {
 
 #[tokio::test]
 async fn close_shell_unknown_id_is_an_error() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let out = close_shell_with(
         &reg,
@@ -681,7 +681,7 @@ async fn close_shell_unknown_id_is_an_error() {
 /// pin nothing.
 #[tokio::test]
 async fn closing_an_owners_shells_ends_only_that_owners_shells() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let spawn_sleeping_host = |id: ShellId| async move {
         let dir = tempfile::tempdir().context("tempdir for cast")?;

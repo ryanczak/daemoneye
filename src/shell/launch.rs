@@ -224,20 +224,8 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::shell::proto::{ShellResponse, ShellState};
-    use crate::test_home_guard;
     use tokio::io::AsyncBufReadExt;
     use tokio::net::UnixListener;
-
-    /// Point `HOME` at a fresh temp dir and return the guard; callers then run
-    /// `Config::ensure_dirs()` so `shells_dir`/`shell_logs_dir` exist.
-    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let guard = test_home_guard();
-        let dir = tempfile::tempdir().unwrap();
-        unsafe {
-            std::env::set_var("HOME", dir.path());
-        }
-        (guard, dir)
-    }
 
     #[test]
     fn launch_validate_shell_id_accepts_canonical_ids() {
@@ -269,7 +257,7 @@ mod tests {
 
     #[test]
     fn launch_paths_live_under_the_configured_dirs() {
-        let (_guard, _dir) = test_home();
+        let (_guard, _dir) = crate::test_home();
         let sock = socket_path("s1");
         assert!(
             sock.ends_with("var/run/shells/s1.sock"),
@@ -380,7 +368,7 @@ mod tests {
 
     #[test]
     fn launch_second_host_for_the_same_id_is_refused() {
-        let (_guard, _dir) = test_home();
+        let (_guard, _dir) = crate::test_home();
         Config::ensure_dirs().ok();
         let first = crate::daemon::instance::InstanceLock::acquire(&lock_path("s1"))
             .expect("first acquisition succeeds");
@@ -394,7 +382,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn launch_run_host_serves_status_over_its_socket() {
-        let (_guard, _dir) = test_home();
+        let (_guard, _dir) = crate::test_home();
         Config::ensure_dirs().ok();
         let id = "s1";
         let _host = tokio::spawn(async move { run_host(id, "bash", &[], 24, 80).await });
@@ -428,7 +416,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_run_host_rejects_an_invalid_id_before_binding() {
-        let (guard, _dir) = test_home();
+        let (guard, _dir) = crate::test_home();
         Config::ensure_dirs().ok();
         let result = run_host("../x", "bash", &[], 24, 80).await;
         assert!(result.is_err(), "an invalid id must be rejected");

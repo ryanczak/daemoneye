@@ -1,5 +1,4 @@
 use super::*;
-use crate::config::Config;
 use crate::shell::PtyBackend;
 use crate::shell::client;
 use crate::shell::host;
@@ -7,21 +6,6 @@ use crate::shell::registry::ShellRecord;
 use crate::shell::registry::spawn_for_in_sandbox;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Point `HOME` at a fresh temp dir for the duration of the test and
-/// serialise against other HOME-mutating tests (bug-05c-1). Callers hold
-/// the returned guard for the whole test so every `launch::socket_path` /
-/// `launch::lock_path` resolution — including inside the spawned host —
-/// lands under this same temp `HOME`.
-fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-    let guard = crate::test_home_guard();
-    let dir = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("HOME", dir.path());
-    }
-    Config::ensure_dirs().ok();
-    (guard, dir)
-}
 
 /// The `spawn` substitute tests pass instead of `spawn_detached_host`
 /// (F4): an in-process host that serves the *configured* socket for `id`
@@ -46,7 +30,7 @@ async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn session_creates_a_shell_when_the_owner_has_none() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("a".into());
 
@@ -85,7 +69,7 @@ async fn session_creates_a_shell_when_the_owner_has_none() {
 
 #[tokio::test]
 async fn session_reuses_the_owners_live_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("b".into());
     let spawn_calls = Arc::new(AtomicUsize::new(0));
@@ -134,7 +118,7 @@ async fn session_reuses_the_owners_live_shell() {
 
 #[tokio::test]
 async fn session_gives_different_owners_different_shells() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
 
     let (ida, _) = shell_for_owner(
@@ -172,7 +156,7 @@ async fn session_gives_different_owners_different_shells() {
 /// reuse filter excludes it even for its own owner.
 #[tokio::test]
 async fn a_remote_shell_is_never_reused_for_a_local_command() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("a".into());
 
@@ -222,7 +206,7 @@ async fn a_remote_shell_is_never_reused_for_a_local_command() {
 
 #[tokio::test]
 async fn session_replaces_a_shell_whose_host_is_dead() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("a".into());
 
@@ -274,7 +258,7 @@ async fn session_replaces_a_shell_whose_host_is_dead() {
 
 #[tokio::test]
 async fn session_honours_the_per_owner_cap() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("a".into());
 
@@ -335,7 +319,7 @@ async fn session_honours_the_per_owner_cap() {
 
 #[tokio::test]
 async fn session_rolls_back_the_record_when_readiness_times_out() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("a".into());
 
@@ -361,7 +345,7 @@ async fn session_rolls_back_the_record_when_readiness_times_out() {
 
 #[tokio::test]
 async fn session_dedicated_shell_is_never_reused_by_shell_for_owner() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("bg".into());
 
@@ -420,7 +404,7 @@ async fn session_dedicated_shell_is_never_reused_by_shell_for_owner() {
 
 #[tokio::test]
 async fn session_spawn_dedicated_for_creates_a_new_shell_even_when_one_is_reusable() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("bg".into());
 
@@ -470,7 +454,7 @@ async fn session_spawn_dedicated_for_creates_a_new_shell_even_when_one_is_reusab
 
 #[tokio::test]
 async fn session_spawn_dedicated_for_removes_the_record_when_readiness_never_arrives() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("bg".into());
 
@@ -600,7 +584,7 @@ fn shell_marker_name_is_posix_inside_a_sandbox() {
 /// in one turn.
 #[test]
 fn an_unknown_host_is_refused_by_name() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -643,7 +627,7 @@ fn the_local_host_is_refused_here() {
 
 #[test]
 fn a_configured_host_returns_its_configured_entry() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\n\
@@ -659,7 +643,7 @@ fn a_configured_host_returns_its_configured_entry() {
 
 #[test]
 fn an_unconfigured_host_becomes_its_own_ssh_destination() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n",
@@ -678,7 +662,7 @@ fn an_unconfigured_host_becomes_its_own_ssh_destination() {
 
 #[test]
 fn a_configured_host_with_an_empty_ssh_is_still_an_error() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.half]\n",
@@ -713,7 +697,7 @@ fn the_local_host_is_still_refused_by_the_permissive_lookup() {
 
 #[test]
 fn the_strict_lookup_still_refuses_an_unconfigured_host() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n",
@@ -735,7 +719,7 @@ fn the_strict_lookup_still_refuses_an_unconfigured_host() {
 /// that shell back, reused, without a spawn.
 #[tokio::test]
 async fn shell_for_owner_reuses_a_shell_on_the_requested_host() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("hosted".into());
 
@@ -773,7 +757,7 @@ async fn shell_for_owner_reuses_a_shell_on_the_requested_host() {
 /// left in the registry for later work that names its host.
 #[tokio::test]
 async fn shell_for_owner_does_not_reuse_a_shell_from_another_host() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("mixed".into());
 
@@ -861,7 +845,7 @@ async fn cancel_busy(id: &ShellId) {
 /// its own terminal, which is the reuse answer.
 #[tokio::test]
 async fn probe_foreground_reads_a_prompt_on_an_idle_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("probe-idle".into());
     let (id, _) = shell_for_owner(
@@ -892,7 +876,7 @@ async fn probe_foreground_reads_a_prompt_on_an_idle_shell() {
 /// `Program { cmd: "sleep" }` — non-tui, cooked mode.
 #[tokio::test]
 async fn probe_foreground_names_a_running_program() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("probe-busy".into());
     let (id, _) = shell_for_owner(
@@ -922,7 +906,7 @@ async fn probe_foreground_names_a_running_program() {
 /// registry, untouched and still running its job.
 #[tokio::test]
 async fn shell_for_owner_skips_a_busy_lowest_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("busy-lowest".into());
     let (busy, _) = shell_for_owner(
@@ -976,7 +960,7 @@ async fn shell_for_owner_skips_a_busy_lowest_shell() {
 /// owner's shells in index order.
 #[tokio::test]
 async fn shell_for_owner_reuses_the_next_idle_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("next-idle".into());
     let (lowest, _) = shell_for_owner(
@@ -1032,7 +1016,7 @@ async fn shell_for_owner_reuses_the_next_idle_shell() {
 /// shell.
 #[tokio::test]
 async fn shell_for_owner_never_reuses_a_sandbox_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("boxed".into());
 
@@ -1086,7 +1070,7 @@ async fn shell_for_owner_never_reuses_a_sandbox_shell() {
 
 #[tokio::test]
 async fn shell_for_owner_in_sandbox_creates_then_reuses() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("boxed".into());
     let spawn_calls = Arc::new(AtomicUsize::new(0));
@@ -1146,7 +1130,7 @@ async fn shell_for_owner_in_sandbox_creates_then_reuses() {
 
 #[tokio::test]
 async fn shell_for_owner_in_sandbox_keeps_sandboxes_apart() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("boxed".into());
 
@@ -1191,7 +1175,7 @@ async fn shell_for_owner_in_sandbox_keeps_sandboxes_apart() {
 
 #[tokio::test]
 async fn shell_for_owner_in_sandbox_never_returns_a_host_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("boxed".into());
 
@@ -1242,7 +1226,7 @@ async fn shell_for_owner_in_sandbox_never_returns_a_host_shell() {
 
 #[tokio::test]
 async fn shell_for_owner_in_sandbox_ignores_another_owners_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner_a = Owner::Chat("a".into());
     let owner_b = Owner::Chat("b".into());

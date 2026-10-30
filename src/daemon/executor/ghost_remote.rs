@@ -107,7 +107,6 @@ where
 mod tests {
     use super::*;
     use crate::shell::{Owner, ShellRegistry, ShellResponse, ShellState, socket_path, status};
-    use crate::test_home_guard;
     use anyhow::Context;
     use std::sync::Arc;
 
@@ -116,18 +115,6 @@ mod tests {
     const ROWS: u16 = 24;
     /// The PTY geometry every shell host is spawned with.
     const COLS: u16 = 80;
-
-    /// Point `HOME` at a fresh temp dir for the duration of the test and
-    /// serialise against other HOME-mutating tests (bug-05c-1).
-    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let guard = test_home_guard();
-        let dir = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("HOME", dir.path());
-        }
-        crate::config::Config::ensure_dirs().ok();
-        (guard, dir)
-    }
 
     /// A real in-process PTY host serving the configured socket for `id`: a
     /// bash session whose `.cast` the returned path points at. The
@@ -189,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_ghost_remote_command_runs_in_a_ghost_owned_shell_on_that_host() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("g1".into());
         let (text, exit_code) = run_ghost_remote(
@@ -254,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_local_ghost_command_runs_in_a_ghost_owned_shell_on_the_daemon_host() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("g-local".into());
         let (text, exit_code) = run_ghost_remote(
@@ -293,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_ghost_reuses_its_shell_for_later_commands_on_that_host() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("g1".into());
         let (first, first_exit) = run_ghost_remote(
@@ -326,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_ghost_remote_password_prompt_fails_fast_and_says_nobody_can_answer() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("g1".into());
         // The fake, byte-for-byte as `shell_exec.rs` defines it: every `\$`
@@ -391,7 +378,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires the configured host `pinky` reachable over ssh"]
     async fn a_ghost_command_runs_on_pinky_over_a_batchmode_shell() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("g1".into());
         let spawn_pinky = |id: crate::shell::ShellId| async move {

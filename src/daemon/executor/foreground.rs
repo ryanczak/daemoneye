@@ -694,19 +694,6 @@ mod refusal_gate_tests {
         }
     }
 
-    /// Point `HOME` at a fresh temp dir for the duration of the test and
-    /// serialise against other HOME-mutating tests (bug-05c-1). The temp dir
-    /// is dropped with the returned guard pair, so nothing leaks.
-    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let guard = crate::test_home_guard();
-        let dir = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("HOME", dir.path());
-        }
-        crate::config::Config::ensure_dirs().ok();
-        (guard, dir)
-    }
-
     /// A ghost on a configured host whose elevated-permission whitelist names
     /// another script may not elevate this one: the call is refused **before**
     /// approval and before any tmux call, naming the script and the allowed
@@ -716,7 +703,7 @@ mod refusal_gate_tests {
     /// go red when the gate is removed.
     #[test]
     fn an_unlisted_elevated_script_is_refused_on_a_configured_host() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
 
         let sessions = SessionStore::new();
         let session_id = "ghost-elevation-refused";
@@ -775,7 +762,7 @@ mod refusal_gate_tests {
     /// set, and is recorded with the raw value as `requested_host`.
     #[test]
     fn an_unconfigured_ssh_target_is_outside_a_nonempty_hosts_list() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
 
         let sessions = SessionStore::new();
         let session_id = "ghost-unconfigured-target";

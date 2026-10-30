@@ -33,7 +33,7 @@ where
 /// the record was stamped but where the command actually ran.
 #[tokio::test]
 async fn run_terminal_command_on_a_named_host_reuses_that_hosts_shell() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -117,7 +117,7 @@ async fn run_terminal_command_on_a_named_host_reuses_that_hosts_shell() {
 /// both for reuse and for a fresh shell.
 #[tokio::test]
 async fn run_terminal_command_without_a_host_stays_on_the_daemon_host() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("local-run".into());
 
@@ -174,7 +174,7 @@ async fn run_terminal_command_without_a_host_stays_on_the_daemon_host() {
 /// refused, naming both hosts, and the command does **not** run in s3.
 #[tokio::test]
 async fn run_terminal_command_refuses_a_shell_whose_host_differs_from_the_named_host() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -256,7 +256,7 @@ async fn run_terminal_command_refuses_a_shell_whose_host_differs_from_the_named_
 /// before the call is made, so the refusal is the first answer.
 #[tokio::test]
 async fn run_terminal_command_refuses_a_busy_named_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("busy-named".into());
     let (id, _) = shell_for_owner(
@@ -376,7 +376,7 @@ async fn run_terminal_command_refuses_a_busy_named_shell() {
 /// one, or `shell` + `host` could never be combined at all.
 #[tokio::test]
 async fn run_terminal_command_with_a_matching_shell_and_host_is_not_an_error() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -427,7 +427,7 @@ async fn run_terminal_command_with_a_matching_shell_and_host_is_not_an_error() {
 /// spawn.
 #[tokio::test]
 async fn run_terminal_command_an_unconfigured_host_resolves_to_its_own_destination() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.web01]\n\
@@ -471,7 +471,7 @@ async fn run_terminal_command_an_unconfigured_host_resolves_to_its_own_destinati
 /// the tool path, not just the parser.
 #[tokio::test]
 async fn run_terminal_command_host_local_is_the_daemon_host() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
 
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("local-word".into());
@@ -525,7 +525,7 @@ async fn run_terminal_command_host_local_is_the_daemon_host() {
 
 #[tokio::test]
 async fn read_shell_returns_clean_output_after_a_real_command() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = crate::shell::registry();
     let id = crate::shell::spawn_for_on_host(
         reg,
@@ -575,7 +575,7 @@ async fn read_shell_returns_clean_output_after_a_real_command() {
 /// second command is sent, so a range that reaches back must contain it.
 #[tokio::test]
 async fn read_shell_since_command_excludes_the_previous_commands_output() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = crate::shell::registry();
     let owner = Owner::Chat("since-command-e2e".into());
     let id = crate::shell::spawn_for(reg, owner.clone(), 5, false, spawn_in_logs_dir)
@@ -705,7 +705,7 @@ fn socket_close_mid_command_reports_shell_exit() {
 /// dead shell.
 #[tokio::test]
 async fn an_exited_shell_is_reported_as_exited_not_as_a_timeout() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("exited-e2e".into());
     let mut sink = tokio::io::sink();
@@ -747,7 +747,7 @@ async fn an_exited_shell_is_reported_as_exited_not_as_a_timeout() {
 /// abandoned it with a false "could not be read" error.
 #[tokio::test]
 async fn a_password_prompt_that_never_appears_is_not_given_up() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("never-prompt".into());
     let (id, result, _cast) = run_with_transport(
@@ -778,7 +778,7 @@ async fn a_password_prompt_that_never_appears_is_not_given_up() {
 /// dozen copies of the secret.
 #[tokio::test]
 async fn a_correct_password_is_sent_exactly_once() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("answered-once".into());
     let (writes, mut reader) = answered_transport();
@@ -841,7 +841,7 @@ async fn a_correct_password_is_sent_exactly_once() {
 /// **fast and honestly**, and the same shell runs the next command.
 #[tokio::test]
 async fn an_unanswerable_password_prompt_gives_up_fast_and_leaves_the_shell_usable() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("nobody-attached".into());
     let started = std::time::Instant::now();
@@ -924,7 +924,7 @@ async fn an_unanswerable_password_prompt_gives_up_fast_and_leaves_the_shell_usab
 /// the classification fire on the program that actually prompts.
 #[tokio::test]
 async fn a_later_command_on_the_line_still_gets_the_prompt_sentinel() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("later-on-line".into());
     let (writes, mut reader) = answered_transport();
@@ -961,7 +961,7 @@ async fn a_later_command_on_the_line_still_gets_the_prompt_sentinel() {
 /// `read_to_marker` this fails at "timed out after 2s".
 #[tokio::test]
 async fn an_answer_after_the_timeout_still_completes_the_command() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("late-answer".into());
     let writes = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1048,7 +1048,7 @@ async fn an_answer_after_the_timeout_still_completes_the_command() {
 /// of timing out at 2 s, and the under-5-s assertion fails.
 #[tokio::test]
 async fn a_hang_after_an_answer_still_times_out() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("hang-after-answer".into());
     let (writes, mut reader) = answered_transport();
@@ -1108,7 +1108,7 @@ async fn a_hang_after_an_answer_still_times_out() {
 #[tokio::test]
 #[ignore = "requires the configured host `pinky` reachable over ssh"]
 async fn an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",

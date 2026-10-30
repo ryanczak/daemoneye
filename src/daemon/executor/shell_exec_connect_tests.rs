@@ -1,6 +1,4 @@
 use super::*;
-use crate::config::Config;
-use crate::test_home_guard;
 use std::sync::Arc;
 
 /// Serialises this module's PTY-spawning tests against each other. Each
@@ -104,18 +102,6 @@ async fn drive_fake(
         Duration::from_secs(10),
     )
     .await
-}
-
-/// Hold `HOME` at a fresh temp dir (so config and `ssh_dir()` are cold)
-/// for one test, serialised against the other HOME-mutating tests.
-fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-    let guard = test_home_guard();
-    let dir = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("HOME", dir.path());
-    }
-    Config::ensure_dirs().ok();
-    (guard, dir)
 }
 
 /// bug-08e-1's regression: the deadline is measured from the **last
@@ -353,7 +339,7 @@ async fn an_unknown_host_key_is_refused() {
 #[tokio::test]
 #[ignore = "requires the configured host `pinky` reachable over ssh"]
 async fn a_cold_host_connects_first_and_a_warm_one_is_reused_on_pinky() {
-    let (_home, dir) = test_home();
+    let (_home, dir) = crate::test_home();
     std::fs::write(
         dir.path().join(".daemoneye/etc/config.toml"),
         "[models.default]\nprovider = \"ollama\"\n\n[hosts.pinky]\nssh = \"pinky\"\n",
@@ -410,7 +396,7 @@ use super::tests::{FishShellEnv, spawn_in_process_host};
 #[tokio::test]
 async fn a_sandbox_shell_targeted_by_id_uses_the_posix_marker() {
     let _pty = PTY_TEST_LOCK.lock().await;
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("sandbox-marker".into());
 

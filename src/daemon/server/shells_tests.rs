@@ -1,24 +1,9 @@
 use super::*;
-use crate::config::Config;
 use crate::shell::InFlight;
 use crate::shell::Owner;
-use crate::test_home_guard;
 use std::sync::Arc;
 
 // ── Shared fixtures ───────────────────────────────────────────────────
-
-/// Point `HOME` at a fresh temp dir **and** create the dirs the shell
-/// substrate resolves through it (`shells_dir()` for sockets and locks,
-/// `shell_logs_dir()` for casts and their meta indexes), so a test never
-/// touches the developer's real `~/.daemoneye`. Must be held for the
-/// test's whole body — the guard restores `HOME` on drop.
-fn shell_test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-    let guard = test_home_guard();
-    let dir = tempfile::tempdir().unwrap();
-    unsafe { std::env::set_var("HOME", dir.path()) }
-    Config::ensure_dirs().ok();
-    (guard, dir)
-}
 
 /// A real in-process PTY host serving the configured socket for `id`:
 /// a bash session whose `.cast` the returned path points at, with the
@@ -139,7 +124,7 @@ fn two_command_recording(id: &str, indexed: bool) -> std::path::PathBuf {
 
 #[tokio::test]
 async fn shell_log_read_returns_events_and_where_each_command_begins() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     two_command_recording("s4-17", true);
     let mut tx: Vec<u8> = Vec::new();
     handle_shell_log_read(&mut tx, "s4-17").await.unwrap();
@@ -187,7 +172,7 @@ async fn shell_log_read_returns_events_and_where_each_command_begins() {
 
 #[test]
 fn shell_log_read_marks_at_the_output_when_nothing_was_typed() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let dir = two_command_recording("s4-17", true);
     let cast = dir.join("s4-17.cast");
     let text = std::fs::read_to_string(&cast).unwrap();
@@ -216,7 +201,7 @@ fn shell_log_read_marks_at_the_output_when_nothing_was_typed() {
 
 #[test]
 fn shell_log_read_refuses_what_it_cannot_read() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let dir = two_command_recording("s4-17", false);
     let bare = read_shell_log(&dir, "s4", LOG_READ_CAP).err().unwrap();
     assert!(bare.contains("not a log id"), "{bare}");
@@ -239,7 +224,7 @@ fn shell_log_read_refuses_what_it_cannot_read() {
 
 #[test]
 fn shell_log_read_drops_the_oldest_events_past_the_cap() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let dir = two_command_recording("s4-17", true);
     // The last three events ("$ ", "echo two\r\n", "two\r\n") are 17 bytes.
     let log = read_shell_log(&dir, "s4-17", 17).unwrap();
@@ -260,7 +245,7 @@ fn shell_log_read_drops_the_oldest_events_past_the_cap() {
 
 #[tokio::test]
 async fn shell_log_list_is_newest_first_and_filters() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let cmd = |c: &str| {
         serde_json::json!({"index": 0, "command": c, "started": 0.0,
             "ended": 0.0, "exit_code": 0, "first_byte": 0, "end_byte": 1})
@@ -322,7 +307,7 @@ async fn shell_log_list_is_newest_first_and_filters() {
 
 #[tokio::test]
 async fn shell_list_reports_every_shell_with_its_last_command() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id_a = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |_id| async { Ok(()) })
@@ -384,7 +369,7 @@ async fn shell_list_reports_every_shell_with_its_last_command() {
 
 #[tokio::test]
 async fn shell_input_reaches_the_shell() {
-    let (_guard, dir) = shell_test_home();
+    let (_guard, dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -457,7 +442,7 @@ async fn status_reaches(id: &str, want: crate::shell::ShellState) -> bool {
 #[tokio::test]
 async fn shell_signal_pauses_resumes_and_interrupts_the_foreground_job() {
     use crate::shell::ShellState;
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -510,7 +495,7 @@ async fn shell_signal_pauses_resumes_and_interrupts_the_foreground_job() {
 #[tokio::test]
 async fn shell_signal_int_cancels_the_run_that_owns_the_shell() {
     use crate::daemon::run::{CancelDoor, register_active, register_run, take_cancel_door};
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let session = "shells-08b-owner";
     let owner = Owner::Chat(session.into());
@@ -563,7 +548,7 @@ async fn shell_signal_int_cancels_the_run_that_owns_the_shell() {
 async fn shell_signal_stop_parks_and_cont_wakes_the_owning_run() {
     use crate::daemon::run::{is_paused, register_active, take_pause_notice};
     use crate::shell::ShellState;
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let session = "shells-08c-owner";
     let owner = Owner::Ghost(session.into());
@@ -617,7 +602,7 @@ async fn shell_signal_stop_parks_and_cont_wakes_the_owning_run() {
 #[tokio::test]
 async fn shell_input_records_a_user_input_event_without_its_content() {
     use crate::daemon::run::{register_active, take_typed_notice};
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let session = "shells-08d-owner";
     let owner = Owner::Ghost(session.into());
@@ -676,7 +661,7 @@ async fn shell_input_records_a_user_input_event_without_its_content() {
 
 #[tokio::test]
 async fn shell_open_opens_a_user_owned_shell() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let mut tx: Vec<u8> = Vec::new();
     handle_shell_open(&mut tx, None).await.unwrap();
     let Response::ShellOpened { id } = parse_response(&tx) else {
@@ -711,7 +696,7 @@ async fn shell_open_opens_a_user_owned_shell() {
 
 #[tokio::test]
 async fn shell_signal_refuses_unknown_signals_and_shells() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let bad = signal_state(&reg, "s1", "TERM").await.unwrap_err();
     assert!(bad.contains("STOP, CONT, INT"), "{bad}");
@@ -721,7 +706,7 @@ async fn shell_signal_refuses_unknown_signals_and_shells() {
 
 #[tokio::test]
 async fn shell_resize_changes_the_shells_size() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -759,7 +744,7 @@ async fn shell_resize_changes_the_shells_size() {
 
 #[tokio::test]
 async fn shell_ipc_refuses_an_unknown_shell() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let mut tx: Vec<u8> = Vec::new();
     handle_shell_input(&mut tx, &reg, "s99", b"x")
@@ -782,7 +767,7 @@ async fn shell_ipc_refuses_an_unknown_shell() {
 
 #[tokio::test]
 async fn shell_list_carries_each_shells_flags() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id_a = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |_id| async { Ok(()) })
@@ -914,7 +899,7 @@ async fn close_tail_shell(reg: &ShellRegistry, id: &str, owner: &Owner) {
 
 #[tokio::test]
 async fn shell_tail_without_follow_sends_only_the_screen() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -960,7 +945,7 @@ async fn shell_tail_without_follow_sends_only_the_screen() {
 
 #[tokio::test]
 async fn shell_tail_reports_the_shells_size() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -996,7 +981,7 @@ async fn shell_tail_reports_the_shells_size() {
 
 #[tokio::test]
 async fn shell_tail_follow_streams_live_chunks_until_the_client_disconnects() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -1085,7 +1070,7 @@ impl tokio::io::AsyncWrite for HangsUpAfterFirstFrame {
 
 #[tokio::test]
 async fn shell_tail_ends_quietly_when_the_client_hangs_up_mid_stream() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -1124,7 +1109,7 @@ async fn shell_tail_ends_quietly_when_the_client_hangs_up_mid_stream() {
 
 #[tokio::test]
 async fn shell_tail_reports_exited_when_the_shell_ends() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -1172,7 +1157,7 @@ async fn shell_tail_reports_exited_when_the_shell_ends() {
 
 #[tokio::test]
 async fn shell_tail_falls_back_to_subscribe_on_an_old_host() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("t".into());
     let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
@@ -1211,7 +1196,7 @@ async fn shell_tail_falls_back_to_subscribe_on_an_old_host() {
 
 #[tokio::test]
 async fn shell_tail_refuses_an_unknown_shell() {
-    let (_guard, _dir) = shell_test_home();
+    let (_guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let mut rx = tokio::io::BufReader::new(tokio::io::empty());
     let mut tx: Vec<u8> = Vec::new();

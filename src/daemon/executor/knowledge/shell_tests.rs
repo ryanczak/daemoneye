@@ -181,18 +181,6 @@ fn has_record(reg: &ShellRegistry, id: &str) -> bool {
     with_shells(reg, |store| store.contains_key(id))
 }
 
-/// Point `HOME` at a fresh temp dir **and** create the dirs the shell
-/// substrate resolves through it — the same shape `shell_exec`'s
-/// `test_home()` gives, so `socket_path`/`lock_path` land inside the
-/// sandbox. Must be held for the test's whole body.
-pub(crate) fn lifecycle_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-    let guard = crate::test_home_guard();
-    let dir = tempfile::tempdir().unwrap();
-    unsafe { std::env::set_var("HOME", dir.path()) }
-    crate::config::Config::ensure_dirs().ok();
-    (guard, dir)
-}
-
 // -- default_shell_for (phase-08a) --------------------------------------
 
 #[test]
@@ -459,7 +447,7 @@ fn shell_context_omits_the_default_line_when_every_shell_is_remote() {
 
 #[tokio::test]
 async fn e2e_shell_context_block_names_a_real_hosts_shell() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("e2e".into());
     let out = open_shell_with(
@@ -542,7 +530,7 @@ fn context_scope_rejects_unknown_value() {
 
 #[test]
 fn shells_only_context_without_shells_is_not_empty() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let out = shells_only_context(&Owner::Chat("empty".into()));
     assert!(
         !out.is_empty(),

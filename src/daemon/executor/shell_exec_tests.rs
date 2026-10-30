@@ -1,7 +1,5 @@
 use super::*;
-use crate::config::Config;
 use crate::shell::{ShellResponse, bind, lock_path, screen, send_input, serve, socket_path};
-use crate::test_home_guard;
 use anyhow::Context;
 use std::sync::Arc;
 
@@ -171,18 +169,6 @@ where
         .clone()
         .expect("the spawn step recorded the host's cast path");
     Ok((id, out, cast))
-}
-
-/// Point `HOME` at a fresh temp dir for the duration of the test and
-/// serialise against other HOME-mutating tests (bug-05c-1).
-fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-    let guard = test_home_guard();
-    let dir = tempfile::tempdir().expect("tempdir");
-    unsafe {
-        std::env::set_var("HOME", dir.path());
-    }
-    Config::ensure_dirs().ok();
-    (guard, dir)
 }
 
 /// `$SHELL` pointed at fish for the duration of one test, restored by
@@ -368,7 +354,7 @@ fn resolve_shell_target_is_case_sensitive() {
 
 #[tokio::test]
 async fn run_terminal_command_targets_the_named_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("tip".into());
     // The reuse rule's pick, opened first so it is the lowest-numbered one.
@@ -428,7 +414,7 @@ async fn run_terminal_command_targets_the_named_shell() {
 
 #[tokio::test]
 async fn run_terminal_command_refuses_another_owners_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     // Same inner string "a", different kind — the shape a comparison on
     // the inner string instead of `Owner::key()` would accept.
@@ -476,7 +462,7 @@ async fn run_terminal_command_refuses_another_owners_shell() {
 
 #[tokio::test]
 async fn run_terminal_command_custom_timeout_names_the_applied_value() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("sleeper".into());
     let err = run_in_shell_for_test(
@@ -507,7 +493,7 @@ async fn run_terminal_command_custom_timeout_names_the_applied_value() {
 /// comes from a side task polling the registry while the command runs.
 #[tokio::test]
 async fn in_flight_is_set_while_a_command_runs_and_cleared_after() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let in_reg = reg.clone();
     let owner = Owner::Chat("in-flight".into());
@@ -553,7 +539,7 @@ async fn in_flight_is_set_while_a_command_runs_and_cleared_after() {
 /// guard's Drop — so the shell must not be left marked busy by a failure.
 #[tokio::test]
 async fn in_flight_is_cleared_when_the_command_times_out() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("in-flight-timeout".into());
     let err = run_in_shell_for_test(
@@ -586,7 +572,7 @@ async fn in_flight_is_cleared_when_the_command_times_out() {
 
 #[tokio::test]
 async fn shell_exec_returns_the_real_exit_code() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let (id, result) = run_in_shell_for_test(
         &reg,
@@ -621,7 +607,7 @@ async fn shell_exec_returns_the_real_exit_code() {
 /// as `probe_foreground` would have stamped it.
 #[tokio::test]
 async fn a_finished_command_leaves_the_shell_at_its_prompt() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let started = now_unix();
     let (id, result) = run_in_shell_for_test(
@@ -660,7 +646,7 @@ async fn a_finished_command_leaves_the_shell_at_its_prompt() {
 /// busy probe read `Program` stays `Program`.
 #[tokio::test]
 async fn a_busy_shell_is_not_marked_at_its_prompt() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("busy-named-stamp".into());
     let (id, _) = shell_for_owner(
@@ -730,7 +716,7 @@ async fn a_busy_shell_is_not_marked_at_its_prompt() {
 
 #[tokio::test]
 async fn shell_exec_masks_a_secret_that_stays_raw_in_the_cast() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let cast_path: Arc<std::sync::Mutex<Option<std::path::PathBuf>>> =
         Arc::new(std::sync::Mutex::new(None));
@@ -782,7 +768,7 @@ async fn shell_exec_masks_a_secret_that_stays_raw_in_the_cast() {
 
 #[tokio::test]
 async fn shell_exec_annotates_colour_and_strips_control_bytes() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let (_, result) = run_in_shell_for_test(
         &reg,
@@ -809,7 +795,7 @@ async fn shell_exec_annotates_colour_and_strips_control_bytes() {
 
 #[tokio::test]
 async fn shell_exec_reuses_the_owners_shell_across_calls() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("reuse".into());
     let (id1, first) = run_in_shell_for_test(
@@ -855,7 +841,7 @@ async fn shell_exec_reuses_the_owners_shell_across_calls() {
 /// about what ssh printed.
 #[tokio::test]
 async fn run_terminal_command_launches_an_interactive_command() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let start = std::time::Instant::now();
     let (id, result) = run_in_shell_for_test(
@@ -925,7 +911,7 @@ async fn run_terminal_command_launches_an_interactive_command() {
 /// miss it; the interrupt at the end is what ends the sleep.
 #[tokio::test]
 async fn launch_waits_for_a_slow_program_to_draw() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("slow-draw".into());
     let (id, _) = run_in_shell_for_test(&reg, owner, "true", 5, None, None, spawn_in_process_host)
@@ -959,7 +945,7 @@ async fn launch_waits_for_a_slow_program_to_draw() {
 /// interrupt at the end is what ends it.
 #[tokio::test]
 async fn launch_interactive_returns_the_settled_screen() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("launch-screen".into());
     let (id, _) = run_in_shell_for_test(&reg, owner, "true", 5, None, None, spawn_in_process_host)
@@ -1027,7 +1013,7 @@ async fn launch_interactive_returns_the_settled_screen() {
 /// the end ends the session so the shell does not outlive the test.
 #[tokio::test]
 async fn run_interactive_in_shell_launches_any_command() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("interactive-param".into());
     let (id, result) = tokio::time::timeout(
@@ -1076,7 +1062,7 @@ async fn run_interactive_in_shell_launches_any_command() {
 /// Set against real in-process hosts.
 #[tokio::test]
 async fn an_interactive_launch_keeps_its_shell_and_the_next_command_gets_another() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("marked".into());
     let (id, _) = run_in_shell_for_test(
@@ -1191,7 +1177,7 @@ async fn an_interactive_launch_keeps_its_shell_and_the_next_command_gets_another
 /// shell, both commands run on it, and the reuse filter is untouched.
 #[tokio::test]
 async fn shell_exec_non_interactive_still_runs_on_the_same_shell() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("plain".into());
     let (id1, one) = run_in_shell_for_test(
@@ -1281,7 +1267,7 @@ fn shell_exec_ordering_guard_masks_a_secret_split_by_an_embedded_escape() {
 /// appear — proving the plain path never allocates a sentinel or wraps.
 #[tokio::test]
 async fn non_sudo_command_takes_the_plain_path() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let (id, result) = run_in_shell_for_test(
         &reg,
@@ -1326,7 +1312,7 @@ async fn non_sudo_command_takes_the_plain_path() {
 /// a defaulted 0).
 #[tokio::test]
 async fn a_run_command_appends_a_meta_index_record() {
-    let (_home, _dir) = test_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let (id, result) = run_in_shell_for_test(
         &reg,

@@ -304,16 +304,6 @@ pub(crate) mod test_support {
         }
     }
 
-    /// Point `HOME` at a fresh temp dir for the duration of the test and
-    /// serialise against other HOME-mutating tests (bug-05c-1).
-    pub(crate) fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let guard = crate::test_home_guard();
-        let dir = tempfile::tempdir().expect("tempdir");
-        unsafe { std::env::set_var("HOME", dir.path()) }
-        crate::config::Config::ensure_dirs().ok();
-        (guard, dir)
-    }
-
     /// A real in-process PTY host serving the configured socket for `id`: a
     /// bash session standing in for the sandbox's bash. The detached
     /// `spawn_sbx_host` cannot run under a test binary (07b F4).
@@ -344,7 +334,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::{
         CreatedSet, enabled_sbx, fake, local_policy, ok_run, resolved_policy, run, sbx_config,
-        spawn_in_process_host, test_home,
+        spawn_in_process_host,
     };
     use super::*;
     use crate::daemon::executor::sbx::{self, NetworkPlan};
@@ -661,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_ghost_in_sandbox_runs_in_the_sandbox_shell() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("t-shell-1".into());
         let sandbox = "de-ghost-x";
@@ -702,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_ghost_in_sandbox_reuses_its_shell() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("t-shell-2".into());
         let sandbox = "de-ghost-y";
@@ -743,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn shell_for_owner_in_sandbox_is_reachable_for_the_module_tests() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Ghost("t-shell-3".into());
         let (id, _) = shell_for_owner_in_sandbox(

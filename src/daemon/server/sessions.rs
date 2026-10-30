@@ -259,15 +259,6 @@ mod tests {
     use crate::daemon::session::SessionStore;
     use crate::ipc::Response;
 
-    /// Points `HOME` at a fresh temp dir for the guard's lifetime; the
-    /// returned guard restores it.
-    fn temp_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let lock = crate::test_home_guard();
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        (lock, tmp)
-    }
-
     /// The single response frame a handler wrote to `tx`.
     fn reply(tx: &[u8]) -> Response {
         let line = std::str::from_utf8(tx).unwrap().lines().next().unwrap();
@@ -276,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn save_of_an_unknown_session_is_an_error_and_saves_nothing() {
-        let (_lock, _tmp) = temp_home();
+        let (_lock, _tmp) = crate::test_home();
         let sessions = SessionStore::new();
         let mut tx: Vec<u8> = Vec::new();
 
@@ -306,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_into_an_unknown_session_is_an_error() {
-        let (_lock, _tmp) = temp_home();
+        let (_lock, _tmp) = crate::test_home();
         crate::session_store::save_session(crate::session_store::SaveSessionArgs {
             name: "saved-name",
             current_saved_name: None,

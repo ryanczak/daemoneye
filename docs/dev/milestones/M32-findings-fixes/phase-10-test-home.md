@@ -1,6 +1,6 @@
 # Phase 10 — One `test_home()` fixture
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Findings:** M31 `FINDINGS.md` #4 (#8, #49, #50, #62 and #63 are
@@ -212,3 +212,48 @@ Run the block once more and paste both outputs.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-10-30 02:22 (started)
+
+Executor session opened on phase-10-test-home. Status flipped todo →
+in-progress here and in the M32 README row; no code touched yet. Plan: run the
+spec's script once as written, log its output, then findings, E2E block,
+commit.
+### Update — 2026-10-30 02:22 (cuts done)
+
+Task 1's script ran once, as written, unmodified and unindented, via
+`python3 - <<'PY'` inside `bash`, followed by `cargo fmt --all` twice. Both
+assertions passed and both summary lines printed:
+
+```
+one crate::test_home(); eleven local helpers removed
+unused imports removed
+```
+
+`cargo fmt --all` ran twice after the script and exited 0 both times.
+### Findings — 2026-10-30 02:22
+
+`git diff --stat` shows 17 files, 189 insertions, 296 deletions: `src/lib.rs`
+gains the 13-line `test_home()` while the fifteen def/caller files and the three
+`use super::*` callers shrink, the largest being `session_tests.rs` (68 lines
+touched) and `shells_tests.rs` (61) — a net −107 lines. No file outside the
+eleven def sites, the three callers and `src/lib.rs` changed.
+### Update — 2026-10-30 02:25 (end-to-end verification)
+
+Ran the phase doc's E2E block verbatim once, unmodified, redirecting nothing —
+pasting its captured output below as received. No known flake appeared, so
+there was no second run.
+
+```
+local_defs=0 shared=1 calls=154
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.51s
+fmt_exit=0
+passed=2607 failed=0
+```
+
+Every acceptance criterion reads green off that capture: the shape moved from
+`local_defs=11 shared=0` to `local_defs=0 shared=1 calls=154`; hygiene is
+`ok. 16 passed`; bug tracker is `ok. 6 passed`; clippy finished clean;
+`fmt_exit=0`; and the full suite is exactly `passed=2607 failed=0`, the same
+count as before the phase.

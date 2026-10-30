@@ -390,7 +390,6 @@ fn report_state(outcome: &Result<CommandOutcome, String>) -> RunState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
     use crate::daemon::session::SessionEntry;
     use crate::shell::{Nonce, PtyBackend, bind, lock_path, serve, socket_path};
     use anyhow::Context;
@@ -399,16 +398,6 @@ mod tests {
 
     const ROWS: u16 = 24;
     const COLS: u16 = 80;
-
-    /// Point `HOME` at a fresh temp dir for the duration of the test and
-    /// serialise against other HOME-mutating tests (bug-05c-1).
-    fn test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
-        let guard = crate::test_home_guard();
-        let dir = tempfile::tempdir().expect("tempdir");
-        unsafe { std::env::set_var("HOME", dir.path()) }
-        Config::ensure_dirs().ok();
-        (guard, dir)
-    }
 
     /// The production spawn substitute: a real in-process PTY host serving
     /// the configured socket for `id`, a bash session whose `.cast` the
@@ -588,7 +577,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_start_returns_before_the_command_finishes() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let (start, mut handle) = start_background_with(
             &reg,
@@ -627,7 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_start_uses_a_dedicated_shell_not_the_owners_existing_one() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let owner = Owner::Chat("bg-dedicated".into());
         // Give the owner a live reusable shell first, exactly as the
@@ -671,7 +660,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_start_refuses_an_interactive_command() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let result = start_background_with(
             &reg,
@@ -698,7 +687,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_notify_pushes_a_completion_message_carrying_the_real_exit_code() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let session_id = "bg-notify-session".to_string();
         let sessions = store_with_entry(&session_id);
@@ -743,7 +732,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_notify_on_a_vanished_session_is_a_silent_return() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let session_id = "bg-vanished-session".to_string();
         let sessions = store_with_entry(&session_id);
@@ -780,7 +769,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_start_in_sandbox_places_a_dedicated_sandbox_shell() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let (start, handle) = start_background_in_sandbox_with(
             &reg,
@@ -821,7 +810,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_start_in_sandbox_refuses_an_interactive_command() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let result = start_background_in_sandbox_with(
             &reg,
@@ -849,7 +838,7 @@ mod tests {
 
     #[tokio::test]
     async fn bg_notify_and_close_closes_after_the_message_lands() {
-        let (_home, _dir) = test_home();
+        let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let session_id = "bg-close".to_string();
         let sessions = store_with_entry(&session_id);

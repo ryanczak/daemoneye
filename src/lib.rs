@@ -55,6 +55,20 @@ pub fn test_home_guard() -> TestHomeGuard {
     }
 }
 
+/// A fresh temporary `HOME` for one test. The guard holds
+/// [`TEST_HOME_LOCK`] and restores `HOME` on drop; `HOME` points at the
+/// returned directory, and the daemon's directory tree is created in it.
+/// Hold both for the whole test body: dropping the directory first leaves
+/// `HOME` pointing at a deleted path.
+#[cfg(test)]
+pub(crate) fn test_home() -> (TestHomeGuard, tempfile::TempDir) {
+    let guard = test_home_guard();
+    let dir = tempfile::tempdir().expect("tempdir");
+    unsafe { std::env::set_var("HOME", dir.path()) };
+    crate::config::Config::ensure_dirs().ok();
+    (guard, dir)
+}
+
 /// RAII guard returned by [`test_home_guard`].
 ///
 /// Holds [`TEST_HOME_LOCK`] *and* snapshots `HOME` on acquisition, restoring it

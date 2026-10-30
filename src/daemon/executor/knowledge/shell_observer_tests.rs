@@ -40,7 +40,7 @@ fn append_event(path: &std::path::Path, t: f64, payload: &str) {
 
 #[tokio::test]
 async fn watch_shell_returns_when_the_pattern_appears() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 5, 1_788_470_005);
     append_event(&cast_path("s5", 1_788_470_005), 1.0, "warming up\n");
@@ -76,7 +76,7 @@ async fn watch_shell_returns_when_the_pattern_appears() {
 
 #[tokio::test]
 async fn watch_shell_ignores_output_written_before_the_call() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 6, 1_788_470_006);
     append_event(&cast_path("s6", 1_788_470_006), 1.0, "READY already\n");
@@ -102,7 +102,7 @@ async fn watch_shell_ignores_output_written_before_the_call() {
 
 #[tokio::test]
 async fn watch_shell_times_out_and_reports_what_it_saw() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 7, 1_788_470_007);
     hold_lock("s7");
@@ -133,7 +133,7 @@ async fn watch_shell_times_out_and_reports_what_it_saw() {
 
 #[tokio::test]
 async fn watch_shell_unknown_id_is_an_error_naming_live_shells() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 8, NOW);
     let out = watch_shell_with(
@@ -162,7 +162,7 @@ async fn watch_shell_unknown_id_is_an_error_naming_live_shells() {
 
 #[tokio::test]
 async fn watch_shell_invalid_pattern_is_an_error() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 9, NOW);
     let early = std::time::Instant::now();
@@ -195,7 +195,7 @@ async fn watch_shell_invalid_pattern_is_an_error() {
 
 #[tokio::test]
 async fn watch_shell_finds_the_cast_when_the_records_timestamp_is_stale() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     // The record says the shell started at N, but the host stamped the
     // cast N+1 — a spawn that crossed a second boundary.
@@ -226,7 +226,7 @@ async fn watch_shell_finds_the_cast_when_the_records_timestamp_is_stale() {
 
 #[tokio::test]
 async fn watch_shell_stops_when_the_host_is_gone() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 11, 1_788_470_011);
     let path = cast_path("s11", 1_788_470_011);
@@ -262,7 +262,7 @@ async fn watch_shell_stops_when_the_host_is_gone() {
 
 #[tokio::test]
 async fn watch_shell_reports_that_nothing_was_running() {
-    let (guard, _dir) = lifecycle_home();
+    let (guard, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     spawn_in_process_host(ShellId::from_index(12))
         .await
@@ -528,7 +528,7 @@ fn compose_input_refuses_bad_input_before_anything_is_sent() {
 
 #[tokio::test]
 async fn send_input_result_names_csi_u_keys_and_the_paste() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert(&reg, 3, Owner::Chat("caller".into()), NOW);
     let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
@@ -594,7 +594,7 @@ async fn send_input_result_names_csi_u_keys_and_the_paste() {
 
 #[tokio::test]
 async fn send_input_enter_sends_a_carriage_return() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert(&reg, 3, Owner::Chat("caller".into()), NOW);
     let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
@@ -635,7 +635,7 @@ async fn send_input_enter_sends_a_carriage_return() {
 
 #[tokio::test]
 async fn the_users_shell_is_visible_and_drivable_from_chat_only() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert(&reg, 3, Owner::Chat("a".into()), NOW);
     insert(&reg, 7, Owner::User, NOW);
@@ -688,7 +688,7 @@ async fn the_users_shell_is_visible_and_drivable_from_chat_only() {
 
 #[tokio::test]
 async fn send_input_without_enter_sends_no_newline() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert(&reg, 3, Owner::Chat("caller".into()), NOW);
     let captured: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
@@ -728,7 +728,7 @@ async fn send_input_without_enter_sends_no_newline() {
 
 #[tokio::test]
 async fn send_input_refuses_another_owners_shell() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     // Same inner string "a", different owner kind — the shape that breaks
     // a comparison on the inner string instead of `Owner::key()`.
@@ -763,7 +763,7 @@ async fn send_input_refuses_another_owners_shell() {
 
 #[tokio::test]
 async fn send_input_unknown_id_is_an_error_naming_live_shells() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert(&reg, 5, Owner::Chat("caller".into()), NOW);
     let sent: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
@@ -792,7 +792,7 @@ async fn send_input_unknown_id_is_an_error_naming_live_shells() {
 }
 #[tokio::test]
 async fn send_input_text_never_reaches_read_shell() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     spawn_in_process_host(ShellId::from_index(3))
         .await
@@ -815,7 +815,7 @@ async fn send_input_text_never_reaches_read_shell() {
     );
     // The host writes its `.cast` under the `HOME` it inherited at spawn
     // (see spawn_with_cast, whose tempdir homes both the PTY and the log);
-    // the test's `lifecycle_home()` dir holds none of it by construction.
+    // the test's `crate::test_home()` dir holds none of it by construction.
     // Production-path half of the safety property: the typed text really
     // reached a real host's cast as an `"i"` event. The read-side half —
     // that no reader surfaces it — is `…_in_a_reachable_cast` below,
@@ -1452,7 +1452,7 @@ async fn wait_screen_never_matching_times_out() {
 
 #[tokio::test]
 async fn read_shell_screen_invalid_wait_for_is_an_error() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 5, 1_788_470_005);
     let out = read_shell_screen_in(
@@ -1547,7 +1547,7 @@ fn body_rows(out: &str) -> Vec<&str> {
 
 #[tokio::test]
 async fn read_shell_screen_returns_the_screen_with_a_foreground_header() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = open_screen_shell(&reg).await;
     type_into(&id, b"echo SCREEN-MARKER-01C\n").await;
@@ -1570,7 +1570,7 @@ async fn read_shell_screen_returns_the_screen_with_a_foreground_header() {
 
 #[tokio::test]
 async fn read_shell_screen_names_a_running_program() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = open_screen_shell(&reg).await;
     type_into(&id, b"sleep 30\n").await;
@@ -1586,7 +1586,7 @@ async fn read_shell_screen_names_a_running_program() {
 
 #[tokio::test]
 async fn read_shell_screen_lines_tails_the_visible_rows() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = open_screen_shell(&reg).await;
     type_into(&id, b"printf 'row-a\\nrow-b\\nrow-c\\n'\n").await;
@@ -1624,7 +1624,7 @@ async fn read_shell_screen_lines_tails_the_visible_rows() {
 }
 #[tokio::test]
 async fn read_shell_screen_pattern_filters_rows() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = open_screen_shell(&reg).await;
     type_into(&id, b"printf 'row-a\\nrow-b\\nrow-c\\n'\n").await;
@@ -1645,7 +1645,7 @@ async fn read_shell_screen_pattern_filters_rows() {
 
 #[tokio::test]
 async fn read_shell_screen_invalid_pattern_is_an_error() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 5, 1_788_470_005);
     let out = read_shell_screen_in(
@@ -1669,7 +1669,7 @@ async fn read_shell_screen_invalid_pattern_is_an_error() {
 
 #[tokio::test]
 async fn read_shell_screen_unknown_shell_is_an_error_naming_live_shells() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     insert_watch_record(&reg, 5, 1_788_470_005);
     let out = read_shell_screen_in(
@@ -1696,7 +1696,7 @@ async fn read_shell_screen_unknown_shell_is_an_error_naming_live_shells() {
 
 #[tokio::test]
 async fn read_shell_screen_records_last_foreground() {
-    let (_home, _dir) = lifecycle_home();
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = open_screen_shell(&reg).await;
     let before = with_shells(&reg, |store| {
