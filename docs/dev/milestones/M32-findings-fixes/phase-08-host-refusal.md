@@ -1,6 +1,6 @@
 # Phase 08 — `edit_file` logs a failed connect; one host lookup per foreground call
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Findings:** M31 `FINDINGS.md` #80 and #82 (#75, #78 and #79 are
@@ -435,3 +435,26 @@ kill: (-3971120): No such process
 **Commit:** b41057703a194842aebc2eadfc3e8778b7453932
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - The production diff is line for line the dictated one. The
+    reviewer compared the `+`/`-` lines of both.
+  - The only ledger edit was a trailing blank line.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean, 2605 passed / 0 failed.
+  - `bug_tracker` passes, with 6 tests.
+  - `helper_calls=2 lookups=1 refuse=1 allow=0`, and one Findings heading.
+  - The foreground `dispatch` is still 145 lines, untouched.
+- **Tests:** `log_connect_failure_records_the_tool_and_host` reads the
+  event back and checks all four fields. It would fail if the helper
+  logged under another event name or dropped a field.
+- **Findings:** two, logged as M32 #13 and #14 and both deferred to the
+  function milestone.
+- **Calibration:** the sixth dictated phase first try. Dictating the
+  whole diff worked for a change spread over two files.
+
