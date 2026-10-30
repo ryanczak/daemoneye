@@ -211,37 +211,13 @@ where
         shell,
         timeout_secs,
         interactive,
-        cmd_id,
         session_id,
         max_per_owner,
+        ..
     } = a;
     let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
-    // `host` is already parsed above, before the prompt.
-    // The permissive lookup runs **after** approval: an
-    // unconfigured host resolves to its own ssh
-    // destination there, and only an empty-ssh half-written
-    // entry refuses — never routed through the shell-error
-    // wording, which would dress a host problem in
-    // shell-limit or timeout advice the model cannot act on.
-    let host = match &host {
-        crate::host::HostId::Local => crate::host::HostId::Local,
-        crate::host::HostId::Named(name) => {
-            if let Err(e) = crate::shell::host_entry_or_bare(name) {
-                let msg = format!("Error: {e}");
-                send_response_split(
-                    tx,
-                    Response::ToolResult {
-                        tool_call_id: id.to_string(),
-                        output: msg.clone(),
-                    },
-                )
-                .await?;
-                crate::daemon::stats::finish_command(cmd_id, 1);
-                return Ok(msg);
-            }
-            host.clone()
-        }
-    };
+    // `host` is already parsed above, before the prompt. A named host's
+    // permissive lookup runs once, after approval, in `run_on_named_host`.
     // The two arms spawn different programs, so their closure
     // types differ and each calls `run_in_shell_with_prompts`
     // itself (the same split `open_shell` makes). An

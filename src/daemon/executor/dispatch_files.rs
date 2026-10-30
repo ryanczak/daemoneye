@@ -50,15 +50,7 @@ where
             }
             if let Err(msg) = connect_named_host(host.as_deref(), is_ghost, call.id(), tx, rx).await
             {
-                crate::daemon::utils::log_event(
-                    "ssh_connect_failed",
-                    serde_json::json!({
-                        "session": session_id.unwrap_or("-"),
-                        "tool": "read_file",
-                        "requested_host": host_id.as_str(),
-                        "error": msg,
-                    }),
-                );
+                log_connect_failure("read_file", session_id, host_id.as_str(), &msg);
                 let outcome = format!("Error: {msg}");
                 send_response_split(
                     tx,
@@ -96,6 +88,12 @@ where
                 && let Err(msg) =
                     connect_named_host(host.as_deref(), false, id.as_str(), tx, rx).await
             {
+                log_connect_failure(
+                    "edit_file",
+                    session_id,
+                    host.as_deref().unwrap_or("local"),
+                    &msg,
+                );
                 let outcome = format!("Error: {msg}");
                 send_response_split(
                     tx,
@@ -131,5 +129,42 @@ where
         }
 
         other => anyhow::bail!("{} is not one of the file tools", other.tool_name()),
+    }
+}
+
+/// Record a failed connect to a named host, for a file tool's call.
+fn log_connect_failure(tool: &str, session_id: Option<&str>, requested_host: &str, msg: &str) {
+    crate::daemon::utils::log_event(
+        "ssh_connect_failed",
+        serde_json::json!({
+            "session": session_id.unwrap_or("-"),
+            "tool": tool,
+            "requested_host": requested_host,
+            "error": msg,
+        }),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_connect_failure;
+
+    #[test]
+    fn log_connect_failure_records_the_tool_and_host() {
+        let _home = crate::daemon::run::cancel::test_support::HomeGuard::new();
+        log_connect_failure("edit_file", Some("sess-1"), "web01", "connection refused");
+
+        let seg = crate::config::current_event_segment_path();
+        let text = std::fs::read_to_string(&seg).unwrap_or_default();
+        let events: Vec<serde_json::Value> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .filter(|v: &serde_json::Value| v["event"] == "ssh_connect_failed")
+            .collect();
+        assert_eq!(events.len(), 1, "one call, one event: {events:?}");
+        assert_eq!(events[0]["tool"], "edit_file");
+        assert_eq!(events[0]["requested_host"], "web01");
+        assert_eq!(events[0]["session"], "sess-1");
+        assert_eq!(events[0]["error"], "connection refused");
     }
 }
