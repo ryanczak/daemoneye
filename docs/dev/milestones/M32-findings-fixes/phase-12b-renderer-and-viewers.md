@@ -1,6 +1,6 @@
 # Phase 12b — Renderer and viewers
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-12
@@ -327,3 +327,16 @@ kill: (-668637): No such process
 **Commit:** c5e6f1dad2a638b6482b86dbc29be33c50ea5b32
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the
+  architect's dry run, whose red run of
+  `render_tail_keeps_the_log_status_line_while_a_note_is_set` stands as
+  the evidence. The suite moved 2609 to 2610 and the shape line from
+  6/2/6/0 to 1/0/0/1. The `(started)` entry landed above the Update Log
+  marker, a placement slip only.
+- **Calibration:** none.
