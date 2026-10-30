@@ -1,6 +1,6 @@
 # Phase 07 — Remote delete and copy read their result, not a substring
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Finding:** M31 `FINDINGS.md` #38 (#36, #37 and #40 move to the
@@ -445,3 +445,37 @@ kill: (-3753030): No such process
 **Commit:** 171bfb51f623f585eeab0fbd3cfdc431bed605ef
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-29
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - The production diff is the specified parser plus the two
+    call-site conversions.
+  - The model-facing messages are unchanged.
+  - `ops.rs` is untouched.
+- **Reviewer's checks:**
+  - fmt 0, build and clippy clean.
+  - `bug_tracker` passes, with 6 tests.
+  - `substring=0 parser_calls=2`, and one Findings heading.
+  - Full suite: the first run hit M32 #11 (`for_each_skips_unparseable_lines`)
+    and stopped at 2516 passed / 1 failed. The re-run gave 2604 passed /
+    0 failed.
+- **Tests:** the step-1 red run is described in prose, not pasted. The
+  completion summary says "the red transcript is pasted in the Update
+  Log", and it is not. Accepted anyway: the architect's dry run of the
+  same code before dispatch produced exactly the failures the prose
+  describes, `Some(Ok(…))` against `None` for two cases and against
+  `Some(Err(…))` for the third. The claim is still recorded here as
+  false.
+- **Findings:** two, one per call site and one on the parser. The
+  `rposition` note is logged as M32 #12 and rejected, since the tests
+  pin it. M32 #11 recurred at this review, which confirms it as a flake
+  for phase 11.
+- **Calibration:** the fifth dictated-seam phase first try. It is the
+  second time this milestone that a summary has claimed a pasted
+  transcript that is not in the log (phase 01's Findings, now this).
+  This is a rexyMCP product item, already carried from M31.
+
