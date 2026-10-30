@@ -1,6 +1,6 @@
 # Phase 12 — Client prompts
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-11b
@@ -282,3 +282,14 @@ kill: (-590505): No such process
 **Commit:** 2c6c67d827fbfb90d8fc930f4580e79e2e9c2e7e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the
+  architect's dry run; the suite holds at exactly 2609 and the shape line
+  moved from 2/1/2/12 to 1/0/1/3. The run wrote no `(started)` entry,
+  a bookkeeping slip only.
+- **Calibration:** none.
