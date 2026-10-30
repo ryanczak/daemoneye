@@ -374,3 +374,24 @@ re-export the trait. The gate then passed 2/2, and the greps read
   nest, because the finished arm also binds `tool_outcome_detail` first.
   Noted only; both compile and clippy-clean as written.
 
+### Update — 2026-10-30 02:05 (end-to-end verification)
+
+Ran the phase doc's E2E block verbatim, redirected to
+`/tmp/phase09-e2e.txt`; the file's contents follow, unedited.
+
+```
+silent_sends=1 silent_close=0 extract_warn=1
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+passed=2607 failed=0
+```
+
+Matches the expected values exactly: `silent_sends=1 silent_close=0
+extract_warn=1`, the lock gate `2 passed`, hygiene `16 passed`, bug
+tracker `6 passed`, clippy clean, and the full suite `passed=2607
+failed=0` (2605 + the gate's 2). No known flake failed in this run —
+`read_shell_screen_lines_tails_the_visible_rows` and the two event-log
+tests all passed on the first pass.
+
