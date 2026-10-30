@@ -7,10 +7,8 @@ shared test fixture, fourteen phases, defects first. See
 and the phase table. The 40 allowlisted functions are the milestone after
 this one; MCP surface is now M33, Knowledge M34.
 
-**Active phase:** [phase-11-test-reliability](milestones/M32-findings-fixes/phase-11-test-reliability.md)
-(`todo`) — drafted 2026-10-29; dispatch with `/rexymcp:dispatch 11`. Phases
-01–10 are done; 04b was dropped (#20 rejected); 11b (test-tidies) split off
-11 at drafting and follows it.
+**Active phase:** none drafted. Phases 01–11 are done; 04b was dropped (#20 rejected).
+Next: `/rexymcp:architect next` drafts phase 11b (test-tidies).
 
 M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). The function milestone, M33 (MCP surface) and M34

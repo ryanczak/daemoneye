@@ -1,6 +1,6 @@
 # Phase 11 — Test reliability
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Depends on:** phase-10
@@ -381,3 +381,22 @@ kill: (-450578): No such process
 **Commit:** 321232fa8ee69babcd799ee4b9d4df832c5d00cf
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — the first run (session `6ae40c6b`) stalled after 120
+  read-only turns, checking that the inlined script's new code would
+  compile. Refined: the script moved into
+  `scripts/phase-11-test-reliability.py`, step 1 became one command, and
+  reading source before it was forbidden. The second run finished in 31
+  turns.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the
+  architect's dry run, whose red runs stand as the evidence: the
+  assertion alone fails exactly the four unguarded tests, and dropping
+  the shell line from `with_shell_line` fails
+  `an_approved_local_command_runs_in_the_sessions_shell`.
+- **Calibration:** a script that writes new code goes in a repo file, not
+  a heredoc; a heredoc of new code reads as something to verify. A
+  pure-move heredoc (phase 10) did not stall.
