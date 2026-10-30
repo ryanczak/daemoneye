@@ -5,7 +5,7 @@ retired: the fourteen defects are fixed with a test each, the duplicated
 code the audit named is one copy, and the test suite is fast, reliable
 and built on shared fixtures.
 
-**Status:** done (scoped 2026-10-28, closed 2026-10-30)
+**Status:** in-progress (scoped 2026-10-28; closed 2026-10-30, reopened the same day for phase 16)
 
 **Release:** 2.5.0
 
@@ -110,6 +110,7 @@ ledger's. Expected count: 14. Each may split at drafting.
 | 13 | tool-tidies ([phase-13-tool-tidies.md](phase-13-tool-tidies.md)) — one `shell_tool_regex` holds the shell tools' pattern size limit (#70); `send_input` and `close_shell` use the shared `unknown_shell_error`, pinned byte for byte by their tests (#72); `window_text` is linear and its alias goes (#42 #43); `run_started_at` calls `started_at_of` (#64); one `with_run_id` for the run-log arms (#76); `load_tools` looks each group up once (#81) | #42 #43 #64 #70 #72 #76 #81 | done |
 | 14 | small-tidies ([phase-14-small-tidies.md](phase-14-small-tidies.md)) — the ghost refusal prints the config error chain, with a test (M32 #1); the two config defaults call `default_true` (#10); `ContainerInfo`'s docs describe the sbx sandbox, `image` kept as wire format (#32 #33); the unread `ArtifactHit`/`EpochHit` fields go (#48, part); `startup.rs` names its imports (#17); `EventHit` stays, see M32 #16 | #10 #17 #32 #33 #48 M32 #1 | done |
 | 15 | events-search ([phase-15-events-search.md](phase-15-events-search.md)) — the events search reads its FTS index, which never returned a hit (M32 #16): the whole history as a phrase query, then the tail scan, each line once; every events result is masked (M32 #17); `EventHit`'s dead fields go (#48, rest) | #48 M32 #16 M32 #17 | done |
+| 16 | sentinels-and-wrap ([phase-16-sentinels-and-wrap.md](phase-16-sentinels-and-wrap.md)) — the remote edit, sudo edit and create read `remote_write_outcome`, so a failure naming a `DE_OK:` path is a failure (M32 #10); `wrap_words` budgets leading whitespace in chars (M32 #7) | M32 #7 M32 #10 | todo |
 
 ## Notes
 
@@ -151,3 +152,7 @@ ledger's. Expected count: 14. Each may split at drafting.
   Two rexyMCP product items carried: the server-authored completion
   entry copies the executor's raw `</think>` text (phases 13 and 15),
   and the governor's stall counter is blind to bash writes (#14, filed).
+- **Reopened (PE decision 2026-10-30).** The post-close findings review
+  pulled M32 #10 and #7 forward as phase 16, so the ledger's bug rows
+  leave the milestone at zero open. The close above stands for phases
+  01–15; phase 16's review re-runs the exit criteria's suite count.
