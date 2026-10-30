@@ -1,6 +1,6 @@
 # Phase 12b — Renderer and viewers
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-12
@@ -138,4 +138,45 @@ more and paste both.
 
 ## Update Log
 
+### Update — 2026-10-30 16:53 (started — executor)
+
+Phase 12b started. Spec task 1 ran first:
+`python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-12b-renderer-and-viewers.py && cargo fmt --all`,
+both clean (exit 0). Script output, quoted verbatim:
+
+```
+one render_status_bar for six status bars; one alert_panel for two dialogs
+one enter_alt_screen and resize_events for the tail, log and attach viewers
+render_tail_keeps_the_log_status_line_while_a_note_is_set added
+```
+
 <!-- entries appended below this line -->
+
+### Findings — 2026-10-30
+
+`git diff --stat` after the cuts: the phase doc plus the six source files
+the script names — `render_ratatui.rs` (84 lines moved into the shared
+`render_status_bar`), `render_ratatui_draw.rs` (-66, the three panel
+duplicates replaced by `alert_panel`), `tail.rs` (+26, the new ordering
+test), `tail_view.rs` (-32), `attach.rs` (-16), `viewer.rs` (+36, the
+shared `enter_alt_screen`/`resize_events` entries). 128 insertions,
+146 deletions. Nothing outside those seven files.
+
+### Update — 2026-10-30 17:00 (end-to-end verification)
+
+Ran the phase doc's End-to-end block verbatim; its output, unedited:
+
+```
+status_bars=1 alert_shells=0 alt_entries=0 order_test=1
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 22.14s
+fmt_exit=0
+passed=2610 failed=0
+```
+
+All six acceptance criteria read off that output: `status_bars=1
+alert_shells=0 alt_entries=0 order_test=1`; `passed=2610 failed=0`;
+hygiene `ok. 16 passed` with `allowlist=unchanged`; bug tracker
+`ok. 6 passed`; clippy clean; `fmt_exit=0`.

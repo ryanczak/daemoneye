@@ -452,20 +452,7 @@ fn render_live_region(
     }
 
     // ── Status bar ─────────────────────────────────────────────
-    let uptime = fmt_uptime(start_time.elapsed());
-    let status_text = format!(
-        " session:{} · {} · up {} ",
-        short_session(session_id),
-        model,
-        uptime,
-    );
-    let status_block = Block::default().borders(Borders::NONE).style(
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM),
-    );
-    let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-    frame.render_widget(status_para, chunks[1]);
+    render_status_bar(frame, chunks[1], session_id, model, start_time);
 }
 
 /// The approval options line: bright-yellow key letters in blood-red
@@ -582,20 +569,7 @@ fn render_prompt_region(
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
-    let uptime = fmt_uptime(start_time.elapsed());
-    let status_text = format!(
-        " session:{} · {} · up {} ",
-        short_session(session_id),
-        model,
-        uptime,
-    );
-    let status_block = Block::default().borders(Borders::NONE).style(
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM),
-    );
-    let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-    frame.render_widget(status_para, chunks[1]);
+    render_status_bar(frame, chunks[1], session_id, model, start_time);
 }
 
 /// Render the live region with a spinner message replacing the input box content.
@@ -623,20 +597,7 @@ fn render_spinner_region(
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
-    let uptime = fmt_uptime(start_time.elapsed());
-    let status_text = format!(
-        " session:{} · {} · up {} ",
-        short_session(session_id),
-        model,
-        uptime,
-    );
-    let status_block = Block::default().borders(Borders::NONE).style(
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM),
-    );
-    let status_para = Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-    frame.render_widget(status_para, chunks[1]);
+    render_status_bar(frame, chunks[1], session_id, model, start_time);
 }
 
 /// Clip `s` to at most `max` characters, marking truncation with a trailing '…'.
@@ -673,6 +634,45 @@ fn short_session(id: &str) -> String {
         let head: String = id.chars().take(8).collect();
         format!("{head}…")
     }
+}
+/// The dim status bar under the live region:
+/// ` session:<short id> · <model> · up <uptime> `.
+fn render_status_bar(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    session_id: &str,
+    model: &str,
+    start_time: std::time::Instant,
+) {
+    let status_text = format!(
+        " session:{} · {} · up {} ",
+        short_session(session_id),
+        model,
+        fmt_uptime(start_time.elapsed()),
+    );
+    let status_block = Block::default().borders(Borders::NONE).style(
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::raw(status_text))).block(status_block),
+        area,
+    );
+}
+
+/// The panel an approval or credential dialog draws in: rounded, a red
+/// border, a bold yellow title. The picker draws a plain border on purpose:
+/// it asks for a choice, not an approval.
+fn alert_panel(title: &str, red: Color, yellow: Color) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(red))
+        .title(Span::styled(
+            format!(" {title} "),
+            Style::default().fg(yellow).add_modifier(Modifier::BOLD),
+        ))
 }
 
 fn fmt_uptime(elapsed: std::time::Duration) -> String {

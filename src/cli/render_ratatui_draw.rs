@@ -226,14 +226,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             let red = self.palette.red();
             let yellow = self.palette.yellow();
 
-            let panel = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(red))
-                .title(Span::styled(
-                    format!(" {title_owned} "),
-                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
-                ));
+            let panel = alert_panel(&title_owned, red, yellow);
 
             let content = Paragraph::new(vec![
                 approval_options_line(&session_label_owned, red, yellow),
@@ -245,21 +238,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             .block(panel);
             frame.render_widget(content, chunks[0]);
 
-            let uptime = fmt_uptime(start_time.elapsed());
-            let status_text = format!(
-                " session:{} · {} · up {} ",
-                short_session(&session_id),
-                model,
-                uptime,
-            );
-            let status_block = Block::default().borders(Borders::NONE).style(
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
-            );
-            let status_para =
-                Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-            frame.render_widget(status_para, chunks[1]);
+            render_status_bar(frame, chunks[1], &session_id, &model, start_time);
         })?;
 
         Ok(())
@@ -299,14 +278,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             let red = self.palette.red();
             let yellow = self.palette.yellow();
 
-            let panel = Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(red))
-                .title(Span::styled(
-                    format!(" {title_owned} "),
-                    Style::default().fg(yellow).add_modifier(Modifier::BOLD),
-                ));
+            let panel = alert_panel(&title_owned, red, yellow);
 
             let inner_width = area.width.saturating_sub(2) as usize;
             let content = Paragraph::new(vec![
@@ -323,21 +295,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             .block(panel);
             frame.render_widget(content, chunks[0]);
 
-            let uptime = fmt_uptime(start_time.elapsed());
-            let status_text = format!(
-                " session:{} · {} · up {} ",
-                short_session(&session_id),
-                model,
-                uptime,
-            );
-            let status_block = Block::default().borders(Borders::NONE).style(
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
-            );
-            let status_para =
-                Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-            frame.render_widget(status_para, chunks[1]);
+            render_status_bar(frame, chunks[1], &session_id, &model, start_time);
         })?;
 
         Ok(())
@@ -405,21 +363,7 @@ impl<B: Backend> RatatuiRenderer<B> {
                 .collect();
             frame.render_widget(Paragraph::new(lines).block(panel), chunks[0]);
 
-            let uptime = fmt_uptime(start_time.elapsed());
-            let status_text = format!(
-                " session:{} · {} · up {} ",
-                short_session(&session_id),
-                model,
-                uptime,
-            );
-            let status_block = Block::default().borders(Borders::NONE).style(
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::DIM),
-            );
-            let status_para =
-                Paragraph::new(Line::from(Span::raw(status_text))).block(status_block);
-            frame.render_widget(status_para, chunks[1]);
+            render_status_bar(frame, chunks[1], &session_id, &model, start_time);
         })?;
 
         Ok(())

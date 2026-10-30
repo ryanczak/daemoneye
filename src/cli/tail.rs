@@ -1127,6 +1127,32 @@ mod tests {
         assert!(bottom.contains("n/p commands"), "{bottom:?}");
     }
 
+    /// `render_tail`'s status match takes the log arm before the
+    /// note-carrying tail arm. Stepping to a command sets a note, and the
+    /// status line must still be the log's (M31 #30).
+    #[test]
+    fn render_tail_keeps_the_log_status_line_while_a_note_is_set() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let (events, commands) = session(3, 1);
+        let mut m = TailModel::from_log("s3-17", 5, 20, &events, &commands, false);
+        m.act(TailAction::NextCommand, 10);
+        assert!(m.note.is_some(), "stepping to a command sets a note");
+        let mut terminal = Terminal::new(TestBackend::new(140, 8)).unwrap();
+        terminal.draw(|f| render_tail(f, &m)).unwrap();
+        let bottom: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .skip(7 * 140)
+            .take(140)
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(bottom.starts_with("log s3-17"), "{bottom:?}");
+        assert!(bottom.contains("n/p commands"), "{bottom:?}");
+    }
+
     #[tokio::test]
     async fn tail_loop_steps_a_log_with_n() {
         use crate::cli::input::Key;

@@ -45,9 +45,6 @@ pub async fn run_log_viewer(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     id: &str,
 ) -> anyhow::Result<()> {
-    use crossterm::cursor::Show;
-    use crossterm::execute;
-    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
     use tokio::io::AsyncBufReadExt;
 
     let reply = crate::cli::commands::ipc_client::request_once(crate::ipc::Request::ShellLogRead {
@@ -56,22 +53,13 @@ pub async fn run_log_viewer(
     .await?;
     let mut model = open_log(id, reply).map_err(|msg| anyhow::anyhow!(msg))?;
 
-    execute!(std::io::stdout(), EnterAlternateScreen)?;
-    let _guard = crate::cli::viewer::AltScreenGuard::new(|| {
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
-        let _ = execute!(std::io::stdout(), Show);
-        renderer.reanchor();
-    });
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
+    let (_guard, mut terminal) = crate::cli::viewer::enter_alt_screen(renderer)?;
     let mut keys = Box::pin(futures_util::stream::unfold(stdin, |stdin| async move {
         crate::cli::input::read_key(stdin)
             .await
             .map(|key| (key, stdin))
     }));
-    let mut resizes = Box::pin(futures_util::stream::unfold(sigwinch, |sig| async move {
-        sig.recv().await.map(|()| ((), sig))
-    }));
+    let mut resizes = crate::cli::viewer::resize_events(sigwinch);
     let mut frames = tokio::io::BufReader::new(tokio::io::empty()).lines();
     tail_loop(
         &mut terminal,
@@ -95,9 +83,6 @@ pub async fn run_tail_viewer(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     id: &str,
 ) -> anyhow::Result<()> {
-    use crossterm::cursor::Show;
-    use crossterm::execute;
-    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
     use tokio::io::AsyncBufReadExt;
 
     let stream = crate::cli::commands::ipc_client::connect().await?;
@@ -119,22 +104,13 @@ pub async fn run_tail_viewer(
     };
     let mut model = open_tail(id, first).map_err(|msg| anyhow::anyhow!(msg))?;
 
-    execute!(std::io::stdout(), EnterAlternateScreen)?;
-    let _guard = crate::cli::viewer::AltScreenGuard::new(|| {
-        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
-        let _ = execute!(std::io::stdout(), Show);
-        renderer.reanchor();
-    });
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
+    let (_guard, mut terminal) = crate::cli::viewer::enter_alt_screen(renderer)?;
     let mut keys = Box::pin(futures_util::stream::unfold(stdin, |stdin| async move {
         crate::cli::input::read_key(stdin)
             .await
             .map(|key| (key, stdin))
     }));
-    let mut resizes = Box::pin(futures_util::stream::unfold(sigwinch, |sig| async move {
-        sig.recv().await.map(|()| ((), sig))
-    }));
+    let mut resizes = crate::cli::viewer::resize_events(sigwinch);
     tail_loop(
         &mut terminal,
         &mut model,

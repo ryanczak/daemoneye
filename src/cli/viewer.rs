@@ -368,6 +368,42 @@ impl Drop for AltScreenGuard<'_> {
     }
 }
 
+/// The terminal a full-screen viewer draws into on the alternate screen.
+pub(crate) type AltTerminal =
+    ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
+
+/// Enter the alternate screen for a full-screen viewer. The guard leaves it
+/// when dropped: it leaves the alternate screen, shows the cursor and
+/// re-pins `renderer`'s inline viewport, on every exit path including `?`.
+/// The guard is built before the terminal, so a failed terminal still
+/// leaves the alternate screen.
+pub(crate) fn enter_alt_screen(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+) -> std::io::Result<(AltScreenGuard<'_>, AltTerminal)> {
+    use crossterm::cursor::Show;
+    use crossterm::execute;
+    use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+
+    execute!(std::io::stdout(), EnterAlternateScreen)?;
+    let guard = AltScreenGuard::new(move || {
+        let _ = execute!(std::io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(std::io::stdout(), Show);
+        renderer.reanchor();
+    });
+    let terminal =
+        ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(std::io::stdout()))?;
+    Ok((guard, terminal))
+}
+
+/// `sigwinch` as a stream of resize events, for a viewer's event loop.
+pub(crate) fn resize_events(
+    sigwinch: &mut tokio::signal::unix::Signal,
+) -> std::pin::Pin<Box<impl futures_util::Stream<Item = ()> + '_>> {
+    Box::pin(futures_util::stream::unfold(sigwinch, |sig| async move {
+        sig.recv().await.map(|()| ((), sig))
+    }))
+}
+
 /// Full-screen alternate-screen viewer loop.
 ///
 /// Enters the alternate screen, runs its own key loop, and exits back to the
