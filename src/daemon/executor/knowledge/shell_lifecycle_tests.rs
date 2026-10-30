@@ -672,6 +672,11 @@ async fn close_shell_unknown_id_is_an_error() {
         out.contains("list_shells"),
         "the model is told the way to get a fresh id: {out}"
     );
+    assert_eq!(
+        out,
+        unknown_shell_error(&reg, "s99"),
+        "close_shell words the refusal as every shell tool does (M31 #72)"
+    );
 }
 
 /// 08c Task 4.1: closing an owner's shells ends **only** that owner's

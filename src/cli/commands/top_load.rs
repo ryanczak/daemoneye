@@ -73,14 +73,7 @@ pub(super) fn state_word(state: &crate::daemon::run::RunState) -> String {
 /// The instant the run log's `RunStarted` carries, or `None` when it cannot
 /// be read or parsed.
 fn run_started_at(id: &crate::daemon::run::RunId) -> Option<DateTime<Utc>> {
-    let records = read_turn_log(id);
-    let ts = records.iter().find_map(|r| match &r.event {
-        crate::daemon::run::TurnLogEvent::RunStarted { .. } => Some(r.timestamp.clone()),
-        _ => None,
-    })?;
-    DateTime::parse_from_rfc3339(&ts)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    super::started_at_of(&read_turn_log(id))
 }
 
 /// Running runs first, then the rest newest first. Pure: takes the rows with

@@ -417,6 +417,15 @@ pub fn shells_only_context(caller: &Owner) -> String {
     }
 }
 
+/// Compile a pattern a shell tool was given. The 1 MiB compiled-size limit
+/// is the one policy every pattern-taking shell tool shares; each caller
+/// words its own refusal, naming its parameter, on an `Err`.
+fn shell_tool_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    regex::RegexBuilder::new(pattern)
+        .size_limit(1 << 20)
+        .build()
+}
+
 #[path = "shell_read.rs"]
 mod readers;
 pub use readers::*;

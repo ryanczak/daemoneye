@@ -266,7 +266,7 @@ pub(crate) async fn read_shell_screen_in(
         return unknown_shell_error(reg, shell);
     }
     let pattern_re = match pattern {
-        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+        Some(p) => match shell_tool_regex(p) {
             Ok(re) => Some(re),
             Err(e) => {
                 return format!(
@@ -278,7 +278,7 @@ pub(crate) async fn read_shell_screen_in(
         None => None,
     };
     let wait_re = match wait_for {
-        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+        Some(p) => match shell_tool_regex(p) {
             Ok(re) => Some(re),
             Err(e) => {
                 return format!(

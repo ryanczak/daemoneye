@@ -186,7 +186,7 @@ pub(super) fn read_shell_in(
         );
     }
     let filter_re = match filter {
-        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+        Some(p) => match shell_tool_regex(p) {
             Ok(re) => Some(re),
             Err(e) => {
                 return format!(
@@ -478,7 +478,7 @@ pub(super) fn read_log_in(
     // 2. The regex next, before any file read — an invalid pattern costs
     //    nothing and reads nothing.
     let re = match filter {
-        Some(p) => match regex::RegexBuilder::new(p).size_limit(1 << 20).build() {
+        Some(p) => match shell_tool_regex(p) {
             Ok(re) => Some(re),
             Err(e) => {
                 return format!(

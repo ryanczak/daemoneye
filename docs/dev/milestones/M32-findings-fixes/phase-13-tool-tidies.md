@@ -1,6 +1,6 @@
 # Phase 13 — Tool tidies
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-12b
@@ -140,3 +140,52 @@ output, run the block once more and paste both.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-30 10:47 (started)
+
+Executing phase 13 (tool tidies) per the spec. First step after this entry: run
+`docs/dev/milestones/M32-findings-fixes/scripts/phase-13-tool-tidies.py` once,
+then `cargo fmt --all`, before reading any source file.
+
+### Update — 2026-10-30 10:47 (cuts done)
+
+Ran `python3 docs/dev/milestones/M32-findings-fixes/scripts/phase-13-tool-tidies.py && cargo fmt --all`
+as the first command after the started entry; both exited 0. The script printed
+seven lines, the last `the two unknown-id tests pin the shared wording`:
+
+```
+one shell_tool_regex for 6 pattern sites
+one unknown_shell_error for send_input, close_shell and watch_shell
+window_text linear; activity_window_text gone
+run_started_at calls started_at_of
+one with_run_id for the three run-log tools
+load_tools looks each group up once
+the two unknown-id tests pin the shared wording
+```
+
+`cargo fmt --all` reformatted nothing to report (exit 0, no output).
+
+### Findings — 2026-10-30
+
+`git diff --stat` shows 15 files changed, 83 insertions(+), 94 deletions(-):
+the 13 source files the phase names plus this phase doc and the milestone
+README (the start-of-phase status flip). Nothing unexpected.
+
+### Update — 2026-10-30 10:52 (end-to-end verification)
+
+Ran the block in § End-to-end verification verbatim, redirected to a file and
+pasted below. Every line matches the expected values: the shape line
+(`regex_builders=1 drifted=0 aliases=0 nth=0 started_copies=0 id_parses=1
+group_lookups=1 wording_pins=2`), `allowlist=unchanged`, hygiene `16 passed`,
+bug tracker `6 passed`, clippy clean, `fmt_exit=0`, and the full suite at
+exactly `passed=2610 failed=0` — the same count as before the phase.
+
+```
+regex_builders=1 drifted=0 aliases=0 nth=0 started_copies=0 id_parses=1 group_lookups=1 wording_pins=2
+allowlist=unchanged
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.22s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+fmt_exit=0
+passed=2610 failed=0
+```

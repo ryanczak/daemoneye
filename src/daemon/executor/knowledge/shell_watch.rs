@@ -60,10 +60,7 @@ pub(super) fn find_in_shells_in(
 ) -> String {
     // 1. Build the regex first, before any lock or file read — an invalid
     //    pattern costs nothing and every shell stays unread.
-    let re = match regex::RegexBuilder::new(pattern)
-        .size_limit(1 << 20)
-        .build()
-    {
+    let re = match shell_tool_regex(pattern) {
         Ok(re) => re,
         Err(e) => {
             return format!(
@@ -231,12 +228,6 @@ pub(super) fn unknown_shell_error(reg: &ShellRegistry, id: &str) -> String {
     }
 }
 
-/// The `read_shell`-sentence shape `watch_shell` returns for an id not in
-/// `reg` — the shared 03b wording. A value, never `Err`.
-fn watch_shell_unknown_error(reg: &ShellRegistry, shell: &str) -> String {
-    unknown_shell_error(reg, shell)
-}
-
 /// Wait on a live shell's arriving output: with a `pattern`, until the (ANSI-
 /// and carriage-return-normalised) output written **after this call** matches
 /// it; without one, until the shell's running command finishes, the shell
@@ -268,7 +259,7 @@ pub(super) async fn watch_shell_with(
     grace: Duration,
 ) -> String {
     // 1. Refusals first, cheapest first: an invalid pattern costs nothing.
-    let re = match pattern.map(|p| regex::RegexBuilder::new(p).size_limit(1 << 20).build()) {
+    let re = match pattern.map(shell_tool_regex) {
         Some(Ok(re)) => Some(re),
         Some(Err(e)) => {
             return format!(
@@ -283,7 +274,7 @@ pub(super) async fn watch_shell_with(
     // 2. The id must be in the registry.
     let started_unix = with_shells(reg, |store| store.get(shell).map(|r| r.started_unix));
     let Some(record_started_unix) = started_unix else {
-        return watch_shell_unknown_error(reg, shell);
+        return unknown_shell_error(reg, shell);
     };
 
     // 3. Resolve the cast by name, never by the record's `started_unix`: the

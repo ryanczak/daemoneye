@@ -36,14 +36,14 @@ where
         PendingCall::LoadTools { groups, .. } => {
             let mut loaded: Vec<String> = Vec::new();
             let mut unknown: Vec<String> = Vec::new();
+            let mut result_parts = Vec::new();
             for g in groups {
                 let members = crate::ai::tools::tools_in_group(g);
                 if members.is_empty() {
                     unknown.push(g.clone());
                 } else {
-                    for m in members {
-                        loaded.push(m.to_string());
-                    }
+                    result_parts.push(format!("Loaded group(s): {} → {}", g, members.join(", ")));
+                    loaded.extend(members.iter().map(|m| m.to_string()));
                 }
             }
             // Persist into session state
@@ -56,13 +56,6 @@ where
                         entry.dirty = true;
                     }
                 });
-            }
-            let mut result_parts = Vec::new();
-            for g in groups {
-                let members = crate::ai::tools::tools_in_group(g);
-                if !members.is_empty() {
-                    result_parts.push(format!("Loaded group(s): {} → {}", g, members.join(", ")));
-                }
             }
             if !unknown.is_empty() {
                 result_parts.push(format!(

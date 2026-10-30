@@ -191,19 +191,7 @@ where
         store.get(shell).map(|record| record.owner.key())
     });
     let Some(owner_key) = owner_in_registry else {
-        let live = live_shell_ids(reg);
-        return if live.is_empty() {
-            format!(
-                "Error: no shell with id {shell:?} is in the registry (no shells are \
-                 live — call list_shells to confirm)."
-            )
-        } else {
-            format!(
-                "Error: no shell with id {shell:?} is in the registry. Live shell ids: \
-                 {}. Call list_shells to refresh.",
-                live.join(", ")
-            )
-        };
+        return unknown_shell_error(reg, shell);
     };
     if !caller.may_drive(&owner_key) {
         return format!(

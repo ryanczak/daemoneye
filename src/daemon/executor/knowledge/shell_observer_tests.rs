@@ -789,6 +789,11 @@ async fn send_input_unknown_id_is_an_error_naming_live_shells() {
     );
     assert!(out.contains("list_shells"));
     assert!(!sent.load(Ordering::SeqCst));
+    assert_eq!(
+        out,
+        unknown_shell_error(&reg, "s99"),
+        "send_input words the refusal as every shell tool does (M31 #72)"
+    );
 }
 #[tokio::test]
 async fn send_input_text_never_reaches_read_shell() {

@@ -114,7 +114,7 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
             inner_height(rects.activity),
         )
     } else {
-        activity_window_text(
+        window_text(
             &activity_body,
             model.activity_top,
             inner_height(rects.activity),
@@ -197,17 +197,12 @@ fn panel_title_line(panel: Panel, focused: bool) -> Line<'static> {
 /// The Shells body's visible window: the lines `top` onward as far as the
 /// panel's inner height shows, from the one pure range helper.
 fn window_text(body: &str, top: usize, inner_h: usize) -> String {
-    let total = body.lines().count();
-    visible_range(total, inner_h, top)
-        .map(|i| body.lines().nth(i).unwrap_or_default().to_string())
+    let range = visible_range(body.lines().count(), inner_h, top);
+    body.lines()
+        .skip(range.start)
+        .take(range.len())
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The Activity body's visible window while not tailing, from the same
-/// range helper.
-fn activity_window_text(body: &str, top: usize, inner_h: usize) -> String {
-    window_text(body, top, inner_h)
 }
 
 /// The lines a panel shows: `top` onward for `inner_h` lines, clamped so

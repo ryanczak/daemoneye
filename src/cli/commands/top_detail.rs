@@ -37,7 +37,9 @@ pub fn load_run_detail(id: &crate::daemon::run::RunId) -> Option<RunDetail> {
 
 /// The instant the records' first `RunStarted` carries, or `None`. Pure, so
 /// `load_run_detail` and the row builder read one log, not two.
-fn started_at_of(records: &[crate::daemon::run::TurnLogRecord]) -> Option<DateTime<Utc>> {
+pub(super) fn started_at_of(
+    records: &[crate::daemon::run::TurnLogRecord],
+) -> Option<DateTime<Utc>> {
     let ts = records.iter().find_map(|r| match &r.event {
         crate::daemon::run::TurnLogEvent::RunStarted { .. } => Some(r.timestamp.clone()),
         _ => None,
