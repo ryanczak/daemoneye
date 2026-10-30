@@ -1,6 +1,6 @@
 # Phase 01 — Tokio and compatible updates
 
-**Status:** review
+**Status:** done
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-30
 **Depends on:** M32 (v2.5.0)
@@ -228,9 +228,6 @@ is no second paste.
 
 ### Update — 2026-10-30 23:22 (complete, server-authored)
 
-**Summary:** </think>Commit is done. Verify working tree clean (git status --short printed nothing after commit — yes, empty output shown between commit and log). All tasks done. Status left at in-progress; no complete entry written by me.
-
-Now the final Summary + Notes for review, 2–6 sentences. Include: what was built, deviations (none beyond naming the adaptation — the cmd-output-0.log path was ephemeral; and the doc's Findings-criterion semantics note), E2E result, notes for reviewer.</think>
 **Summary:** Phase 01 executed exactly as scripted: the phase script + `cargo update` + `cargo fmt --all` ran as one exit-0 command, lifting every semver-compatible requirement to its latest release (tokio 1.54.1, clap 4.6.7, reqwest 0.13.5, serde_json 1.0.154, similar 3.2.1, toml 1.1.8, uuid 1.29.0), deleting the four duplicate `[dev-dependencies]` entries, replacing the libc-based `TtyFd` with an owned `O_NONBLOCK` `File` registered through the one authorized `unsafe` `AsyncFd::register` block, making the stream-idle fake server read the request before answering, and adding `read_byte_waits_out_a_drained_pipe` to pin the `WouldBlock` arm. The End-to-end block ran verbatim once and printed the criterion line exactly — `asyncfd_new=0 register=1 libc_io=0 drained_test=1 reads_request=1 tokio_lock=1.54.1 dev_dups=0` — with `allowlist=unchanged`, `build_warnings=0`, hygiene and doc_truth both `ok. 16 passed`, clippy clean, `fmt_exit=0`, and `passed=2616 failed=0`. Committed as `chore: raise compatible deps to latest, register tty fd through AsyncFd::register` (059c3252, 6 files); status left at `in-progress` for the server's flip.
 
 **Notes for review:** One adaptation — the script's four anchor lines and the `cargo update` excerpt in the `(cuts done)` entry were copied from `.rexymcp/output/cmd-output-0.log`, the harness's own capture of the run, because that path is ephemeral and was gone when I came back to paste it; the full run's output was therefore never separately redirected by me, so the excerpts are copies of the run's log rather than a paste of a transcript I hand-redirected. Two things to weigh against the acceptance criteria as written: the first `grep -c '^### Findings — '` on this doc prints **1** counting only this dispatch's entry — earlier M33 pre-draft entries apparently carry no Findings heading, so no disambiguation was needed — and the spec's own text acknowledged a second `### Findings — 2026-10-30` entry would exist "within hours," which means the criterion as pinned can only hold while that second entry is absent; flagging in case the reviewer intends the count to survive future entries. The suite-count arithmetic held at exactly 2616 with no early stop, so no second E2E paste exists to include.
@@ -366,3 +363,11 @@ kill: (-1267537): No such process
 **Commit:** 059c3252e20a65258403a512174aa1e6fd905a42
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none
+- **Calibration:** the reviewer removed executor reasoning (a `</think>` span) that had leaked into the server-authored completion summary. The executor's started entry calls itself `claude-opus-4-6`, which is wrong; the run was GLM-5.3-Flash.
