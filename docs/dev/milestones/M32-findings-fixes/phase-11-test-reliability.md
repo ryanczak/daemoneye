@@ -1,6 +1,6 @@
 # Phase 11 — Test reliability
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-29
 **Depends on:** phase-10
@@ -221,3 +221,163 @@ test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 fmt_exit=0
 passed=2609 failed=0
 ```
+
+### Update — 2026-10-30 13:39 (complete, server-authored)
+
+**Summary:** </think>Everything is done. Checklist:
+
+- [x] Phase doc Status: in-progress ✓ (I flipped it, did not flip to review)
+- [x] Milestone README row: in-progress ✓
+- [x] No (complete) entry written by me ✓
+- [x] cargo fmt --all run (as part of step 1 command) ✓
+- [x] All verification commands ran clean ✓
+- [x] Final message: Summary + Notes for review ✓ (about to write)
+- [x] git status clean ✓
+- [x] git log -1 --stat shows all files ✓
+
+Acceptance criteria:
+- End-to-end block prints assert=1 guarded=4 approved_tests=2 single_read=1 ✓
+- cargo test passed=2609 failed=0 ✓
+- hygiene 16 passed, bug_tracker 6 passed, allowlist unchanged, fmt/clippy clean ✓
+- grep -c '^### Findings — ' = 1 ✓, e2e entry has fenced output ✓
+
+Now write the final Summary + Notes for review.</think>
+**Summary:** Phase 11 executed exactly per spec. I flipped the phase doc and M32 README row to `in-progress`, appended the started entry, then ran the phase script + `cargo fmt --all` as my first code command — it printed all four lines (`log_event asserts the HOME lock under cfg(test)`, `four tests take crate::test_home()`, `read_shell_screen_lines_tails_the_visible_rows reads once per poll`, `two approved-path tests added`) with no assert fired. Cuts-done, Findings (`git diff --stat`: 9 files, +208/−25 — the seven source files plus the two doc status flips), and end-to-end entries are appended to the phase doc's Update Log, and everything is committed as `test:` (`321232fa`); the working tree is clean.
+
+**Notes for review:** The End-to-end block ran in one pass with the expected output: `assert=1 guarded=4 approved_tests=2 single_read=1`, `allowlist=unchanged`, hygiene `16 passed`, bug tracker `6 passed`, clippy clean, `fmt_exit=0`, and `passed=2609 failed=0` — exactly the 2609 the spec requires (2607 + 2). `grep -c '^### Findings — '` on the phase doc prints `1`, and the fenced E2E output is in the verification entry. No deviations from the spec; the script was run unmodified and no source file was opened or hand-edited. Per the lifecycle split, I left the status at `in-progress` and did not write a `(complete)` entry — that tail is yours.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.4.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.55s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ok
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.25s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (449904): No such process
+kill: (-450578): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-084f36955f09af75)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-11-test-reliability.md` — +36 -1
+- `src/daemon/executor/dispatch_foreground.rs` — +159 -0
+- `src/daemon/executor/file_ops/ops.rs` — +1 -0
+- `src/daemon/executor/foreground.rs` — +2 -0
+- `src/daemon/executor/knowledge/shell_observer_tests.rs` — +7 -23
+- `src/daemon/mod.rs` — +1 -0
+- `src/daemon/utils/event_log.rs` — +6 -0
+- `src/lib.rs` — +13 -0
+
+**Commit:** 321232fa8ee69babcd799ee4b9d4df832c5d00cf
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
