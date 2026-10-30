@@ -1,6 +1,6 @@
 # Phase 11b — Test tidies
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-11
@@ -175,3 +175,160 @@ status_literals=3 builder=1 messages=2`, hygiene `ok. 16 passed`, bug tracker
 `ok. 6 passed`, clippy clean, `fmt_exit=0`, and the suite at exactly
 `passed=2609 failed=0`.
 
+### Update — 2026-10-30 14:08 (complete, server-authored)
+
+**Summary:** </think>Everything is done. Working tree clean, all tasks complete. Final message: Summary + Notes for review, 2–6 sentences.
+
+Completion checklist:
+- [x] Phase doc status says in-progress (I never flipped to review).
+- [x] README row in-progress.
+- [x] No (complete) entry hand-written.
+- [x] cargo fmt --all run before git add (ran right after the script; nothing edited after; e2e check confirmed fmt_exit=0).
+- [x] All verification commands clean.
+- [x] Final message substantive.
+- [x] git status --short shows nothing (confirmed post-commit — it printed nothing after commit).
+- [x] git log -1 --stat shows all five files.
+
+Note on the grep-literal rule: the spec pins `pub(super) fn test_renderer(` and the two message strings — those are exactly what the E2E block grepped, output shows builder=1 messages=2, captured in the e2e Update Log entry. Good.
+
+Write the final summary.</think>
+**Summary**
+
+Phase 11b executed as specified: I flipped the phase doc and milestone README row to `in-progress`, appended the started entry, then ran `phase-11b-test-tidies.py` (once, as the first post-start command, with `cargo fmt --all` after it) without opening the script or any source file — it exited 0 printing `one test_renderer builder; 17 inline renderers and 15 status literals replaced` / `two assert_eq! messages added`. The script's three named files changed as intended (#54 one `test_renderer(cols, rows, viewport, depth)` builder, #53 `default_status()`/`approval_test_status()` shared by both render test files, #51 two `assert_eq!` messages in `incremental_tests.rs`); #5, #6, and #51's nine table checks stay rejected as drafted. The End-to-end block was run once verbatim and its output pasted unmodified into the `(end-to-end verification)` entry: `renderer_literals=1 status_literals=3 builder=1 messages=2`, hygiene `ok. 16 passed`, bug tracker `ok. 6 passed`, clippy clean, `fmt_exit=0`, and the suite at exactly **`passed=2609 failed=0`**. Committed as `9ede0073` (`test:`); `git status --short` is clean.
+
+**Notes for review**
+
+- No deviations from the spec; the script's printed lines match its expected two-line output, so no blocker was needed. The diff is net −378 lines (187 insertions, 565 deletions), close to the estimated ~140/~560.
+- The status_literal count lands at 3 (`status_literals=3`), not 1: the two moved fixtures plus the one out-of-scope unique literal (`session_id: "abcdef12"`, `context_window: 0`), which the spec says stays inline.
+- The `builder=1`/`messages=2` greps also serve as the spec-pinned-literal check — both literals the spec names (`pub(super) fn test_renderer(` and the two assert messages) verified present in the e2e transcript, not unit tests alone.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-7593688ba66ac3a2)
+kill: (505944): No such process
+kill: (-506677): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-58152f9516574e2d)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-24319e47e01464a3)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7278712a86caa2f2)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-f1caa86cc6b68e4c)
+     Running tests/integration.rs (target/debug/deps/integration-6e2b1cb55f8da66f)
+     Running tests/isolation.rs (target/debug/deps/isolation-555c471c8dff13d2)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-084f36955f09af75)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-122203846dd0c681)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/phase-11b-test-tidies.md` — +48 -1
+- `src/cli/render_ratatui_layout_tests.rs` — +41 -351
+- `src/cli/render_ratatui_tests.rs` — +89 -210
+- `src/memory/index/incremental_tests.rs` — +8 -2
+
+**Commit:** 9ede0073a5a788ab910b608791b1a5eed4c1c3f4
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
