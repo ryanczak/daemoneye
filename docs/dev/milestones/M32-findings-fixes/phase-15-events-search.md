@@ -1,6 +1,6 @@
 # Phase 15 — Events search
 
-**Status:** review
+**Status:** done
 **Milestone:** M32 — Findings fixes
 **Drafted:** 2026-10-30
 **Depends on:** phase-14
@@ -363,3 +363,11 @@ kill: (-907788): No such process
 **Commit:** f0e5b49bfb9fe0de665a15388882bd027e8f94f5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-30
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The source diff is byte-identical to the drafting dry run.
+- **Calibration:** 30 turns. Gates rerun at review: fmt, build and clippy clean, `passed=2612 failed=0`. The red run and four mutations were done at drafting; the first dry run caught that the OR match expression returns loosely related lines, which is why the events search got its own phrase query. Nit, the architect's: the script left one over-long line in `search_events_fts`'s doc comment, which rustfmt does not wrap. The server-authored completion entry again carries the executor's raw `</think>` text, the second phase running (13, 15).
