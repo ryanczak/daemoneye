@@ -20,26 +20,13 @@ where
             host, rows, cols, ..
         } => 'arm: {
             if let Some(policy) = ghost_policy.as_ref() {
-                let asked = match host.as_deref() {
-                    None => crate::host::HostId::Local,
-                    Some(name) => match crate::host::HostId::parse(name) {
-                        Ok(parsed) => parsed,
-                        Err(msg) => {
-                            break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
-                        }
-                    },
+                let asked = match resolve_host(host.as_deref()) {
+                    Ok(parsed) => parsed,
+                    Err(msg) => {
+                        break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
+                    }
                 };
-                if !policy.may_use_host(&asked) {
-                    let msg = ghost_host_refusal(policy, &asked);
-                    crate::daemon::utils::log_event(
-                        "ghost_host_refused",
-                        serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "tool": "open_shell",
-                            "requested_host": asked.as_str(),
-                            "allowed_hosts": policy.hosts,
-                        }),
-                    );
+                if let Some(msg) = refuse_ghost_host(policy, &asked, "open_shell", session_id) {
                     break 'arm Ok(ToolCallOutcome::Result(msg));
                 }
             }

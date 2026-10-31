@@ -89,7 +89,7 @@ where
             // parsed once. An *unconfigured* well-formed name is not refused
             // here; it classifies as `new_host` and is asked (06b), then
             // connects on approval using the bare name (06c).
-            let host = match resolve_foreground_host(host.as_deref()) {
+            let host = match resolve_host(host.as_deref()) {
                 Ok(host) => host,
                 Err(msg) => {
                     let msg = format!("Error: {msg}");
@@ -108,18 +108,9 @@ where
             // reaching a host its runbook did not name is refused here, with
             // the allowed set named so the model can correct itself.
             if let Some(policy) = ghost_policy.as_ref()
-                && !policy.may_use_host(&host)
+                && let Some(msg) =
+                    refuse_ghost_host(policy, &host, "run_terminal_command", session_id)
             {
-                let msg = ghost_host_refusal(policy, &host);
-                crate::daemon::utils::log_event(
-                    "ghost_host_refused",
-                    serde_json::json!({
-                        "session": session_id.unwrap_or("-"),
-                        "tool": "run_terminal_command",
-                        "requested_host": host.as_str(),
-                        "allowed_hosts": policy.hosts,
-                    }),
-                );
                 send_response_split(
                     tx,
                     Response::ToolResult {

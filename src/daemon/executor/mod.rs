@@ -16,6 +16,11 @@ mod file_ops;
 mod foreground;
 pub(crate) mod ghost_remote;
 pub(crate) mod ghost_sandbox;
+pub(crate) mod host_gate;
+// The gate's two public pieces, reachable as `super::…` for this module's
+// children (`foreground.rs`, `knowledge/ghost.rs`) and through their
+// `use super::*` globs for the dispatch arms.
+pub(crate) use host_gate::{ghost_host_refusal, refuse_ghost_host, resolve_host};
 pub(crate) mod knowledge;
 mod route;
 pub mod sbx;
@@ -280,45 +285,6 @@ pub(crate) fn ghost_input_refusal(shell: &str, fg: &crate::shell::Foreground) ->
 /// rather than a line of prompt text.
 pub(crate) fn ghost_may_run_foreground(is_ghost: bool, sandbox_enabled: bool) -> bool {
     !is_ghost || !sandbox_enabled // a ghost gets no unsandboxed door out
-}
-
-/// Resolve the foreground call's `host` argument **before** the approval
-/// prompt.
-///
-/// A malformed name is refused with [`crate::host::HostId::parse`]'s own
-/// message — a name that can never be a host is not a decision the user
-/// should be asked to make, so it never reaches the panel. An *unconfigured*
-/// well-formed name is deliberately **not** refused here: it is
-/// phase-06c's `new_host` case and must reach the prompt, then connect on
-/// approval using the bare name as its own ssh destination.
-///
-/// Returns the parsed id for the prompt's classification and the later run
-/// (parsed once, not twice), or the refusal sentence for the model.
-fn resolve_foreground_host(host: Option<&str>) -> Result<crate::host::HostId, String> {
-    match host {
-        None => Ok(crate::host::HostId::Local),
-        Some(name) => crate::host::HostId::parse(name),
-    }
-}
-
-/// The sentence a ghost reads when it asks for a host its runbook did not
-/// grant: the refused host **and** the allowed set, so the model can correct
-/// itself rather than retrying blindly.
-fn ghost_host_refusal(policy: &GhostPolicy, host: &crate::host::HostId) -> String {
-    let allowed = if policy.hosts.is_empty() {
-        "the runbook grants every host (its `hosts:` list is empty, which is \
-         unrestricted), so this refusal should not have happened"
-            .to_string()
-    } else {
-        format!("{} ({})", policy.hosts.join(", "), policy.hosts.len())
-    };
-    format!(
-        "Error: this runbook's `hosts:` list does not grant host {}. \
-         Hosts this runbook allows: {}. \
-         Stay on the hosts the runbook names, or work on the daemon host.",
-        host.as_str(),
-        allowed
-    )
 }
 
 /// Connect first for a named host; `None`, `"local"` and a malformed name
@@ -946,218 +912,6 @@ mod ghost_foreground_gate_tests {
     #[test]
     fn ghost_may_run_foreground_denies_ghosts_when_the_sandbox_is_on() {
         assert!(!ghost_may_run_foreground(true, true));
-    }
-}
-
-#[cfg(test)]
-mod host_gate_tests {
-    use super::resolve_foreground_host;
-
-    // ── resolve_foreground_host ordering (M21 phase-06c) ────────────────────
-
-    #[test]
-    fn a_malformed_host_is_refused_without_prompting() {
-        let err = resolve_foreground_host(Some("bad host!"))
-            .expect_err("a name that can never be a host is refused before any prompt");
-        assert!(
-            err.contains("bad host!"),
-            "the refusal echoes the name the model sent: {err}"
-        );
-        assert!(
-            err.contains("[A-Za-z0-9._-]"),
-            "the refusal is HostId::parse's own shape message: {err}"
-        );
-    }
-
-    #[test]
-    fn a_malformed_host_refusal_names_the_character_class() {
-        for bad in ["bad host!", "", "web/01", "../etc"] {
-            let err =
-                resolve_foreground_host(Some(bad)).expect_err("every malformed name is refused");
-            assert!(
-                err.contains("A-Za-z0-9._-"),
-                "the refusal must carry the accepted character class, not shell-limit or \
-                 timeout advice: {err}"
-            );
-            assert!(
-                !err.contains("per-owner shell limit") && !err.contains("timed out"),
-                "the refusal is a host-shape sentence only: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_unconfigured_host_is_not_refused_before_the_prompt() {
-        // The whole point of the row: a well-formed name `[hosts]` does not
-        // configure must pass this gate and reach the panel. (Whether it is in
-        // `[hosts]` is the classification's question, not the parser's.)
-        let parsed = resolve_foreground_host(Some("nope"))
-            .expect("an unconfigured well-formed host is not refused here");
-        assert_eq!(
-            parsed,
-            crate::host::HostId::Named("nope".to_string()),
-            "the parsed id is carried on, so the name is parsed once"
-        );
-    }
-
-    #[test]
-    fn an_omitted_host_resolves_to_local_before_the_prompt() {
-        let parsed = resolve_foreground_host(None).expect("no host argument is the daemon host");
-        assert_eq!(parsed, crate::host::HostId::Local);
-    }
-}
-
-#[cfg(test)]
-mod ghost_host_gate_tests {
-    use super::{edit_file_connects_first, ghost_host_refusal, resolve_foreground_host};
-    use crate::daemon::policy::GhostPolicy;
-
-    fn ghost_with_hosts(hosts: &[&str]) -> GhostPolicy {
-        GhostPolicy {
-            hosts: hosts.iter().map(|h| h.to_string()).collect(),
-            ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
-        }
-    }
-
-    /// The refusal sentence names the host the ghost asked for **and** the
-    /// hosts the runbook allows — the model needs both to correct itself
-    /// instead of retrying blindly.
-    #[test]
-    fn a_ghost_naming_an_unlisted_host_is_refused_with_both_lists() {
-        let policy = ghost_with_hosts(&["pinky"]);
-        let host = resolve_foreground_host(Some("web01")).expect("web01 is well-formed");
-        let msg = ghost_host_refusal(&policy, &host);
-        assert!(
-            msg.contains("web01"),
-            "the refusal must name the requested host: {msg}"
-        );
-        assert!(
-            msg.contains("pinky"),
-            "the refusal must name the allowed host(s): {msg}"
-        );
-        assert!(
-            msg.starts_with("Error:"),
-            "a refusal is error text the model reads as a failed call: {msg}"
-        );
-    }
-
-    /// A chat session has no ghost policy at all, so the gate must be a
-    /// no-op for it — both the Foreground and OpenShell doors consult the
-    /// policy only when one exists.
-    #[test]
-    fn a_non_ghost_session_is_not_gated_by_hosts() {
-        // `execute_tool_call` derives `ghost_policy` from the session entry:
-        // a non-ghost session yields `None`, and every gate below is behind
-        // `if let Some(policy) = ghost_policy.as_ref()`. That condition,
-        // evaluated at the seam the dispatcher consults, is what "not gated"
-        // means here: with no policy the gate expression is false for every
-        // host, so a chat session reaches any host untouched.
-        let policy: Option<&GhostPolicy> = None;
-        let gate_fires = policy
-            .is_some_and(|p| !p.may_use_host(&crate::host::HostId::Named("any-host".to_string())));
-        assert!(
-            !gate_fires,
-            "no policy means no gate: a chat session reaches any host"
-        );
-        // Even a ghost whose runbook grants nothing named is unrestricted.
-        let unrestricted = ghost_with_hosts(&[]);
-        assert!(
-            unrestricted.may_use_host(&crate::host::HostId::Named("any-host".to_string())),
-            "an empty hosts list stays unrestricted for the gate too"
-        );
-    }
-
-    /// The common case: a ghost working on the daemon host is untouched by
-    /// the boundary, however restrictive its `hosts:` list is.
-    #[test]
-    fn a_ghost_may_still_use_the_daemon_host() {
-        let policy = ghost_with_hosts(&["pinky"]);
-        let local = resolve_foreground_host(None).expect("an omitted host is local");
-        assert_eq!(local, crate::host::HostId::Local);
-        assert!(
-            policy.may_use_host(&local),
-            "the daemon host is never a hosts: question: a ghost running local \
-             commands is the default ghost workflow"
-        );
-    }
-
-    /// The "recorded" half: the refusal reaches the event log with the
-    /// requested host in its fields. `log_event` is fire-and-forget (it
-    /// swallows write errors by design), so the test drives the same
-    /// helper the gate calls and asserts the segment file gained a record.
-    #[test]
-    fn an_unlisted_host_refusal_is_recorded() {
-        let _guard = crate::test_home_guard();
-        let tmp = tempfile::tempdir().unwrap();
-        let saved_home = std::env::var("HOME").ok();
-        unsafe { std::env::set_var("HOME", tmp.path()) };
-        crate::config::Config::ensure_dirs().ok();
-
-        let policy = ghost_with_hosts(&["pinky"]);
-        let host = resolve_foreground_host(Some("web01")).expect("web01 is well-formed");
-        let msg = ghost_host_refusal(&policy, &host);
-        crate::daemon::utils::log_event(
-            "ghost_host_refused",
-            serde_json::json!({
-                "session": "ghost-test",
-                "tool": "run_terminal_command",
-                "requested_host": host.as_str(),
-                "allowed_hosts": policy.hosts,
-            }),
-        );
-
-        let seg = crate::config::current_event_segment_path();
-        let content = std::fs::read_to_string(&seg).expect("the event segment was written");
-        let found = content.lines().any(|line| {
-            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-                return false;
-            };
-            v.get("event").and_then(|e| e.as_str()) == Some("ghost_host_refused")
-                && v.get("requested_host").and_then(|h| h.as_str()) == Some("web01")
-                && v.get("allowed_hosts").is_some()
-        });
-        assert!(
-            found,
-            "the refusal must be recorded naming the requested host and the              allowed list — segment:\n{content}"
-        );
-        assert!(
-            msg.contains("web01"),
-            "the refusal text is the model-visible half: {msg}"
-        );
-
-        match saved_home {
-            Some(v) => unsafe { std::env::set_var("HOME", v) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-    }
-
-    // ── bug-08e-2: a ghost's edit_file never connects ───────────────────────
-
-    /// The decision the EditFile arm consults: a ghost is refused inside
-    /// `run_edit_file`, so its call must never reach the connect step for
-    /// any host argument at all — including a name that is not configured
-    /// (the BatchMode ControlMaster bug-08e-2 describes) and including a
-    /// well-formed one. Chat connects first for every well-formed name.
-    #[test]
-    fn a_ghost_edit_file_never_connects() {
-        for host in [None, Some("nope"), Some("pinky"), Some("local")] {
-            assert!(
-                !edit_file_connects_first(true, host),
-                "a ghost's edit_file never connects: host = {host:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_chat_edit_file_connects_first_for_a_well_formed_name() {
-        assert!(edit_file_connects_first(false, Some("pinky")));
-        assert!(edit_file_connects_first(false, Some("not-configured")));
-        // `None` and `"local"` are the daemon host — nothing to connect to.
-        assert!(!edit_file_connects_first(false, None));
-        assert!(!edit_file_connects_first(false, Some("local")));
-        // A malformed name passes through; the operation refuses it with
-        // HostId::parse's own wording.
-        assert!(!edit_file_connects_first(false, Some("../etc")));
     }
 }
 
@@ -1853,5 +1607,39 @@ mod tests {
             "[Interactive session started] …",
             "a launch already names its shell and is returned unchanged"
         );
+    }
+}
+
+#[cfg(test)]
+mod edit_file_connects_first_tests {
+    use super::edit_file_connects_first;
+
+    // ── bug-08e-2: a ghost's edit_file never connects ───────────────────────
+
+    /// The decision the EditFile arm consults: a ghost is refused inside
+    /// `run_edit_file`, so its call must never reach the connect step for
+    /// any host argument at all — including a name that is not configured
+    /// (the BatchMode ControlMaster bug-08e-2 describes) and including a
+    /// well-formed one. Chat connects first for every well-formed name.
+    #[test]
+    fn a_ghost_edit_file_never_connects() {
+        for host in [None, Some("nope"), Some("pinky"), Some("local")] {
+            assert!(
+                !edit_file_connects_first(true, host),
+                "a ghost's edit_file never connects: host = {host:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_chat_edit_file_connects_first_for_a_well_formed_name() {
+        assert!(edit_file_connects_first(false, Some("pinky")));
+        assert!(edit_file_connects_first(false, Some("not-configured")));
+        // `None` and `"local"` are the daemon host — nothing to connect to.
+        assert!(!edit_file_connects_first(false, None));
+        assert!(!edit_file_connects_first(false, Some("local")));
+        // A malformed name passes through; the operation refuses it with
+        // HostId::parse's own wording.
+        assert!(!edit_file_connects_first(false, Some("../etc")));
     }
 }

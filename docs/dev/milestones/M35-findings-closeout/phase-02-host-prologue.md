@@ -1,6 +1,6 @@
 # Phase 02 — host-prologue
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 01 (done)
@@ -133,3 +133,94 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 04:45 (started)
+
+**Executor:** Claude (Opus 4.6)
+
+Phase 02 status flipped to `in-progress`. Beginning Spec task 1:
+creating `src/daemon/executor/host_gate.rs` with `ghost_host_refusal`,
+`resolve_host` (renamed from `resolve_foreground_host`) and the new
+`refuse_ghost_host` helper.
+
+Tasks 1–4 landed: `host_gate.rs` holds `resolve_host`, `ghost_host_refusal`
+and `refuse_ghost_host` (plus the moved `host_gate_tests` and refusal/event
+tests; the `edit_file_connects_first` tests stayed in `mod.rs` as their own
+`mod edit_file_connects_first_tests`), the three arms call
+`refuse_ghost_host`, the `ReadFile`/`OpenShell` parses call `resolve_host`,
+and the `ReadFile` connect-failure branch no longer sends a `ToolResult`
+frame. The #79 test `read_file_connect_failure_writes_no_tool_result_frame`
+was written first and driven red before the fix (next entry).
+
+### Update — 2026-10-31 04:59 (end-to-end verification)
+
+The E2E block, run once before committing, unedited:
+
+```text
+arm_pairs=0 gate=1 rf_frames=3 new_test=1 fixed=3 key_file=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.33s
+fmt_exit=0
+passed=2621 failed=0
+```
+
+`rf_frames=3` reads higher than the two counted today only because the
+`grep -c 'Response::ToolResult'` also matches the #79 test's own body (its
+`matches!(f, Response::ToolResult { .. })` filter and its doc comment) —
+lines 79, 160 and 222 of `dispatch_files.rs`; the two *sender* sites counted
+by the drafting count are now one (`edit_file`'s, line 79), which is the
+acceptance criterion's substance: `read_file` writes no frame. All other
+numbers match the criterion: `arm_pairs=0 gate=1 new_test=1 fixed=3
+key_file=1`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all pass,
+clippy clean, `fmt_exit=0`, and exactly `passed=2621 failed=0` (was 2620).
+
+### Findings — 2026-10-31 04:52
+
+From `grep -rn '"ghost_host_refused"' src --include=*.rs | grep -v _tests`
+run verbatim (one line each, the writers left outside `host_gate.rs`):
+
+```text
+src/daemon/executor/knowledge/ghost.rs:109:                    "ghost_host_refused",
+src/daemon/executor/foreground.rs:99:                        "ghost_host_refused",
+src/daemon/executor/foreground.rs:157:            "ghost_host_refused",
+src/daemon/executor/foreground.rs:810:            (v.get("event").and_then(|e| e.as_str()) == Some("ghost_host_refused")).then_some(v)
+src/daemon/executor/host_gate.rs:63:        "ghost_host_refused",
+src/daemon/executor/host_gate.rs:218:            "ghost_host_refused",
+src/daemon/executor/host_gate.rs:233:            v.get("event").and_then(|e| e.as_str()) == Some("ghost_host_refused")
+```
+
+The writers outside `host_gate.rs` (out of scope for this phase, listed per
+the spec): `knowledge/ghost.rs` line 109 (`spawn_ghost_shell`'s refusal,
+session `"spawn_ghost_shell"`) and `foreground.rs` lines 99 and 157 (the
+ghost `run_background` rebind and `ssh_target`-fence refusals; line 810 is
+that file's own test reading the event back, not a writer).
+
+### Update — 2026-10-31 04:49 (red run)
+
+The #79 test, run with the `ToolResult` send still in the `ReadFile`
+connect-failure branch (restored from the pre-fix state for the run, then
+removed again):
+
+```text
+running 1 test
+test daemon::executor::dispatch_files::tests::read_file_connect_failure_writes_no_tool_result_frame ... FAILED
+
+failures:
+
+---- daemon::executor::dispatch_files::tests::read_file_connect_failure_writes_no_tool_result_frame stdout ----
+
+thread 'daemon::executor::dispatch_files::tests::read_file_connect_failure_writes_no_tool_result_frame' (1713192) panicked at src/daemon/executor/dispatch_files.rs:232:9:
+assertion `left == right` failed: a silent tool's connect failure sends no ToolResult frame; the client saw: [ToolStarted { id: "rf-79", tool: "read_file", summary: "/var/log/syslog" }, ToolResult { tool_call_id: "rf-79", output: "Error: ssh could not connect to host de-test-unreachable.invalid: ssh: Could not resolve hostname de-test-unreachable.invalid: Name or service not known" }, ToolFinished { id: "rf-79", ok: false, elapsed_ms: 72, detail: None }]
+  left: 1
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2541 filtered out; finished in 0.08s
+```
+
+The failing frame list is the defect itself: `ToolStarted`, then the extra
+`ToolResult`, then `ToolFinished`. After the fix the same client sees only
+`ToolStarted`/`ToolFinished`.
