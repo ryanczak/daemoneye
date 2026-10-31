@@ -81,7 +81,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6.
 | 03 | small-tidies ([phase-03-small-tidies.md](phase-03-small-tidies.md)) — one `chat_owner` rule (session-less asks share the named owner `ask`), one output-header format; #14 closed stale at drafting | M31 #75; M32 #8 (#14 rejected) | done |
 | 04 | run-records ([phase-04-run-records.md](phase-04-run-records.md)) — a `wait: false` command record carries the command's exit code, and a denial's `mode` matches the call | M29 O5 | done |
 | 05 | status-bar ([phase-05-status-bar.md](phase-05-status-bar.md)) — the turn number after a resume, and the session name under an approval panel | M29 O6 | done |
-| 06 | typed-input-queue ([phase-06-typed-input-queue.md](phase-06-typed-input-queue.md)) — text typed during a turn is kept and sent when the turn ends | M32 #18 | review      |
+| 06 | typed-input-queue ([phase-06-typed-input-queue.md](phase-06-typed-input-queue.md)) — text typed during a turn is kept and sent when the turn ends | M32 #18 | done |
 
 ## Notes
 

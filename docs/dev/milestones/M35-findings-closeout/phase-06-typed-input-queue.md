@@ -1,6 +1,6 @@
 # Phase 06 — typed-input-queue
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 05 (done)
@@ -203,27 +203,6 @@ clippy clean (`Finished` only); `fmt_exit=0`; `cargo test` reports exactly
 
 ### Update — 2026-10-31 23:26 (complete, server-authored)
 
-**Summary:** </think>The commit message says "Suite 2628 -> 2631" which matches. All tasks done. Let me double-check the completion checklist:
-
-- Phase doc Status: in-progress ✓ (server flips to review)
-- Milestone README row: in-progress ✓
-- No `(complete)` entry written by me ✓
-- fmt run before git add ✓
-- All verification commands ran clean ✓
-- Final message: substantive Summary + Notes ✓ (about to write)
-- git status clean ✓
-- git log -1 --stat includes every file ✓
-
-One thing to verify — the acceptance criterion mentions `empty_box=0`, achieved. The red-runs entry exists. The findings entry exists. E2E entry exists. Commit exists.
-
-Note deviations for review:
-1. Typeahead carried via `RatatuiQueryCtx` field instead of a 7th parameter to `ask_with_session_ratatui` (avoids clippy too_many_arguments which is already at 6; the spec says "hands it down through ask_with_session_ratatui to its select_stream call" — passing through the ctx struct satisfies that).
-2. select_stream got an `#[allow(clippy::too_many_arguments)]` (8 params) — same pattern already used in stream_prompts.rs.
-3. Hygiene allowlist: run_chat_ratatui 500→526, ask_with_session_ratatui 673→678.
-4. The stream test needed the daemon line delayed 20 ms via a joined writer because select! polls branches in random order — a pre-written line raced the key consumption.
-5. layout test helpers corner_row/row_text made pub(super).
-
-All three tests are in. Let me write the summary.</think>
 Phase 06 is complete and committed (`a6339c3f`), working tree clean.
 
 **Summary + Notes for review**
@@ -375,3 +354,14 @@ kill: (-2706834): No such process
 **Commit:** a6339c3f35454aed7a0c0cda5e6639787e1d3439
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:**
+  - Allowlist raised per the M35 rule, with reasons logged: `run_chat_ratatui` 500 → 526 (consuming the queued message, then submit or pre-fill) and `ask_with_session_ratatui` 673 → 678.
+  - `select_stream` gained `#[allow(clippy::too_many_arguments)]` with an inline reason (8 parameters). The repo carries 16 such allows in production code. Bundling `interrupt_state` and `typeahead` into one per-turn struct would remove this one; that is left for whenever `select_stream` is next touched.
+  - `ask.rs` and the greeting turn pass a throwaway `Typeahead`, as the spec allowed for other callers.
+- **Calibration:** all three red runs fail. The `select_stream` one shows `"h"` against `"hi"`: its red state had one `select!` arm wired, not none. The queued message goes through `push_history` like a typed one. The live behaviour (typing during a turn, Enter mid-turn, the pre-fill) is checked at the milestone close. The reviewer stripped executor reasoning that had leaked into the completion summary.
