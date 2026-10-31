@@ -1,6 +1,6 @@
 # Phase 01 — cli-small-a
 
-**Status:** review
+**Status:** done
 **Milestone:** M34 — Function caps
 **Drafted:** 2026-10-31
 **Depends on:** M33 (v2.6.0)
@@ -281,3 +281,11 @@ kill: (-1567004): No such process
 **Commit:** 6dc8798f348fd164c3055efdf789d0f3a0e2d797
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. `search_memory_fts` lost a dead `found` flag; it was set but never read, and the original silenced it with `let _ = found;`.
+- **Calibration:** the lean split spec worked. It named the functions, the cap, the file headroom and "extract, don't compress", and four functions landed in one run with the count held at 2618. `cmd_session` went from 155 lines to 18, with one helper per subcommand and all 8 early returns preserved. Open question: the executor reports that `src/search.rs` was reverted to `HEAD` mid-run by something outside it. It caught this through the hygiene gate and redid the split. The cause is unknown and worth watching in later phases.
