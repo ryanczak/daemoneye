@@ -1,6 +1,6 @@
 # Phase 01 — copy-path
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** M33 (v2.6.0)
@@ -358,3 +358,11 @@ kill: (-1642115): No such process
 **Commit:** fee60e08172d2821cd44d2ea0b53995c93931fa7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** `tests/hygiene_allowlist.txt`: `run_copy_with_spawn` 213 → 214. The #37 branch added two lines, and the reason is recorded in the end-to-end entry. That matches the PE's ratchet decision (2026-10-31): a phase that needs a longer function raises its line and says why, and the code is not squeezed to fit. The spec did not say so; the M35 README now does.
+- **Calibration:** both red runs show the old behaviour, not a typo. #40 gave `/d/b.de_tmp` for both calls, and #37 gave `Error copying … DE_ERROR: destination already exists …`. The temp name now keeps the whole file name plus a UUID, in the destination's own directory.

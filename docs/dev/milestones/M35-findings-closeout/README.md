@@ -36,6 +36,10 @@ it names.
 - **A deduplication preserves behaviour** and holds the suite count exactly.
 - **The phase marks its findings fixed** in the ledger row's triage cell
   (`fixed: M35 phase-NN, <test name>` or `fixed: M35 phase-NN, dedupe`).
+- **The function cap is a ratchet** (PE, 2026-10-31): a fix that grows an
+  allowlisted function raises its `tests/hygiene_allowlist.txt` line and says
+  why in the Update Log. A new function over 150 lines gets a line with its
+  reason. Nothing is squeezed to fit.
 - **Every Spec step terminates:** named commands or files, and the output
   that ends the step.
 
@@ -66,7 +70,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6.
 
 | #  | Phase | Findings | Status |
 |----|-------|----------|--------|
-| 01 | copy-path ([phase-01-copy-path.md](phase-01-copy-path.md)) — the remote copy builds its shell after approval, one dest-exists rule and message for both branches, a per-invocation tmp path | M31 #36, #37, #40 | review      |
+| 01 | copy-path ([phase-01-copy-path.md](phase-01-copy-path.md)) — the remote copy builds its shell after approval, one dest-exists rule and message for both branches, a per-invocation tmp path | M31 #36, #37, #40 | done |
 | 02 | host-prologue — one shared host-parse + ghost-refusal prologue for `read_file`, `open_shell` and foreground; `read_file`'s connect failure sends no extra `ToolResult`; one id source for the connect-failure reply | M31 #78, #79; M32 #13 | todo |
 | 03 | small-tidies — the shell tools' owner fallback, `ApprovedRun.cmd_id`, the duplicated `"output (N lines)"` header | M31 #75; M32 #14, #8 | todo |
 | 04 | run-records — a `wait: false` command record carries the command's exit code, and a denial's `mode` matches the call | M29 O5 | todo |
