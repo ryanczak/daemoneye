@@ -1,6 +1,6 @@
 # Phase 04 — run-records
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 03 (done)
@@ -345,3 +345,11 @@ kill: (-2564852): No such process
 **Commit:** 4547fa1403c5a698c20cb74cc555263460af9dcb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** a fourth test, `bg_completion_on_a_failed_outcome_records_status_failed`. It covers the failed-completion behaviour the Goal specified without naming a test, so it is the right addition. The suite is therefore exactly 2626, not the spec's 2625. The architect mis-pinned the count; the executor's own explanation (counting `top.rs`'s new table row) is wrong, but its number is right. **Spec step 8 was skipped:** there is no `(end-to-end verification)` entry. The reviewer ran the block's first line, which printed `legacy_mode=0 new_tests=3 o5_fixed=1`, and the gates: fmt clean, `build_warnings=0`, clippy clean, hygiene, doc_truth and bug_tracker pass, `passed=2626 failed=0`.
+- **Calibration:** when a spec names a behaviour, it should name its test too, or pin the count as "at least". Both red runs are real: the completion test failed with no record written, and the denial test got `"foreground"` where `"shell"` was expected. `record_command_completion` in `bg_shell.rs` is the single completion point.
