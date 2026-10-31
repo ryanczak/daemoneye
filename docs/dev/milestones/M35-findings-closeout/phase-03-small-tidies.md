@@ -1,6 +1,6 @@
 # Phase 03 — small-tidies
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 02 (done)
@@ -168,3 +168,150 @@ First line matches the acceptance criterion
 (`default_owner_sites=0 ask_owner=1 header_fmts=1 new_test=1 fixed=2`); hygiene
 16 passed, doc_truth 16 passed, bug_tracker 6 passed; `build_warnings=0`,
 clippy clean, `fmt_exit=0`; the full suite is exactly `passed=2622 failed=0`.
+
+### Update — 2026-10-31 16:28 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Working tree clean. Phase doc status still in-progress, no completion entry written by me. Commit is `ec796c9a`.
+
+Now write the final Summary + Notes for review.</think>
+**Summary:** Phase 03 done. Added `ASK_OWNER` and `chat_owner(Option<&str>) -> Owner` to `executor/mod.rs` (documented why asks share a named owner, that session ids are 16 hex so `ask` cannot collide, and that existing `""`-owner shells age out via the sweep), red-greenned it with `chat_owner_gives_a_session_less_call_the_ask_owner` (captured the failing run before fixing), then replaced all nine `Owner::Chat(session_id.unwrap_or_default()…)` sites across the six `dispatch_*.rs` files; `viewer_layout.rs` gained one `output_header(n)` used by both `Block::Output` arms; M31 #75 and M32 #8 ledger rows now read `fixed: M35 phase-03, …` with the `(was: …)` text kept. Suite went 2621 → exactly 2622.
+
+**Notes for review:** One adaptation — the spec's sketch asserted equality on `Owner`, which has no `PartialEq` and adding a derive was out of scope, so the test asserts with `matches!(…, Owner::Chat(o) if o == ASK_OWNER)`; behavior identical. I also renamed the helper's parameter to `n` so the one remaining `output ({n} lines)` literal sits inside the single formatting function (the E2E grep counts it, `header_fmts=1`). E2E block ran once pre-commit and its verbatim output is pasted in the `end-to-end verification` entry: `default_owner_sites=0 ask_owner=1 header_fmts=1 new_test=1 fixed=2`, `build_warnings=0`, hygiene 16 / doc_truth 16 / bug_tracker 6 passed, clippy clean, `fmt_exit=0`, `passed=2622 failed=0`. No allowlist line grew (`executor/mod.rs` is 754→757 production lines, still under the 800 cap). Committed as `ec796c9a`; status left at `in-progress` for the server's completion tail; working tree clean.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test config_pricing_round_trip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+kill: (2169197): No such process
+kill: (-2169910): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d575d0b2c2ae3264)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-b278ad2979a68876)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-9c63a2decda31dcd)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-aab856d6777ceb37)
+     Running tests/integration.rs (target/debug/deps/integration-d3f77f8c074697c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-9e7c6a22e4706ca4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-0968df9ce6900eb4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-01205396fa4dcbd5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M31-code-hygiene/FINDINGS.md` — +1 -1
+- `docs/dev/milestones/M32-findings-fixes/FINDINGS.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/README.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/phase-03-small-tidies.md` — +61 -1
+- `src/cli/viewer_layout.rs` — +8 -5
+- `src/daemon/executor/dispatch_background.rs` — +1 -1
+- `src/daemon/executor/dispatch_context.rs` — +3 -5
+- `src/daemon/executor/dispatch_foreground.rs` — +1 -1
+- `src/daemon/executor/dispatch_open_shell.rs` — +1 -7
+- `src/daemon/executor/dispatch_send_input.rs` — +1 -6
+- `src/daemon/executor/dispatch_shells.rs` — +7 -18
+- `src/daemon/executor/mod.rs` — +27 -0
+
+**Commit:** ec796c9a1368a3cbff01cd7b3c913d0906d4bc6f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

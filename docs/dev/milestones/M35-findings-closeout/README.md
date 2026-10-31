@@ -78,7 +78,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6.
 |----|-------|----------|--------|
 | 01 | copy-path ([phase-01-copy-path.md](phase-01-copy-path.md)) — the remote copy builds its shell after approval, one dest-exists rule and message for both branches, a per-invocation tmp path | M31 #36, #37, #40 | done |
 | 02 | host-prologue ([phase-02-host-prologue.md](phase-02-host-prologue.md)) — one shared host-parse + ghost-refusal prologue for `read_file`, `open_shell` and foreground; `read_file`'s connect failure sends no extra `ToolResult`; one id source for the connect-failure reply | M31 #78, #79; M32 #13 | done |
-| 03 | small-tidies ([phase-03-small-tidies.md](phase-03-small-tidies.md)) — one `chat_owner` rule (session-less asks share the named owner `ask`), one output-header format; #14 closed stale at drafting | M31 #75; M32 #8 (#14 rejected) | in-progress |
+| 03 | small-tidies ([phase-03-small-tidies.md](phase-03-small-tidies.md)) — one `chat_owner` rule (session-less asks share the named owner `ask`), one output-header format; #14 closed stale at drafting | M31 #75; M32 #8 (#14 rejected) | review      |
 | 04 | run-records — a `wait: false` command record carries the command's exit code, and a denial's `mode` matches the call | M29 O5 | todo |
 | 05 | status-bar — the turn number after a resume, and the session name under an approval panel | M29 O6 | todo |
 | 06 | typed-input-queue — text typed during a turn is kept and sent when the turn ends | M32 #18 | todo |
