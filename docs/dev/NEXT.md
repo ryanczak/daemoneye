@@ -6,8 +6,8 @@
 (`v2.5.0`, pushed). After M33: the function milestone (the 40 allowlisted
 functions), then MCP surface (M34) and Knowledge (M35).
 
-**Active phase:** [phase 02 — rusqlite-and-syn](milestones/M33-dependency-refresh/phase-02-rusqlite-and-syn.md)
-(`todo`; dispatch with `/rexymcp:dispatch 02`). Phase 01 done 2026-10-30.
+**Active phase:** [phase 03 — vt100-0.18](milestones/M33-dependency-refresh/phase-03-vt100-0.18.md)
+(`todo`; dispatch with `/rexymcp:dispatch 03`). Phases 01 and 02 done 2026-10-30/31.
 
 M32 closed 2026-10-30 (`v2.5.0`, pushed). M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). The function milestone, M34 (MCP surface) and M35
