@@ -1,6 +1,6 @@
 # Phase 05 — status-bar
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 04 (done)
@@ -172,3 +172,163 @@ First line matches the acceptance criterion (`blank_session=0 seed_fn=1
 new_tests=2 o6_fixed=1`); hygiene, doc_truth and bug_tracker pass; clippy clean
 (no diagnostics, `Finished` only); `fmt_exit=0`; `cargo test` reports exactly
 `passed=2628 failed=0`.
+
+### Update — 2026-10-31 21:47 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Let me do a final check of the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` — yes, I only flipped todo → in-progress.
+- [x] Milestone README's phase-table row still says `in-progress` — yes.
+- [x] No hand-written `(complete)` Update Log entry — correct, I wrote started, red runs, findings, end-to-end verification entries only.
+- [x] `cargo fmt --all` was run immediately before `git add` — yes, ran `cargo fmt --all && cargo fmt --all --check` right before staging.
+- [x] All verification commands ran clean — build_warnings=0, clippy clean, fmt_exit=0, hygiene/doc_truth/bug_tracker pass, cargo test passed=2628 failed=0.
+- [x] Final message: Summary + Notes for review — writing now.
+- [x] `git status --short` shows nothing — confirmed (empty output).
+- [x] `git log -1 --stat` shows the commit includes every file touched — 6 files, all included.
+
+One deviation to note: I removed a duplicated comment line in `chat_loop.rs` ("// Wait for tmux client attachment." was duplicated) to keep `run_chat_ratatui` within its 500-line hygiene allowlist cap instead of raising the allowlist line. That's worth noting. Also note the mid-phase patch accident (I briefly deleted an `if should_echo` line which the verifier caught; restored).
+
+Also worth noting: `resumed_turn` signature is `pub(super)` and located in chat_loop.rs with the test module; the spec said "a small function in chat_loop.rs" — fine.
+
+Summary time.</think>
+**Summary:** Both M29 O6 defects are fixed. `prompt_status` in `stream_ask.rs` now takes the turn's session id (`session_id.unwrap_or("")` at all nine call sites, `None` still renders `""`), so the status bar names the session under an approval, credential or picker panel instead of reading `session: · <model>`. `run_chat_ratatui` seeds its turn counter from a new `RatatuiCtx.turn_seed` field: on a resume, `run_chat_inner` sends one `QueryLimits` through the existing `request_once` helper and feeds the reply through the new pure `resumed_turn` in `chat_loop.rs` (`LimitsInfo` → `turn_count`; `Err` or any other reply → 0, the chat never fails over a label); a fresh chat sends nothing and starts at 0. Both tests were written red-first and captured failing before their fixes; M29's O6 deferred item is marked `**Fixed in M35 phase-05.**`
+
+**End-to-end verification:** the phase's E2E block ran once against the working tree and is pasted verbatim in the phase doc's `### Update — 2026-10-31 14:52 (end-to-end verification)` entry — first line `blank_session=0 seed_fn=1 new_tests=2 o6_fixed=1`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all `ok`, clippy clean, `fmt_exit=0`, `cargo test` exactly `passed=2628 failed=0` (2626 → 2628).
+
+**Notes for review:**
+- One deviation: my first wiring grew `run_chat_ratatui` to 501 lines against its allowlisted 500. Rather than raise the allowlist line (the M35 rule permits growth with a logged why), I removed a duplicated comment line (`// Wait for tmux client attachment.` appeared twice in a row) that the function had carried, bringing it back to 500 — no allowlist change needed, `tests/hygiene_allowlist.txt` untouched.
+- Mid-phase the verifier caught two transient breakages I introduced (missing imports/signature drift after editing `chat.rs`, and a botched `patch` that briefly dropped an `if should_echo(&query) {` line); both were restored and the final tree builds clean with zero warnings, so nothing of those remains.
+- `resumed_turn` is `pub(super)` and matches the spec's signature `resumed_turn(reply: anyhow::Result<Response>) -> usize`, spelled `crate::ipc::Response` because `chat_loop.rs` reaches `ipc` through the full path (no `use crate::ipc` in that file's scope).
+- Status left at `in-progress` as required; the server authors the completion flip and entry. Working tree is clean, commit `0f6c3c8f` contains all six touched files.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test config_pricing_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+kill: (2635736): No such process
+kill: (-2636444): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d575d0b2c2ae3264)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-b278ad2979a68876)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-9c63a2decda31dcd)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-aab856d6777ceb37)
+     Running tests/integration.rs (target/debug/deps/integration-d3f77f8c074697c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-9e7c6a22e4706ca4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-0968df9ce6900eb4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-01205396fa4dcbd5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M29-post-2.0-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/README.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/phase-05-status-bar.md` — +55 -1
+- `src/cli/commands/chat.rs` — +22 -1
+- `src/cli/commands/chat_loop.rs` — +32 -2
+- `src/cli/commands/stream_ask.rs` — +33 -4
+
+**Commit:** 0f6c3c8fbef3bf263fb95e962fd2af6f75055f88
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
