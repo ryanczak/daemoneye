@@ -1,12 +1,11 @@
 # NEXT
 
-**Active milestone:** M34 — Function caps
-([`README.md`](milestones/M34-function-caps/README.md)), scoped 2026-10-31,
-release `2.7.0`. M33 — Dependency refresh closed 2026-10-31 (`v2.6.0`,
-tagged; push pending). After M34: MCP surface (M35), then Knowledge (M36).
+**Active milestone:** none. M34 — Function caps was withdrawn 2026-10-31
+after phase 01 (PE decision: no forced function length). M33 closed
+2026-10-31 (`v2.6.0`, tagged; push pending). Next: MCP surface (M35) or
+Knowledge (M36), to be scoped.
 
-**Active phase:** [phase 02 — cli-small-b](milestones/M34-function-caps/phase-02-cli-small-b.md)
-(`todo`; dispatch with `/rexymcp:dispatch 02`). Phase 01 done 2026-10-31.
+**Active phase:** none.
 
 M32 closed 2026-10-30 (`v2.5.0`, pushed). M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M35 (MCP surface) and M36 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost

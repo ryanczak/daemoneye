@@ -1,6 +1,6 @@
 # Phase 02 — cli-small-b
 
-**Status:** todo
+**Status:** cancelled
 **Milestone:** M34 — Function caps
 **Drafted:** 2026-10-31
 **Depends on:** phase 01 (done)
@@ -90,3 +90,9 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 (cancelled)
+
+Run 4e78800b stopped by `stop_phase` on the PE's instruction at turn 16,
+stage `awaiting_model`, no file changed. The milestone was withdrawn; see
+the README's Notes.

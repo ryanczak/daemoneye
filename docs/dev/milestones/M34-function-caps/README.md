@@ -5,7 +5,7 @@ entries in `tests/hygiene_allowlist.txt` are split until each is within the
 cap and its line is deleted, and the six M32 findings deferred here are
 fixed alongside the functions they live in.
 
-**Status:** todo (scoped 2026-10-31)
+**Status:** withdrawn (scoped 2026-10-31, withdrawn 2026-10-31 after phase 01)
 
 **Release:** 2.7.0
 
@@ -80,27 +80,36 @@ Line counts are the allowlist's.
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
 | 01 | cli-small-a ([phase-01-cli-small-a.md](phase-01-cli-small-a.md)) | `activity_row_in` 163, `aggregate_costs` 159, `cmd_session` 155, `search_memory_fts` 154 | done        |
-| 02 | cli-small-b ([phase-02-cli-small-b.md](phase-02-cli-small-b.md)) | `run_setup` 256, `async_main` 173, `run_ask_raw` 169 | todo |
-| 03 | backend-chat | `GeminiClient::chat` 263, `AnthropicClient::chat` 252, `OpenAiClient::chat` 238 | todo |
-| 04 | file-ops | `run_edit_with_spawn` 271, `run_read_file` 165, `run_create_with_spawn` 164 | todo |
-| 05 | copy-and-findings | `run_copy_with_spawn` 213; findings #36, #37, #40 | todo |
-| 06 | dispatch-findings | findings #75, #78, #79 (no allowlist line) | todo |
-| 07 | executor-core | `run_in_shell_core` 250, `prompt_and_await_approval` 210 | todo |
-| 08 | shell-readers | `run_schedule_command` 184, `read_to_marker` 163, `watch_shell_with` 159 | todo |
-| 09 | alert-and-schedule | `maybe_analyze_alert` 240, `run_scheduled_job_inner` 193, `trigger_ghost_turn` 172 | todo |
-| 10 | viewer-and-markdown | `viewer_loop` 234, `render_line_to_spans` 219, `lang_keywords` 216 | todo |
-| 11 | server-and-context | `handle_client` 214, `auto_search_context` 211, `run_compaction` 184 | todo |
-| 12 | tmux-cache | `get_labeled_context_scoped` 321, `SessionCache::refresh` 171 | todo |
-| 13 | status | `run_status` 435, `handle_status` 200 | todo |
-| 14 | run-background | `run_background` 440 | todo |
-| 15 | chat-loop | `run_chat_ratatui` 500, `read_input_line_inner_ratatui` 183 | todo |
-| 16 | handle-ask | `handle_ask` 573 | todo |
-| 17 | run-daemon | `run_daemon` 598 | todo |
-| 18 | ask-with-session | `ask_with_session_ratatui` 673 | todo |
-| 19 | ghost-turn | `do_ghost_turn` 775 | todo |
-| 20 | conversation-loop | `run_conversation_loop` 775 | todo |
+| 02 | cli-small-b ([phase-02-cli-small-b.md](phase-02-cli-small-b.md)) | `run_setup` 256, `async_main` 173, `run_ask_raw` 169 | cancelled |
+| 03 | backend-chat | `GeminiClient::chat` 263, `AnthropicClient::chat` 252, `OpenAiClient::chat` 238 | withdrawn |
+| 04 | file-ops | `run_edit_with_spawn` 271, `run_read_file` 165, `run_create_with_spawn` 164 | withdrawn |
+| 05 | copy-and-findings | `run_copy_with_spawn` 213; findings #36, #37, #40 | withdrawn |
+| 06 | dispatch-findings | findings #75, #78, #79 (no allowlist line) | withdrawn |
+| 07 | executor-core | `run_in_shell_core` 250, `prompt_and_await_approval` 210 | withdrawn |
+| 08 | shell-readers | `run_schedule_command` 184, `read_to_marker` 163, `watch_shell_with` 159 | withdrawn |
+| 09 | alert-and-schedule | `maybe_analyze_alert` 240, `run_scheduled_job_inner` 193, `trigger_ghost_turn` 172 | withdrawn |
+| 10 | viewer-and-markdown | `viewer_loop` 234, `render_line_to_spans` 219, `lang_keywords` 216 | withdrawn |
+| 11 | server-and-context | `handle_client` 214, `auto_search_context` 211, `run_compaction` 184 | withdrawn |
+| 12 | tmux-cache | `get_labeled_context_scoped` 321, `SessionCache::refresh` 171 | withdrawn |
+| 13 | status | `run_status` 435, `handle_status` 200 | withdrawn |
+| 14 | run-background | `run_background` 440 | withdrawn |
+| 15 | chat-loop | `run_chat_ratatui` 500, `read_input_line_inner_ratatui` 183 | withdrawn |
+| 16 | handle-ask | `handle_ask` 573 | withdrawn |
+| 17 | run-daemon | `run_daemon` 598 | withdrawn |
+| 18 | ask-with-session | `ask_with_session_ratatui` 673 | withdrawn |
+| 19 | ghost-turn | `do_ghost_turn` 775 | withdrawn |
+| 20 | conversation-loop | `run_conversation_loop` 775 | withdrawn |
 
 ## Notes
+
+- **Withdrawn 2026-10-31.** PE decision: "i don't think forcing functions
+  to an arbitrary length makes sense. let's not do this." Phase 01 had
+  landed (four functions split, approved, behaviour held at 2618 tests) and
+  stays as committed; phase 02 was stopped at turn 16 with no edit on disk.
+  The 36 remaining `fn` allowlist entries are not a backlog. The six M32
+  findings folded into this milestone (#36, #37, #40, #75, #78, #79) return
+  to the M32 FINDINGS deferred list with no owner. The `FN_CAP` gate in
+  `tests/hygiene.rs` is a separate decision, recorded below when made.
 
 - **Scoped 2026-10-31**, after the M33 close. The phase order puts the
   cheapest splits first so the lean split spec is calibrated on 154-line
