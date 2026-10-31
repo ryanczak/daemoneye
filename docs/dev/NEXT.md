@@ -6,8 +6,8 @@ release `2.7.0`. M34 (Function caps) was withdrawn 2026-10-31 after phase 01.
 M33 closed 2026-10-31 (`v2.6.0`, pushed). After M35: MCP surface (M36), then
 Knowledge (M37).
 
-**Active phase:** [phase 02 — host-prologue](milestones/M35-findings-closeout/phase-02-host-prologue.md)
-(`todo`; dispatch with `/rexymcp:dispatch 02`). Phase 01 done 2026-10-31.
+**Active phase:** [phase 03 — small-tidies](milestones/M35-findings-closeout/phase-03-small-tidies.md)
+(`todo`; dispatch with `/rexymcp:dispatch 03`). Phases 01–02 done 2026-10-31.
 
 M32 closed 2026-10-30 (`v2.5.0`, pushed). M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M36 (MCP surface) and M37 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost

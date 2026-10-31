@@ -26,7 +26,13 @@ it names.
 3. **F8 (ghost foreground) is out of scope.** It is a feature and stays
    unscheduled. The M28 `wait: false` note stays closed by the earlier PE
    decision.
-4. **Numbering:** this is M35; MCP surface becomes M36 and Knowledge M37.
+4. **#75, a session-less call's shells (2026-10-31, at phase-03 drafting):**
+   `daemoneye ask` sends no session id, so refusing such calls would stop
+   `ask` running commands. Asks keep sharing one owner, but a named one
+   (`ask`) through one `chat_owner` helper, in place of nine copies of
+   `unwrap_or_default()`. M32 #14 was found stale at the same drafting and
+   closed as rejected.
+5. **Numbering:** this is M35; MCP surface becomes M36 and Knowledge M37.
 
 **Rules every phase carries:**
 
@@ -72,7 +78,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6.
 |----|-------|----------|--------|
 | 01 | copy-path ([phase-01-copy-path.md](phase-01-copy-path.md)) — the remote copy builds its shell after approval, one dest-exists rule and message for both branches, a per-invocation tmp path | M31 #36, #37, #40 | done |
 | 02 | host-prologue ([phase-02-host-prologue.md](phase-02-host-prologue.md)) — one shared host-parse + ghost-refusal prologue for `read_file`, `open_shell` and foreground; `read_file`'s connect failure sends no extra `ToolResult`; one id source for the connect-failure reply | M31 #78, #79; M32 #13 | done |
-| 03 | small-tidies — the shell tools' owner fallback, `ApprovedRun.cmd_id`, the duplicated `"output (N lines)"` header | M31 #75; M32 #14, #8 | todo |
+| 03 | small-tidies ([phase-03-small-tidies.md](phase-03-small-tidies.md)) — one `chat_owner` rule (session-less asks share the named owner `ask`), one output-header format; #14 closed stale at drafting | M31 #75; M32 #8 (#14 rejected) | todo |
 | 04 | run-records — a `wait: false` command record carries the command's exit code, and a denial's `mode` matches the call | M29 O5 | todo |
 | 05 | status-bar — the turn number after a resume, and the session name under an approval panel | M29 O6 | todo |
 | 06 | typed-input-queue — text typed during a turn is kept and sent when the turn ends | M32 #18 | todo |
