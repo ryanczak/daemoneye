@@ -1,6 +1,6 @@
 # Phase 06 — typed-input-queue
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 05 (done)
@@ -200,3 +200,178 @@ First line matches the acceptance criterion (`typeahead=1 empty_box=0
 new_tests=3 fixed=1`); hygiene, doc_truth and bug_tracker pass; `build_warnings=0`;
 clippy clean (`Finished` only); `fmt_exit=0`; `cargo test` reports exactly
 `passed=2631 failed=0` (2628 → 2631).
+
+### Update — 2026-10-31 23:26 (complete, server-authored)
+
+**Summary:** </think>The commit message says "Suite 2628 -> 2631" which matches. All tasks done. Let me double-check the completion checklist:
+
+- Phase doc Status: in-progress ✓ (server flips to review)
+- Milestone README row: in-progress ✓
+- No `(complete)` entry written by me ✓
+- fmt run before git add ✓
+- All verification commands ran clean ✓
+- Final message: substantive Summary + Notes ✓ (about to write)
+- git status clean ✓
+- git log -1 --stat includes every file ✓
+
+One thing to verify — the acceptance criterion mentions `empty_box=0`, achieved. The red-runs entry exists. The findings entry exists. E2E entry exists. Commit exists.
+
+Note deviations for review:
+1. Typeahead carried via `RatatuiQueryCtx` field instead of a 7th parameter to `ask_with_session_ratatui` (avoids clippy too_many_arguments which is already at 6; the spec says "hands it down through ask_with_session_ratatui to its select_stream call" — passing through the ctx struct satisfies that).
+2. select_stream got an `#[allow(clippy::too_many_arguments)]` (8 params) — same pattern already used in stream_prompts.rs.
+3. Hygiene allowlist: run_chat_ratatui 500→526, ask_with_session_ratatui 673→678.
+4. The stream test needed the daemon line delayed 20 ms via a joined writer because select! polls branches in random order — a pre-written line raced the key consumption.
+5. layout test helpers corner_row/row_text made pub(super).
+
+All three tests are in. Let me write the summary.</think>
+Phase 06 is complete and committed (`a6339c3f`), working tree clean.
+
+**Summary + Notes for review**
+
+Built the M32 #18 typed-input queue: a pure `Typeahead` in `stream.rs` (`feed(&Key) -> bool`, `text()`, `enter_pressed()`) is fed before `key_outcome`/`InterruptState` in both `select!` arms of `select_stream`, so `Char`, `Backspace` and one `Enter` are consumed mid-turn while Ctrl-C's warn/abort, Ctrl-O, focus events and pastes follow today's path unchanged; `draw_spinner`/`render_spinner_region` now take the kept text and render it in the input box; `run_chat_ratatui` passes a fresh typeahead per turn down through `RatatuiQueryCtx` and at turn end either queues the kept text as the next query (consumed at the top of the loop, no second Enter) or pre-fills via `InputState::current_line_mut().insert_str`. All three new tests were written red-first and captured failing; the E2E block ran once before commit and printed `typeahead=1 empty_box=0 new_tests=3 fixed=1`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all ok, clippy clean, `fmt_exit=0`, `cargo test` exactly `passed=2631 failed=0` (2628 → 2631).
+
+**Notes for review:**
+- The typeahead reaches `ask_with_session_ratatui` as a `RatatuiQueryCtx` field rather than a 7th parameter — a 7th would trip clippy `too_many_arguments` at the function that already sat at 6; `select_stream` itself went to 8 params and carries the same `#[allow(clippy::too_many_arguments)]` comment style already used in `stream_prompts.rs`.
+- Hygiene allowlist raised per the M35 rule: `run_chat_ratatui` 500 → 526 (queued-message consume + submit/pre-fill), `ask_with_session_ratatui` 673 → 678 (the ctx destructure).
+- One test-design note: `select_stream_keeps_typed_text_for_the_next_turn` writes the daemon line 20 ms in via a joined writer, because `select!` polls branches in random order and a pre-written line raced the key consumption; the same sequencer `read_byte_waits_out_a_drained_pipe` uses.
+- `render_ratatui_layout_tests.rs`'s `corner_row`/`row_text` became `pub(super)` so the new test reuses them instead of duplicating helpers.
+- Status left at `in-progress`; no `(complete)` entry written — the server authors both.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_read_and_clear ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+kill: (2706129): No such process
+kill: (-2706834): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d575d0b2c2ae3264)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-b278ad2979a68876)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-9c63a2decda31dcd)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-aab856d6777ceb37)
+     Running tests/integration.rs (target/debug/deps/integration-d3f77f8c074697c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-9e7c6a22e4706ca4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-0968df9ce6900eb4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-01205396fa4dcbd5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M32-findings-fixes/FINDINGS.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/README.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/phase-06-typed-input-queue.md` — +72 -1
+- `src/cli/commands/ask.rs` — +7 -1
+- `src/cli/commands/chat.rs` — +3 -1
+- `src/cli/commands/chat_loop.rs` — +51 -25
+- `src/cli/commands/stream.rs` — +147 -0
+- `src/cli/commands/stream_ask.rs` — +17 -3
+- `src/cli/render_ratatui.rs` — +5 -2
+- `src/cli/render_ratatui_draw.rs` — +2 -0
+- `src/cli/render_ratatui_layout_tests.rs` — +14 -6
+- `src/cli/render_ratatui_tests.rs` — +32 -1
+- `tests/hygiene_allowlist.txt` — +2 -2
+
+**Commit:** a6339c3f35454aed7a0c0cda5e6639787e1d3439
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
