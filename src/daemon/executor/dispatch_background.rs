@@ -141,7 +141,7 @@ where
                 false,
                 cmd,
                 "approved",
-                0,
+                None,
                 &text,
             );
             if sandboxed {
@@ -196,7 +196,7 @@ where
                 false,
                 cmd,
                 "shell-error",
-                -1,
+                Some(-1),
                 &msg,
             );
             Ok(ToolCallOutcome::Result(msg))

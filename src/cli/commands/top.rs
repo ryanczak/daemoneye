@@ -351,9 +351,10 @@ fn activity_row_in(value: &serde_json::Value, offset: chrono::FixedOffset) -> Op
             let session = short_session(&str_field(value, "session", "-"));
             let shell = str_field(value, "shell", "-");
             let cmd = short_cmd(&str_field(value, "cmd", "-"));
-            // `exit -` when the field is absent: a tmux-era line carried no
-            // exit code.
-            let exit = match value.get("exit") {
+            // `exit -` when the field is absent (a tmux-era line) or `null`
+            // (a launch whose command has not finished, or a failed one): no
+            // exit code is known yet.
+            let exit = match value.get("exit").filter(|v| !v.is_null()) {
                 Some(v) => v.to_string(),
                 None => "-".to_string(),
             };
@@ -1253,6 +1254,14 @@ mod tests {
                 mk(
                     "command",
                     serde_json::json!({ "session": "5175faf67d501ce8", "shell": "s0", "cmd": "hostname" }),
+                ),
+                "5175faf6 s0 hostname exit -",
+            ),
+            (
+                "command",
+                mk(
+                    "command",
+                    serde_json::json!({ "session": "5175faf67d501ce8", "shell": "s0", "cmd": "hostname", "exit": serde_json::Value::Null }),
                 ),
                 "5175faf6 s0 hostname exit -",
             ),

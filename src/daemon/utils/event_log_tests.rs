@@ -573,7 +573,7 @@ fn log_shell_command_writes_the_exit_code() {
             true,
             "printf 'HELLO\n'; exit 3",
             "approved",
-            3,
+            Some(3),
             "body line one\nbody line two",
         );
         let record = last_written_event();
@@ -594,7 +594,15 @@ fn log_shell_command_writes_the_exit_code() {
 #[test]
 fn log_shell_command_records_wait_and_shell() {
     with_test_home(|| {
-        log_shell_command(Some("sess-1"), "s3", false, "cmd", "approved", 0, "out");
+        log_shell_command(
+            Some("sess-1"),
+            "s3",
+            false,
+            "cmd",
+            "approved",
+            Some(0),
+            "out",
+        );
         let record = last_written_event();
         assert_eq!(record["event"], "command", "event kind");
         assert_eq!(record["wait"], false, "wait: false run");
@@ -605,28 +613,64 @@ fn log_shell_command_records_wait_and_shell() {
 }
 
 #[test]
+fn a_denial_record_is_shell_mode() {
+    with_test_home(|| {
+        log_command(Some("s"), "foreground", "", "ls", "denied", "");
+        let record = last_written_event();
+        assert_eq!(record["event"], "command", "event kind");
+        assert_eq!(
+            record["mode"], "shell",
+            "the record says the shell substrate ran it"
+        );
+        assert_eq!(
+            record["wait"], true,
+            "wait is still derived from the mode given"
+        );
+    });
+}
+
+#[test]
 fn log_command_derives_wait_from_mode() {
     with_test_home(|| {
         log_command(Some("sess-1"), "foreground", "", "cmd", "denied", "out");
         let record = last_written_event();
         assert_eq!(record["wait"], true, "foreground is a waited decision");
         assert_eq!(record["shell"], serde_json::Value::Null);
-        assert_eq!(record["mode"], "foreground");
+        assert_eq!(record["mode"], "shell");
         assert_eq!(record["pane"], "");
 
         log_command(Some("sess-1"), "background", "h1", "cmd", "approved", "out");
         let record = last_written_event();
         assert_eq!(record["wait"], false, "background is wait: false");
         assert_eq!(record["shell"], serde_json::Value::Null);
-        assert_eq!(record["mode"], "background");
+        assert_eq!(record["mode"], "shell");
         assert_eq!(record["pane"], "h1");
 
         log_command(Some("sess-1"), "other", "", "cmd", "denied", "out");
         let record = last_written_event();
         assert_eq!(record["wait"], serde_json::Value::Null, "unknown mode");
         assert_eq!(record["shell"], serde_json::Value::Null);
-        assert_eq!(record["mode"], "other");
+        assert_eq!(record["mode"], "shell");
         assert_eq!(record["pane"], "");
+    });
+}
+
+#[test]
+fn a_background_launch_records_no_exit_code() {
+    with_test_home(|| {
+        log_shell_command(Some("sess-1"), "s9", false, "cmd", "approved", None, "out");
+        let record = last_written_event();
+        assert_eq!(record["event"], "command", "event kind");
+        assert_eq!(
+            record["exit"],
+            serde_json::Value::Null,
+            "the launch knows no exit"
+        );
+        assert_eq!(
+            record["status"], "approved",
+            "the launch record is still the approval"
+        );
+        assert_eq!(record["wait"], false, "wait: false run");
     });
 }
 
@@ -634,7 +678,15 @@ fn log_command_derives_wait_from_mode() {
 fn log_shell_command_truncates_the_excerpt_at_200_chars() {
     with_test_home(|| {
         let long = "x".repeat(300);
-        log_shell_command(Some("sess-1"), "s1", true, "cmd", "approved", 0, &long);
+        log_shell_command(
+            Some("sess-1"),
+            "s1",
+            true,
+            "cmd",
+            "approved",
+            Some(0),
+            &long,
+        );
         let record = last_written_event();
         assert_eq!(record["out"].as_str().unwrap().chars().count(), 200);
     });

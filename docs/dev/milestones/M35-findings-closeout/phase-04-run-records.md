@@ -1,6 +1,6 @@
 # Phase 04 — run-records
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 03 (done)
@@ -124,3 +124,82 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 19:20 (progress)
+
+Started. Status flipped to in-progress (here and in the milestone README).
+Working through the spec in order: the two red tests, the fixes, the launch
+test, the `top.rs` null case, the M29 README mark, then the log entries and
+the E2E block.
+
+### Findings — 2026-10-31
+
+`grep -rn 'log_command(\|log_shell_command(' src --include=*.rs | grep -v _tests`,
+the callers and what each now writes (the `/log` parser in `chat.rs` shares
+the name and is not a logging call):
+
+- `log_command` (`event_log.rs`) — the mode is now `"shell"` always; `wait`
+  still derived from the `mode` argument it is handed.
+- `foreground.rs` 50, 277, 317, 349, 436, 474, 491 — `log_command` with
+  `"foreground"` or `"background"`: `mode: "shell"`, `wait: true`/`false`
+  from that argument.
+- `mod.rs` 641, 739 — denials, timeouts and ghost refusals:
+  `mode: "shell"`, `wait` from the approval's `mode`.
+- `dispatch_foreground.rs` 304, 326, 404, 428 — `log_shell_command`:
+  `mode: "shell"`, `wait: true`, `exit` `Some(result.exit_code)` on a
+  completed run and `Some(-1)` on the two host-error and the shell-error
+  path.
+- `dispatch_background.rs` 138, 193 — the launch and its start error:
+  `mode: "shell"`, `wait: false`, `exit` `None` on the launch and
+  `Some(-1)` on the start error.
+- `bg_shell.rs` 371 (`record_command_completion`) — the completion:
+  `mode: "shell"`, `wait: false`, `exit` `Some(code)` on `Ok`, `None` and
+  `status: "failed"` on `Err`.
+
+### Update — 2026-10-31 19:55 (red runs)
+
+Step 1's two tests, each run against the pre-fix tree and its `test result:`
+line plus assertion message kept.
+
+`bg_completion_records_the_commands_exit_code` (with the completion-record
+fix not yet in place, the completion wrote no `command` record at all, so the
+segment was missing):
+
+```
+running 1 test
+test daemon::executor::bg_shell::tests::bg_completion_records_the_commands_exit_code ... FAILED
+
+failures:
+
+---- daemon::executor::bg_shell::tests::bg_completion_records_the_commands_exit_code stdout ----
+
+thread 'daemon::executor::bg_shell::tests::bg_completion_records_the_commands_exit_code' (2296432) panicked at src/daemon/executor/bg_shell.rs:409:14:
+today's event segment exists — the record was never written: Os { code: 2, kind: NotFound, message: "No such file or directory" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    daemon::executor::bg_shell::tests::bg_completion_records_the_commands_exit_code
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2544 filtered out; finished in 0.03s
+```
+
+`a_denial_record_is_shell_mode` (with `log_command` still writing the legacy
+mode):
+
+```
+running 1 test
+test daemon::utils::event_log::tests::a_denial_record_is_shell_mode ... FAILED
+
+failures:
+
+---- daemon::utils::event_log::tests::a_denial_record_is_shell_mode stdout ----
+
+thread 'daemon::utils::event_log::tests::a_denial_record_is_shell_mode' (2300852) panicked at src/daemon/utils/event_log_tests.rs:613:9:
+assertion `left == right` failed: the record says the shell substrate ran it
+  left: String("foreground")
+ right: "shell"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2546 filtered out; finished in 0.03s
+```
+
+Step 2 fixed both: the two tests now pass, and `a_background_launch_records_no_exit_code`
+(step 3, which could not compile before `exit_code: Option<i32>`) passes too.

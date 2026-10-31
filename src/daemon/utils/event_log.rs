@@ -87,7 +87,7 @@ pub fn log_shell_command(
     wait: bool,
     command: &str,
     status: &str,
-    exit_code: i32,
+    exit_code: Option<i32>,
     output_excerpt: &str,
 ) {
     let cmd: String = command
@@ -329,9 +329,11 @@ pub fn sweep_event_segments(retention_days: u32) {
     }
 }
 
-/// Back-compat shim — existing call sites in server.rs still compile while
-/// the migration to `log_event` is in progress.  New code should call
-/// `log_event` directly.
+/// A `command` event for a run recorded through the legacy log sites
+/// (denials, timeouts, ghost refusals). The shell substrate runs every
+/// command, so `mode` is always `"shell"`; `wait` is still derived from the
+/// `mode` the caller passes, because that is the call's shape, not the
+/// substrate's.
 pub fn log_command(
     session_id: Option<&str>,
     mode: &str,
@@ -358,7 +360,7 @@ pub fn log_command(
         "command",
         serde_json::json!({
             "session": session_id.unwrap_or("-"),
-            "mode":    mode,
+            "mode":    "shell",
             "wait":    wait,
             "shell":   serde_json::Value::Null,
             "pane":    pane,

@@ -189,7 +189,7 @@ repo).
 **Deferred to a later milestone.**
 1. **O5:** a `wait: false` `command` record carries `exit: 0`, the
    launch's code, not the command's; and a denial's `mode` is still the
-   legacy `foreground`. Readers were told to use `wait`/`shell`.
+   legacy `foreground`. Readers were told to use `wait`/`shell`. **Fixed in M35 phase-04.**
 2. **O6:** the status bar reads `turn 1` after a resume, and `session:`
    is blank while an approval panel is up.
 3. **F8, ghosts are background-only** (from M28). Unscheduled.

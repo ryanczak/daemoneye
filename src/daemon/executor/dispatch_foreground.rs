@@ -307,7 +307,7 @@ where
             true,
             cmd,
             "host-error",
-            -1,
+            Some(-1),
             &msg,
         );
         return Ok(msg);
@@ -329,7 +329,7 @@ where
             true,
             cmd,
             "host-error",
-            -1,
+            Some(-1),
             &msg,
         );
         return Ok(msg);
@@ -407,7 +407,7 @@ where
                 true,
                 cmd,
                 "approved",
-                result.exit_code,
+                Some(result.exit_code),
                 &text,
             );
             text
@@ -431,7 +431,7 @@ where
                 true,
                 cmd,
                 "shell-error",
-                -1,
+                Some(-1),
                 &msg,
             );
             msg

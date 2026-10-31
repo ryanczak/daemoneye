@@ -18,6 +18,7 @@ use crate::daemon::run::{
     RunId, RunKind, RunState, TurnLogEvent, TurnLogRecord, append_turn_event,
 };
 use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
+use crate::daemon::utils::log_shell_command;
 use crate::shell::{
     CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell, spawn_command,
     spawn_dedicated_for, with_shells,
@@ -310,6 +311,7 @@ pub(super) async fn await_and_notify(
         Err(_) => Err("the command's reader task ended without delivering an outcome".to_string()),
     };
     let state = report_state(&outcome);
+    record_command_completion(&session_id, &cmd, &shell_id, &outcome);
 
     // Phase 1 (locked): the session entry disappearing before the await is a
     // silent return, exactly as `notify_session` does.
@@ -349,6 +351,32 @@ pub(super) async fn await_and_notify(
         run_id,
         event: TurnLogEvent::RunFinished { state },
     });
+}
+
+/// The `command` record of a finished background run: where the exit code is
+/// first known. The launch record (`dispatch_background.rs`) carries no exit
+/// code — it says the command was approved — and this record says what
+/// actually happened. A run whose outcome is `Err` did not complete, so its
+/// status is `failed` and no exit code is reported.
+fn record_command_completion(
+    session_id: &str,
+    cmd: &str,
+    shell_id: &ShellId,
+    outcome: &Result<CommandOutcome, String>,
+) {
+    let (status, exit) = match outcome {
+        Ok(o) => ("completed", Some(o.exit_code)),
+        Err(_) => ("failed", None),
+    };
+    log_shell_command(
+        Some(session_id),
+        shell_id.as_str(),
+        false,
+        cmd,
+        status,
+        exit,
+        "",
+    );
 }
 
 /// [`await_and_notify`] to completion, then `close(shell_id)`: a sandboxed
@@ -398,6 +426,18 @@ mod tests {
 
     const ROWS: u16 = 24;
     const COLS: u16 = 80;
+
+    /// The last line of today's event segment: the record the code under
+    /// test just wrote. The `command` events land in the dated segment,
+    /// which `log_event` creates on first write — so a missing segment
+    /// means the record was never written.
+    fn last_written_event_record() -> serde_json::Value {
+        let seg = crate::config::current_event_segment_path();
+        let content = std::fs::read_to_string(&seg)
+            .expect("today's event segment exists — the record was never written");
+        let last = content.lines().last().expect("at least one line");
+        serde_json::from_str(last).expect("the last line is valid JSON")
+    }
 
     /// The production spawn substitute: a real in-process PTY host serving
     /// the configured socket for `id`, a bash session whose `.cast` the
@@ -727,6 +767,95 @@ mod tests {
         assert!(
             content.contains("DONE"),
             "the command's own output must reach the session: {content:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn bg_completion_records_the_commands_exit_code() {
+        let (_home, _dir) = crate::test_home();
+        let reg = ShellRegistry::default();
+        let session_id = "bg-record-session".to_string();
+        let sessions = store_with_entry(&session_id);
+        let (start, handle) = start_background_with(
+            &reg,
+            Owner::Chat(session_id.clone()),
+            "printf 'DONE\\n'; sh -c 'exit 4'",
+            5,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the command starts");
+
+        await_and_notify(
+            sessions.clone(),
+            session_id.clone(),
+            "printf 'DONE\\n'; sh -c 'exit 4'".to_string(),
+            start,
+            handle,
+        )
+        .await;
+
+        let record = last_written_event_record();
+        assert_eq!(
+            record["event"], "command",
+            "the completion writes a command record"
+        );
+        assert_eq!(record["status"], "completed", "a finished run is completed");
+        assert_eq!(record["wait"], false, "the run was wait: false");
+        assert_eq!(record["shell"], "s0", "the record names the shell");
+        assert_eq!(record["exit"], 4, "the command's real exit code");
+    }
+
+    /// Hang the run's shell up before its outcome is awaited: the reader task
+    /// then ends without an end marker and the handle resolves to `Err`, the
+    /// shape of a completion that failed.
+    async fn close_shell_in_process(shell_id: ShellId) {
+        let socket = crate::shell::socket_path(shell_id.as_str());
+        let _ = crate::shell::close_or_term(&socket, std::time::Duration::from_secs(5)).await;
+    }
+
+    #[tokio::test]
+    async fn bg_completion_on_a_failed_outcome_records_status_failed() {
+        let (_home, _dir) = crate::test_home();
+        let reg = ShellRegistry::default();
+        let session_id = "bg-record-failed-session".to_string();
+        let sessions = store_with_entry(&session_id);
+        let (start, handle) = start_background_with(
+            &reg,
+            Owner::Chat(session_id.clone()),
+            "printf 'ORPHAN\\n'",
+            5,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the command starts");
+        with_sessions(&sessions, |store| {
+            store.remove(&session_id);
+        });
+        close_shell_in_process(start.shell_id.clone()).await;
+
+        await_and_notify(
+            sessions.clone(),
+            session_id.clone(),
+            "printf 'ORPHAN\\n'".to_string(),
+            start,
+            handle,
+        )
+        .await;
+
+        let record = last_written_event_record();
+        assert_eq!(
+            record["event"], "command",
+            "the completion writes a command record"
+        );
+        assert_eq!(
+            record["status"], "failed",
+            "an Err outcome is a failed record"
+        );
+        assert_eq!(
+            record["exit"],
+            serde_json::Value::Null,
+            "no exit code is known"
         );
     }
 
