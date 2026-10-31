@@ -21,7 +21,7 @@ fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/status.rs run_status 435
 fn src/cli/viewer.rs viewer_loop 234
 fn src/daemon/context/background.rs run_compaction 184
-fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 213
+fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 214
 fn src/daemon/executor/file_ops/ops.rs run_create_with_spawn 164
 fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 271
 fn src/daemon/executor/file_ops/read.rs run_read_file 165

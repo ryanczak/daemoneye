@@ -23,6 +23,16 @@ where
     run_copy_with_spawn(id, src_path, dest_path, host, session_id, tx, rx, spawn).await
 }
 
+/// The one dest-exists message, shared by the local check (before the
+/// approval prompt) and the remote branch's handling of its `DE_ERROR:`
+/// line (after it) — M31 finding #37.
+pub(super) fn dest_exists_message(dest: &str) -> String {
+    format!(
+        "Error: destination already exists: {}. Remove it first or choose a different path.",
+        dest
+    )
+}
+
 /// `run_copy` with the spawn seam explicit — tests inject an in-process PTY
 /// host here instead of the production ssh spawn.
 #[allow(clippy::too_many_arguments)]
@@ -59,15 +69,6 @@ where
     match host {
         crate::host::HostId::Local => {}
         crate::host::HostId::Named(name) => {
-            let safe_src = super::super::sq_escape(src_path);
-            let safe_dst = super::super::sq_escape(dest);
-            let cmd = format!(
-                "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
-                 elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
-                 else cp -n -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
-                 || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
-            );
-
             // Show the approval prompt before executing — no local content available
             // for remote files, so show path info only (new_content = None).
             send_response_split(
@@ -87,6 +88,17 @@ where
             if let Err(outcome) = super::super::write::await_edit_file_response(id, rx).await? {
                 return Ok(outcome);
             }
+
+            // The shell string is built only after the approval (M31 #36) —
+            // building it earlier is observable to nobody but a reader.
+            let safe_src = super::super::sq_escape(src_path);
+            let safe_dst = super::super::sq_escape(dest);
+            let cmd = format!(
+                "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
+                 elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
+                 else cp -n -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
+                 || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
+            );
             let cmd_id = crate::daemon::stats::start_command(
                 &format!("copy_file {} {}", src_path, dest),
                 "foreground",
@@ -122,6 +134,9 @@ where
                 }
                 Some(Err(line)) => {
                     crate::daemon::stats::finish_command(cmd_id, 1);
+                    if line.starts_with("DE_ERROR: destination already exists: ") {
+                        return Ok(ToolCallOutcome::Result(dest_exists_message(dest)));
+                    }
                     return Ok(ToolCallOutcome::Result(format!(
                         "Error copying {} to {}: {}",
                         src_path, dest, line
@@ -160,10 +175,7 @@ where
 
     let dest_std = std::path::Path::new(dest);
     if dest_std.exists() {
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error: destination already exists: {}. Remove it first or choose a different path.",
-            dest
-        )));
+        return Ok(ToolCallOutcome::Result(dest_exists_message(dest)));
     }
 
     let source_content = match std::fs::read_to_string(&src_std) {
@@ -210,7 +222,7 @@ where
         )));
     }
 
-    let tmp_path = dest_std.with_extension("de_tmp");
+    let tmp_path = copy_tmp_path(dest_std);
     if let Err(e) = std::fs::write(&tmp_path, &source_content) {
         crate::daemon::stats::finish_command(cmd_id, 1);
         return Ok(ToolCallOutcome::Result(format!(
@@ -237,4 +249,15 @@ where
         "Copied {} to {}: {} line(s).",
         src_path, dest, line_count
     )))
+}
+
+/// The temp file a local copy writes before renaming into `dest`. It lives
+/// beside the destination — the rename must stay on one filesystem — and is
+/// unique per call: the extension is not replaced, because two copies whose
+/// destinations share a stem (`/d/b.txt` and `/d/b.md`) would otherwise share
+/// one temp path and clobber each other's temp file (M31 finding #40).
+pub(super) fn copy_tmp_path(dest: &std::path::Path) -> std::path::PathBuf {
+    let stem = dest.file_name().and_then(|n| n.to_str()).unwrap_or("dest");
+    let name = format!("{stem}.{}.de_tmp", uuid::Uuid::new_v4().simple());
+    dest.with_file_name(name)
 }

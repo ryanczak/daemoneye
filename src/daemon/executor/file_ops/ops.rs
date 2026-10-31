@@ -601,6 +601,8 @@ where
 mod copy;
 #[path = "ops_delete.rs"]
 mod delete;
+#[cfg(test)]
+use copy::copy_tmp_path;
 pub(super) use copy::run_copy;
 #[cfg(test)]
 use copy::run_copy_with_spawn;
@@ -1320,6 +1322,85 @@ mod tests {
             prompts.lock().unwrap().len(),
             1,
             "the delete is gated by exactly one EditFilePrompt"
+        );
+    }
+
+    /// M35 #40: a copy's temp path is unique per call and per destination.
+    /// Before the fix the local branch built `dest.with_extension("de_tmp")`,
+    /// which replaces the extension — so `/d/b.txt` and `/d/b.md` shared one
+    /// temp path and two concurrent copies clobbered each other's temp file.
+    #[test]
+    fn copy_tmp_path_is_unique_per_call_and_destination() {
+        let b_txt = std::path::Path::new("/d/b.txt");
+        let b_md = std::path::Path::new("/d/b.md");
+        let first = copy_tmp_path(b_txt);
+        let second = copy_tmp_path(b_txt);
+        assert_ne!(
+            first, second,
+            "two calls for the same dest must differ: {first:?} vs {second:?}"
+        );
+        assert_ne!(
+            first,
+            copy_tmp_path(b_md),
+            "dests with different extensions must not share a temp path: {first:?}"
+        );
+        for (dest, tmp) in [(b_txt, &first), (b_md, &copy_tmp_path(b_md))] {
+            assert_eq!(
+                tmp.parent(),
+                Some(dest.parent().unwrap()),
+                "the temp path stays next to {dest:?}: {tmp:?}"
+            );
+            assert!(
+                tmp.to_str().unwrap().ends_with(".de_tmp"),
+                "the temp path keeps the .de_tmp suffix: {tmp:?}"
+            );
+            assert_ne!(
+                tmp, dest,
+                "the temp path is never the destination itself: {tmp:?}"
+            );
+        }
+    }
+
+    /// M35 #37: the remote branch must report an existing destination exactly
+    /// as the local branch does — one source for the message, not two formats.
+    /// Before the fix the remote branch wrapped the shell's
+    /// `DE_ERROR: destination already exists: <dest>` in its own
+    /// "Error copying …" prefix, so the same condition produced two messages.
+    #[tokio::test]
+    async fn copy_on_a_named_host_reports_an_existing_destination_like_local() {
+        let (_home, dir) = remote_write_test_home();
+        let src = dir.path().join("probe-src.txt");
+        let dst = dir.path().join("probe-dst.txt");
+        std::fs::write(&src, "copy me").unwrap();
+        std::fs::write(&dst, "already there").unwrap();
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_copy_with_spawn(
+            "t37",
+            src.to_str().unwrap(),
+            Some(dst.to_str().unwrap()),
+            &crate::host::HostId::Named("web01".to_string()),
+            Some("sess-1"),
+            &mut tx,
+            &mut rx,
+            Box::new(|id| Box::pin(spawn_in_process_host(id))),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_copy must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert_eq!(
+            s,
+            format!(
+                "Error: destination already exists: {}. Remove it first or choose a different path.",
+                dst.display()
+            ),
+            "the remote branch reports the dest exactly as the local branch does: {s:?}"
+        );
+        assert_eq!(
+            prompts.lock().unwrap().len(),
+            1,
+            "the copy is gated by exactly one EditFilePrompt"
         );
     }
 
