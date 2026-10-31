@@ -44,13 +44,7 @@ where
                 break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
             }
             Ok(ToolCallOutcome::Result(
-                knowledge::open_shell(
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                    host.as_deref(),
-                    *rows,
-                    *cols,
-                )
-                .await,
+                knowledge::open_shell(&chat_owner(session_id), host.as_deref(), *rows, *cols).await,
             ))
         }
 

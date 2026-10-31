@@ -92,7 +92,7 @@ async fn start_approved<W>(
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
+    let owner = chat_owner(session_id);
     let max_per_owner = crate::config::Config::load()
         .unwrap_or_default()
         .shells

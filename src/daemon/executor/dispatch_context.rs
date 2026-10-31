@@ -17,14 +17,14 @@ pub(super) fn dispatch(
             };
             if breadth == knowledge::ContextBreadth::ShellsOnly {
                 break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                    &chat_owner(session_id),
                 )));
             }
             // PE decision 1: a caller outside tmux gets the daemon's own
             // shells only — no pane blocks, no pane map.
             if chat_pane.is_none() {
                 break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
+                    &chat_owner(session_id),
                 )));
             }
             let ctx_scope = match breadth {
@@ -33,9 +33,7 @@ pub(super) fn dispatch(
             };
             let ctx = cache.get_labeled_context_scoped(chat_pane, ctx_scope);
             let pane_map = cache.pane_map_summary(chat_pane);
-            let shells_line = knowledge::shell_context_block(&Owner::Chat(
-                session_id.unwrap_or_default().to_string(),
-            ));
+            let shells_line = knowledge::shell_context_block(&chat_owner(session_id));
             Ok(ToolCallOutcome::Result(format!(
                 "{shells_line}{ctx}\n{pane_map}"
             )))

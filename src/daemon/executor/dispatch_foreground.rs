@@ -208,7 +208,7 @@ where
         max_per_owner,
         ..
     } = a;
-    let owner = Owner::Chat(session_id.unwrap_or_default().to_string());
+    let owner = chat_owner(session_id);
     // `host` is already parsed above, before the prompt. A named host's
     // permissive lookup runs once, after approval, in `run_on_named_host`.
     // The two arms spawn different programs, so their closure

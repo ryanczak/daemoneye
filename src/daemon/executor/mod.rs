@@ -387,6 +387,21 @@ fn with_shell_line(text: &str, shell_id: &str, launched: bool) -> String {
     }
 }
 
+/// The chat owner every session-less tool call shares. `daemoneye ask` sends
+/// no session id, so every one-shot ask would otherwise share the empty
+/// string by accident; a named owner keeps them together deliberately. A
+/// real session id is 16 hex characters, so `"ask"` cannot collide with one.
+pub(crate) const ASK_OWNER: &str = "ask";
+
+/// The one owner rule for chat tool calls: the session's id, or [`ASK_OWNER`]
+/// when the call carries no session (`daemoneye ask`). Nothing is refused —
+/// an ask may run commands — but its shells are not anonymous. Shells a
+/// running daemon already holds under the old empty-string owner are not
+/// migrated; they age out through the existing sweep.
+pub(crate) fn chat_owner(session_id: Option<&str>) -> Owner {
+    Owner::Chat(session_id.unwrap_or(ASK_OWNER).to_string())
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -919,6 +934,18 @@ mod ghost_foreground_gate_tests {
 mod tests {
     use super::*;
     use crate::daemon::run::RunMetrics;
+
+    #[test]
+    fn chat_owner_gives_a_session_less_call_the_ask_owner() {
+        assert!(
+            matches!(chat_owner(None), Owner::Chat(o) if o == ASK_OWNER),
+            "a session-less call owns its shells as the named ask owner"
+        );
+        assert!(
+            matches!(chat_owner(Some("0123456789abcdef")), Owner::Chat(o) if o == "0123456789abcdef"),
+            "a session's call owns its shells as the session id"
+        );
+    }
 
     /// A plain result is a success; `Error:` and `error:` prefixes are
     /// failures; the prefix rule does not catch a result that merely

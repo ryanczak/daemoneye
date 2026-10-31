@@ -131,12 +131,7 @@ where
 
             // 6. Execute.
             Ok(ToolCallOutcome::Result(
-                knowledge::send_input(
-                    shell,
-                    &input,
-                    &Owner::Chat(session_id.unwrap_or_default().to_string()),
-                )
-                .await,
+                knowledge::send_input(shell, &input, &chat_owner(session_id)).await,
             ))
         }
 

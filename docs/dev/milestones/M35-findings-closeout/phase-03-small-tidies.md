@@ -1,6 +1,6 @@
 # Phase 03 — small-tidies
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 02 (done)
@@ -108,3 +108,63 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 09:10 (progress)
+
+Started. Status flipped to in-progress (here and in the milestone README).
+Working through the spec in order: helper, test (red), fix, nine sites,
+header format, ledgers.
+
+### Update — 2026-10-31 09:17 (red run)
+
+Step 2's test, run against step 1's helper (which still used
+`unwrap_or_default()`):
+
+```
+running 1 test
+test daemon::executor::tests::chat_owner_gives_a_session_less_call_the_ask_owner ... FAILED
+
+failures:
+
+---- daemon::executor::tests::chat_owner_gives_a_session_less_call_the_ask_owner stdout ----
+
+thread 'daemon::executor::tests::chat_owner_gives_a_session_less_call_the_ask_owner' (2123943) panicked at src/daemon/executor/mod.rs:940:9:
+a session-less call owns its shells as the named ask owner
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    daemon::executor::tests::chat_owner_gives_a_session_less_call_the_ask_owner
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2542 filtered out; finished in 0.00s
+```
+
+Step 3 fixed the helper to `unwrap_or(ASK_OWNER)`; the test now passes, and the
+full suite is at 2622 after steps 4 and 5.
+
+### Findings — 2026-10-31
+
+`git diff --stat`: 12 files, +83/−30 — the helper and its test in
+`executor/mod.rs`, nine one-line owner swaps across the six dispatch files,
+`viewer_layout.rs`'s header dedupe, and the two ledger rows.
+
+### Update — 2026-10-31 09:25 (end-to-end verification)
+
+The phase doc's E2E block, run once before committing, its output redirected to
+a file and pasted verbatim:
+
+```
+default_owner_sites=0 ask_owner=1 header_fmts=1 new_test=1 fixed=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.66s
+fmt_exit=0
+passed=2622 failed=0
+```
+
+First line matches the acceptance criterion
+(`default_owner_sites=0 ask_owner=1 header_fmts=1 new_test=1 fixed=2`); hygiene
+16 passed, doc_truth 16 passed, bug_tracker 6 passed; `build_warnings=0`,
+clippy clean, `fmt_exit=0`; the full suite is exactly `passed=2622 failed=0`.

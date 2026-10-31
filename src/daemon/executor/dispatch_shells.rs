@@ -12,12 +12,9 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     match call {
-        PendingCall::ListShells { scope, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::list_shells(
-                scope.as_deref(),
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-            )))
-        }
+        PendingCall::ListShells { scope, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::list_shells(scope.as_deref(), &chat_owner(session_id)),
+        )),
 
         PendingCall::ReadShell {
             shell,
@@ -59,20 +56,12 @@ where
             .await?,
         )),
 
-        PendingCall::FindInShells { pattern, scope, .. } => {
-            Ok(ToolCallOutcome::Result(knowledge::find_in_shells(
-                pattern,
-                scope.as_deref(),
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-            )))
-        }
+        PendingCall::FindInShells { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
+            knowledge::find_in_shells(pattern, scope.as_deref(), &chat_owner(session_id)),
+        )),
 
         PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::close_shell(
-                shell,
-                &Owner::Chat(session_id.unwrap_or_default().to_string()),
-            )
-            .await,
+            knowledge::close_shell(shell, &chat_owner(session_id)).await,
         )),
 
         PendingCall::WatchShell {

@@ -34,6 +34,12 @@ pub fn layout_blocks_with(
     rows
 }
 
+/// The `Block::Output` header: one format for both the laid-out block and
+/// the collapsed bare header.
+fn output_header(n: usize) -> String {
+    format!("output ({n} lines)")
+}
+
 fn layout_block(block: &Block, width: usize, rows: &mut Vec<ViewRow>, idx: usize) {
     match block {
         Block::UserTurn { label, text } => {
@@ -66,7 +72,7 @@ fn layout_block(block: &Block, width: usize, rows: &mut Vec<ViewRow>, idx: usize
         Block::Output { full, .. } => {
             let n = full.lines().count();
             rows.push(ViewRow {
-                text: format!("output ({n} lines)"),
+                text: output_header(n),
                 kind: RowKind::Header,
                 block: idx,
             });
@@ -118,10 +124,7 @@ fn bare_header(block: &Block) -> Option<String> {
             Some(l) => format!("{tool} — {l}"),
             None => tool.clone(),
         }),
-        Block::Output { full, .. } => {
-            let n = full.lines().count();
-            Some(format!("output ({n} lines)"))
-        }
+        Block::Output { full, .. } => Some(output_header(full.lines().count())),
         Block::Assistant { .. } | Block::System { .. } => None,
     }
 }
