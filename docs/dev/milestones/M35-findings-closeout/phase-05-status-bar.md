@@ -1,6 +1,6 @@
 # Phase 05 — status-bar
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 04 (done)
@@ -118,3 +118,57 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 14:24 (started)
+
+Executor: Claude (Opus 4.6). Starting phase 05: `prompt_status` takes the turn's
+session id, `resumed_turn` seeds the turn counter from the daemon's
+`LimitsInfo`, wired through `RatatuiCtx`. Red-first on both tests.
+
+### Update — 2026-10-31 14:41 (red runs)
+
+Both new tests failed on the pre-fix code, each captured with the fix
+mechanically reverted and the test kept:
+
+```
+thread 'cli::commands::stream::ask::tests::prompt_status_names_the_session' panicked at src/cli/commands/stream_ask.rs:716:9:
+assertion `left == right` failed
+  left: ""
+  right: "0123456789abcdef"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2548 filtered out; finished in 0.00s
+```
+
+```
+thread 'cli::commands::chat::chat_loop::tests::a_resumed_chat_seeds_its_turn_from_the_daemon' panicked at src/cli/commands/chat_loop.rs:738:9:
+  left: 0
+  right: 7
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2548 filtered out; finished in 0.00s
+```
+
+Both pass after the fix (`test result: ok. 1 passed; …` each).
+
+### Findings — 2026-10-31
+
+From `git diff --stat` alone: no file moved and no allowlist line grew; the
+phase touched only the three named sources and three docs. none.
+
+### Update — 2026-10-31 14:52 (end-to-end verification)
+
+The phase's E2E block, run once against the working tree before commit; output
+redirected to a file and pasted verbatim:
+
+```
+blank_session=0 seed_fn=1 new_tests=2 o6_fixed=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2628 failed=0
+```
+
+First line matches the acceptance criterion (`blank_session=0 seed_fn=1
+new_tests=2 o6_fixed=1`); hygiene, doc_truth and bug_tracker pass; clippy clean
+(no diagnostics, `Finished` only); `fmt_exit=0`; `cargo test` reports exactly
+`passed=2628 failed=0`.

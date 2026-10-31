@@ -163,9 +163,23 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
         let _ = renderer.commit(&format!("\n⚙ {brief}\n"));
     }
 
+    // A resumed chat counts on: seed the turn counter from the daemon's count
+    // before its first turn. A fresh chat sends nothing and starts at 0, and
+    // a failed or foreign reply also starts at 0 — a label must not stop chat.
+    let turn_seed = match resume_id.as_deref() {
+        Some(id) => resumed_turn(
+            request_once(Request::QueryLimits {
+                session_id: id.to_string(),
+            })
+            .await,
+        ),
+        None => 0,
+    };
+
     let result = run_chat_inner_raw(
         session_id,
         current_prompt,
+        turn_seed,
         RawChatArgs {
             handles: InputHandles {
                 state: &mut input_state,
@@ -210,6 +224,9 @@ struct RatatuiCtx<'a> {
     chat_width: usize,
     session_id: String,
     current_prompt: Option<String>,
+    /// The turn number a resumed chat counts on: the daemon's count for the
+    /// session, seeded by `run_chat_inner` before the first turn.
+    turn_seed: usize,
     approval: &'a mut SessionApproval,
     tmux_session: Option<String>,
     target_pane: Option<String>,
@@ -237,6 +254,7 @@ struct RawChatArgs<'a> {
 async fn run_chat_inner_raw(
     session_id: String,
     current_prompt: Option<String>,
+    turn_seed: usize,
     args: RawChatArgs<'_>,
 ) -> Result<()> {
     let RawChatArgs {
@@ -266,6 +284,7 @@ async fn run_chat_inner_raw(
         chat_width,
         session_id,
         current_prompt,
+        turn_seed,
         approval,
         tmux_session,
         target_pane,
@@ -275,9 +294,11 @@ async fn run_chat_inner_raw(
 }
 #[path = "chat_loop.rs"]
 mod chat_loop;
-use chat_loop::run_chat_ratatui;
+use chat_loop::{resumed_turn, run_chat_ratatui};
 // The loop reaches these sibling modules as `super::…`, through this import.
+use super::ipc_client::request_once;
 use super::{agents, ipc_client, resume_hint};
+use crate::ipc::Request;
 
 fn banner_lines(chat_width: usize, palette: &crate::cli::palette::Palette) -> Vec<Line<'static>> {
     let logo: &[&str] = &[

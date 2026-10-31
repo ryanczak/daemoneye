@@ -191,7 +191,7 @@ repo).
    launch's code, not the command's; and a denial's `mode` is still the
    legacy `foreground`. Readers were told to use `wait`/`shell`. **Fixed in M35 phase-04.**
 2. **O6:** the status bar reads `turn 1` after a resume, and `session:`
-   is blank while an approval panel is up.
+   is blank while an approval panel is up. **Fixed in M35 phase-05.**
 3. **F8, ghosts are background-only** (from M28). Unscheduled.
 4. **M28's per-result `wait: false` note.** Left as is by PE decision.
 5. **GLM fabricating a tool run in prose** (PE run, L1). Model behaviour;

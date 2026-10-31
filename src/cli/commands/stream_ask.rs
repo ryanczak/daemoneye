@@ -3,10 +3,11 @@
 
 use super::*;
 
-/// The status bar each prompt in a turn draws over: the session's model,
-/// approval hint, token count and cost. The daemon is shown as down and no
-/// session id is named while a prompt holds the live region.
+/// The status bar each prompt in a turn draws over: the session's id, the
+/// session's model, approval hint, token count and cost. The daemon is shown
+/// as down while a prompt holds the live region.
 fn prompt_status<'a>(
+    session_id: &'a str,
     hint: &'a str,
     model: &'a str,
     prompt_tokens: u32,
@@ -15,7 +16,7 @@ fn prompt_status<'a>(
     has_untracked: bool,
 ) -> crate::cli::render::StatusBarState<'a> {
     crate::cli::render::StatusBarState {
-        session_id: "",
+        session_id,
         approval_hint: hint,
         model,
         prompt_tokens,
@@ -352,6 +353,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -384,6 +386,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             Response::CredentialPrompt { id, prompt } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -397,6 +400,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             Response::PaneSelectPrompt { id, panes } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -410,6 +414,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             Response::ScriptDeletePrompt { id, script_name } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -435,6 +440,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -468,6 +474,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -488,6 +495,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -528,6 +536,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 };
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -556,6 +565,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
+                    session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
                     *prompt_tokens,
@@ -686,4 +696,23 @@ pub(in super::super) async fn ask_with_session_ratatui(
     interrupt_state.reset();
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::prompt_status;
+
+    #[test]
+    fn prompt_status_names_the_session() {
+        let sb = prompt_status(
+            "0123456789abcdef",
+            "approve? y/n",
+            "claude-opus-4-6",
+            1234,
+            200_000,
+            0.5,
+            false,
+        );
+        assert_eq!(sb.session_id, "0123456789abcdef");
+    }
 }

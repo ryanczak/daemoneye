@@ -13,6 +13,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         mut chat_width,
         mut session_id,
         mut current_prompt,
+        turn_seed,
         approval,
         tmux_session,
         mut target_pane,
@@ -29,7 +30,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let mut last_ctrl_c: Option<std::time::Instant> = None;
     let mut daemon_up = false;
     let mut prompt_tokens: u32 = 0;
-    let mut turn: usize = 0;
+    let mut turn: usize = turn_seed;
     let mut cost_usd: f64 = 0.0;
     let mut has_untracked: bool = false;
     let mut transcript = crate::cli::transcript::Transcript::new();
@@ -37,7 +38,6 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let mut context_window = config.resolve_model(None).context_window();
     let mut model = config.resolve_model(None).model.clone();
 
-    // Wait for tmux client attachment.
     // Wait for tmux client attachment. Only meaningful inside tmux — outside
     // there is no client to attach, and waiting would hang chat forever.
     if tmux_session.is_some() {
@@ -709,5 +709,35 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                 let _ = renderer.draw(state.current_line(), &sb);
             }
         }
+    }
+}
+
+/// The turn number a resumed chat's counter starts from: the daemon's count
+/// when its reply carries one, 0 otherwise — a failed or foreign reply is
+/// today's behaviour, and a label must not stop the chat.
+pub(super) fn resumed_turn(reply: anyhow::Result<crate::ipc::Response>) -> usize {
+    match reply {
+        Ok(crate::ipc::Response::LimitsInfo { turn_count, .. }) => turn_count,
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resumed_turn;
+    use crate::ipc::{LimitsSummary, Response};
+
+    #[test]
+    fn a_resumed_chat_seeds_its_turn_from_the_daemon() {
+        let limits = LimitsSummary::default();
+        let ok = Ok(Response::LimitsInfo {
+            limits,
+            turn_count: 7,
+            tool_calls_this_session: 0,
+            history_len: 0,
+        });
+        assert_eq!(resumed_turn(ok), 7);
+        assert_eq!(resumed_turn(Err(anyhow::anyhow!("connect failed"))), 0);
+        assert_eq!(resumed_turn(Ok(Response::Error("no".to_string()))), 0);
     }
 }
