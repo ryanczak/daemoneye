@@ -1,7 +1,7 @@
 # NEXT
 
-**Active milestone:** none. M33 (Dependency refresh, release `2.6.0`) closed 2026-10-31,
-pending the live check and the release. Next: the function milestone (the 40
+**Active milestone:** none. M33 (Dependency refresh, release `2.6.0`) closed 2026-10-31
+(`v2.6.0`, tagged; push pending). Next: the function milestone (the 40
 allowlisted functions), then MCP surface (M34) and Knowledge (M35).
 
 **Active phase:** none.

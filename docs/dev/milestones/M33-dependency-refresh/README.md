@@ -3,7 +3,7 @@
 **Goal:** every DaemonEye dependency is at its latest stable release, and
 `cargo install` builds without a warning.
 
-**Status:** done (scoped 2026-10-30, phases closed 2026-10-31; release pending the live check)
+**Status:** done (scoped 2026-10-30, closed 2026-10-31, released 2.6.0)
 
 **Release:** 2.6.0
 
@@ -134,7 +134,16 @@ was cargo's PATH notice for that root. The allowlist gained nothing.
 Each of these is one occurrence. Nothing is folded into WORKFLOW.md; all four
 are in the architect's memory.
 
-**Open before the release.** The live exit criterion: on pinky, `daemoneye
-chat` reads typed input and an approval answer from a real terminal (the
-`AsyncStdin` path), and `daemoneye shell attach` on a resized shell keeps its
-contents.
+**Live check — passed 2026-10-31** (a throwaway HOME `/tmp/de33-live`
+and a private tmux on pinky, GLM at brain:8000):
+- `daemoneye chat` read a typed request, and under `/approvals off` it read
+  the `y` answer at the approval panel. The session jsonl holds both tool
+  results (`live33-marker`, `live33-second`).
+- `/attach s0` showed the shell at 46×160. Keystrokes typed through the
+  attach reached the shell. The client was shrunk to 100×20 (the shell went
+  to 18×100) and grown back to 160×48, and the earlier rows returned. After
+  a detach, a fresh `/attach`, which draws from the daemon's screen
+  snapshot, still showed every marker. Before phase 03 that screen would
+  have been blank.
+- The exit criterion's `daemoneye shell attach` is the `/attach <id>` chat
+  command; there is no `shell` subcommand.

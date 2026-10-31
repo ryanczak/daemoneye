@@ -8,6 +8,34 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-10-31 — M33 Dependency refresh
+
+Every dependency is at its latest stable release (`libc` stays on 0.2:
+its only newer release is a pre-release). `cargo install --path .`
+without `--locked` builds with no warning; under 2.5.0 it warned since
+tokio 1.54. The retrospective is in
+`docs/dev/milestones/M33-dependency-refresh/README.md`.
+
+- **tokio 1.54 and 11 compatible crates** — clap, reqwest, serde_json,
+  similar, toml, uuid and the rest at their latest. The duplicate
+  `[dev-dependencies]` entries for serde, serde_json, toml and uuid are
+  gone.
+- **The chat's terminal reader registers safely** — `AsyncStdin` owns its
+  `/dev/tty` file and registers it with `AsyncFd::register`, which tokio
+  1.54 requires in place of the deprecated `AsyncFd::new`. That is the one
+  `unsafe` block, with its safety argument, and the hand-written `libc`
+  open, read and close are gone.
+- **rusqlite 0.41 and syn 3** — no code change; the memory index and the
+  hygiene gate pass unchanged.
+- **vt100 0.18, and a resized shell keeps its screen** — a PTY shell's
+  screen is resized in place instead of rebuilt blank. Shrinking pushes
+  rows off the top into scrollback, and growing pulls them back, so
+  `/attach` and `read_shell_screen` show the earlier output after a
+  resize. The `/tail` and `/attach` viewer behaves the same way.
+  Lines are not reflowed on a width change, as before.
+
+The suite went from 2615 to 2618 tests.
+
 ## [2.5.0] — 2026-10-30 — M32 Findings fixes
 
 What the M31 audit found is fixed or retired. Every defect fix landed
