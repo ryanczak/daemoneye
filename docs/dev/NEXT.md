@@ -2,7 +2,7 @@
 
 **Active milestone:** none. M34 — Function caps was withdrawn 2026-10-31
 after phase 01 (PE decision: no forced function length). M33 closed
-2026-10-31 (`v2.6.0`, tagged; push pending). Next: MCP surface (M35) or
+2026-10-31 (`v2.6.0`, pushed). Next: MCP surface (M35) or
 Knowledge (M36), to be scoped.
 
 **Active phase:** none.
