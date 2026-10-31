@@ -1,6 +1,6 @@
 # Phase 03 — vt100 0.18
 
-**Status:** review
+**Status:** done
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-31
 **Depends on:** phase 02 (done)
@@ -332,3 +332,11 @@ kill: (-1393367): No such process
 **Commit:** b2fd8c1f2a994beb7585f86217bd539d013b79b8
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** `src/cli/attach.rs` was also edited. It reads `model.screen().size()`, so the `NonZeroU16` change reached it without a `vt100::` path, and the architect's file-list grep missed it. The executor reported it in Findings. It also dropped `PtyBackend`'s `scrollback` field, whose only reader was the removed rebuild. Both are required by the change.
+- **Calibration:** 249 turns is high for the size. The spec named what each new test asserts but not the exact rows vt100 0.18 leaves after a shrink and a grow, so the executor probed the crate to measure them. That was legitimate and the pinned values are correct. A file list in a spec should come from the compiler's errors, not from a grep for the crate path. Red check: `backend_resize_keeps_the_screen_contents` fails against the old rebuild with an empty screen (pasted).
