@@ -1,6 +1,6 @@
 # Phase 03 — small-tidies
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 02 (done)
@@ -171,9 +171,6 @@ clippy clean, `fmt_exit=0`; the full suite is exactly `passed=2622 failed=0`.
 
 ### Update — 2026-10-31 16:28 (complete, server-authored)
 
-**Summary:** </think>All tasks complete. Working tree clean. Phase doc status still in-progress, no completion entry written by me. Commit is `ec796c9a`.
-
-Now write the final Summary + Notes for review.</think>
 **Summary:** Phase 03 done. Added `ASK_OWNER` and `chat_owner(Option<&str>) -> Owner` to `executor/mod.rs` (documented why asks share a named owner, that session ids are 16 hex so `ask` cannot collide, and that existing `""`-owner shells age out via the sweep), red-greenned it with `chat_owner_gives_a_session_less_call_the_ask_owner` (captured the failing run before fixing), then replaced all nine `Owner::Chat(session_id.unwrap_or_default()…)` sites across the six `dispatch_*.rs` files; `viewer_layout.rs` gained one `output_header(n)` used by both `Block::Output` arms; M31 #75 and M32 #8 ledger rows now read `fixed: M35 phase-03, …` with the `(was: …)` text kept. Suite went 2621 → exactly 2622.
 
 **Notes for review:** One adaptation — the spec's sketch asserted equality on `Owner`, which has no `PartialEq` and adding a derive was out of scope, so the test asserts with `matches!(…, Owner::Chat(o) if o == ASK_OWNER)`; behavior identical. I also renamed the helper's parameter to `n` so the one remaining `output ({n} lines)` literal sits inside the single formatting function (the E2E grep counts it, `header_fmts=1`). E2E block ran once pre-commit and its verbatim output is pasted in the `end-to-end verification` entry: `default_owner_sites=0 ask_owner=1 header_fmts=1 new_test=1 fixed=2`, `build_warnings=0`, hygiene 16 / doc_truth 16 / bug_tracker 6 passed, clippy clean, `fmt_exit=0`, `passed=2622 failed=0`. No allowlist line grew (`executor/mod.rs` is 754→757 production lines, still under the 800 cap). Committed as `ec796c9a`; status left at `in-progress` for the server's completion tail; working tree clean.
@@ -315,3 +312,11 @@ kill: (-2169910): No such process
 **Commit:** ec796c9a1368a3cbff01cd7b3c913d0906d4bc6f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. The test uses `matches!` because `Owner` has no `PartialEq`, and the spec did not authorize adding a derive. That is a sound adaptation.
+- **Calibration:** the reviewer removed executor reasoning (a `</think>` span) that had again leaked into the server-authored completion summary. This is the second time in this session (M33 phase-01 was the first). It is a rexyMCP completion-bookkeeping defect, not an executor one.
