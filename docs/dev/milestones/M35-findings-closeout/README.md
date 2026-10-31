@@ -72,7 +72,7 @@ it names.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 6.
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 6, plus phase 07 from the live check.
 
 | #  | Phase | Findings | Status |
 |----|-------|----------|--------|
@@ -82,8 +82,25 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6.
 | 04 | run-records ([phase-04-run-records.md](phase-04-run-records.md)) — a `wait: false` command record carries the command's exit code, and a denial's `mode` matches the call | M29 O5 | done |
 | 05 | status-bar ([phase-05-status-bar.md](phase-05-status-bar.md)) — the turn number after a resume, and the session name under an approval panel | M29 O6 | done |
 | 06 | typed-input-queue ([phase-06-typed-input-queue.md](phase-06-typed-input-queue.md)) — text typed during a turn is kept and sent when the turn ends | M32 #18 | done |
+| 07 | greeting-typeahead ([phase-07-greeting-typeahead.md](phase-07-greeting-typeahead.md)) — the greeting turn settles its typeahead like a typed turn (found by the live check) | M32 #18 (gap) | todo |
 
 ## Notes
+
+- **Live check, 2026-10-31** (throwaway HOME `/tmp/de35-live`, private
+  tmux, GLM at brain:8000):
+  - **O5 passes.** A `wait: false` `sh -c 'sleep 1; exit 3'` wrote a launch
+    record (`approved`, `exit: null`) and a completion record (`completed`,
+    `exit: 3`).
+  - **O6 passes.** The status bar read `session:9d46ede3…` under the approval
+    panel, and `chat --resume` labelled its first typed turn `turn 6` after
+    five turns.
+  - **#18 passes on typed turns.** Text typed and entered mid-turn showed in
+    the box under the spinner and was sent as the next turn, and the model
+    answered `ACK`. Without Enter it pre-filled the input line.
+  - **#18 fails on the greeting turn**, where it was first seen. Text typed
+    during it is shown, then discarded: phase 06 gave the greeting a
+    throwaway typeahead, which the spec allowed. Phase 07 fixes it; that
+    step is re-checked live before the release.
 
 - **Scoped 2026-10-31**, after M34 was withdrawn. O6 was reproduced in
   the M33 live check: the status bar read `session: ·` while an approval

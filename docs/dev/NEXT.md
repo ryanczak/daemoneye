@@ -6,8 +6,8 @@ release `2.7.0`. M34 (Function caps) was withdrawn 2026-10-31 after phase 01.
 M33 closed 2026-10-31 (`v2.6.0`, pushed). After M35: MCP surface (M36), then
 Knowledge (M37).
 
-**Active phase:** [phase 06 — typed-input-queue](milestones/M35-findings-closeout/phase-06-typed-input-queue.md)
-(`todo`; dispatch with `/rexymcp:dispatch 06`). Phases 01–05 done 2026-10-31.
+**Active phase:** [phase 07 — greeting-typeahead](milestones/M35-findings-closeout/phase-07-greeting-typeahead.md)
+(`todo`; dispatch with `/rexymcp:dispatch 07`). Phases 01–06 done 2026-10-31; the live check passed O5 and O6 and found the greeting-turn gap in #18.
 
 M32 closed 2026-10-30 (`v2.5.0`, pushed). M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M36 (MCP surface) and M37 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
