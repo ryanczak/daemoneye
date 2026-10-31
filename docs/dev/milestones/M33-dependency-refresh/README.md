@@ -3,7 +3,7 @@
 **Goal:** every DaemonEye dependency is at its latest stable release, and
 `cargo install` builds without a warning.
 
-**Status:** in-progress (scoped 2026-10-30)
+**Status:** done (scoped 2026-10-30, phases closed 2026-10-31; release pending the live check)
 
 **Release:** 2.6.0
 
@@ -92,3 +92,49 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 3.
   milestone. Numbering: this milestone takes M33, so MCP surface becomes
   M34 and Knowledge M35; the function milestone (the 40 allowlisted
   functions) stays next after this one, unnumbered until scoped.
+
+## Retrospective — 2026-10-31
+
+**Outcome.** All three phases done. Every direct dependency is at its latest
+stable release (`libc` excepted, as scoped). The suite went from 2615 to 2618
+tests. `cargo install --path .` without `--locked` builds with no compile
+warning: checked 2026-10-31 in a scratch root, where the only `warning:` line
+was cargo's PATH notice for that root. The allowlist gained nothing.
+
+| Phase | Verdict | Turns | Note |
+|---|---|---|---|
+| 01 tokio-and-compatible | approved_first_try | — | The architect wrote a script that made every edit; the executor ran it |
+| 02 rusqlite-and-syn | approved_after_1 | 204 + 17 | The upgrade needed no code. The first run stalled on an open-ended Findings audit; resumed with a bounded step |
+| 03 vt100-0.18 | approved_first_try | 249 | The resize semantics change was taken in both the viewer and the backend (PE choice) |
+
+**Behaviour changes shipped.**
+- `AsyncStdin` owns its `/dev/tty` `File` through `AsyncFd::register`. That is
+  the one authorized `unsafe` block, and the hand-rolled `libc` I/O is gone.
+- A resized PTY shell keeps its screen and scrollback, where it used to be
+  rebuilt blank. vt100 0.18 pushes rows into scrollback on a shrink and pulls
+  them back on a grow. `read_shell_screen` after a resize now shows the old
+  content until the program redraws.
+
+**What the milestone taught (architect side).**
+1. *The executor writes the code.* Phase 01's pre-written script was the
+   architect doing the phase. The PE stopped it (2026-10-30). Phases 02 and 03
+   were lean specs and GLM did the work.
+2. *Every Spec step must terminate.* Phase 02's "Findings: anything the
+   upgrade changed", plus a pointer at the crate sources, had no stopping
+   point. GLM diffed two crates for about 120 read-only calls on an
+   already-green tree. Two named commands and a three-line answer finished it
+   in 17 turns.
+3. *A spec's file list comes from the compiler, not a grep.* Phase 03's list
+   (from `grep vt100::`) missed `src/cli/attach.rs`, which reaches the size
+   type through a method. The executor found it from the build errors and
+   reported it.
+4. *Pin the values you can.* Phase 03's 249 turns went partly to measuring
+   vt100 0.18's post-resize rows, which the spec described but did not pin.
+
+Each of these is one occurrence. Nothing is folded into WORKFLOW.md; all four
+are in the architect's memory.
+
+**Open before the release.** The live exit criterion: on pinky, `daemoneye
+chat` reads typed input and an approval answer from a real terminal (the
+`AsyncStdin` path), and `daemoneye shell attach` on a resized shell keeps its
+contents.
