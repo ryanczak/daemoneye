@@ -1,6 +1,6 @@
 # Phase 01 — cli-small-a
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M34 — Function caps
 **Drafted:** 2026-10-31
 **Depends on:** M33 (v2.6.0)
@@ -143,5 +143,141 @@ Every acceptance criterion reads off it: `allowlisted=0 allowlist_fn=36`
 `passed=2618 failed=0` exactly (acceptance 3), and `tests_changed=0`
 (acceptance 4).
 
+### Update — 2026-10-31 03:23 (complete, server-authored)
+
+**Summary:** **Summary:** All four over-cap functions are split into same-file helpers with no behaviour change — `activity_row_in` 163→113 (extracted `ghost_activity_summary`), `aggregate_costs` 159→138 (`group_key`, `record_cost_event` with `EventCost`/`CostTotals`), `cmd_session` 155→18 (one helper per subcommand: `session_help`/`session_list`/`session_save`/`session_load`/`session_delete`/`session_rename`, plus `rehydrate_transcript`), and `search_memory_fts` 154→104 (`memory_dir`, `memory_kind_label`, `emit_memory_index_hit`, `memory_filename_matches`). Their four lines are deleted from `tests/hygiene_allowlist.txt` (allowlist now 36 `fn` entries, 0 for these functions) and `src/search.rs` lands at 784 lines, under its 784-line ceiling with the file cap intact. No test was added, edited, or moved.
+
+**Notes for review:** Deviation worth flagging — mid-run the working tree's `src/search.rs` was found byte-identical to `HEAD` after my edit round (an external overwrite reverted the split while I was working on `costs.rs`); I detected it via the hygiene gate re-naming `search_memory_fts` at 154 and re-applied the same split, and the final diff is the correct one (the redundant `found`/`let _ = found` scaffolding is gone as part of it). One transient test regression during the split (`CostGroup::key` left empty when `record_cost_event` took the key by value) was fixed by restoring the original `entry(key.clone())` + `group.key = key` pairing; the E2E block run once unedited prints `allowlisted=0 allowlist_fn=36`, `tests_changed=0`, `build_warnings=0`, hygiene and doc_truth both `16 passed`, `fmt_exit=0`, clippy clean, and exactly `passed=2618 failed=0`. Committed as `refactor: split four CLI functions under the 150-line cap` (6dc8798f); working tree clean; phase doc left at `in-progress` with the started, Findings, and end-to-end entries appended — the completion bookkeeping is yours.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
 
 
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.08s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test config_pricing_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+kill: (1566258): No such process
+kill: (-1567004): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d575d0b2c2ae3264)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-b278ad2979a68876)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-9c63a2decda31dcd)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-aab856d6777ceb37)
+     Running tests/integration.rs (target/debug/deps/integration-d3f77f8c074697c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-9e7c6a22e4706ca4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-0968df9ce6900eb4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-01205396fa4dcbd5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M34-function-caps/README.md` — +1 -1
+- `docs/dev/milestones/M34-function-caps/phase-01-cli-small-a.md` — +51 -1
+- `src/cli/commands/costs.rs` — +98 -42
+- `src/cli/commands/slash_session.rs` — +166 -138
+- `src/cli/commands/top.rs` — +52 -35
+- `src/search.rs` — +91 -65
+- `tests/hygiene_allowlist.txt` — +0 -4
+
+**Commit:** 6dc8798f348fd164c3055efdf789d0f3a0e2d797
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
