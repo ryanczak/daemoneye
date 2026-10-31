@@ -62,6 +62,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
         model,
         stdin,
         transcript,
+        typeahead,
     } = ctx;
 
     let stream = connect().await?;
@@ -157,6 +158,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             &mut rx,
             &mut line_buf,
             &mut interrupt_state,
+            typeahead,
             tick_interval,
             overall_timeout,
             &mut sigwinch,
@@ -213,7 +215,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     cost_usd: 0.0,
                     has_untracked: false,
                 };
-                let _ = renderer.draw_spinner(SPINNER[spin % SPINNER.len()], verb, dot_count, &sb);
+                let _ = renderer.draw_spinner(
+                    SPINNER[spin % SPINNER.len()],
+                    verb,
+                    dot_count,
+                    typeahead.text(),
+                    &sb,
+                );
                 spin = spin.wrapping_add(1);
                 continue;
             }
@@ -252,7 +260,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     cost_usd: 0.0,
                     has_untracked: false,
                 };
-                let _ = renderer.draw_spinner("⚡", "interrupt?", 0, &sb);
+                let _ = renderer.draw_spinner("⚡", "interrupt?", 0, typeahead.text(), &sb);
                 continue;
             }
             StreamOutcome::Msg(_) => {
@@ -291,7 +299,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     cost_usd: 0.0,
                     has_untracked: false,
                 };
-                let _ = renderer.draw_spinner(SPINNER[spin % SPINNER.len()], verb, dot_count, &sb);
+                let _ = renderer.draw_spinner(
+                    SPINNER[spin % SPINNER.len()],
+                    verb,
+                    dot_count,
+                    typeahead.text(),
+                    &sb,
+                );
                 spin = spin.wrapping_add(1);
                 continue;
             }

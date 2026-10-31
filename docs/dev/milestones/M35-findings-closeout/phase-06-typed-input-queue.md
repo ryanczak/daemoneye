@@ -1,6 +1,6 @@
 # Phase 06 — typed-input-queue
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 05 (done)
@@ -129,3 +129,74 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 15:16 (started)
+
+Executor: Claude (Opus 4.6). Starting phase 06: a per-turn `Typeahead` in
+`stream.rs` fed before `key_outcome` in both `select!` arms, the kept text drawn
+in the spinner's input box, and `run_chat_ratatui` submitting or pre-filling it
+at turn end. Red-first on all three tests.
+
+### Update — 2026-10-31 16:05 (red runs)
+
+Each new test was written against the pre-fix code and captured failing (the
+failing run kept; the fix then applied):
+
+```
+thread 'cli::commands::stream::tests::typeahead_keeps_text_and_one_enter' panicked at src/cli/commands/stream.rs:278:9:
+h is consumed
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2549 filtered out; finished in 0.00s
+```
+
+```
+thread 'cli::commands::stream::stream_seam_tests::select_stream_keeps_typed_text_for_the_next_turn' panicked at src/cli/commands/stream.rs:620:9:
+assertion `left == right` failed
+  left: "h"
+ right: "hi"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2550 filtered out; finished in 0.00s
+```
+
+```
+thread 'cli::commands::render_ratatui::tests::spinner_draws_the_typeahead_in_the_input_box' panicked at src/cli/render_ratatui_tests.rs:170:9:
+the input box row should show the typeahead, got: "│                                │"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2551 filtered out; finished in 0.00s
+```
+
+All three pass after their fixes (`test result: ok. 1 passed; …` each).
+
+### Findings — 2026-10-31
+
+From `git diff --stat` alone: `run_chat_ratatui` grew past its allowlisted 500
+(526) — the queued-message consume at the top of the loop and the submit /
+pre-fill after the turn; its allowlist line was raised to 526 per the M35 rule.
+No other file moved past a cap. Two findings:
+
+- `ask_with_session_ratatui` (673) took the typeahead through `RatatuiQueryCtx`
+  rather than a seventh parameter; a seventh would trip the same
+  `too_many_arguments` clippy cap the struct exists to avoid (chat.rs's comment
+  on `RatatuiCtx`). `select_stream` itself went to 8 parameters and needed the
+  allow-already-used-in-stream_prompts comment.
+- `render_ratatui_layout_tests.rs`'s `corner_row`/`row_text` helpers became
+  `pub(super)` so the new test beside `tests` could reuse them — no duplicate
+  helper.
+
+### Update — 2026-10-31 16:35 (end-to-end verification)
+
+The phase's E2E block, run once against the working tree before commit; output
+redirected to a file and pasted verbatim:
+
+```
+typeahead=1 empty_box=0 new_tests=3 fixed=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.89s
+fmt_exit=0
+passed=2631 failed=0
+```
+
+First line matches the acceptance criterion (`typeahead=1 empty_box=0
+new_tests=3 fixed=1`); hygiene, doc_truth and bug_tracker pass; `build_warnings=0`;
+clippy clean (`Finished` only); `fmt_exit=0`; `cargo test` reports exactly
+`passed=2631 failed=0` (2628 → 2631).

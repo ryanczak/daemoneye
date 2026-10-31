@@ -120,6 +120,7 @@ impl<B: Backend> RatatuiRenderer<B> {
         spinner_frame: &str,
         verb: &str,
         dot_count: usize,
+        typeahead_text: &str,
         status: &StatusBarState<'_>,
     ) -> Result<(), B::Error> {
         let session_id = status.session_id.to_string();
@@ -151,6 +152,7 @@ impl<B: Backend> RatatuiRenderer<B> {
                 f,
                 area,
                 spinner_line.clone(),
+                typeahead_text,
                 &session_id,
                 &model,
                 start_time,

@@ -6,7 +6,7 @@ use ratatui::backend::TestBackend;
 
 /// Find the y-coordinate of the row containing the first '┌' (top-left
 /// corner of the input box).
-fn corner_row(buf: &ratatui::buffer::Buffer) -> u16 {
+pub(super) fn corner_row(buf: &ratatui::buffer::Buffer) -> u16 {
     let cols = buf.area.width;
     for y in 0..buf.area.height {
         for x in 0..cols {
@@ -19,7 +19,7 @@ fn corner_row(buf: &ratatui::buffer::Buffer) -> u16 {
 }
 
 /// Collect an entire row's symbols into a single String.
-fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
+pub(super) fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
     let cols = buf.area.width;
     let mut s = String::new();
     for x in 0..cols {
@@ -34,7 +34,9 @@ fn spinner_renders_above_input_box_not_inside_it() {
 
     let status = default_status();
 
-    renderer.draw_spinner("(◉)", "scrying", 3, &status).unwrap();
+    renderer
+        .draw_spinner("(◉)", "scrying", 3, "", &status)
+        .unwrap();
 
     let buf = renderer.terminal.backend().buffer();
     let corner = corner_row(buf);
@@ -77,7 +79,9 @@ fn spinner_glyph_renders_at_column_zero() {
 
     let status = default_status();
 
-    renderer.draw_spinner("(◉)", "scrying", 3, &status).unwrap();
+    renderer
+        .draw_spinner("(◉)", "scrying", 3, "", &status)
+        .unwrap();
 
     let buf = renderer.terminal.backend().buffer();
     let corner = corner_row(buf);
@@ -109,7 +113,9 @@ fn input_box_row_is_stable_across_draw_modes() {
     let corner_draw = corner_row(buf1);
 
     // Draw in spinner mode.
-    renderer.draw_spinner("(◉)", "scrying", 1, &status).unwrap();
+    renderer
+        .draw_spinner("(◉)", "scrying", 1, "", &status)
+        .unwrap();
     let buf2 = renderer.terminal.backend().buffer();
     let corner_spinner = corner_row(buf2);
 
@@ -166,7 +172,9 @@ fn short_region_collapses_spinner_row() {
 
     // Neither call should panic.
     renderer.draw(&input, &status).unwrap();
-    renderer.draw_spinner("(◉)", "scrying", 1, &status).unwrap();
+    renderer
+        .draw_spinner("(◉)", "scrying", 1, "", &status)
+        .unwrap();
 
     // A box border should still be present.
     let buf = renderer.terminal.backend().buffer();

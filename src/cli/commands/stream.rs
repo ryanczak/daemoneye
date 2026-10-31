@@ -107,6 +107,9 @@ pub(super) struct RatatuiQueryCtx<'a> {
     pub(super) model: &'a str,
     pub(super) stdin: &'a AsyncStdin,
     pub(super) transcript: &'a mut crate::cli::transcript::Transcript,
+    /// Where this turn's typed text accumulates (M32 #18); the caller reads
+    /// it again after the turn to submit or pre-fill.
+    pub(super) typeahead: &'a mut Typeahead,
 }
 
 #[path = "stream_ask.rs"]
@@ -152,11 +155,13 @@ async fn recv_line(
 /// `tick_interval` controls the spinner animation rate (80 ms for phase 1,
 /// `Duration::MAX` to disable for phase 2). `overall_timeout` is an optional
 /// total timeout for the daemon response (120 s for phase 2, `None` for phase 1).
+#[allow(clippy::too_many_arguments)] // 8 params: the flow needs stdin, the daemon reader, its partial buffer, both per-turn states, the tick rate, the overall deadline and the resize signal
 async fn select_stream(
     stdin: &AsyncStdin,
     rx: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
     buf: &mut Vec<u8>,
     interrupt_state: &mut InterruptState,
+    typeahead: &mut Typeahead,
     tick_interval: std::time::Duration,
     overall_timeout: Option<std::time::Duration>,
     sigwinch: &mut tokio::signal::unix::Signal,
@@ -168,6 +173,9 @@ async fn select_stream(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
+                        if typeahead.feed(&key) {
+                            continue;
+                        }
                         if let Some(outcome) = key_outcome(&key) {
                             return outcome;
                         }
@@ -199,6 +207,9 @@ async fn select_stream(
             tokio::select! {
                 key = read_key(stdin) => {
                     if let Some(key) = key {
+                        if typeahead.feed(&key) {
+                            continue;
+                        }
                         if let Some(outcome) = key_outcome(&key) {
                             return outcome;
                         }
@@ -231,9 +242,85 @@ async fn select_stream(
 mod prompts;
 use prompts::*;
 
+/// Text typed while a turn streams, kept for the turn's end (M32 #18).
+///
+/// `select_stream` feeds every key here before `key_outcome` and the
+/// interrupt state; a key the typeahead consumed goes no further. Printable
+/// characters and Backspace accumulate; the first Enter marks the kept text
+/// as submitted and every later key of the turn is refused, so exactly one
+/// message can be queued. Every other key (Ctrl-C's warn and abort, Ctrl-O,
+/// focus events, a paste) is refused and follows today's path.
+#[derive(Debug, Default, Clone)]
+pub(super) struct Typeahead {
+    text: String,
+    enter: bool,
+}
+
+impl Typeahead {
+    /// Feed one key. Returns `true` when the typeahead consumed it — the
+    /// key then reaches neither `key_outcome` nor the interrupt state.
+    pub(super) fn feed(&mut self, key: &Key) -> bool {
+        if self.enter {
+            return false;
+        }
+        match key {
+            Key::Char(c) if *c != '\0' && *c != '\x1b' => {
+                self.text.push(*c);
+                true
+            }
+            Key::Backspace => {
+                self.text.pop();
+                true
+            }
+            Key::Enter => {
+                self.enter = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The kept text, as it would be sent.
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Whether Enter was pressed mid-turn: the kept text is the next
+    /// message, not a pre-fill.
+    pub(super) fn enter_pressed(&self) -> bool {
+        self.enter
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Typeahead ───────────────────────────────────────────────────────
+
+    #[test]
+    fn typeahead_keeps_text_and_one_enter() {
+        let mut ta = Typeahead::default();
+        // h, i, Backspace, o keep "ho" with no Enter.
+        assert!(ta.feed(&Key::Char('h')), "h is consumed");
+        assert!(ta.feed(&Key::Char('i')), "i is consumed");
+        assert!(ta.feed(&Key::Backspace), "Backspace is consumed");
+        assert!(ta.feed(&Key::Char('o')), "o is consumed");
+        assert_eq!(ta.text(), "ho");
+        assert!(!ta.enter_pressed(), "no Enter yet");
+
+        // Enter is consumed once and marks the text submitted.
+        assert!(ta.feed(&Key::Enter), "Enter is consumed");
+        assert!(ta.enter_pressed());
+
+        // After Enter, further characters are refused — one message only.
+        assert!(!ta.feed(&Key::Char('x')), "a post-Enter char is refused");
+
+        // Ctrl-C and focus events are never consumed: they keep today's path.
+        assert!(!ta.feed(&Key::CtrlC), "Ctrl-C is never consumed");
+        assert!(!ta.feed(&Key::FocusGained), "FocusGained is never consumed");
+        assert_eq!(ta.text(), "ho", "refused keys change nothing");
+    }
 
     // ── read_byte_by ────────────────────────────────────────────────────
 
@@ -494,6 +581,61 @@ mod stream_seam_tests {
         assert!(buf.is_empty(), "buf cleared after a complete line");
     }
 
+    /// Text typed while the daemon is silent is kept in the typeahead and the
+    /// turn ends on its Enter: `hi` + `\r` on the keyboard, then a full daemon
+    /// line, gives `Msg` with `"hi"` kept and Enter marked.
+    ///
+    /// The daemon line is written 20 ms in, by a joined writer (the sequencer
+    /// `read_byte_waits_out_a_drained_pipe` uses): `select!` polls its branches
+    /// in random order, so a line pre-written beside the keys would race the
+    /// key consumption. Until it lands the typeahead is the only ready branch,
+    /// so the keys are consumed first, deterministically.
+    #[tokio::test]
+    async fn select_stream_keeps_typed_text_for_the_next_turn() {
+        let (client, server) = UnixStream::pair().unwrap();
+        let (read_half, _w) = client.into_split();
+        let mut rx = BufReader::new(read_half);
+        let (_srv_r, mut srv_w) = server.into_split();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut state = InterruptState::new();
+        let mut typeahead = Typeahead::default();
+
+        // The user types `hi` then Enter while the spinner runs.
+        let (stdin, wf) = make_pipe_stdin();
+        write_bytes(&wf, b"hi\r").await;
+
+        // Then the daemon delivers a full line.
+        let writer = async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let wire = serde_json::to_string(&Response::Token("hi".to_string())).unwrap();
+            use tokio::io::AsyncWriteExt;
+            srv_w.write_all(wire.as_bytes()).await.unwrap();
+            srv_w.write_all(b"\n").await.unwrap();
+        };
+
+        let mut sigwinch =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).unwrap();
+
+        let ((), outcome) = tokio::join!(
+            writer,
+            select_stream(
+                &stdin,
+                &mut rx,
+                &mut buf,
+                &mut state,
+                &mut typeahead,
+                std::time::Duration::MAX,
+                Some(std::time::Duration::from_secs(120)),
+                &mut sigwinch,
+            )
+        );
+
+        assert!(matches!(outcome, StreamOutcome::Msg(_)), "got {outcome:?}");
+        assert_eq!(typeahead.text(), "hi", "both letters were consumed");
+        assert!(typeahead.enter_pressed(), "the \\r was consumed as Enter");
+        assert!(buf.is_empty());
+    }
+
     /// With the daemon idle (read pending) and an interrupt key queued,
     /// `select_stream` returns `Warn` on the first press without touching the
     /// stream — and the buffer is untouched.
@@ -504,6 +646,7 @@ mod stream_seam_tests {
         let mut rx = BufReader::new(read_half);
         let mut buf: Vec<u8> = Vec::new();
         let mut state = InterruptState::new();
+        let mut typeahead = Typeahead::default();
 
         let (stdin, wf) = make_pipe_stdin();
         write_bytes(&wf, &[0x03]).await; // Ctrl+C
@@ -516,6 +659,7 @@ mod stream_seam_tests {
             &mut rx,
             &mut buf,
             &mut state,
+            &mut typeahead,
             std::time::Duration::MAX, // no spinner tick
             Some(std::time::Duration::from_secs(120)),
             &mut sigwinch,
@@ -555,6 +699,7 @@ mod stream_seam_tests {
             &mut rx,
             &mut buf,
             &mut state,
+            &mut Typeahead::default(),
             std::time::Duration::MAX,
             Some(std::time::Duration::from_secs(120)),
             &mut sigwinch,
@@ -618,6 +763,7 @@ mod stream_seam_tests {
             &mut rx,
             &mut buf,
             &mut state,
+            &mut Typeahead::default(),
             std::time::Duration::MAX,
             Some(std::time::Duration::from_secs(120)),
             &mut sigwinch,
@@ -651,6 +797,7 @@ mod stream_seam_tests {
                 &mut rx,
                 &mut buf,
                 &mut state,
+                &mut Typeahead::default(),
                 std::time::Duration::MAX,
                 Some(std::time::Duration::from_secs(120)),
                 &mut sigwinch,

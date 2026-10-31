@@ -37,6 +37,9 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let config = Config::load().unwrap_or_default();
     let mut context_window = config.resolve_model(None).context_window();
     let mut model = config.resolve_model(None).model.clone();
+    // Text typed during the last turn and submitted with Enter (M32 #18):
+    // consumed at the top of the loop as the next query.
+    let mut queued_message: Option<String> = None;
 
     // Wait for tmux client attachment. Only meaningful inside tmux — outside
     // there is no client to attach, and waiting would hang chat forever.
@@ -105,6 +108,9 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     // Send the greeting query — minimal rendering via ratatui commit path.
     {
         let cw = chat_width;
+        // The greeting turn has no next message to queue into, but keys typed
+        // during it must not be dropped: a throwaway typeahead, discarded.
+        let mut typeahead = Typeahead::default();
         match ask_with_session_ratatui(
             QueryArgs {
                 query: "Hello!".to_string(),
@@ -128,6 +134,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 model: &model,
                 stdin,
                 transcript: &mut transcript,
+                typeahead: &mut typeahead,
             },
         )
         .await
@@ -162,33 +169,40 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let user_host = local_user_host();
 
     loop {
-        // Read input using the existing key handler but render via ratatui.
-        let line_opt = read_input_line_inner_ratatui(RatatuiInputCtx {
-            state: input_state,
-            stdin,
-            sigwinch,
-            renderer: &mut renderer,
-            chat_width: &mut chat_width,
-            session_id: &session_id,
-            approval,
-            model: &model,
-            prompt_tokens,
-            context_window,
-            daemon_up,
-            cost_usd,
-            has_untracked,
-            last_ctrl_c: &mut last_ctrl_c,
-            transcript: &transcript,
-            pushes,
-        })
-        .await?;
+        // A queued message (typed mid-turn and submitted with Enter, M32 #18)
+        // becomes the next query without reading input or a second Enter.
+        let query = if let Some(q) = queued_message.take() {
+            q
+        } else {
+            // Read input using the existing key handler but render via ratatui.
+            let line_opt = read_input_line_inner_ratatui(RatatuiInputCtx {
+                state: input_state,
+                stdin,
+                sigwinch,
+                renderer: &mut renderer,
+                chat_width: &mut chat_width,
+                session_id: &session_id,
+                approval,
+                model: &model,
+                prompt_tokens,
+                context_window,
+                daemon_up,
+                cost_usd,
+                has_untracked,
+                last_ctrl_c: &mut last_ctrl_c,
+                transcript: &transcript,
+                pushes,
+            })
+            .await?;
 
-        let Some(line) = line_opt else { break };
+            let Some(line) = line_opt else { break };
 
-        let query = line.trim().to_string();
-        if query.is_empty() {
-            continue;
-        }
+            let q = line.trim().to_string();
+            if q.is_empty() {
+                continue;
+            }
+            q
+        };
 
         input_state.push_history(query.clone());
 
@@ -450,6 +464,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         {
             let cw = chat_width;
             let mut prompt_tokens_copy = prompt_tokens;
+            let mut typeahead = Typeahead::default();
             match ask_with_session_ratatui(
                 QueryArgs {
                     query,
@@ -473,6 +488,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     model: &model,
                     stdin,
                     transcript: &mut transcript,
+                    typeahead: &mut typeahead,
                 },
             )
             .await
@@ -483,6 +499,16 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 }
             }
             prompt_tokens = prompt_tokens_copy;
+
+            // The turn ended with text kept: Enter submitted it as the next
+            // message, otherwise it pre-fills the input line (M32 #18).
+            if !typeahead.text().is_empty() {
+                if typeahead.enter_pressed() {
+                    queued_message = Some(typeahead.text().to_string());
+                } else {
+                    input_state.current_line_mut().insert_str(typeahead.text());
+                }
+            }
         }
 
         redraw(

@@ -148,6 +148,38 @@ fn live_region_shows_input_text_and_status_bar() {
     );
 }
 
+/// M32 #18: the spinner's input box holds the text typed mid-turn instead of
+/// today's empty one.
+#[test]
+fn spinner_draws_the_typeahead_in_the_input_box() {
+    use super::layout_tests::{corner_row, row_text};
+
+    let mut renderer = make_test_renderer();
+
+    let status = default_status();
+
+    renderer
+        .draw_spinner("(◉)", "scrying", 3, "queued text", &status)
+        .unwrap();
+
+    let buf = renderer.terminal.backend().buffer();
+    let corner = corner_row(buf);
+
+    // The text is inside the box: the row below the top border shows it.
+    let text_row = row_text(buf, corner + 1);
+    assert!(
+        text_row.contains("queued text"),
+        "the input box row should show the typeahead, got: {text_row:?}"
+    );
+
+    // And it is not the spinner row above the box.
+    let spinner_row = row_text(buf, corner - 1);
+    assert!(
+        !spinner_row.contains("queued text"),
+        "the typeahead must not leak into the spinner row, got: {spinner_row:?}"
+    );
+}
+
 #[test]
 fn commit_renders_transcript_line_into_buffer() {
     let mut renderer = make_test_renderer();
@@ -159,7 +191,6 @@ fn commit_renders_transcript_line_into_buffer() {
 
     // Commit a line.
     renderer.commit("Hello from transcript").unwrap();
-
     let backend = renderer.terminal.backend();
     // After insert_before, the committed line should be in the buffer or scrollback.
     let buf = backend.buffer();

@@ -14,7 +14,9 @@ use crate::ipc::{Request, Response};
 
 use super::approval::SessionApproval;
 use super::ipc_client::{connect, recv, send_request};
-use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, ask_with_session_ratatui};
+use super::stream::{
+    AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, Typeahead, ask_with_session_ratatui,
+};
 
 pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     if raw {
@@ -34,6 +36,9 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
             }
         };
     let mut transcript = crate::cli::transcript::Transcript::new();
+    // A one-shot ask has no next turn: a throwaway typeahead keeps the keys
+    // from being dropped mid-turn without anywhere to submit them.
+    let mut typeahead = Typeahead::default();
 
     ask_with_session_ratatui(
         QueryArgs {
@@ -58,6 +63,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
             model: &ask_config.resolve_model(None).model,
             stdin: &stdin,
             transcript: &mut transcript,
+            typeahead: &mut typeahead,
         },
     )
     .await

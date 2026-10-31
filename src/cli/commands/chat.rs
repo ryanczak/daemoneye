@@ -12,7 +12,9 @@ use super::chat_presence;
 use super::ipc_client::new_session_id;
 use super::pane::resolve_target_pane;
 use super::slash;
-use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, ask_with_session_ratatui};
+use super::stream::{
+    AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, Typeahead, ask_with_session_ratatui,
+};
 
 /// `/log` and its log id: `Some(Some(id))` for `/log <id>`, `Some(None)` for a
 /// bare `/log`, `None` for anything else — `/logs` included.

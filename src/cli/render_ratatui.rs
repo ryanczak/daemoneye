@@ -573,10 +573,13 @@ fn render_prompt_region(
 }
 
 /// Render the live region with a spinner message replacing the input box content.
+/// `typeahead_text` is what the user typed mid-turn (M32 #18): it fills the
+/// input box instead of today's empty one.
 fn render_spinner_region(
     frame: &mut ratatui::Frame,
     area: Rect,
     spinner_line: Line<'static>,
+    typeahead_text: &str,
     session_id: &str,
     model: &str,
     start_time: std::time::Instant,
@@ -587,13 +590,13 @@ fn render_spinner_region(
     let spinner_para = Paragraph::new(spinner_line);
     frame.render_widget(spinner_para, spinner_rect);
 
-    // ── Empty bordered input box ───────────────────────────────
+    // ── Bordered input box holding the kept text ───────────────
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new("").block(input_block);
+    let input_para = Paragraph::new(typeahead_text.to_string()).block(input_block);
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
