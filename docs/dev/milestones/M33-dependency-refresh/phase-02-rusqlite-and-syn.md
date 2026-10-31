@@ -1,6 +1,6 @@
 # Phase 02 — rusqlite 0.41 and syn 3
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-30
 **Depends on:** phase 01 (done)
@@ -149,3 +149,136 @@ test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 fmt_exit=0
 passed=2616 failed=0
 ```
+
+### Update — 2026-10-31 00:01 (complete, server-authored)
+
+**Summary:** **Summary:** Resumed phase 02 at steps 3–5, exactly as the architect's guidance scoped it — no source, `Cargo.toml`, or lockfile edits, and no crate-source audit. The Findings entry was written from only the two spec-named commands (`git diff --stat`: Cargo.toml/Cargo.lock only, no source change; `git diff Cargo.lock`: rusqlite 0.40.2→0.41.1 with libsqlite3-sys 0.38.2→0.39.1, syn 2.0.119→3.0.9, and tempfile's getrandom 0.4.3→0.3.4 as a resolution side-effect). The E2E block ran once and its verbatim output is pasted in the end-to-end verification entry. Committed as `chore: upgrade rusqlite to 0.41 and syn to 3` (781d9854); `git status --short` is clean and the commit contains all four touched files.
+
+**Notes for review:** E2E confirms every acceptance criterion: first line `rusqlite=0.41.1 syn=3.0.9`, `allowlist=unchanged`, `build_warnings=0`, clippy clean, `fmt_exit=0`, hygiene 16 passed, doc_truth 16 passed, and the full suite `passed=2616 failed=0` — no test added or removed, no gate fix needed (Findings says `none` on failures). Phase status left at `in-progress` with no hand-written `(complete)` entry, per the lifecycle split.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.08s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g4_briefing_injection_block_format ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_entry_format ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6252e26b6ec9889b)
+kill: (1322729): No such process
+kill: (-1323456): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-27a608fb4790b1c9)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2c50982d98d70d1c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6c982ebc971170c8)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-d59fc8118e8ecc0d)
+     Running tests/integration.rs (target/debug/deps/integration-1cdcdd5c7e5c0780)
+     Running tests/isolation.rs (target/debug/deps/isolation-d7c0f2abbac7f554)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-d0a008f93be4cbf4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a585ff67b6d9c31a)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M33-dependency-refresh/phase-02-rusqlite-and-syn.md` — +61 -6
+
+**Commit:** 781d985483fbf541cd7dbe2e1e05d714d3ee8c3b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
