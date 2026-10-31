@@ -1,6 +1,6 @@
 # Phase 05 — status-bar
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 04 (done)
@@ -175,22 +175,6 @@ new_tests=2 o6_fixed=1`); hygiene, doc_truth and bug_tracker pass; clippy clean
 
 ### Update — 2026-10-31 21:47 (complete, server-authored)
 
-**Summary:** </think>All tasks complete. Let me do a final check of the completion checklist:
-
-- [x] Phase doc's Status: line still says `in-progress` — yes, I only flipped todo → in-progress.
-- [x] Milestone README's phase-table row still says `in-progress` — yes.
-- [x] No hand-written `(complete)` Update Log entry — correct, I wrote started, red runs, findings, end-to-end verification entries only.
-- [x] `cargo fmt --all` was run immediately before `git add` — yes, ran `cargo fmt --all && cargo fmt --all --check` right before staging.
-- [x] All verification commands ran clean — build_warnings=0, clippy clean, fmt_exit=0, hygiene/doc_truth/bug_tracker pass, cargo test passed=2628 failed=0.
-- [x] Final message: Summary + Notes for review — writing now.
-- [x] `git status --short` shows nothing — confirmed (empty output).
-- [x] `git log -1 --stat` shows the commit includes every file touched — 6 files, all included.
-
-One deviation to note: I removed a duplicated comment line in `chat_loop.rs` ("// Wait for tmux client attachment." was duplicated) to keep `run_chat_ratatui` within its 500-line hygiene allowlist cap instead of raising the allowlist line. That's worth noting. Also note the mid-phase patch accident (I briefly deleted an `if should_echo` line which the verifier caught; restored).
-
-Also worth noting: `resumed_turn` signature is `pub(super)` and located in chat_loop.rs with the test module; the spec said "a small function in chat_loop.rs" — fine.
-
-Summary time.</think>
 **Summary:** Both M29 O6 defects are fixed. `prompt_status` in `stream_ask.rs` now takes the turn's session id (`session_id.unwrap_or("")` at all nine call sites, `None` still renders `""`), so the status bar names the session under an approval, credential or picker panel instead of reading `session: · <model>`. `run_chat_ratatui` seeds its turn counter from a new `RatatuiCtx.turn_seed` field: on a resume, `run_chat_inner` sends one `QueryLimits` through the existing `request_once` helper and feeds the reply through the new pure `resumed_turn` in `chat_loop.rs` (`LimitsInfo` → `turn_count`; `Err` or any other reply → 0, the chat never fails over a label); a fresh chat sends nothing and starts at 0. Both tests were written red-first and captured failing before their fixes; M29's O6 deferred item is marked `**Fixed in M35 phase-05.**`
 
 **End-to-end verification:** the phase's E2E block ran once against the working tree and is pasted verbatim in the phase doc's `### Update — 2026-10-31 14:52 (end-to-end verification)` entry — first line `blank_session=0 seed_fn=1 new_tests=2 o6_fixed=1`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all `ok`, clippy clean, `fmt_exit=0`, `cargo test` exactly `passed=2628 failed=0` (2626 → 2628).
@@ -332,3 +316,11 @@ kill: (-2636444): No such process
 **Commit:** 0f6c3c8fbef3bf263fb95e962fd2af6f75055f88
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. A duplicated `// Wait for tmux client attachment.` comment line in `chat_loop.rs` was dropped; the full comment below it stays.
+- **Calibration:** all entries are present, including the end-to-end one that phase 04 skipped. Marking that step "required" in the spec worked. Both red runs are real: the session id was `""` against `"0123456789abcdef"`, and the seed was `0` against `7`. The live behaviour (the session name under an approval panel, and the turn number after `chat --resume`) is checked at the milestone close. The reviewer stripped executor reasoning that had leaked into the completion summary.
