@@ -1,6 +1,6 @@
 # Phase 03 — vt100 0.18
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-31
 **Depends on:** phase 02 (done)
@@ -187,3 +187,148 @@ fix the five production/test files named in step 2 for the `NonZeroU16` sizes an
 `String` returns, add `ShellScreen::resize` and rewire `PtyBackend::resize`, then
 the two new tests, the red check, findings, E2E, and the commit.
 
+### Update — 2026-10-31 00:43 (complete, server-authored)
+
+**Summary:** **Summary:** Upgraded vt100 0.16.2 → 0.18.1 (`Cargo.toml` + `cargo update -p vt100`) and adapted the call sites: `ShellScreen::new`/`resize` and the tail model's parser construction now convert `u16` → `NonZeroU16` at the boundary with a `0 → NonZeroU16::MIN` fallback (matching the existing `.max(1)` clamp), the `state_formatted()`/`size()` `String`/`NonZero` return changes are unwrapped with `.as_bytes()`/`.get()`, and a new `ShellScreen::resize(rows, cols)` lets `PtyBackend::resize` resize the existing screen instead of replacing it with a blank one (dropping `PtyBackend`'s now-readerless `scrollback` field). Added `screen_resize_shrink_pushes_rows_to_scrollback_and_grow_restores_them` and `tail_resize_shrink_then_grow_keeps_the_rows`, renamed `backend_resize_replaces_the_screen_and_does_not_reflow` → `backend_resize_keeps_the_screen_contents` (with a pre-resize marker print + wait, kept-content assert at 40×120), and verified the red check — the test fails with `the screen keeps its contents across a resize: ""` against the old `ShellScreen::new` rebuild.
+
+**Notes for review:**
+- **Deviations from the spec's file list (step 2):** `src/cli/attach.rs` also needed the fix — two `model.screen().size()` destructures and a `(30, 100)` test assert leaked the `NonZero` change there; `src/shell/keys.rs` needed nothing (its `Screen` reads return `bool`, unchanged upstream). Recorded in the Findings entry.
+- **Test-value calibration:** I probed vt100 0.18.1's actual resize semantics before pinning expectations — a 3-row screen fed 6 lines then shrunk to 2 pushes `line5` into scrollback (`line1..line5` kept), and growing to 5 restores `line3\nline4\nline5\nline6`; the spec's "same shrink and grow" tests pin those measured values rather than guessed ones.
+- **E2E (ran once, pasted in the phase doc):** `vt100=0.18.1 rebuild=0 screen_resize=1 new_tests=2 old_name=0`, `allowlist=unchanged`, `build_warnings=0`, clippy clean, `fmt_exit=0`, hygiene 16 passed, doc_truth 16 passed, `cargo test` = exactly `passed=2618 failed=0`.
+- Red-check and E2E entries are in the phase doc's Update Log; status left at `in-progress` per the lifecycle split, one commit `b2fd8c1f` (`chore: upgrade vt100 to 0.18; keep the shell screen across a resize`), working tree clean.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
+
+
+TEST
+. ok
+test functions_fit_the_cap ... ok
+test exempt_files_exist ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.09s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test event_log_append_read ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-3895041824b11c14)
+kill: (1392625): No such process
+kill: (-1393367): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-dd2871b6637bde5a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-f771ba28c5e0838d)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-6a9c87db276c8578)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-54ba86320be9ce2a)
+     Running tests/integration.rs (target/debug/deps/integration-bd124ab667c8b0d2)
+     Running tests/isolation.rs (target/debug/deps/isolation-321adfe6f8bdcdd8)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-8dce9e6501c0ec71)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-5251d864d6747c26)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `Cargo.toml` — +1 -1
+- `docs/dev/milestones/M33-dependency-refresh/README.md` — +1 -1
+- `docs/dev/milestones/M33-dependency-refresh/phase-03-vt100-0.18.md` — +56 -1
+- `src/cli/attach.rs` — +9 -1
+- `src/cli/tail.rs` — +56 -8
+- `src/cli/tail_view.rs` — +1 -0
+- `src/daemon/server/shells_tests.rs` — +5 -1
+- `src/shell/backend.rs` — +3 -5
+- `src/shell/backend_tests.rs` — +23 -2
+- `src/shell/screen.rs` — +66 -5
+
+**Commit:** b2fd8c1f2a994beb7585f86217bd539d013b79b8
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
