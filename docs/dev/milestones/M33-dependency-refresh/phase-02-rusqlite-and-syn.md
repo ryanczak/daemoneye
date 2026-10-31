@@ -1,6 +1,6 @@
 # Phase 02 — rusqlite 0.41 and syn 3
 
-**Status:** review
+**Status:** done
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-30
 **Depends on:** phase 01 (done)
@@ -282,3 +282,11 @@ kill: (-1323456): No such process
 **Commit:** 781d985483fbf541cd7dbe2e1e05d714d3ee8c3b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (the first run's `NoProgressStall` hard-fail, resumed with `continue_phase`; no bug filed)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. `src/`, `tests/` and the allowlist are unchanged; the upgrade needed no code change.
+- **Calibration:** `spec_bug`. The architect's Findings step ("anything the upgrade changed in behaviour") and its Pre-flight pointer at the crate sources had no end. The first run finished the upgrade green, then spent about 120 read-only calls diffing the two crates. Bounded to two named commands, the resume finished in 17 turns. Every Spec step must name its commands and the output that ends it.

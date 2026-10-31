@@ -83,7 +83,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 3.
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
 | 01 | tokio-and-compatible ([phase-01-tokio-and-compatible.md](phase-01-tokio-and-compatible.md)) — `cargo update`; every semver-compatible requirement raised to its latest; `AsyncFd::register` in `tty.rs` (decision 1); the stream-idle test's fake server reads the request before it answers | tokio + 11 compatible crates | done        |
-| 02 | rusqlite-and-syn ([phase-02-rusqlite-and-syn.md](phase-02-rusqlite-and-syn.md)) — rusqlite 0.41 and syn 3, the two breaking upgrades that build clean | rusqlite, syn | review      |
+| 02 | rusqlite-and-syn ([phase-02-rusqlite-and-syn.md](phase-02-rusqlite-and-syn.md)) — rusqlite 0.41 and syn 3, the two breaking upgrades that build clean | rusqlite, syn | done        |
 | 03 | vt100-0.18 — the `NonZeroU16` sizes, the `String` returns, and the resize behaviour (decision 3) | vt100 | todo |
 
 ## Notes
