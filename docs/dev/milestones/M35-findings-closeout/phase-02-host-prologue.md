@@ -1,6 +1,6 @@
 # Phase 02 — host-prologue
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 01 (done)
@@ -224,3 +224,148 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2541 filtered ou
 The failing frame list is the defect itself: `ToolStarted`, then the extra
 `ToolResult`, then `ToolFinished`. After the fix the same client sees only
 `ToolStarted`/`ToolFinished`.
+
+### Update — 2026-10-31 05:55 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 02 (host-prologue) is implemented and committed as `d6298187`. `src/daemon/executor/host_gate.rs` (new, 250 lines) now owns the shared prologue: `resolve_host` (renamed from `resolve_foreground_host`, callers updated), `ghost_host_refusal` (sentence unchanged), and the new `refuse_ghost_host(policy, host, tool, session_id) -> Option<String>` that writes the four-field `ghost_host_refused` event; the three arms (`dispatch_files.rs` ReadFile, `dispatch_open_shell.rs` OpenShell, `dispatch_foreground.rs`) call it and each keeps its own frames — foreground still sends its `ToolResult` after a refusal, the silent tools send none. The `ReadFile` connect-failure branch no longer writes an explicit `ToolResult` frame (#79, which also closes M32 #13); the new test `read_file_connect_failure_writes_no_tool_result_frame` was driven red first (pasted in the red-run entry) and passes after the fix. The moved test modules went with their subjects (`host_gate_tests` + the refusal/event tests into `host_gate.rs`; `edit_file_connects_first` tests stayed in `mod.rs` as `mod edit_file_connects_first_tests`), ledgers #78/#79/#13 are marked `fixed: M35 phase-02`, and CLAUDE.md gained the `host_gate.rs` Key-files row.
+
+**Notes for review:**
+- The E2E block printed `arm_pairs=0 gate=1 rf_frames=3 new_test=1 fixed=3 key_file=1` — `rf_frames` reads 3, not the drafted 2→1, because the count also matches the #79 test's own body (its `matches!(f, Response::ToolResult { .. })` filter and doc comment); actual sender sites in `dispatch_files.rs` are now one (`edit_file`'s), which is the criterion's substance. Flagged in the E2E entry rather than edited into the block, which must stay verbatim.
+- `mod.rs` shrank 1646→production ~740 lines (well under the 800 cap); no allowlist line was raised.
+- Full suite: `passed=2621 failed=0` (was 2620), hygiene/doc_truth/bug_tracker pass, clippy clean, `fmt_exit=0`, `build_warnings=0`. Status left `in-progress`; no `(complete)` entry written.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+kill: (1729269): No such process
+kill: (-1729991): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d575d0b2c2ae3264)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-b278ad2979a68876)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-9c63a2decda31dcd)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-aab856d6777ceb37)
+     Running tests/integration.rs (target/debug/deps/integration-d3f77f8c074697c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-9e7c6a22e4706ca4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-0968df9ce6900eb4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-01205396fa4dcbd5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M31-code-hygiene/FINDINGS.md` — +2 -2
+- `docs/dev/milestones/M32-findings-fixes/FINDINGS.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/README.md` — +13 -1
+- `docs/dev/milestones/M35-findings-closeout/phase-02-host-prologue.md` — +92 -1
+- `src/daemon/executor/dispatch_files.rs` — +84 -25
+- `src/daemon/executor/dispatch_foreground.rs` — +3 -12
+- `src/daemon/executor/dispatch_open_shell.rs` — +6 -19
+- `src/daemon/executor/host_gate.rs` — +250 -0
+- `src/daemon/executor/mod.rs` — +39 -251
+
+**Commit:** d6298187ebfb70d65c53538344a0037596b4e842
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
