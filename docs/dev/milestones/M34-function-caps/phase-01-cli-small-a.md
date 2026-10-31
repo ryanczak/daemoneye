@@ -1,6 +1,6 @@
 # Phase 01 — cli-small-a
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M34 — Function caps
 **Drafted:** 2026-10-31
 **Depends on:** M33 (v2.6.0)
@@ -95,3 +95,53 @@ Run it before committing: `tests_changed` compares the working tree with
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 02:25 (started)
+
+**Executor:** executor-1 (headless run).
+
+Status flipped `todo → in-progress` in this doc and in the milestone README's
+phase table. Working through the Spec in order: split the four functions, then
+delete their four allowlist lines, then the gates, findings, E2E, and the
+commit. No test file is touched.
+
+### Findings — 2026-10-31
+
+From `git diff --stat` alone:
+
+- `activity_row_in` (top.rs 163 → 113): the five `ghost_*` match arms moved
+  into `ghost_activity_summary`; `none` beyond that.
+- `aggregate_costs` (costs.rs 159 → 138): `group_key` (the `GroupBy` match)
+  and `record_cost_event` (the per-event fold into group + totals, via the
+  `EventCost`/`CostTotals` helpers); `none` beyond that.
+- `cmd_session` (slash_session.rs 155 → 18): one helper per subcommand —
+  `session_help`, `session_list`, `session_save`, `session_load`,
+  `session_delete`, `session_rename` — plus `rehydrate_transcript` for the
+  load arm's tail; `none` beyond that.
+- `search_memory_fts` (search.rs 154 → 104): `memory_dir`,
+  `memory_kind_label`, `emit_memory_index_hit` (the literal-vs-stemmed emit),
+  and `memory_filename_matches` (the filename pass); `none` beyond that.
+
+### Update — 2026-10-31 02:50 (end-to-end verification)
+
+The Spec's E2E block, run once unedited; output captured mechanically:
+
+```
+allowlisted=0 allowlist_fn=36
+tests_changed=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2618 failed=0
+```
+
+Every acceptance criterion reads off it: `allowlisted=0 allowlist_fn=36`
+(acceptance 1), hygiene and doc_truth pass with `build_warnings=0` and
+`fmt_exit=0` and a clippy tail with no diagnostics (acceptance 2),
+`passed=2618 failed=0` exactly (acceptance 3), and `tests_changed=0`
+(acceptance 4).
+
+
+

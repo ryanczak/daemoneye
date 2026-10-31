@@ -113,28 +113,7 @@ pub fn aggregate_costs(
             continue;
         }
 
-        let key = match group_by {
-            GroupBy::Day => {
-                let date = ts.date_naive();
-                date.format("%Y-%m-%d").to_string()
-            }
-            GroupBy::Agent => agent_name.to_string(),
-            GroupBy::Provider => value
-                .get("provider")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            GroupBy::Model => value
-                .get("model")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string(),
-            GroupBy::Session => value
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("-")
-                .to_string(),
-        };
+        let key = group_key(group_by, ts, agent_name, &value);
 
         let tokens = value.get("tokens");
         let input_tokens: u64 = tokens
@@ -167,26 +146,26 @@ pub fn aggregate_costs(
             .unwrap_or("");
         let is_untracked = pricing_source.eq_ignore_ascii_case("unknown");
 
-        let group = groups.entry(key.clone()).or_default();
-        group.key = key;
-        group.calls += 1;
-        group.input_tokens += input_tokens;
-        group.output_tokens += output_tokens;
-        group.cache_tokens += cache_tokens;
-        group.total_cost_usd += cost;
-        if is_untracked {
-            group.untracked_calls += 1;
-        }
-
-        total_calls += 1;
-        total_input += input_tokens;
-        total_output += output_tokens;
-        total_cache += cache_tokens;
-        total_cost += cost;
-        if is_untracked {
-            untracked_calls += 1;
-            untracked_tokens += input_tokens + output_tokens + cache_tokens;
-        }
+        record_cost_event(
+            &mut groups,
+            &mut CostTotals {
+                calls: &mut total_calls,
+                input: &mut total_input,
+                output: &mut total_output,
+                cache: &mut total_cache,
+                cost: &mut total_cost,
+                untracked_calls: &mut untracked_calls,
+                untracked_tokens: &mut untracked_tokens,
+            },
+            key,
+            EventCost {
+                input_tokens,
+                output_tokens,
+                cache_tokens,
+                cost,
+                is_untracked,
+            },
+        );
     }
 
     let mut sorted_groups: Vec<CostGroup> = groups.into_values().collect();
@@ -212,6 +191,83 @@ pub fn aggregate_costs(
         total_cost_usd: total_cost,
         untracked_calls,
         untracked_tokens,
+    }
+}
+
+/// The bucket one `ai_cost` event rolls up into, for the chosen grouping.
+fn group_key(
+    group_by: GroupBy,
+    ts: chrono::DateTime<Utc>,
+    agent_name: &str,
+    value: &serde_json::Value,
+) -> String {
+    match group_by {
+        GroupBy::Day => ts.date_naive().format("%Y-%m-%d").to_string(),
+        GroupBy::Agent => agent_name.to_string(),
+        GroupBy::Provider => value
+            .get("provider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        GroupBy::Model => value
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        GroupBy::Session => value
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-")
+            .to_string(),
+    }
+}
+
+/// One event's extracted cost figures, ready to fold into the totals.
+struct EventCost {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_tokens: u64,
+    cost: f64,
+    is_untracked: bool,
+}
+
+/// The running totals [`aggregate_costs`] folds each event into.
+struct CostTotals<'a> {
+    calls: &'a mut u32,
+    input: &'a mut u64,
+    output: &'a mut u64,
+    cache: &'a mut u64,
+    cost: &'a mut f64,
+    untracked_calls: &'a mut u32,
+    untracked_tokens: &'a mut u64,
+}
+
+/// Fold one parsed `ai_cost` event into its group and the totals.
+fn record_cost_event(
+    groups: &mut HashMap<String, CostGroup>,
+    totals: &mut CostTotals<'_>,
+    key: String,
+    event: EventCost,
+) {
+    let group = groups.entry(key.clone()).or_default();
+    group.key = key;
+    group.calls += 1;
+    group.input_tokens += event.input_tokens;
+    group.output_tokens += event.output_tokens;
+    group.cache_tokens += event.cache_tokens;
+    group.total_cost_usd += event.cost;
+    if event.is_untracked {
+        group.untracked_calls += 1;
+    }
+
+    *totals.calls += 1;
+    *totals.input += event.input_tokens;
+    *totals.output += event.output_tokens;
+    *totals.cache += event.cache_tokens;
+    *totals.cost += event.cost;
+    if event.is_untracked {
+        *totals.untracked_calls += 1;
+        *totals.untracked_tokens += event.input_tokens + event.output_tokens + event.cache_tokens;
     }
 }
 

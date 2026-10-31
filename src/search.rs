@@ -268,78 +268,28 @@ fn search_memory_fts(
             break;
         }
         // Resolve to file path
-        let base = crate::config::config_dir();
-        let mem_base = if namespace == "global" {
-            base.join("memory")
-        } else {
-            base.join("agents").join(namespace).join("memory")
-        };
+        let mem_base = memory_dir(namespace);
 
         // Try each category directory
-        let mut found = false;
         for category in crate::memory::MemoryCategory::ALL {
             let dir = mem_base.join(category.dir_name());
             let path = dir.join(format!("{}.md", key));
-            if path.exists() {
-                let kind_label = format!("memory/{}", category.dir_name());
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    let lines: Vec<&str> = content.lines().collect();
-                    let has_literal = lines.iter().any(|l| l.to_lowercase().contains(query_lower));
-
-                    if has_literal {
-                        for (i, line) in lines.iter().enumerate() {
-                            if results.len() >= MAX_RESULTS {
-                                break;
-                            }
-                            if line.to_lowercase().contains(query_lower) {
-                                let before_start = i.saturating_sub(context_lines);
-                                let after_end = (i + context_lines + 1).min(lines.len());
-                                results.push(SearchResult {
-                                    kind: kind_label.clone(),
-                                    name: key.clone(),
-                                    line_number: i + 1,
-                                    matched_line: line.to_string(),
-                                    context_before: lines[before_start..i]
-                                        .iter()
-                                        .map(|s| s.to_string())
-                                        .collect(),
-                                    context_after: lines[i + 1..after_end]
-                                        .iter()
-                                        .map(|s| s.to_string())
-                                        .collect(),
-                                });
-                            }
-                        }
-                    } else {
-                        // THE TRAP: stemmed hit — emit first non-empty line
-                        if let Some((first_idx, first_line)) =
-                            lines.iter().enumerate().find(|(_, l)| !l.trim().is_empty())
-                        {
-                            let before_start = first_idx.saturating_sub(context_lines);
-                            let after_end = (first_idx + context_lines + 1).min(lines.len());
-                            results.push(SearchResult {
-                                kind: kind_label.clone(),
-                                name: key.clone(),
-                                line_number: first_idx + 1,
-                                matched_line: first_line.to_string(),
-                                context_before: lines[before_start..first_idx]
-                                    .iter()
-                                    .map(|s| s.to_string())
-                                    .collect(),
-                                context_after: lines[first_idx + 1..after_end]
-                                    .iter()
-                                    .map(|s| s.to_string())
-                                    .collect(),
-                            });
-                        }
-                    }
-                }
-                index_hit_keys.insert((namespace.clone(), key.clone()));
-                found = true;
-                break;
+            if !path.exists() {
+                continue;
             }
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                emit_memory_index_hit(
+                    &content,
+                    query_lower,
+                    context_lines,
+                    &memory_kind_label(&category),
+                    key,
+                    results,
+                );
+            }
+            index_hit_keys.insert((namespace.clone(), key.clone()));
+            break;
         }
-        let _ = found; // suppress unused warning; we just need the de-dup tracking
     }
 
     // 2. Filename matching — independent of the index
@@ -401,6 +351,82 @@ fn search_memory_fts(
                 });
             }
         }
+    }
+}
+
+/// The root of one namespace's memory tree: `global` at `<config>/memory`,
+/// every other namespace under `<config>/agents/<ns>/memory`.
+fn memory_dir(namespace: &str) -> std::path::PathBuf {
+    let base = crate::config::config_dir();
+    if namespace == "global" {
+        base.join("memory")
+    } else {
+        base.join("agents").join(namespace).join("memory")
+    }
+}
+
+/// The `memory/<category>` label one memory hit carries.
+fn memory_kind_label(category: &crate::memory::MemoryCategory) -> String {
+    format!("memory/{}", category.dir_name())
+}
+
+/// Emit the index hits for one memory file: every line containing the query
+/// with context, or — the stemmed-hit trap — the first non-empty line when
+/// the body has no literal substring.
+fn emit_memory_index_hit(
+    content: &str,
+    query_lower: &str,
+    context_lines: usize,
+    kind_label: &str,
+    key: &str,
+    results: &mut Vec<SearchResult>,
+) {
+    let lines: Vec<&str> = content.lines().collect();
+    let has_literal = lines.iter().any(|l| l.to_lowercase().contains(query_lower));
+
+    if has_literal {
+        for (i, line) in lines.iter().enumerate() {
+            if results.len() >= MAX_RESULTS {
+                break;
+            }
+            if line.to_lowercase().contains(query_lower) {
+                let before_start = i.saturating_sub(context_lines);
+                let after_end = (i + context_lines + 1).min(lines.len());
+                results.push(SearchResult {
+                    kind: kind_label.to_string(),
+                    name: key.to_string(),
+                    line_number: i + 1,
+                    matched_line: line.to_string(),
+                    context_before: lines[before_start..i]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                    context_after: lines[i + 1..after_end]
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect(),
+                });
+            }
+        }
+    } else if let Some((first_idx, first_line)) =
+        lines.iter().enumerate().find(|(_, l)| !l.trim().is_empty())
+    {
+        let before_start = first_idx.saturating_sub(context_lines);
+        let after_end = (first_idx + context_lines + 1).min(lines.len());
+        results.push(SearchResult {
+            kind: kind_label.to_string(),
+            name: key.to_string(),
+            line_number: first_idx + 1,
+            matched_line: first_line.to_string(),
+            context_before: lines[before_start..first_idx]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            context_after: lines[first_idx + 1..after_end]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        });
     }
 }
 

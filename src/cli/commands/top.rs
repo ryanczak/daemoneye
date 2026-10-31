@@ -377,59 +377,12 @@ fn activity_row_in(value: &serde_json::Value, offset: chrono::FixedOffset) -> Op
                 if ghost { "yes" } else { "no" }
             )
         }
-        "ghost_start" => {
-            let alert = str_field(value, "alert_name", "-");
-            let session = short_session(&str_field(value, "session_id", "-"));
-            let depth = num_field(value, "spawn_depth", 0);
-            format!("{alert} {session} depth {depth}")
-        }
-        "ghost_turn" => {
-            let session = short_session(&str_field(value, "session_id", "-"));
-            let turn = num_field(value, "turn", 0);
-            let tools: Vec<String> = value
-                .get("tools")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
-                        .map(|n| n.to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
-            let joined = if tools.is_empty() {
-                "no tools".to_string()
-            } else {
-                tools.join(", ")
-            };
-            format!("{session} turn {turn}: {joined}")
-        }
-        "ghost_complete" => {
-            let session = short_session(&str_field(value, "session_id", "-"));
-            let turns = num_field(value, "turns_used", 0);
-            format!("{session} {turns} turns")
-        }
-        "ghost_shells_closed" => {
-            let session = short_session(&str_field(value, "session", "-"));
-            let shells: Vec<String> = value
-                .get("shells")
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|s| s.as_str())
-                        .map(|s| s.to_string())
-                        .collect()
-                })
-                .unwrap_or_default();
-            format!("{session} {}", shells.join(", "))
-        }
-        "ghost_lifecycle" => {
-            let content = str_field(value, "content", "");
-            // The session log path rides after an em-dash separator; the
-            // panel wants the words, not where they are filed.
-            content
-                .split_once(" — ")
-                .map(|(head, _)| head.trim().to_string())
-                .unwrap_or_else(|| content.trim().to_string())
+        "ghost_start"
+        | "ghost_turn"
+        | "ghost_complete"
+        | "ghost_shells_closed"
+        | "ghost_lifecycle" => {
+            ghost_activity_summary(value, name).unwrap_or_else(|| generic_summary(value))
         }
         "job_scheduled" => {
             let job_name = str_field(value, "job_name", "-");
@@ -458,6 +411,70 @@ fn activity_row_in(value: &serde_json::Value, offset: chrono::FixedOffset) -> Op
 /// One Activity row from an event value, in the process's local zone.
 fn activity_row(value: &serde_json::Value) -> Option<ActivityRow> {
     activity_row_in(value, *Local::now().offset())
+}
+
+/// Summary text for the five ghost-* activity events, `None` when `name` is
+/// not one of them (the caller falls back to [`generic_summary`]).
+fn ghost_activity_summary(value: &serde_json::Value, name: &str) -> Option<String> {
+    match name {
+        "ghost_start" => {
+            let alert = str_field(value, "alert_name", "-");
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let depth = num_field(value, "spawn_depth", 0);
+            Some(format!("{alert} {session} depth {depth}"))
+        }
+        "ghost_turn" => {
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let turn = num_field(value, "turn", 0);
+            let tools: Vec<String> = value
+                .get("tools")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|t| t.get("name").and_then(|n| n.as_str()))
+                        .map(|n| n.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let joined = if tools.is_empty() {
+                "no tools".to_string()
+            } else {
+                tools.join(", ")
+            };
+            Some(format!("{session} turn {turn}: {joined}"))
+        }
+        "ghost_complete" => {
+            let session = short_session(&str_field(value, "session_id", "-"));
+            let turns = num_field(value, "turns_used", 0);
+            Some(format!("{session} {turns} turns"))
+        }
+        "ghost_shells_closed" => {
+            let session = short_session(&str_field(value, "session", "-"));
+            let shells: Vec<String> = value
+                .get("shells")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str())
+                        .map(|s| s.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(format!("{session} {}", shells.join(", ")))
+        }
+        "ghost_lifecycle" => {
+            let content = str_field(value, "content", "");
+            // The session log path rides after an em-dash separator; the
+            // panel wants the words, not where they are filed.
+            Some(
+                content
+                    .split_once(" — ")
+                    .map(|(head, _)| head.trim().to_string())
+                    .unwrap_or_else(|| content.trim().to_string()),
+            )
+        }
+        _ => None,
+    }
 }
 
 /// Bounded generic summary for events with no dedicated arm: the remaining
