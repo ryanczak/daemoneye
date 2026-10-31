@@ -6,6 +6,8 @@
 //! is the *transcript* (the byte-exact record of everything that happened).
 //! Only the former lives here.
 
+use core::num::NonZeroU16;
+
 use crate::shell::keys::ShellModes;
 
 /// Semantic colour tag produced from grid cells by [`ShellScreen::annotated`].
@@ -48,9 +50,14 @@ pub struct ShellScreen {
 impl ShellScreen {
     /// Create an empty screen `rows` high by `cols` wide; `scrollback` sizes
     /// the scrollback buffer and is passed through to `vt100::Parser::new`.
+    /// A 0 row or column count becomes 1: vt100 0.18 sizes are `NonZeroU16`.
     pub fn new(rows: u16, cols: u16, scrollback: usize) -> Self {
         Self {
-            parser: vt100::Parser::new(rows, cols, scrollback),
+            parser: vt100::Parser::new(
+                NonZeroU16::new(rows).unwrap_or(NonZeroU16::MIN),
+                NonZeroU16::new(cols).unwrap_or(NonZeroU16::MIN),
+                scrollback,
+            ),
         }
     }
 
@@ -77,13 +84,25 @@ impl ShellScreen {
         if self.parser.screen().alternate_screen() {
             out.extend_from_slice(b"\x1b[?1049h");
         }
-        out.extend(self.parser.screen().state_formatted());
+        out.extend_from_slice(self.parser.screen().state_formatted().as_bytes());
         out
     }
 
     /// `(rows, cols)` of the terminal.
     pub fn size(&self) -> (u16, u16) {
-        self.parser.screen().size()
+        let (rows, cols) = self.parser.screen().size();
+        (rows.get(), cols.get())
+    }
+
+    /// Resize the grid, keeping its contents: vt100 0.18 pushes rows pushed
+    /// off the top into scrollback and pulls them back on growth, so a
+    /// resized shell keeps its screen and scrollback. A 0 row or column
+    /// count becomes 1, as `new` does.
+    pub fn resize(&mut self, rows: u16, cols: u16) {
+        self.parser.screen_mut().set_size(
+            NonZeroU16::new(rows).unwrap_or(NonZeroU16::MIN),
+            NonZeroU16::new(cols).unwrap_or(NonZeroU16::MIN),
+        );
     }
 
     /// `(row, col)` of the cursor, 0-indexed.
@@ -260,7 +279,11 @@ mod tests {
     fn snapshot_reproduces_the_screen() {
         let mut s = ShellScreen::new(24, 80, 100);
         s.feed(b"user@host:~$ ls\r\n\x1b[1;34mdir\x1b[0m  file.txt\r\nuser@host:~$ ");
-        let mut p = vt100::Parser::new(24, 80, 100);
+        let mut p = vt100::Parser::new(
+            NonZeroU16::new(24).unwrap_or(NonZeroU16::MIN),
+            NonZeroU16::new(80).unwrap_or(NonZeroU16::MIN),
+            100,
+        );
         p.process(&s.snapshot());
         assert_eq!(
             p.screen().contents_formatted(),
@@ -279,7 +302,11 @@ mod tests {
         let mut s = ShellScreen::new(24, 80, 100);
         s.feed(b"before\r\n\x1b[?1049h\x1b[H\x1b[2J\x1b[7m top bar \x1b[0m\x1b[5;10Hin vim");
         assert!(s.parser.screen().alternate_screen());
-        let mut p = vt100::Parser::new(24, 80, 100);
+        let mut p = vt100::Parser::new(
+            NonZeroU16::new(24).unwrap_or(NonZeroU16::MIN),
+            NonZeroU16::new(80).unwrap_or(NonZeroU16::MIN),
+            100,
+        );
         p.process(&s.snapshot());
         assert!(
             p.screen().alternate_screen(),
@@ -435,6 +462,40 @@ mod tests {
         assert_eq!(s.scrollback_rows(0), "", "no scrollback rows requested");
         assert_eq!(s.contents(), "line7\nline8", "viewport untouched");
         assert_eq!(s.contents(), "line7\nline8", "still untouched");
+    }
+
+    #[test]
+    fn screen_resize_shrink_pushes_rows_to_scrollback_and_grow_restores_them() {
+        let mut s = ShellScreen::new(3, 20, 100);
+        for i in 1..=6 {
+            let line = format!("line{i}\r\n");
+            s.feed(line.as_bytes());
+        }
+        // 6 lines through a 3-row screen: line5/line6/blank are the viewport,
+        // line1..line4 are in scrollback.
+        assert_eq!(s.contents(), "line5\nline6", "viewport before resize");
+        s.resize(2, 20);
+        // Shrink drops rows from the bottom until the cursor is on the bottom
+        // row, then pushes the excess off the top into scrollback: line5
+        // leaves `contents()` and joins line1..line4 in scrollback.
+        assert!(
+            !s.contents().contains("line5"),
+            "the viewport must drop line5: {:?}",
+            s.contents()
+        );
+        assert_eq!(
+            s.scrollback_rows(100),
+            "line1\nline2\nline3\nline4\nline5",
+            "the pushed row is in scrollback"
+        );
+        s.resize(5, 20);
+        // Growing back pulls the scrollback rows into the top of the screen.
+        assert_eq!(
+            s.contents(),
+            "line3\nline4\nline5\nline6",
+            "the rows came back: {:?}",
+            s.contents()
+        );
     }
 
     #[test]

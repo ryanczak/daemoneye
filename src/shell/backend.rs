@@ -80,7 +80,6 @@ pub struct PtyBackend {
     awaiting_secret: AtomicBool,
     out_tx: broadcast::Sender<Vec<u8>>,
     started: Instant,
-    scrollback: usize,
 }
 
 impl PtyBackend {
@@ -109,7 +108,6 @@ impl PtyBackend {
             awaiting_secret: AtomicBool::new(false),
             out_tx,
             started,
-            scrollback,
         });
         let mut rx = this.shell.lock().unwrap_or_log().subscribe();
 
@@ -182,9 +180,9 @@ impl ShellBackend for PtyBackend {
             .unwrap_or_log()
             .resize(rows, cols)
             .context("resize shell")?;
-        // Rebuilding the screen at the new size keeps the viewport consistent
-        // with the PTY: a direct resize does not reflow text (F2).
-        *self.screen.lock().unwrap_or_log() = ShellScreen::new(rows, cols, self.scrollback);
+        // The screen keeps its rows across a resize (vt100 0.18 semantics):
+        // shrink pushes rows off the top into scrollback, grow pulls them back.
+        self.screen.lock().unwrap_or_log().resize(rows, cols);
         Ok(())
     }
 

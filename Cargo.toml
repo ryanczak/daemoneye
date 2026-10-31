@@ -44,7 +44,7 @@ zeroize = "1.9.1"
 # Terminal emulation for the shell screen model — turns a raw PTY byte stream
 # into a cell grid, so colour is read off parsed cells instead of re-parsing
 # escape sequences out of a string.
-vt100 = "0.16"
+vt100 = "0.18.1"
 
 [dev-dependencies]
 filetime = "0.2.29"

@@ -1,6 +1,6 @@
 # Phase 03 — vt100 0.18
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M33 — Dependency refresh
 **Drafted:** 2026-10-31
 **Depends on:** phase 02 (done)
@@ -132,3 +132,58 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 00:40 (end-to-end verification)
+
+Ran the phase doc's E2E block once; output pasted verbatim:
+
+```
+vt100=0.18.1 rebuild=0 screen_resize=1 new_tests=2 old_name=0
+allowlist=unchanged
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 24.19s
+fmt_exit=0
+passed=2618 failed=0
+```
+
+First line matches the acceptance criterion exactly (`vt100=0.18.1 rebuild=0
+screen_resize=1 new_tests=2 old_name=0`), `cargo test` reports exactly
+`passed=2618 failed=0` (2616 before + the two new tests).
+
+### Findings — 2026-10-31 (from `git diff --stat`)
+
+Changed: `Cargo.toml`/`Cargo.lock` (vt100 0.16.2 → 0.18.1), `src/shell/screen.rs`
+(`ShellScreen::resize` + the `NonZeroU16` conversions), `src/shell/backend.rs`
+(`PtyBackend::resize` calls it), `src/cli/tail.rs` (parser construction, `resize`,
+the `.get()` on `size()` halves), `src/cli/tail_view.rs` (one `.get()` pair),
+plus the test files `src/shell/backend_tests.rs`, `src/daemon/server/shells_tests.rs`.
+Departures from step 2's file list: `src/cli/attach.rs` also needed the fix (two
+`model.screen().size()` destructures and a `(30, 100)` size assert leaked the
+`NonZero` change there); `src/shell/keys.rs` needed nothing (its `Screen` reads
+return `bool`, unchanged upstream). Also dropped `PtyBackend`'s `scrollback`
+field — the removed `ShellScreen::new` in `resize` was its only reader.
+
+### Update — 2026-10-31 00:36 (red check)
+
+`PtyBackend::resize` temporarily rebuilt the screen with `ShellScreen::new`
+(the old behaviour) while `backend_resize_keeps_the_screen_contents` was run
+against it:
+
+```
+thread 'shell::backend::tests::backend_resize_keeps_the_screen_contents' (1370766) panicked at src/shell/backend_tests.rs:811:5:
+the screen keeps its contents across a resize: ""
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2538 filtered out; finished in 0.05s
+```
+
+The old `ShellScreen::new` line is restored; the test passes against the
+`ShellScreen::resize` implementation.
+
+### Update — 2026-10-31 00:07 (progress)
+
+Executor 03 started. Plan: upgrade vt100 in `Cargo.toml` + `cargo update -p vt100`,
+fix the five production/test files named in step 2 for the `NonZeroU16` sizes and
+`String` returns, add `ShellScreen::resize` and rewire `PtyBackend::resize`, then
+the two new tests, the red check, findings, E2E, and the commit.
+

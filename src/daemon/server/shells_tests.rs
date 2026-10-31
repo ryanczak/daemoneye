@@ -828,7 +828,11 @@ async fn next_response(lines: &mut ClientLines) -> Response {
 
 /// Render escape-code bytes on a fresh 24×80 terminal and return the text.
 fn rendered(bytes: &[u8]) -> String {
-    let mut p = vt100::Parser::new(24, 80, 0);
+    let mut p = vt100::Parser::new(
+        core::num::NonZeroU16::new(24).unwrap_or(core::num::NonZeroU16::MIN),
+        core::num::NonZeroU16::new(80).unwrap_or(core::num::NonZeroU16::MIN),
+        0,
+    );
     p.process(bytes);
     p.screen().contents()
 }

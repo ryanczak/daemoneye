@@ -191,6 +191,7 @@ where
     use futures_util::StreamExt;
 
     let (orig_rows, orig_cols) = model.screen().size();
+    let (orig_rows, orig_cols) = (orig_rows.get(), orig_cols.get());
     let size = terminal.size()?;
     let (rows, cols) = body_size(size.height, size.width);
     model.resize(rows, cols);
@@ -605,7 +606,14 @@ mod tests {
              keys, and a lone ctrl-d detaches after its window and restores \
              the size"
         );
-        assert_eq!(model.screen().size(), (30, 100), "the grid followed");
+        assert_eq!(
+            model.screen().size(),
+            (
+                core::num::NonZeroU16::new(30).unwrap_or(core::num::NonZeroU16::MIN),
+                core::num::NonZeroU16::new(100).unwrap_or(core::num::NonZeroU16::MIN)
+            ),
+            "the grid followed"
+        );
         assert!(!model.ctrl_d_pending);
     }
 

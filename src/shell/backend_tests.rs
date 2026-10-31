@@ -1,5 +1,6 @@
 use super::*;
 use crate::shell::proto::ShellSignal;
+use core::num::NonZeroU16;
 use std::time::Duration;
 
 /// A unique cast path under a fresh temp dir, per test.
@@ -777,10 +778,21 @@ fn backend_lagged_subscriber_does_not_break_the_pump() {
 }
 
 #[test]
-fn backend_resize_replaces_the_screen_and_does_not_reflow() {
+fn backend_resize_keeps_the_screen_contents() {
     let dir = tempfile::tempdir().unwrap();
     let backend = spawn_backend(&dir);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(backend.input(b"printf 'resize-marker\\n'\n"))
+        .expect("input ok");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !backend.screen_contents().contains("resize-marker\n") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "screen never showed resize-marker: {:?}",
+            backend.screen_contents()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
     let before = rt.block_on(backend.status());
     match before {
         ShellResponse::Status { rows, cols, .. } => {
@@ -796,6 +808,11 @@ fn backend_resize_replaces_the_screen_and_does_not_reflow() {
         }
         other => panic!("expected status, got {other:?}"),
     }
+    assert!(
+        backend.screen_contents().contains("resize-marker"),
+        "the screen keeps its contents across a resize: {:?}",
+        backend.screen_contents()
+    );
 }
 
 #[test]
@@ -817,7 +834,11 @@ fn subscribe_with_screen_then_live_chunks_rebuild_the_screen() {
     }
 
     let (snap, mut rx) = backend.subscribe_with_screen();
-    let mut p = vt100::Parser::new(24, 80, 0);
+    let mut p = vt100::Parser::new(
+        NonZeroU16::new(24).unwrap_or(NonZeroU16::MIN),
+        NonZeroU16::new(80).unwrap_or(NonZeroU16::MIN),
+        0,
+    );
     p.process(&snap);
 
     rt.block_on(backend.input(b"printf 'marker-three\\n'\n"))

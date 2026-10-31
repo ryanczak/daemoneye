@@ -3,6 +3,8 @@
 //! Pure state, no terminal I/O, so every rule here is tested without a
 //! daemon or a screen.
 
+use core::num::NonZeroU16;
+
 use crate::ipc::{LogCommand, LogEvent, Response};
 
 /// Lines of history the client keeps for scrolling back. The shell's own
@@ -101,7 +103,11 @@ impl TailModel {
     /// The model for `id`, from the stream's first frame: a grid of the
     /// shell's own `rows` × `cols`, drawn from `screen`.
     pub fn new(id: &str, rows: u16, cols: u16, screen: &[u8]) -> Self {
-        let mut parser = vt100::Parser::new(rows.max(1), cols.max(1), TAIL_SCROLLBACK);
+        let mut parser = vt100::Parser::new(
+            NonZeroU16::new(rows.max(1)).unwrap_or(NonZeroU16::MIN),
+            NonZeroU16::new(cols.max(1)).unwrap_or(NonZeroU16::MIN),
+            TAIL_SCROLLBACK,
+        );
         parser.process(screen);
         Self {
             id: id.to_string(),
@@ -123,9 +129,13 @@ impl TailModel {
     }
 
     /// Resize the grid, as the shell's own terminal is resized. Clamped to
-    /// one row and one column, as `new` does.
+    /// one row and one column, as `new` does; the sizes are `NonZeroU16`
+    /// under vt100 0.18.
     pub fn resize(&mut self, rows: u16, cols: u16) {
-        self.parser.screen_mut().set_size(rows.max(1), cols.max(1));
+        self.parser.screen_mut().set_size(
+            NonZeroU16::new(rows.max(1)).unwrap_or(NonZeroU16::MIN),
+            NonZeroU16::new(cols.max(1)).unwrap_or(NonZeroU16::MIN),
+        );
     }
 
     /// The model for a recording: every output event fed through a grid of
@@ -226,7 +236,7 @@ impl TailModel {
             );
             return;
         };
-        let rows = self.parser.screen().size().0 as usize;
+        let rows = self.parser.screen().size().0.get() as usize;
         let total = self.history_len() + rows;
         self.show_line(self.marks[to].line, total);
         self.at_mark = Some(to);
@@ -369,6 +379,7 @@ impl TailModel {
     fn all_lines(&mut self) -> Vec<String> {
         let keep = self.offset();
         let (_, cols) = self.parser.screen().size();
+        let cols = cols.get();
         self.parser.screen_mut().set_scrollback(usize::MAX);
         let max = self.offset();
         let mut out = Vec::with_capacity(max + 64);
@@ -391,7 +402,7 @@ impl TailModel {
     /// Scroll so line `idx` (oldest = 0) is in view: on the live screen it
     /// shows at offset 0, otherwise at the top. Pauses follow.
     fn show_line(&mut self, idx: usize, total: usize) {
-        let rows = self.parser.screen().size().0 as usize;
+        let rows = self.parser.screen().size().0.get() as usize;
         let max = total.saturating_sub(rows);
         let to = max.saturating_sub(idx);
         self.parser.screen_mut().set_scrollback(to);
@@ -436,7 +447,7 @@ impl TailModel {
 
     /// Index of the bottom line in view, oldest = 0.
     fn bottom_in_view(&mut self) -> usize {
-        let rows = self.parser.screen().size().0 as usize;
+        let rows = self.parser.screen().size().0.get() as usize;
         let offset = self.offset();
         self.parser.screen_mut().set_scrollback(usize::MAX);
         let max = self.offset();
@@ -799,7 +810,13 @@ mod tests {
             },
         )
         .expect("a screen opens the tail");
-        assert_eq!(m.screen().size(), (30, 100));
+        assert_eq!(
+            m.screen().size(),
+            (
+                NonZeroU16::new(30).unwrap_or(NonZeroU16::MIN),
+                NonZeroU16::new(100).unwrap_or(NonZeroU16::MIN)
+            )
+        );
         assert!(m.screen().contents().starts_with("hi"));
         assert_eq!(
             open_tail("s9", Response::Error("no live shell s9".to_string())).err(),
@@ -1406,7 +1423,14 @@ mod tests {
     #[test]
     fn tail_model_draws_the_screen_at_the_shells_size() {
         let m = TailModel::new("s3", 30, 100, b"\x1b[1;34mhello\x1b[0m");
-        assert_eq!(m.screen().size(), (30, 100), "the grid is the shell's size");
+        assert_eq!(
+            m.screen().size(),
+            (
+                NonZeroU16::new(30).unwrap_or(NonZeroU16::MIN),
+                NonZeroU16::new(100).unwrap_or(NonZeroU16::MIN)
+            ),
+            "the grid is the shell's size"
+        );
         assert!(
             m.screen().contents().starts_with("hello"),
             "{:?}",
@@ -1414,6 +1438,30 @@ mod tests {
         );
         assert!(m.follow, "a new tail follows");
         assert!(!m.exited);
+    }
+
+    #[test]
+    fn tail_resize_shrink_then_grow_keeps_the_rows() {
+        let mut m = TailModel::new("s3", 3, 20, b"");
+        for i in 1..=6 {
+            m.apply(&chunk(format!("line{i}\r\n").into_bytes()));
+        }
+        assert_eq!(m.screen().contents(), "line5\nline6", "before resize");
+        m.resize(2, 20);
+        // Shrink pushes line5 off the top into scrollback.
+        assert!(
+            !m.screen().contents().contains("line5"),
+            "the viewport must drop line5: {:?}",
+            m.screen().contents()
+        );
+        m.resize(5, 20);
+        // Growing back pulls it out of scrollback again.
+        assert_eq!(
+            m.screen().contents(),
+            "line3\nline4\nline5\nline6",
+            "the rows came back: {:?}",
+            m.screen().contents()
+        );
     }
 
     #[test]

@@ -250,6 +250,7 @@ pub fn render_tail(f: &mut ratatui::Frame, model: &TailModel) {
     let body_height = area.height.saturating_sub(1);
     let screen = model.screen();
     let (rows, cols) = screen.size();
+    let (rows, cols) = (rows.get(), cols.get());
     let buf = f.buffer_mut();
     for row in 0..rows.min(body_height) {
         for col in 0..cols.min(area.width) {
