@@ -1,6 +1,6 @@
 # Phase 02 — host-prologue
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 01 (done)
@@ -369,3 +369,11 @@ kill: (-1729991): No such process
 **Commit:** d6298187ebfb70d65c53538344a0037596b4e842
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** the executor appended its "started" entry to the *milestone README* under a new `## Update Log` heading, where it does not belong, and labelled itself Claude (Opus 4.6). The reviewer removed it; the phase doc carries the record. It also moved the existing host tests from `mod.rs` into `host_gate.rs` with the functions they test. That is in scope, and the count held.
+- **Calibration:** the #79 test drives `execute_tool_call`, not `dispatch` alone. That is stronger than the spec asked, because it observes the whole frame stream: the red run shows `ToolStarted`, the extra `ToolResult`, then `ToolFinished`. `executor/mod.rs` went from 788 to 754 production lines. Findings lists the `ghost_host_refused` writers left outside the gate (`knowledge/ghost.rs`, `foreground.rs` ×2), as the spec asked; they stay as they are.
