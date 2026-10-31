@@ -109,7 +109,9 @@ Line counts are the allowlist's.
   The 36 remaining `fn` allowlist entries are not a backlog. The six M32
   findings folded into this milestone (#36, #37, #40, #75, #78, #79) return
   to the M32 FINDINGS deferred list with no owner. The `FN_CAP` gate in
-  `tests/hygiene.rs` is a separate decision, recorded below when made.
+  `tests/hygiene.rs` stays as a ratchet (PE, 2026-10-31): no listed
+  function grows and no new function passes 150; a future phase that needs
+  a longer one adds an allowlist line with its reason.
 
 - **Scoped 2026-10-31**, after the M33 close. The phase order puts the
   cheapest splits first so the lean split spec is calibrated on 154-line
