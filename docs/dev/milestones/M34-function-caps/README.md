@@ -80,7 +80,7 @@ Line counts are the allowlist's.
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
 | 01 | cli-small-a ([phase-01-cli-small-a.md](phase-01-cli-small-a.md)) | `activity_row_in` 163, `aggregate_costs` 159, `cmd_session` 155, `search_memory_fts` 154 | done        |
-| 02 | cli-small-b | `run_setup` 256, `async_main` 173, `run_ask_raw` 169 | todo |
+| 02 | cli-small-b ([phase-02-cli-small-b.md](phase-02-cli-small-b.md)) | `run_setup` 256, `async_main` 173, `run_ask_raw` 169 | todo |
 | 03 | backend-chat | `GeminiClient::chat` 263, `AnthropicClient::chat` 252, `OpenAiClient::chat` 238 | todo |
 | 04 | file-ops | `run_edit_with_spawn` 271, `run_read_file` 165, `run_create_with_spawn` 164 | todo |
 | 05 | copy-and-findings | `run_copy_with_spawn` 213; findings #36, #37, #40 | todo |
