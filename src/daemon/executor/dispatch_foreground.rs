@@ -234,7 +234,11 @@ where
                     },
                 )
                 .await
-            } else {
+            } else if crate::daemon::utils::command_has_sudo(cmd) {
+                // The sudo arm: `tx` travels inside `SudoPromptArgs` for the
+                // credential round trip, so the wait cannot also tick
+                // keepalives on the same transport. A long sudo command can
+                // still silence the client (issue #1 leaves this gap).
                 shell_exec::run_in_shell_with_prompts(
                     crate::shell::registry(),
                     owner.clone(),
@@ -252,6 +256,33 @@ where
                     },
                 )
                 .await
+            } else {
+                // Non-sudo: the run never touches the transport (`prompts:
+                // None`), so dummy halves stand in for `tx`/`rx` and the real
+                // writer stays free for the keepalive ticks — a long command
+                // no longer runs silent past the client's silence budget.
+                let mut sink = tokio::io::sink();
+                let mut eof = tokio::io::BufReader::new(tokio::io::empty());
+                crate::daemon::utils::with_keepalive(
+                    tx,
+                    shell_exec::run_in_shell_with_prompts(
+                        crate::shell::registry(),
+                        owner.clone(),
+                        cmd,
+                        max_per_owner,
+                        shell.as_deref(),
+                        *timeout_secs,
+                        id.as_str(),
+                        &mut sink,
+                        &mut eof,
+                        crate::host::HostId::Local,
+                        |id| {
+                            let (rows, cols) = crate::shell::spawn_size();
+                            crate::shell::spawn_detached_host(id, &[], rows, cols)
+                        },
+                    ),
+                )
+                .await?
             };
             finish_run(run, owner, a, tx).await?
         }
@@ -348,7 +379,11 @@ where
             },
         )
         .await
-    } else {
+    } else if crate::daemon::utils::command_has_sudo(cmd) {
+        // The sudo arm: `tx` travels inside `SudoPromptArgs` for the
+        // credential round trip, so the wait cannot also tick keepalives on
+        // the same transport. A long sudo command can still silence the
+        // client (issue #1 leaves this gap).
         shell_exec::run_in_shell_with_prompts(
             crate::shell::registry(),
             owner.clone(),
@@ -366,6 +401,33 @@ where
             },
         )
         .await
+    } else {
+        // Non-sudo: the run never touches the transport (`prompts: None`), so
+        // dummy halves stand in for `tx`/`rx` and the real writer stays free
+        // for the keepalive ticks — a long command no longer runs silent past
+        // the client's silence budget.
+        let mut sink = tokio::io::sink();
+        let mut eof = tokio::io::BufReader::new(tokio::io::empty());
+        crate::daemon::utils::with_keepalive(
+            tx,
+            shell_exec::run_in_shell_with_prompts(
+                crate::shell::registry(),
+                owner.clone(),
+                cmd,
+                max_per_owner,
+                shell.as_deref(),
+                *timeout_secs,
+                id.as_str(),
+                &mut sink,
+                &mut eof,
+                host.clone(),
+                |id| {
+                    let (rows, cols) = crate::shell::spawn_size();
+                    crate::shell::spawn_ssh_host(id, name, rows, cols)
+                },
+            ),
+        )
+        .await?
     };
     finish_run(run, owner, a, tx).await
 }
@@ -581,14 +643,14 @@ mod approved_path_tests {
             .collect()
     }
 
-    fn foreground_call(cmd: &str, host: Option<&str>) -> PendingCall {
+    fn foreground_call(cmd: &str, host: Option<&str>, timeout_secs: u64) -> PendingCall {
         PendingCall::Foreground {
             id: "fg-83".to_string(),
             thought_signature: None,
             cmd: cmd.to_string(),
             shell: None,
             host: host.map(str::to_string),
-            timeout_secs: Some(20),
+            timeout_secs: Some(timeout_secs),
             interactive: false,
         }
     }
@@ -628,7 +690,7 @@ mod approved_path_tests {
         reply.push('\n');
         let frames = drive(
             sid,
-            &foreground_call("echo DE-M32-83-$((40+3))", None),
+            &foreground_call("echo DE-M32-83-$((40+3))", None, 20),
             &reply,
         )
         .await;
@@ -653,12 +715,72 @@ mod approved_path_tests {
         );
     }
 
+    /// Issue #1 bug 2: a foreground command that runs longer than the
+    /// client's 120 s silence budget must not silence the connection — the
+    /// wait sends `Response::KeepAlive` frames while the command runs, so the
+    /// client never abandons it and the turn is never silently dropped. One
+    /// keep-alive period (15 s) plus the command's own runtime, by design.
+    #[tokio::test]
+    async fn a_long_foreground_command_sends_keepalives_while_it_runs() {
+        let (_home, _dir) = crate::test_home();
+        let sid = "sess-83-keepalive";
+        crate::shell::spawn_for(
+            crate::shell::registry(),
+            Owner::Chat(sid.to_string()),
+            5,
+            false,
+            |id| Box::pin(spawn_in_process_host(id)),
+        )
+        .await
+        .expect("the session's shell opens");
+        let mut reply = serde_json::to_string(&Request::ToolCallResponse {
+            id: "fg-83".to_string(),
+            approved: true,
+            user_message: None,
+        })
+        .expect("ToolCallResponse serialises");
+        reply.push('\n');
+        let frames = drive(
+            sid,
+            &foreground_call("sleep 16; echo de-ka-done", None, 30),
+            &reply,
+        )
+        .await;
+        let prompt = frames
+            .iter()
+            .position(|f| matches!(f, Response::ToolCallPrompt { .. }))
+            .expect("the command is put to the user");
+        let result = frames
+            .iter()
+            .position(|f| matches!(f, Response::ToolResult { .. }))
+            .expect("the command produces a result");
+        let keepalives = frames[prompt + 1..result]
+            .iter()
+            .filter(|f| matches!(f, Response::KeepAlive))
+            .count();
+        assert!(
+            keepalives >= 1,
+            "at least one KeepAlive frame must lie between the ToolCallPrompt \
+             and the ToolResult while a 16 s command runs: {frames:?}"
+        );
+        let out = tool_result(&frames);
+        assert!(
+            out.contains("de-ka-done"),
+            "the result carries the command's output: {out}"
+        );
+    }
+
     /// #83: a malformed host name is refused before the prompt — no
     /// `ToolCallPrompt` is written, and the refusal names the rule.
     #[tokio::test]
     async fn a_malformed_host_is_refused_without_asking() {
         let (_home, _dir) = crate::test_home();
-        let frames = drive("sess-83-host", &foreground_call("true", Some("db 01")), "").await;
+        let frames = drive(
+            "sess-83-host",
+            &foreground_call("true", Some("db 01"), 20),
+            "",
+        )
+        .await;
         assert!(
             !frames
                 .iter()

@@ -583,7 +583,31 @@ where
                         .await
                         {
                             Ok(res) => res,
-                            Err(_) => return Ok(()),
+                            // The client's transport died mid call — the write
+                            // the tool needed failed. Keep the turn: persist it
+                            // with a result for every call and record why it
+                            // ended, so `chat --resume` sends a valid history.
+                            Err(e) => {
+                                let result_char_cap = crate::config::LimitsConfig::cap_usize(
+                                    config.limits.tool_result_chars,
+                                );
+                                let gone = endings::ClientGoneTurn {
+                                    session_id: session_id.as_deref(),
+                                    post_trim_len,
+                                    this_turn_count,
+                                    tool_name: call.tool_name(),
+                                    error: &e,
+                                };
+                                let state = endings::ClientGoneState {
+                                    messages: &mut messages,
+                                    pending_calls: &pending_calls,
+                                    tool_results,
+                                    result_char_cap,
+                                    sessions: &sessions,
+                                };
+                                return endings::end_client_gone(tx, gone, state, &mut run_log)
+                                    .await;
+                            }
                         };
 
                         executor::tally_tool_outcome(run_log.metrics_mut(), call, &outcome);

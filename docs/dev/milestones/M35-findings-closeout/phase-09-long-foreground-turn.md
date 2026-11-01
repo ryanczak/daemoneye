@@ -1,6 +1,6 @@
 # Phase 09 — long-foreground-turn
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 08 (for the suite count)
@@ -157,3 +157,84 @@ count is the two arms and nothing the test does.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-01 03:06 (started)
+
+Started phase 09 (long-foreground-turn) — executor Claude (Opus 4.5 session,
+headless run). Plan: write the keep-alive test first for the red run against
+the pre-phase tree, then wrap the two non-sudo awaits in `with_keepalive`, then
+`end_client_gone` with its pure helper and its test module, findings, E2E,
+commit.
+
+### Update — 2026-11-01 03:13 (red run)
+
+The test `a_long_foreground_command_sends_keepalives_while_it_runs` was written
+first; `run_approved` / `run_on_named_host` untouched (the production half of
+`dispatch_foreground.rs` is the pre-phase tree). The test run against that
+tree, output captured mechanically:
+
+```
+$ cargo test --lib a_long_foreground_command_sends_keepalives_while_it_runs
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.97s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+
+running 1 test
+test daemon::executor::dispatch_foreground::approved_path_tests::a_long_foreground_command_sends_keepalives_while_it_runs ... FAILED
+
+failures:
+
+---- daemon::executor::dispatch_foreground::approved_path_tests::a_long_foreground_command_sends_keepalives_while_it_runs stdout ----
+
+thread 'daemon::executor::dispatch_foreground::approved_path_tests::a_long_foreground_command_sends_keepalives_while_it_runs' (2811405) panicked at src/daemon/executor/dispatch_foreground.rs:699:9:
+at least one KeepAlive frame must lie between the ToolCallPrompt and the ToolResult while a 16 s command runs: [ToolCallPrompt { id: "fg-83", command: "sleep 16; echo de-ka-done", background: false, target_pane: None, classification: Command, interactive: false }, ToolResult { tool_call_id: "fg-83", output: "de-ka-done\n[ran in shell s0]" }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::dispatch_foreground::approved_path_tests::a_long_foreground_command_sends_keepalives_while_it_runs
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2555 filtered out; finished in 16.04s
+
+error: test failed, to rerun pass `--lib`
+```
+
+Exactly the phase's failure: the frames between the prompt and the result are
+`[]` — the daemon sent nothing while the 16 s command ran, which is the 120 s
+silence that made the client abandon the connection.
+
+### Findings — 2026-11-01
+
+From `git diff --stat` alone: `dispatch_foreground.rs` +134, `conversation.rs`
++26, `endings.rs` +224, two doc files. `run_conversation_loop` shrank by a
+line, so no allowlist entry moved; the keep-alive gap left open is the **sudo
+arm** (`run_in_shell_with_prompts` with a real `tx`), whose `tx` travels inside
+`SudoPromptArgs` for the credential round trip and so cannot also tick
+keepalives — named in the Constraints and left unchanged.
+
+### Update — 2026-11-01 03:32 (end-to-end verification)
+
+The spec's E2E block, run once before committing, output captured mechanically
+to `/tmp/p09-e2e.txt` and pasted verbatim:
+
+```
+keepalive_waits=2 client_gone_calls=1 bare_return=0 new_tests=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.22s
+fmt_exit=0
+passed=2637 failed=0
+```
+
+`keepalive_waits=2 client_gone_calls=1 bare_return=0 new_tests=2` — the first
+line, exactly as the criterion requires. `build_warnings=0`, hygiene /
+doc_truth / bug_tracker green, clippy clean, `fmt_exit=0`, and the suite at
+`passed=2637 failed=0`. The suite count is **2637, not the pinned 2636**:
+phase 08 left the tree at 2634 (its completion entry says `passed=2634`), this
+phase adds three tests — the keep-alive test and two in the client-gone
+module (the spec's step 2 names one test but its helper contract — "with no
+gathered results every call gets a synthetic one" — is its own criterion, so
+it is a separate test) — and 2634 + 3 = 2637. A HEAD-only baseline tree
+(`git archive HEAD`, built and run in /tmp) confirms the pre-phase count:
+`BASELINE passed=2634 failed=0`.
