@@ -1,6 +1,6 @@
 # Phase 07 — greeting-typeahead
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 06 (done)
@@ -298,3 +298,16 @@ kill: (-2737347): No such process
 **Commit:** 7eedea6cc6697f0444448c2cfaf7980d49d12caf
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none
+- **Calibration:** the first criterion's `grep -c 'settle_typeahead(&'` counted
+  the whole file, so the new test's three calls made it print 5, not 2. That was
+  an architect error, not executor work. The reviewer re-counted with the test
+  module cut off and got exactly 2 production calls (greeting, typed turn). A
+  call-site counter must stop at `#[cfg(test)]`. The executor named the gap
+  itself and did not bend the code to fit the number.
