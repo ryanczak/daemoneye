@@ -94,7 +94,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6, plus ph
 | 05 | status-bar ([phase-05-status-bar.md](phase-05-status-bar.md)) — the turn number after a resume, and the session name under an approval panel | M29 O6 | done |
 | 06 | typed-input-queue ([phase-06-typed-input-queue.md](phase-06-typed-input-queue.md)) — text typed during a turn is kept and sent when the turn ends | M32 #18 | done |
 | 07 | greeting-typeahead ([phase-07-greeting-typeahead.md](phase-07-greeting-typeahead.md)) — the greeting turn settles its typeahead like a typed turn (found by the live check) | M32 #18 (gap) | done |
-| 08 | heredoc-wrap ([phase-08-heredoc-wrap.md](phase-08-heredoc-wrap.md)) — `wrap_command` runs the command in a brace group, so a heredoc terminator or a trailing comment on its last line no longer hangs the shell | issue #1 (bug 1) | todo |
+| 08 | heredoc-wrap ([phase-08-heredoc-wrap.md](phase-08-heredoc-wrap.md)) — `wrap_command` runs the command in a brace group, so a heredoc terminator or a trailing comment on its last line no longer hangs the shell | issue #1 (bug 1) | in-progress |
 | 09 | long-foreground-turn ([phase-09-long-foreground-turn.md](phase-09-long-foreground-turn.md)) — keep-alives during the foreground wait; a client-gone tool call persists the turn with a result per call and records its outcome | issue #1 (bug 2) | todo |
 
 ## Notes

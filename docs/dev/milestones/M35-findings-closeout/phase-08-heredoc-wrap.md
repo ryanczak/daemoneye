@@ -1,6 +1,6 @@
 # Phase 08 — heredoc-wrap
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 07 (done)
@@ -129,3 +129,65 @@ does not inflate it.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-01 01:31 (started)
+
+Started phase 08 (heredoc-wrap) — executor Claude (Opus 4.5 session, headless
+run). Plan: write the new tests first for the red run, then group the command
+in `wrap_command`, then findings, E2E and commit.
+
+### Update — 2026-11-01 01:36 (red run)
+
+Tests written first, `wrap_command` untouched (the production half of
+`src/shell/pty.rs` reverted to the pre-phase tree via `git show HEAD:`), then
+the test run against that tree:
+
+```
+$ cargo test --lib shell::pty::tests::a_heredoc_command_completes_with_its_exit_code
+   (pre-phase tree: the two new tests written first, `wrap_command` untouched)
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.83s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+
+running 1 test
+test shell::pty::tests::a_heredoc_command_completes_with_its_exit_code ... FAILED
+
+failures:
+
+---- shell::pty::tests::a_heredoc_command_completes_with_its_exit_code stdout ----
+
+thread 'shell::pty::tests::a_heredoc_command_completes_with_its_exit_code' (2752283) panicked at src/shell/pty.rs:1423:14:
+the heredoc command must complete inside the timeout: timed out after 5s waiting for command output: "cat <<'EOF'\nde-heredoc-ok\nEOF"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    shell::pty::tests::a_heredoc_command_completes_with_its_exit_code
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2554 filtered out; finished in 5.01s
+```
+
+`timed out after 5s waiting for command output` names the command, exactly the
+live failure from pinky. With the brace group in place the same test passes in
+0.04 s.
+
+### Update — 2026-11-01 01:40 (end-to-end verification)
+
+The spec's E2E block, run once before committing, output captured mechanically
+to `/tmp/p08-red/e2e.txt` and pasted verbatim:
+
+```
+group_form=1 new_tests=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2634 failed=0
+```
+
+`group_form=1 new_tests=2` (the first line, as the criterion requires),
+`build_warnings=0`, hygiene/doc_truth/bug_tracker all green, clippy clean,
+`fmt_exit=0`, and the suite at exactly `passed=2634 failed=0` (2632 + 2).
+The marker literals also grepped: `DE_''BEG` appears 6 times in `pty.rs`
+(two format strings, the doc comment, and three tests), the split quote intact.

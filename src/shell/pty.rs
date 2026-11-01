@@ -58,14 +58,42 @@ pub fn exit_var(shell_name: &str) -> &'static str {
 /// The `DE_''BEG` / `DE_''END` split quotes are deliberate: the PTY echoes the
 /// joined `DE_BEG`, so a search keyed on the full framed marker can only
 /// match the bytes the shell actually wrote, never the echoed command line.
+///
+/// For a `$?` shell the command runs inside a brace group whose closing brace
+/// is on its own line, so the last line of `cmd` is always followed by a
+/// newline before any protocol text. Appending the END printf to the last
+/// line breaks two real commands: a heredoc terminator (`EOF; printf …` is
+/// not a terminator, so the heredoc never closes and the shell hangs at its
+/// `>` prompt) and a line ending in `# comment` (the comment swallows the
+/// printf). The closing brace keeps the group in the current shell, so `cd`
+/// and variables persist and `$?` after it is the last command's status.
+///
+/// A bare newline without the braces would echo `printf '\n\x1fDE_''END …'`
+/// between the command's output and the END marker — the shell reads that
+/// line only after the command has run — and the echo would become part of
+/// every captured output. The brace group has no such echo because the whole
+/// compound command is read before it runs.
+///
+/// A `$status` shell (fish, csh, tcsh) keeps the single-line form: fish has
+/// no brace groups and no heredocs, and csh is not a user of this path.
 pub fn wrap_command(cmd: &str, nonce: &Nonce, shell_name: &str) -> String {
-    format!(
-        "printf '\\x1fDE_''BEG {}\\x1f\\n'; {}; printf '\\n\\x1fDE_''END {} %s\\x1f\\n' {}\n",
-        nonce.as_str(),
-        cmd,
-        nonce.as_str(),
-        exit_var(shell_name)
-    )
+    if exit_var(shell_name) == "$?" {
+        format!(
+            "printf '\\x1fDE_''BEG {}\\x1f\\n'; {{ {}\n}}; printf '\\n\\x1fDE_''END {} %s\\x1f\\n' {}\n",
+            nonce.as_str(),
+            cmd,
+            nonce.as_str(),
+            exit_var(shell_name)
+        )
+    } else {
+        format!(
+            "printf '\\x1fDE_''BEG {}\\x1f\\n'; {}; printf '\\n\\x1fDE_''END {} %s\\x1f\\n' {}\n",
+            nonce.as_str(),
+            cmd,
+            nonce.as_str(),
+            exit_var(shell_name)
+        )
+    }
 }
 
 /// What a completed command produced.
@@ -1097,6 +1125,26 @@ mod tests {
     }
 
     #[test]
+    fn wrap_command_groups_the_command_for_a_heredoc_terminator() {
+        let heredoc = "cat <<'EOF'\nx\nEOF";
+        let bash = wrap_command(heredoc, &nonce("abc"), "bash");
+        assert!(
+            bash.contains("\nEOF\n}; printf"),
+            "a bash command's last line must be followed by `}}; printf`: {bash:?}"
+        );
+        assert!(bash.ends_with("$?\n"), "bash still ends with $?: {bash:?}");
+        let fish = wrap_command("echo hi", &nonce("abc"), "fish");
+        assert!(
+            !fish.contains("{ "),
+            "fish has no brace groups and keeps the single-line form: {fish:?}"
+        );
+        assert!(
+            fish.ends_with("$status\n"),
+            "fish still ends with $status: {fish:?}"
+        );
+    }
+
+    #[test]
     fn parse_outcome_returns_none_before_the_end_marker() {
         let n = nonce("abc");
         let mut buf = b"matt@scrappy:~$ printf '\\x1fDE_''BEG abc\\x1f\\n'; echo hi; printf '\\n\\x1fDE_''END abc %s\\x1f\\n' $?\r\n".to_vec();
@@ -1389,5 +1437,41 @@ mod tests {
                 "run {i} must return its own output: {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_heredoc_command_completes_with_its_exit_code() {
+        let _pty = PTY_TEST_LOCK.lock().unwrap();
+        let _home = crate::test_home_guard();
+        let mut shell =
+            PtyShell::spawn("bash", &[], (24, 80)).expect("bash available in the test env");
+
+        let outcome = shell
+            .run("cat <<'EOF'\nde-heredoc-ok\nEOF", Duration::from_secs(5))
+            .expect("the heredoc command must complete inside the timeout");
+        assert_eq!(outcome.exit_code, 0, "cat exits 0");
+        let text = String::from_utf8_lossy(&outcome.output);
+        assert!(
+            text.contains("de-heredoc-ok"),
+            "the heredoc body must reach cat: {text:?}"
+        );
+
+        let after = shell
+            .run("echo after", Duration::from_secs(5))
+            .expect("the same shell must accept another command");
+        assert_eq!(after.exit_code, 0, "echo exits 0");
+        let after_text = String::from_utf8_lossy(&after.output);
+        assert!(
+            after_text.contains("after"),
+            "the shell is not stuck in the heredoc: {after_text:?}"
+        );
+
+        let failed = shell
+            .run("sh -c 'exit 3' <<'EOF'\nEOF", Duration::from_secs(5))
+            .expect("the second heredoc command must complete inside the timeout");
+        assert_eq!(
+            failed.exit_code, 3,
+            "the group passes the real status through"
+        );
     }
 }
