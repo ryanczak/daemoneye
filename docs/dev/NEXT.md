@@ -2,7 +2,7 @@
 
 **Active milestone:** none. M35 — Findings closeout
 ([`README.md`](milestones/M35-findings-closeout/README.md)) closed 2026-11-01 as
-`v2.7.0` (tagged, push pending). M34 (Function caps) was withdrawn 2026-10-31 after phase 01.
+`v2.7.0` (tagged, pushed). M34 (Function caps) was withdrawn 2026-10-31 after phase 01.
 M33 closed 2026-10-31 (`v2.6.0`, pushed). After M35: MCP surface (M36), then
 Knowledge (M37).
 
