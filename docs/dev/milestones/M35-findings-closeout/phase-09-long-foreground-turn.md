@@ -1,6 +1,6 @@
 # Phase 09 — long-foreground-turn
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 08 (for the suite count)
@@ -376,3 +376,34 @@ kill: (-2870485): No such process
 **Commit:** bb4472aaca0201d76eb52ff6661163956b98ebbe
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-01
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** (1) The suite is at 2637, not the pinned 2636. The
+  executor split Spec step 2's no-gathered-results case into its own test
+  (`with_no_gathered_results_every_call_gets_a_synthetic_one`). That test is
+  legitimate, so the miss is in the pinned count, not the work. (2) The keep-alive
+  wrap became a third arm, `else if command_has_sudo(cmd)` keeping the real
+  transport and the plain arm passing dummy `sink`/`empty` halves, rather than a
+  wrap around the existing call. The reviewer confirmed this is safe:
+  `run_in_shell_with_prompts` builds `prompts: None` from the same
+  `command_has_sudo` test, so the core never touches `tx`/`rx`, and the
+  named host's connect step (`ensure_connected`) still runs before it on the
+  real transport.
+- **Nits, not bounced:** `end_client_gone` keeps an unused `tx` (`let _ = tx;`).
+  It carries a `debug_assert_eq!` on an invariant the helper guarantees by
+  construction. Its wording says "disconnected" for every `execute_tool_call`
+  error, although an error that is not a disconnect would also take this arm.
+  Before this phase that arm dropped the turn silently, so it is still strictly
+  better.
+- **Calibration:** this is the second count criterion in M35 that misfired on an
+  artifact the phase's own tasks created: phase 07's call-site grep counted the
+  test calls, and here the suite count missed a split test. Two occurrences is a
+  trend, so hold for the close: phase docs should pin the named tests and
+  `failed=0`, not an exact suite total. The architect skill already lists
+  "Pinning a count" as an anti-pattern. The reviewer re-ran the gates:
+  `passed=2637 failed=0`, the first E2E line exact, clippy and fmt clean. The
+  red run is real: zero frames between prompt and result on the pre-phase tree.
