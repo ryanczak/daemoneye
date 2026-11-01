@@ -82,7 +82,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 6, plus ph
 | 04 | run-records ([phase-04-run-records.md](phase-04-run-records.md)) — a `wait: false` command record carries the command's exit code, and a denial's `mode` matches the call | M29 O5 | done |
 | 05 | status-bar ([phase-05-status-bar.md](phase-05-status-bar.md)) — the turn number after a resume, and the session name under an approval panel | M29 O6 | done |
 | 06 | typed-input-queue ([phase-06-typed-input-queue.md](phase-06-typed-input-queue.md)) — text typed during a turn is kept and sent when the turn ends | M32 #18 | done |
-| 07 | greeting-typeahead ([phase-07-greeting-typeahead.md](phase-07-greeting-typeahead.md)) — the greeting turn settles its typeahead like a typed turn (found by the live check) | M32 #18 (gap) | todo |
+| 07 | greeting-typeahead ([phase-07-greeting-typeahead.md](phase-07-greeting-typeahead.md)) — the greeting turn settles its typeahead like a typed turn (found by the live check) | M32 #18 (gap) | in-progress |
 
 ## Notes
 

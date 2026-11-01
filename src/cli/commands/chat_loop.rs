@@ -108,8 +108,9 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     // Send the greeting query — minimal rendering via ratatui commit path.
     {
         let cw = chat_width;
-        // The greeting turn has no next message to queue into, but keys typed
-        // during it must not be dropped: a throwaway typeahead, discarded.
+        // Keys typed during the greeting settle exactly as a typed turn's do
+        // (M32 #18): Enter submits the kept text as the first query, no
+        // second Enter; otherwise the first input line starts pre-filled.
         let mut typeahead = Typeahead::default();
         match ask_with_session_ratatui(
             QueryArgs {
@@ -148,6 +149,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
             }
         }
+        settle_typeahead(&typeahead, &mut queued_message, input_state);
     }
 
     redraw(
@@ -500,15 +502,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
             }
             prompt_tokens = prompt_tokens_copy;
 
-            // The turn ended with text kept: Enter submitted it as the next
-            // message, otherwise it pre-fills the input line (M32 #18).
-            if !typeahead.text().is_empty() {
-                if typeahead.enter_pressed() {
-                    queued_message = Some(typeahead.text().to_string());
-                } else {
-                    input_state.current_line_mut().insert_str(typeahead.text());
-                }
-            }
+            settle_typeahead(&typeahead, &mut queued_message, input_state);
         }
 
         redraw(
@@ -748,9 +742,26 @@ pub(super) fn resumed_turn(reply: anyhow::Result<crate::ipc::Response>) -> usize
     }
 }
 
+/// Settle a finished turn's typeahead (M32 #18): text the user kept while the
+/// turn streamed is either submitted with Enter — it becomes the next query,
+/// no second Enter — or pre-fills the input line, cursor at the end. Empty
+/// kept text does nothing.
+fn settle_typeahead(typeahead: &Typeahead, queued: &mut Option<String>, input: &mut InputState) {
+    if typeahead.text().is_empty() {
+        return;
+    }
+    if typeahead.enter_pressed() {
+        *queued = Some(typeahead.text().to_string());
+    } else {
+        input.current_line_mut().insert_str(typeahead.text());
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::resumed_turn;
+    use super::{resumed_turn, settle_typeahead};
+    use crate::cli::commands::stream::Typeahead;
+    use crate::cli::input::{InputState, Key};
     use crate::ipc::{LimitsSummary, Response};
 
     #[test]
@@ -765,5 +776,62 @@ mod tests {
         assert_eq!(resumed_turn(ok), 7);
         assert_eq!(resumed_turn(Err(anyhow::anyhow!("connect failed"))), 0);
         assert_eq!(resumed_turn(Ok(Response::Error("no".to_string()))), 0);
+    }
+
+    #[test]
+    fn settle_typeahead_queues_on_enter_and_prefills_otherwise() {
+        // Enter mid-turn: the kept text becomes the next query, the input
+        // line stays empty.
+        let mut ta = Typeahead::default();
+        for k in [Key::Char('h'), Key::Char('i'), Key::Enter] {
+            ta.feed(&k);
+        }
+        let mut queued = None;
+        let mut input = InputState::new();
+        settle_typeahead(&ta, &mut queued, &mut input);
+        assert_eq!(queued.as_deref(), Some("hi"), "Enter submits the kept text");
+        assert!(
+            input.current_line().as_str().is_empty(),
+            "a queued message does not also pre-fill the line"
+        );
+
+        // No Enter: nothing is queued and the input line starts pre-filled.
+        let mut ta = Typeahead::default();
+        for k in [
+            Key::Char('d'),
+            Key::Char('r'),
+            Key::Char('a'),
+            Key::Char('f'),
+            Key::Char('t'),
+        ] {
+            ta.feed(&k);
+        }
+        let mut queued = None;
+        let mut input = InputState::new();
+        settle_typeahead(&ta, &mut queued, &mut input);
+        assert_eq!(queued, None, "without Enter nothing is queued");
+        assert_eq!(
+            input.current_line().as_str(),
+            "draft",
+            "without Enter the line is pre-filled"
+        );
+
+        // Empty kept text changes nothing either way.
+        let mut ta = Typeahead::default();
+        ta.feed(&Key::Backspace);
+        let mut queued = Some("already".to_string());
+        let mut input = InputState::new();
+        input.current_line_mut().insert_str("kept");
+        settle_typeahead(&ta, &mut queued, &mut input);
+        assert_eq!(
+            queued.as_deref(),
+            Some("already"),
+            "an empty typeahead leaves the queue alone"
+        );
+        assert_eq!(
+            input.current_line().as_str(),
+            "kept",
+            "an empty typeahead leaves the line alone"
+        );
     }
 }

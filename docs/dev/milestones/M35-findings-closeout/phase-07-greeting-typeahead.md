@@ -1,6 +1,6 @@
 # Phase 07 — greeting-typeahead
 
-**Status:** todo
+**Status:** in-progress
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 06 (done)
@@ -99,3 +99,48 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-10-31 17:30 (started)
+
+**Executor:** executor (headless run). Starting phase 07: extract
+`settle_typeahead` from the typed turn's inline after-turn block in
+`run_chat_ratatui`, call it after the greeting turn and after each typed turn,
+and add `settle_typeahead_queues_on_enter_and_prefills_otherwise` beside the
+existing `resumed_turn` test. Status flipped `todo → in-progress`; milestone
+README's phase row updated to match.
+
+### Findings — 2026-10-31
+
+From `git diff --stat` alone: only `chat_loop.rs` grew (725 → 837 lines
+counted with tests), and `run_chat_ratatui` stayed at its allowlisted 520
+lines — the inline after-turn block was extracted into `settle_typeahead`, so
+the call sites after the greeting and after each typed turn are one line each
+and the function did not grow. `tests/hygiene_allowlist.txt` is unchanged.
+
+### Update — 2026-10-31 17:45 (end-to-end verification)
+
+The phase's E2E block, run once against the working tree before commit; output
+redirected to a file and pasted verbatim:
+
+```
+settle_calls=5 discarded_greeting=0 new_test=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.79s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.11s
+fmt_exit=0
+passed=2632 failed=0
+```
+
+The first line reports `settle_calls=5` rather than the criterion's `2`:
+`grep -c 'settle_typeahead(&'` counts the production call sites (2 — the
+greeting turn and each typed turn) *plus* the three call sites inside the new
+test, so 5. The criterion's intent — one call after the greeting turn, one
+after the typed turn, the throwaway-comment gone, the new test present — is
+met: `discarded_greeting=0` and `new_test=1`, and the two production calls
+are visible in the diff at the greeting block (after the greeting `match`)
+and in the typed turn (in place of the inline submit/pre-fill block). hygiene,
+doc_truth and bug_tracker pass; `build_warnings=0`; clippy clean
+(`Finished` only); `fmt_exit=0`; `cargo test` reports exactly `passed=2632
+failed=0` (2631 → 2632).
