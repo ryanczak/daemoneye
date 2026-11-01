@@ -4,7 +4,7 @@
 deferred from M29, M31 and M32 is fixed with a test, or closed with a
 reason.
 
-**Status:** closing (all nine phases done and the live check passed 2026-11-01; the 2.7.0 release awaits the PE's sign-off)
+**Status:** done (closed 2026-11-01, released as 2.7.0)
 
 **Release:** 2.7.0
 
@@ -71,7 +71,7 @@ it names.
   exit code and its `command` event, and the next command in that shell runs
   (#1 bug 1); a foreground `sleep 150` with `timeout_secs: 200` completes
   with the chat still attached and the turn in the transcript (#1 bug 2).
-- `2.7.0` is released per `REXYMCP.md` § Versioning.
+- **Met 2026-11-01.** `2.7.0` is released per `REXYMCP.md` § Versioning.
 
 ## Architecture references
 

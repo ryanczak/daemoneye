@@ -8,6 +8,43 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.7.0] — 2026-11-01 — M35 Findings closeout
+
+Every finding carried from M29, M31 and M32 is fixed with a test or closed
+with a reason, and the two defects behind GitHub issue #1 are fixed. The
+retrospective is in `docs/dev/milestones/M35-findings-closeout/README.md`.
+
+- **A command ending in a heredoc terminator completes** (issue #1) — the
+  PTY wrapper runs the command in a brace group, so `python3 - <<'EOF' …
+  EOF`, or a last line ending in a `# comment`, no longer swallows the exit
+  marker and hangs the shell with every later command typed into it.
+- **A long foreground command keeps its turn** (issue #1) — the daemon
+  sends keep-alives while a `run_terminal_command` runs, so a command past
+  120 s no longer trips the chat client's silence budget. If a client is
+  gone when a tool call fails, the turn is persisted with a result for every
+  call (`chat --resume` sends a valid history), a warning is logged and the
+  run log records why it ended, where before the turn vanished without a
+  trace.
+- **Text typed during a turn is kept** (M32 #18) — a line typed while a
+  turn streams, the greeting turn included, is sent as the next message if
+  Enter was pressed, otherwise it pre-fills the input line.
+- **`wait: false` records carry the real exit code** (M29 O5) — the
+  completion record has the command's exit code, not the launch's `0`, and
+  a denial's `mode` matches the call.
+- **Status bar after a resume** (M29 O6) — `chat --resume` shows the resumed
+  turn number, and the session name stays visible under an approval panel.
+- **Remote `copy`** (M31 #36, #37, #40) — builds its shell after approval,
+  one dest-exists rule and message for both branches, a per-invocation temp
+  path in the destination's own directory.
+- **One host prologue** (M31 #78, #79; M32 #13) — `read_file`, `open_shell`
+  and the foreground arm share one host-parse and ghost-refusal step;
+  `read_file`'s connect failure sends no extra `ToolResult`.
+- **Small tidies** (M31 #75; M32 #8) — session-less asks share the named
+  owner `ask` through one `chat_owner` helper; one output-header format.
+  M32 #3, #9 and #14 are closed as rejected with their reasons.
+
+The suite went from 2618 to 2637 tests.
+
 ## [2.6.0] — 2026-10-31 — M33 Dependency refresh
 
 Every dependency is at its latest stable release (`libc` stays on 0.2:
