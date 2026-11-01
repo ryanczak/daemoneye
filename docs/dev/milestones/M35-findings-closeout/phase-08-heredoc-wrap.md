@@ -1,6 +1,6 @@
 # Phase 08 — heredoc-wrap
 
-**Status:** review
+**Status:** done
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 07 (done)
@@ -326,3 +326,18 @@ kill: (-2784641): No such process
 **Commit:** c786873211a9d563f27ab7eedef242204d68042f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-10-31
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** Spec step 3 (the `### Findings` entry) was skipped.
+  The reviewer read `git diff --stat` instead: only `src/shell/pty.rs` changed
+  (+91 −7), and no allowlisted function was touched. Recorded here rather than
+  bounced, because the item is two lines of prose.
+- **Calibration:** none. The reviewer re-ran the gates: `passed=2634 failed=0`,
+  `group_form=1 new_tests=2`, clippy and fmt clean. The red run is real: the new
+  PTY test timed out after 5 s on the pre-phase tree, naming the heredoc command.
+  Every new `unwrap`/`expect` is in test code, following the file's
+  `PTY_TEST_LOCK` convention.

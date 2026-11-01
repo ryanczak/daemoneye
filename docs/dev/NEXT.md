@@ -6,8 +6,8 @@ release `2.7.0`. M34 (Function caps) was withdrawn 2026-10-31 after phase 01.
 M33 closed 2026-10-31 (`v2.6.0`, pushed). After M35: MCP surface (M36), then
 Knowledge (M37).
 
-**Active phase:** [phase 08 — heredoc-wrap](milestones/M35-findings-closeout/phase-08-heredoc-wrap.md)
-(`todo`; dispatch with `/rexymcp:dispatch 08`). Phases 01–07 done 2026-10-31. Phases 08 and 09 were added 2026-10-31 for GitHub issue #1 ([phase 09 — long-foreground-turn](milestones/M35-findings-closeout/phase-09-long-foreground-turn.md) is drafted and follows 08). The milestone closes after both, the live re-check and the 2.7.0 release.
+**Active phase:** [phase 09 — long-foreground-turn](milestones/M35-findings-closeout/phase-09-long-foreground-turn.md)
+(`todo`, drafted; dispatch with `/rexymcp:dispatch 09`). Phases 01–08 done 2026-10-31; 08 fixed issue #1 bug 1 (heredoc wrap). The milestone closes after 09, the live re-check and the 2.7.0 release.
 
 M32 closed 2026-10-30 (`v2.5.0`, pushed). M31 closed 2026-10-28 (`v2.4.0`, pushed). M30 closed 2026-10-25 (`v2.3.0`, pushed). M29 closed 2026-10-20
 (`v2.2.0`, pushed). M36 (MCP surface) and M37 (Knowledge) follow; Governor & guards (former M25) and F8 (ghost
