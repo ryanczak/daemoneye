@@ -1,6 +1,6 @@
 # Phase 08 — heredoc-wrap
 
-**Status:** in-progress
+**Status:** review
 **Milestone:** M35 — Findings closeout
 **Drafted:** 2026-10-31
 **Depends on:** phase 07 (done)
@@ -191,3 +191,138 @@ passed=2634 failed=0
 `fmt_exit=0`, and the suite at exactly `passed=2634 failed=0` (2632 + 2).
 The marker literals also grepped: `DE_''BEG` appears 6 times in `pty.rs`
 (two format strings, the doc comment, and three tests), the split quote intact.
+
+### Update — 2026-11-01 01:50 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Implemented phase 08 (heredoc-wrap): `wrap_command` in `src/shell/pty.rs` now runs a `$?`-shell command inside a brace group whose closing brace is on its own line (`; { <cmd>\n}; printf '\n\x1fDE_''END …' $?`), so a heredoc terminator or trailing comment on the command's last line is followed by a newline before the protocol text — the pinky hang is fixed; a `$status` shell (fish/csh/tcsh, decided via `exit_var`) keeps the single-line form. The doc comment was rewritten to cover the split-quote rationale, why the group (heredoc terminator + comment), why not the bare newline (the echo), and the `$status` carve-out. Added `wrap_command_groups_the_command_for_a_heredoc_terminator` and a real-bash `a_heredoc_command_completes_with_its_exit_code` (heredoc body + exit 0, a follow-up command in the same shell proving it is not stuck, and `sh -c 'exit 3'` proving the group passes the real status); the red run against the pre-phase tree failed with `timed out after 5s waiting for command output: "cat <<'EOF'\nde-heredoc-ok\nEOF"` and is pasted in the Update Log. E2E block pasted verbatim: `group_form=1 new_tests=2`, `build_warnings=0`, hygiene/doc_truth/bug_tracker green, clippy clean, `fmt_exit=0`, `passed=2634 failed=0` — exactly 2632 + 2. Committed as `c7868732` (`fix: a command ending in a heredoc terminator completes (#1)`); working tree clean, phase status left `in-progress` for the server's completion tail. No deviations from the spec; marker protocol, `parse_outcome`, the two single-line parse fixtures, and all out-of-scope areas untouched.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-6e634504ff19257b)
+kill: (2783950): No such process
+kill: (-2784641): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d575d0b2c2ae3264)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-b278ad2979a68876)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-9c63a2decda31dcd)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-aab856d6777ceb37)
+     Running tests/integration.rs (target/debug/deps/integration-d3f77f8c074697c0)
+     Running tests/isolation.rs (target/debug/deps/isolation-9e7c6a22e4706ca4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-0968df9ce6900eb4)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-01205396fa4dcbd5)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M35-findings-closeout/README.md` — +1 -1
+- `docs/dev/milestones/M35-findings-closeout/phase-08-heredoc-wrap.md` — +63 -1
+- `src/shell/pty.rs` — +91 -7
+
+**Commit:** c786873211a9d563f27ab7eedef242204d68042f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
