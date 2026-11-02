@@ -36,6 +36,7 @@ where
             script_name: script_name.to_string(),
             content: content.to_string(),
             existing_content,
+            agent: false,
         },
     )
     .await?;
@@ -129,6 +130,7 @@ where
         Response::ScriptDeletePrompt {
             id: id.to_string(),
             script_name: script_name.to_string(),
+            agent: false,
         },
     )
     .await?;

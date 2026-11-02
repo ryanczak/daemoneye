@@ -577,67 +577,12 @@ async fn cmd_pane(ctx: SlashCtx<'_>, rest: &str) {
 // ── /approvals ───────────────────────────────────────────────────────────────
 
 fn cmd_approvals(ctx: SlashCtx<'_>, rest: &str) {
-    match rest {
-        "" | "list" | "show" => {
-            let body = vec![
-                format!("commands : {}", on_off(ctx.approval.regular)),
-                format!("sudo     : {}", on_off(ctx.approval.sudo)),
-                format!(
-                    "scripts  : {}",
-                    scope(ctx.approval.scripts_all, ctx.approval.scripts.len())
-                ),
-                format!(
-                    "runbooks : {}",
-                    scope(ctx.approval.runbooks_all, ctx.approval.runbooks.len())
-                ),
-                format!(
-                    "files    : {}",
-                    scope(ctx.approval.file_edits_all, ctx.approval.file_edits.len())
-                ),
-            ];
-            let mut body = body;
-            let hosts = ctx.approval.host_approval_lines();
-            if !hosts.is_empty() {
-                body.push(String::new());
-                body.push("per-host commands:".to_string());
-                body.extend(hosts);
-            }
-            body.push(String::new());
-            body.push("change with: /approvals on|off|revoke".to_string());
+    match super::approval::approvals_cmd(ctx.approval, rest) {
+        super::approval::ApprovalCmdOutcome::Panel(body) => {
             let _ = ctx.renderer.commit_panel("approvals", &body, false);
         }
-        "on" | "auto" => {
-            ctx.approval.regular = true;
-            note(ctx.renderer, "✓ commands auto-approved for this session");
-        }
-        "off" | "manual" | "gated" => {
-            ctx.approval.regular = false;
-            note(ctx.renderer, "✓ commands now require approval");
-        }
-        "revoke" | "reset" => {
-            *ctx.approval =
-                SessionApproval::from_config(&crate::config::ApprovalsConfig::default());
-            ctx.approval.regular = false;
-            note(ctx.renderer, "✓ all session approvals revoked");
-        }
-        other => note(
-            ctx.renderer,
-            &format!("unknown: /approvals {other} (try on|off|revoke)"),
-        ),
-    }
-}
-
-fn on_off(b: bool) -> &'static str {
-    if b { "auto" } else { "gated" }
-}
-
-fn scope(all: bool, count: usize) -> String {
-    if all {
-        "all".to_string()
-    } else if count > 0 {
-        format!("{count} approved")
-    } else {
-        "gated".to_string()
+        super::approval::ApprovalCmdOutcome::Note(line) => note(ctx.renderer, &line),
+        super::approval::ApprovalCmdOutcome::Error(line) => note(ctx.renderer, &line),
     }
 }
 

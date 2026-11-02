@@ -436,18 +436,32 @@ pub enum Response {
     /// Client displays the list and returns a `Request::PaneSelectResponse`.
     PaneSelectPrompt { id: String, panes: Vec<PaneInfo> },
     /// The AI wants to delete a script; the client MUST confirm with the user,
-    /// then return `Request::ScriptDeleteResponse`.
-    ScriptDeletePrompt { id: String, script_name: String },
+    /// then return `Request::ScriptDeleteResponse`. `agent: true` marks the
+    /// frame as an agent delete (`delete_agent`), so the client answers it
+    /// from the `deletes` / `agents` categories rather than `scripts`.
+    /// Defaulted so an older daemon's frame still deserialises (as a script
+    /// delete).
+    ScriptDeletePrompt {
+        id: String,
+        script_name: String,
+        #[serde(default)]
+        agent: bool,
+    },
     /// The AI wants to write a script; the client MUST show the content and
     /// prompt the user for approval, then return `Request::ScriptWriteResponse`.
     /// `existing_content` is `Some` when the script already exists on disk so
     /// the client can render a diff instead of the raw new content.
+    /// `agent: true` marks the frame as an agent config write
+    /// (`create_agent`, `script_name: "agents/<name>"`); defaulted so an
+    /// older daemon's frame still deserialises (as a script write).
     ScriptWritePrompt {
         id: String,
         script_name: String,
         content: String,
         #[serde(default)]
         existing_content: Option<String>,
+        #[serde(default)]
+        agent: bool,
     },
     /// The AI wants to schedule a job; the client MUST show the details and
     /// prompt the user for approval, then return `Request::ScheduleWriteResponse`.

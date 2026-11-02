@@ -343,7 +343,9 @@ prompt = "sre"
 # session.  All defaults preserve the original behaviour — only `commands`
 # starts as true because non-sudo commands are bounded by OS file permissions.
 # Individual approvals can always be revoked at runtime with /approvals revoke.
-# `revoke` always fully gates, regardless of these defaults.
+# `revoke` always fully gates, regardless of these defaults. The schedules,
+# agents and deletes categories have no seed here — they start gated every
+# session; `/approvals <category> on` turns one on for the session.
 #
 # commands      = true   # non-sudo terminal commands (default: true)
 # sudo          = false  # sudo terminal commands (default: false)

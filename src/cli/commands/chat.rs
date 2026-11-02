@@ -61,7 +61,7 @@ Commands:
   /help      show this list           /exit      quit
   /clear     reset session            /refresh   resync host context
   /model     list or switch model     /pane      list or pin target pane
-  /approvals list/on/off/revoke       /prompt    list or switch system prompt
+  /approvals categories on/off        /prompt    list or switch system prompt
   /limits    show active limits       /session   save/load/list/delete/rename
   /shells    list the agent's shells  /hosts     configured hosts and ssh state
   /tail      live view of a shell     (alias /watch; f follow, esc to close)

@@ -517,6 +517,7 @@ fn response_script_write_prompt_roundtrip() {
         script_name: "check-disk.sh".to_string(),
         content: "#!/bin/bash\ndf -h".to_string(),
         existing_content: None,
+        agent: false,
     };
     match roundtrip_resp(&resp) {
         Response::ScriptWritePrompt {
@@ -524,11 +525,13 @@ fn response_script_write_prompt_roundtrip() {
             script_name,
             content,
             existing_content,
+            agent,
         } => {
             assert_eq!(id, "sw_2");
             assert_eq!(script_name, "check-disk.sh");
             assert!(content.contains("df -h"));
             assert!(existing_content.is_none());
+            assert!(!agent, "a script write serialises agent: false");
         }
         _ => panic!("wrong variant"),
     }
@@ -539,6 +542,7 @@ fn response_script_write_prompt_roundtrip() {
         script_name: "check-disk.sh".to_string(),
         content: "#!/bin/bash\ndf -h\necho done".to_string(),
         existing_content: Some("#!/bin/bash\ndf -h".to_string()),
+        agent: false,
     };
     match roundtrip_resp(&resp2) {
         Response::ScriptWritePrompt {

@@ -2,6 +2,28 @@
 
 use std::collections::HashSet;
 
+/// A write or delete prompt the client answers, and the name it would
+/// record for the session when approved with `A`. Built from the wire
+/// frames in the prompt arms; the auto-approve question lives on
+/// [`SessionApproval::prompt_auto_approves`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PromptKind<'a> {
+    /// `write_script`.
+    ScriptWrite(&'a str),
+    /// `write_runbook`.
+    RunbookWrite(&'a str),
+    /// `create_agent` — the agent config write.
+    AgentWrite(&'a str),
+    /// `schedule_command`.
+    ScheduleWrite,
+    /// `delete_script`.
+    ScriptDelete(&'a str),
+    /// `delete_runbook`.
+    RunbookDelete(&'a str),
+    /// `delete_agent`.
+    AgentDelete(&'a str),
+}
+
 /// Per-session auto-approval state.
 ///
 /// - `regular` / `sudo`: class-wide approval for terminal commands **on the
@@ -9,8 +31,10 @@ use std::collections::HashSet;
 ///   one (and vice versa).
 /// - `scripts_all` / `runbooks_all` / `file_edits_all`: class-wide approval seeded from
 ///   `config.toml [approvals]`; bypasses the per-name `HashSet` check entirely.
-/// - `scripts` / `runbooks` / `file_edits`: name/path-scoped approval; each entry
+/// - `scripts` / `runbooks` / `file_edits` / `agents`: name/path-scoped approval; each entry
 ///   auto-approves future writes to that specific artifact for the rest of the session.
+/// - `schedules` / `deletes`: whole-class approval, `off` by default and not
+///   config-seeded — this session only.
 /// - `hosts_regular` / `hosts_sudo`: per-host command approval, keyed by the
 ///   host name from the frame's `Classification`. Started empty; the daemon
 ///   host's flags live in `regular` / `sudo` above.
@@ -30,6 +54,15 @@ pub(super) struct SessionApproval {
     /// Paths auto-approved for the rest of this session via `[A]pprove for session`.
     /// Keyed by the canonical path string.
     pub(super) file_edits: HashSet<String>,
+    /// Every `schedule_command` write pre-approved for this session.
+    pub(super) schedules: bool,
+    /// Every `create_agent` write pre-approved for this session.
+    pub(super) agents_all: bool,
+    /// Agents whose config writes were approved for the session via `A`.
+    pub(super) agents: HashSet<String>,
+    /// Every delete (`delete_script`, `delete_runbook`, `delete_agent`)
+    /// pre-approved for this session.
+    pub(super) deletes: bool,
     /// Non-sudo commands auto-approved for a named remote host via
     /// `[A]pprove for session`. Keyed by the `Classification` host name.
     pub(super) hosts_regular: HashSet<String>,
@@ -48,6 +81,10 @@ impl Default for SessionApproval {
             runbooks: HashSet::new(),
             file_edits_all: false,
             file_edits: HashSet::new(),
+            schedules: false,
+            agents_all: false,
+            agents: HashSet::new(),
+            deletes: false,
             hosts_regular: HashSet::new(),
             hosts_sudo: HashSet::new(),
         }
@@ -105,6 +142,22 @@ impl SessionApproval {
             crate::ipc::Classification::NewHost { .. }
             | crate::ipc::Classification::EscapeHatch
             | crate::ipc::Classification::UserShell { .. } => false,
+        }
+    }
+
+    /// The kinds of write/delete prompt the client answers, and the one
+    /// auto-approve question each has: does this session already hold the
+    /// approval that kind needs to skip its prompt? Schedule writes have
+    /// no per-name state; the whole category is the only grant.
+    pub(super) fn prompt_auto_approves(&self, kind: &PromptKind<'_>) -> bool {
+        match kind {
+            PromptKind::ScriptWrite(name) => self.scripts_all || self.scripts.contains(*name),
+            PromptKind::RunbookWrite(name) => self.runbooks_all || self.runbooks.contains(*name),
+            PromptKind::AgentWrite(name) => self.agents_all || self.agents.contains(*name),
+            PromptKind::ScheduleWrite => self.schedules,
+            PromptKind::ScriptDelete(_)
+            | PromptKind::RunbookDelete(_)
+            | PromptKind::AgentDelete(_) => self.deletes,
         }
     }
 
@@ -196,6 +249,17 @@ impl SessionApproval {
         } else if !self.file_edits.is_empty() {
             active.push(format!("files: {}", self.file_edits.len()));
         }
+        if self.schedules {
+            active.push("schedules: all".to_string());
+        }
+        if self.agents_all {
+            active.push("agents: all".to_string());
+        } else if !self.agents.is_empty() {
+            active.push(format!("agents: {}", self.agents.len()));
+        }
+        if self.deletes {
+            active.push("deletes: all".to_string());
+        }
         if active.is_empty() {
             "cmds: auto".to_string()
         } else {
@@ -204,10 +268,246 @@ impl SessionApproval {
     }
 }
 
+/// One line of `/approvals`'s list body: `"<label> : <state>"` for the eight
+/// categories, a per-host row for each granted host, and the always-asked
+/// block. `cmd_approvals` renders it as-is.
+pub(super) fn approvals_list_body(a: &SessionApproval) -> Vec<String> {
+    let row = |label: &str, state: String| format!("{label:<9} : {state}");
+    let mut body = vec![
+        row("commands", on_off(a.regular).to_string()),
+        row("sudo", on_off(a.sudo).to_string()),
+        row("scripts", scope(a.scripts_all, a.scripts.len())),
+        row("runbooks", scope(a.runbooks_all, a.runbooks.len())),
+        row("files", scope(a.file_edits_all, a.file_edits.len())),
+        row("schedules", on_off(a.schedules).to_string()),
+        row("agents", scope(a.agents_all, a.agents.len())),
+        row("deletes", on_off(a.deletes).to_string()),
+    ];
+    let hosts = a.host_approval_lines();
+    if !hosts.is_empty() {
+        body.push(String::new());
+        body.push("per-host commands:".to_string());
+        body.extend(hosts);
+    }
+    body.push(String::new());
+    body.push("always asked (nothing can auto-approve):".to_string());
+    for kind in [
+        "a host [hosts] does not configure",
+        "a ghost reaching outside its sandbox",
+        "your own /shell shells",
+        "a sudo file edit",
+    ] {
+        body.push(format!("  · {kind}"));
+    }
+    body.push(String::new());
+    body.push("change with: /approvals <category> on|off · all on|off · revoke".to_string());
+    body
+}
+
+fn on_off(b: bool) -> &'static str {
+    if b { "auto" } else { "gated" }
+}
+
+fn scope(all: bool, count: usize) -> String {
+    if all {
+        "auto".to_string()
+    } else if count > 0 {
+        format!("{count} approved")
+    } else {
+        "gated".to_string()
+    }
+}
+
+/// What one `/approvals <args>` invocation did. The caller renders it;
+/// the state change has already happened on `Note` and `Error` carries
+/// the untouched-state guarantee.
+#[derive(Debug, PartialEq)]
+pub(super) enum ApprovalCmdOutcome {
+    /// A panel body (the list).
+    Panel(Vec<String>),
+    /// One confirmation line (starts with ✓).
+    Note(String),
+    /// One refusal line (starts with ✗); the state is untouched.
+    Error(String),
+}
+
+/// The eight categories, in the order `/approvals` lists them.
+const CATEGORIES: [&str; 8] = [
+    "commands",
+    "sudo",
+    "scripts",
+    "runbooks",
+    "files",
+    "schedules",
+    "agents",
+    "deletes",
+];
+
+/// The `/approvals` grammar and its state changes, over the session state
+/// alone — no renderer, so tests drive it directly and `cmd_approvals`
+/// only renders the outcome. `args` is everything after `/approvals `.
+pub(super) fn approvals_cmd(a: &mut SessionApproval, args: &str) -> ApprovalCmdOutcome {
+    let args = args.trim();
+    match args {
+        "" | "list" | "show" => ApprovalCmdOutcome::Panel(approvals_list_body(a)),
+        "on" | "auto" => {
+            a.regular = true;
+            ApprovalCmdOutcome::Note("✓ commands auto-approved for this session".to_string())
+        }
+        "off" | "manual" | "gated" => {
+            a.regular = false;
+            ApprovalCmdOutcome::Note("✓ commands now require approval".to_string())
+        }
+        "all on" => {
+            a.regular = true;
+            a.scripts_all = true;
+            a.runbooks_all = true;
+            a.file_edits_all = true;
+            a.schedules = true;
+            a.agents_all = true;
+            a.deletes = true;
+            ApprovalCmdOutcome::Note(
+                "✓ every category auto-approved for this session — sudo stays as it was"
+                    .to_string(),
+            )
+        }
+        "all off" | "revoke" | "reset" => {
+            *a = SessionApproval {
+                regular: false,
+                ..SessionApproval::default()
+            };
+            ApprovalCmdOutcome::Note("✓ all session approvals revoked".to_string())
+        }
+        other => {
+            let words: Vec<&str> = other.split_whitespace().collect();
+            let verb = words.first().copied().unwrap_or_default();
+            if matches!(verb, "revoke" | "reset") {
+                return match words.get(1) {
+                    Some(category) if CATEGORIES.contains(category) => {
+                        gate_category(a, category);
+                        ApprovalCmdOutcome::Note(format!(
+                            "✓ {category} now require{} approval",
+                            if *category == "deletes" { "" } else { "s" }
+                        ))
+                    }
+                    Some(unknown) => {
+                        ApprovalCmdOutcome::Error(unknown_category(&format!("revoke {unknown}")))
+                    }
+                    None => ApprovalCmdOutcome::Error(format!(
+                        "✗ unknown: /approvals {other} — valid forms: /approvals <category> on|off · all on|off · revoke [category] · host <name> [sudo] on|off ({CATEGORY_LIST})"
+                    )),
+                };
+            }
+            if verb == "host" {
+                return match (words.get(1), words.get(2), words.get(3)) {
+                    (Some(name), Some(&"sudo"), Some(state)) => host_switch(
+                        &mut a.hosts_sudo,
+                        name,
+                        state,
+                        &format!("sudo commands on {name}"),
+                        other,
+                    ),
+                    (Some(name), Some(state), None) => host_switch(
+                        &mut a.hosts_regular,
+                        name,
+                        state,
+                        &format!("commands on {name}"),
+                        other,
+                    ),
+                    _ => ApprovalCmdOutcome::Error(unknown_category(&format!("host {other}"))),
+                };
+            }
+            if words.len() == 2 && matches!(words[1], "on" | "off") && CATEGORIES.contains(&verb) {
+                let on = words[1] == "on";
+                set_category(a, verb, on);
+                return ApprovalCmdOutcome::Note(if on {
+                    format!("✓ {verb} auto-approved for this session")
+                } else {
+                    format!(
+                        "✓ {verb} now require{} approval",
+                        if verb == "deletes" { "" } else { "s" }
+                    )
+                });
+            }
+            ApprovalCmdOutcome::Error(unknown_category(other))
+        }
+    }
+}
+
+fn set_category(a: &mut SessionApproval, category: &str, on: bool) {
+    match category {
+        "commands" => a.regular = on,
+        "sudo" => a.sudo = on,
+        "scripts" => {
+            a.scripts_all = on;
+            if !on {
+                a.scripts.clear();
+            }
+        }
+        "runbooks" => {
+            a.runbooks_all = on;
+            if !on {
+                a.runbooks.clear();
+            }
+        }
+        "files" => {
+            a.file_edits_all = on;
+            if !on {
+                a.file_edits.clear();
+            }
+        }
+        "schedules" => a.schedules = on,
+        "agents" => {
+            a.agents_all = on;
+            if !on {
+                a.agents.clear();
+            }
+        }
+        "deletes" => a.deletes = on,
+        _ => unreachable!("CATEGORIES is the only source of names"),
+    }
+}
+
+fn gate_category(a: &mut SessionApproval, category: &str) {
+    set_category(a, category, false);
+}
+
+fn host_switch(
+    set: &mut HashSet<String>,
+    name: &str,
+    state: &str,
+    what: &str,
+    original: &str,
+) -> ApprovalCmdOutcome {
+    match state {
+        "on" => {
+            set.insert(name.to_string());
+            ApprovalCmdOutcome::Note(format!("✓ {what} auto-approved for this session"))
+        }
+        "off" => {
+            set.remove(name);
+            ApprovalCmdOutcome::Note(format!("✓ {what} now require approval"))
+        }
+        _ => ApprovalCmdOutcome::Error(unknown_category(&format!("host {original}"))),
+    }
+}
+
+/// The one error line every rejected `/approvals` argument gets: it names
+/// the valid categories and the forms. An always-asked kind (e.g. a host
+/// name) is not a category and gets the same refusal — nothing can enable it.
+fn unknown_category(args: &str) -> String {
+    format!(
+        "✗ unknown: /approvals {args} — valid categories: {CATEGORY_LIST}; forms: /approvals <category> on|off · all on|off · revoke [category] · host <name> [sudo] on|off"
+    )
+}
+
+const CATEGORY_LIST: &str = "commands, sudo, scripts, runbooks, files, schedules, agents, deletes";
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::ApprovalsConfig;
+    use crate::ipc::Response;
 
     fn approvals_all() -> ApprovalsConfig {
         ApprovalsConfig {
@@ -353,6 +653,10 @@ mod tests {
             runbooks: HashSet::new(),
             file_edits_all: false,
             file_edits: HashSet::new(),
+            schedules: false,
+            agents_all: false,
+            agents: HashSet::new(),
+            deletes: false,
             hosts_regular: HashSet::new(),
             hosts_sudo: HashSet::new(),
         };
@@ -588,5 +892,479 @@ mod tests {
             "hint='{}' should contain 'scripts: 2'",
             h
         );
+    }
+
+    // ── the /approvals command (M36 phase-03) ────────────────────────────────
+
+    fn set_all(a: &mut SessionApproval) {
+        a.regular = true;
+        a.sudo = true;
+        a.scripts_all = true;
+        a.runbooks_all = true;
+        a.file_edits_all = true;
+        a.schedules = true;
+        a.agents_all = true;
+        a.deletes = true;
+    }
+
+    fn list_states(a: &SessionApproval) -> Vec<(String, String)> {
+        let ApprovalCmdOutcome::Panel(lines) = approvals_cmd(&mut a.clone(), "list") else {
+            panic!("list must return a panel");
+        };
+        lines
+            .iter()
+            .filter_map(|l| {
+                let (name, state) = l.split_once(" : ")?;
+                Some((name.trim().to_string(), state.to_string()))
+            })
+            .collect()
+    }
+
+    fn state_of(a: &SessionApproval, category: &str) -> String {
+        list_states(a)
+            .into_iter()
+            .find(|(n, _)| n == category)
+            .map(|(_, s)| s)
+            .unwrap_or_else(|| format!("no '{category}' row in the list"))
+    }
+
+    fn assert_state(a: &SessionApproval, category: &str, want: &str) {
+        assert_eq!(
+            state_of(a, category),
+            want,
+            "'{category}' must read '{want}'"
+        );
+    }
+
+    fn apply(a: &mut SessionApproval, args: &str) -> String {
+        match approvals_cmd(a, args) {
+            ApprovalCmdOutcome::Note(n) => n,
+            other => panic!("'{args}' must be a note, got {other:?}"),
+        }
+    }
+
+    fn apply_err(a: &mut SessionApproval, args: &str) -> String {
+        match approvals_cmd(a, args) {
+            ApprovalCmdOutcome::Error(e) => e,
+            other => panic!("'{args}' must be an error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn approvals_cmd_lists_every_category_and_the_always_asked_kinds() {
+        let a = SessionApproval::default();
+        let lines = match approvals_cmd(&mut a.clone(), "list") {
+            ApprovalCmdOutcome::Panel(lines) => lines,
+            other => panic!("list returns a panel, got {other:?}"),
+        };
+        let want_order = [
+            "commands",
+            "sudo",
+            "scripts",
+            "runbooks",
+            "files",
+            "schedules",
+            "agents",
+            "deletes",
+        ];
+        let mut found: Vec<&str> = Vec::new();
+        for l in &lines {
+            for name in want_order {
+                if l.starts_with(&format!("{name} ")) && !found.contains(&name) {
+                    found.push(name);
+                }
+            }
+        }
+        assert_eq!(
+            found, want_order,
+            "the list carries the eight categories in the table's order: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.contains("per-host")),
+            "no host grants, no per-host block: {lines:?}"
+        );
+        let asked = lines
+            .iter()
+            .position(|l| l.contains("always asked"))
+            .unwrap_or_else(|| panic!("the list names the always-asked kinds: {lines:?}"));
+        let after: Vec<String> = lines[asked..].to_vec();
+        for kind in [
+            "host [hosts] does not configure",
+            "ghost reaching outside its sandbox",
+            "own /shell shells",
+            "sudo file edit",
+        ] {
+            assert!(
+                after.iter().any(|l| l.contains(kind)),
+                "always-asked names {kind:?}: {after:?}"
+            );
+        }
+        assert!(
+            lines
+                .last()
+                .is_some_and(|l| l.contains("/approvals") && l.contains("on|off")),
+            "the list ends with a usage reminder: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn approvals_cmd_category_on_off_toggles_only_that_category() {
+        for (category, seed) in [
+            ("commands", None),
+            ("sudo", None),
+            ("scripts", Some("s1.sh")),
+            ("runbooks", Some("r1")),
+            ("files", Some("/tmp/f")),
+            ("schedules", None),
+            ("agents", Some("a1")),
+            ("deletes", None),
+        ] {
+            let mut a = SessionApproval::default();
+            if let Some(name) = seed {
+                match category {
+                    "scripts" => _ = a.scripts.insert(name.to_string()),
+                    "runbooks" => _ = a.runbooks.insert(name.to_string()),
+                    "files" => _ = a.file_edits.insert(name.to_string()),
+                    "agents" => _ = a.agents.insert(name.to_string()),
+                    _ => panic!("only name-holding categories seed a name"),
+                }
+            }
+            let on = apply(&mut a, &format!("{category} on"));
+            assert!(on.contains("✓"), "'{category} on' confirms: {on}");
+            assert_state(&a, category, "auto");
+            let off = apply(&mut a, &format!("{category} off"));
+            assert!(off.contains("✓"), "'{category} off' confirms: {off}");
+            assert_state(&a, category, "gated");
+            if seed.is_some() {
+                let names_empty = match category {
+                    "scripts" => a.scripts.is_empty(),
+                    "runbooks" => a.runbooks.is_empty(),
+                    "files" => a.file_edits.is_empty(),
+                    "agents" => a.agents.is_empty(),
+                    _ => panic!("seeded categories hold names"),
+                };
+                assert!(
+                    names_empty,
+                    "'{category} off' forgets the names approved for the session"
+                );
+            }
+        }
+        // off on one category leaves the others alone.
+        let mut a = SessionApproval::default();
+        set_all(&mut a);
+        apply(&mut a, "scripts off");
+        assert_state(&a, "scripts", "gated");
+        for untouched in [
+            "commands",
+            "sudo",
+            "runbooks",
+            "files",
+            "schedules",
+            "agents",
+            "deletes",
+        ] {
+            assert_state(&a, untouched, "auto");
+        }
+    }
+
+    #[test]
+    fn approvals_cmd_all_on_spares_sudo_and_all_off_clears_everything() {
+        let mut a = SessionApproval::default();
+        let note = apply(&mut a, "all on");
+        assert!(
+            note.contains("sudo"),
+            "'all on' says sudo stays as it was: {note}"
+        );
+        for category in [
+            "commands",
+            "scripts",
+            "runbooks",
+            "files",
+            "schedules",
+            "agents",
+            "deletes",
+        ] {
+            assert_state(&a, category, "auto");
+        }
+        assert_state(&a, "sudo", "gated");
+        assert!(!a.sudo, "'all on' never touches the sudo flag");
+
+        a.sudo = true;
+        a.record_session_approval(&remote("pinky"), false);
+        a.record_session_approval(&remote("web01"), true);
+        let note = apply(&mut a, "all off");
+        assert!(note.contains("✓"), "'all off' confirms: {note}");
+        for category in [
+            "commands",
+            "sudo",
+            "scripts",
+            "runbooks",
+            "files",
+            "schedules",
+            "agents",
+            "deletes",
+        ] {
+            assert_state(&a, category, "gated");
+        }
+        assert!(
+            a.hosts_regular.is_empty() && a.hosts_sudo.is_empty(),
+            "'all off' clears the per-host grants too"
+        );
+    }
+
+    #[test]
+    fn approvals_cmd_host_grants_on_off() {
+        let mut a = SessionApproval::default();
+        apply(&mut a, "host pinky on");
+        assert!(
+            a.hosts_regular.contains("pinky"),
+            "'host pinky on' grants pinky's commands"
+        );
+        assert!(!a.hosts_sudo.contains("pinky"));
+        assert!(
+            a.auto_approves(&remote("pinky"), false),
+            "the grant auto-approves a non-sudo command on pinky"
+        );
+        assert!(
+            !a.auto_approves(&remote("pinky"), true),
+            "the commands grant does not cover pinky's sudo commands"
+        );
+        let hosts_row = {
+            let ApprovalCmdOutcome::Panel(lines) = approvals_cmd(&mut a.clone(), "list") else {
+                panic!("list returns a panel");
+            };
+            lines
+                .iter()
+                .find(|l| l.contains("pinky"))
+                .cloned()
+                .unwrap_or_else(|| panic!("the list shows the pinky grant: {lines:?}"))
+        };
+        assert!(
+            hosts_row.contains("commands") && !hosts_row.contains("sudo"),
+            "the pinky row reads commands: {hosts_row}"
+        );
+
+        apply(&mut a, "host pinky sudo on");
+        assert!(a.hosts_sudo.contains("pinky"));
+        assert!(a.auto_approves(&remote("pinky"), true));
+        let ApprovalCmdOutcome::Panel(lines) = approvals_cmd(&mut a.clone(), "list") else {
+            panic!("list returns a panel");
+        };
+        let row = lines
+            .iter()
+            .find(|l| l.contains("pinky"))
+            .expect("the pinky row still shows");
+        assert!(
+            row.contains("commands + sudo"),
+            "both grants show on one row: {row}"
+        );
+
+        apply(&mut a, "host pinky sudo off");
+        assert!(
+            !a.hosts_sudo.contains("pinky"),
+            "'host pinky sudo off' clears the sudo grant"
+        );
+        apply(&mut a, "host pinky off");
+        assert!(
+            !a.hosts_regular.contains("pinky"),
+            "'host pinky off' clears the commands grant"
+        );
+        let ApprovalCmdOutcome::Panel(lines) = approvals_cmd(&mut a.clone(), "list") else {
+            panic!("list returns a panel");
+        };
+        assert!(
+            !lines.iter().any(|l| l.contains("per-host")),
+            "no grants left, no per-host block: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn approvals_cmd_revoke_category_and_legacy_on_off() {
+        let mut a = SessionApproval::default();
+        set_all(&mut a);
+        a.scripts.insert("keep.sh".to_string());
+        apply(&mut a, "revoke scripts");
+        assert_state(&a, "scripts", "gated");
+        assert!(
+            a.scripts.is_empty(),
+            "'revoke scripts' forgets the names too"
+        );
+        assert_state(&a, "runbooks", "auto");
+
+        apply(&mut a, "reset");
+        for category in [
+            "commands",
+            "sudo",
+            "scripts",
+            "runbooks",
+            "files",
+            "schedules",
+            "agents",
+            "deletes",
+        ] {
+            assert_state(&a, category, "gated");
+        }
+
+        apply(&mut a, "on");
+        assert_state(&a, "commands", "auto");
+        assert_state(&a, "sudo", "gated");
+        apply(&mut a, "auto");
+        assert_state(&a, "commands", "auto");
+        apply(&mut a, "off");
+        assert_state(&a, "commands", "gated");
+        apply(&mut a, "manual");
+        assert_state(&a, "commands", "gated");
+    }
+
+    #[test]
+    fn approvals_cmd_rejects_unknown_and_always_asked_names() {
+        for args in [
+            "newhost on",
+            "foo off",
+            "scripts maybe",
+            "host",
+            "host pinky",
+        ] {
+            let mut a = SessionApproval::default();
+            set_all(&mut a);
+            a.scripts.insert("keep.sh".to_string());
+            a.agents.insert("keep-agent".to_string());
+            let err = apply_err(&mut a, args);
+            assert!(err.contains('✗'), "the error line starts ✗: {err}");
+            assert!(
+                err.contains("commands"),
+                "the error names the valid categories: {err}"
+            );
+            let ApprovalCmdOutcome::Panel(lines) = approvals_cmd(&mut a.clone(), "list") else {
+                panic!("list returns a panel");
+            };
+            assert!(
+                lines.iter().any(|l| l.contains("auto")),
+                "state unchanged after a rejected '{args}': {lines:?}"
+            );
+            assert!(
+                a.scripts.contains("keep.sh") && a.agents.contains("keep-agent"),
+                "a rejected '{args}' forgets nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn approvals_cmd_new_categories_auto_approve_their_prompts() {
+        let mut a = SessionApproval::default();
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::ScheduleWrite),
+            "schedules default to gated"
+        );
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::AgentWrite("a1")),
+            "agent writes default to gated"
+        );
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::ScriptDelete("s1")),
+            "deletes default to gated"
+        );
+        a.schedules = true;
+        assert!(
+            a.prompt_auto_approves(&PromptKind::ScheduleWrite),
+            "'schedules on' covers every schedule write"
+        );
+        a.deletes = true;
+        for kind in [
+            PromptKind::ScriptDelete("s1"),
+            PromptKind::RunbookDelete("r1"),
+            PromptKind::AgentDelete("a1"),
+        ] {
+            assert!(
+                a.prompt_auto_approves(&kind),
+                "'deletes on' covers {kind:?}"
+            );
+        }
+
+        // Categories do not cross: a script write is never covered by agents,
+        // an agent write never by scripts, and a delete is not a write.
+        a.agents_all = true;
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::ScriptWrite("s1")),
+            "agents does not cover a script write"
+        );
+        a.deletes = false;
+        a.agents_all = false;
+        a.scripts_all = true;
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::AgentWrite("a1")),
+            "scripts does not cover an agent write"
+        );
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::RunbookWrite("r1")),
+            "scripts does not cover a runbook write"
+        );
+
+        // A per-name agent grant works like scripts': A records the name.
+        let mut a = SessionApproval::default();
+        assert!(!a.prompt_auto_approves(&PromptKind::AgentWrite("a1")));
+        a.record_session_approval(&remote("unused"), false);
+        assert!(
+            a.agents.is_empty(),
+            "a command A records nothing under agents"
+        );
+        a.agents.insert("a1".to_string());
+        assert!(
+            a.prompt_auto_approves(&PromptKind::AgentWrite("a1")),
+            "the agent's name approved for the session covers its next write"
+        );
+        assert!(
+            !a.prompt_auto_approves(&PromptKind::AgentWrite("a2")),
+            "the name grant covers only that agent"
+        );
+    }
+
+    #[test]
+    fn approvals_cmd_agent_flag_round_trips() {
+        let resp = Response::ScriptWritePrompt {
+            id: "aw_1".to_string(),
+            script_name: "agents/deploy".to_string(),
+            content: "name = 'deploy'".to_string(),
+            existing_content: None,
+            agent: true,
+        };
+        let json = serde_json::to_string(&resp).expect("serialize");
+        assert!(
+            json.contains("\"agent\":true"),
+            "an agent write serialises agent: true: {json}"
+        );
+        let parsed: Response = serde_json::from_str(&json).expect("deserialize");
+        match parsed {
+            Response::ScriptWritePrompt { agent, .. } => {
+                assert!(agent, "the agent flag survives the round trip");
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        let del = Response::ScriptDeletePrompt {
+            id: "ad_1".to_string(),
+            script_name: "agent: deploy".to_string(),
+            agent: true,
+        };
+        let json = serde_json::to_string(&del).expect("serialize");
+        assert!(
+            json.contains("\"agent\":true"),
+            "an agent delete serialises agent: true: {json}"
+        );
+
+        // An older daemon's frame has no agent field; it deserialises as a
+        // script prompt with agent false.
+        let old = r##"{"ScriptWritePrompt":{"id":"s_1","script_name":"check.sh","content":"#!/bin/sh"}}"##;
+        let parsed: Response = serde_json::from_str(old).expect("old frame deserialises");
+        match parsed {
+            Response::ScriptWritePrompt { agent, .. } => assert!(!agent),
+            _ => panic!("wrong variant"),
+        }
+        let old_del = r#"{"ScriptDeletePrompt":{"id":"d_1","script_name":"check.sh"}}"#;
+        let parsed: Response = serde_json::from_str(old_del).expect("old frame deserialises");
+        match parsed {
+            Response::ScriptDeletePrompt { agent, .. } => assert!(!agent),
+            _ => panic!("wrong variant"),
+        }
     }
 }

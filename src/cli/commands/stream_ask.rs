@@ -435,33 +435,10 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 let pane_id = prompt_pane_select_ratatui(renderer, stdin, &sb, &panes).await;
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
             }
-            Response::ScriptDeletePrompt { id, script_name } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
-                let approved = prompt_yes_no_ratatui(
-                    renderer,
-                    stdin,
-                    &sb,
-                    &format!("AI wants to delete script: {}", script_name),
-                    &format!("Approve deleting ~/.daemoneye/scripts/{}?", script_name),
-                )
-                .await;
-                send_request(&mut tx, Request::ScriptDeleteResponse { id, approved }).await?;
-            }
-            Response::ScriptWritePrompt {
+            Response::ScriptDeletePrompt {
                 id,
                 script_name,
-                content,
-                existing_content,
+                agent,
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
@@ -474,6 +451,43 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     *session_cost,
                     *session_has_untracked,
                 );
+                let approved = prompt_delete_ratatui(
+                    renderer,
+                    stdin,
+                    &sb,
+                    approval,
+                    agent,
+                    &script_name,
+                    "script",
+                    &format!("~/.daemoneye/scripts/{script_name}"),
+                )
+                .await;
+                send_request(&mut tx, Request::ScriptDeleteResponse { id, approved }).await?;
+            }
+            Response::ScriptWritePrompt {
+                id,
+                script_name,
+                content,
+                existing_content,
+                agent,
+            } => {
+                let hint = approval.hint();
+                let sb = prompt_status(
+                    session_id.unwrap_or(""),
+                    &hint,
+                    ctx.model,
+                    turn,
+                    *prompt_tokens,
+                    context_window,
+                    *session_cost,
+                    *session_has_untracked,
+                );
+                let kind = if agent { "agent" } else { "script" };
+                let prompt_kind = if agent {
+                    super::approval::PromptKind::AgentWrite(&agent_name_of(&script_name))
+                } else {
+                    super::approval::PromptKind::ScriptWrite(&script_name)
+                };
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
@@ -482,12 +496,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     &script_name,
                     &content,
                     existing_content.as_deref(),
-                    "script",
+                    kind,
+                    prompt_kind,
                     |a: &mut super::approval::SessionApproval, name: &str| {
-                        a.scripts.insert(name.to_string());
+                        if agent {
+                            a.agents.insert(agent_name_of(name));
+                        } else {
+                            a.scripts.insert(name.to_string());
+                        }
                     },
-                    |a: &super::approval::SessionApproval| a.scripts_all,
-                    |a: &super::approval::SessionApproval, name: &str| a.scripts.contains(name),
                 )
                 .await;
                 send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
@@ -509,9 +526,10 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     *session_cost,
                     *session_has_untracked,
                 );
-                let approved =
-                    prompt_schedule_write_ratatui(renderer, stdin, &sb, &name, &kind, &action)
-                        .await;
+                let approved = prompt_schedule_write_ratatui(
+                    renderer, stdin, &sb, approval, &name, &kind, &action,
+                )
+                .await;
                 send_request(&mut tx, Request::ScheduleWriteResponse { id, approved }).await?;
             }
             Response::RunbookWritePrompt {
@@ -540,11 +558,10 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     &content,
                     existing_content.as_deref(),
                     "runbook",
+                    super::approval::PromptKind::RunbookWrite(&runbook_name),
                     |a: &mut super::approval::SessionApproval, name: &str| {
                         a.runbooks.insert(name.to_string());
                     },
-                    |a: &super::approval::SessionApproval| a.runbooks_all,
-                    |a: &super::approval::SessionApproval, name: &str| a.runbooks.contains(name),
                 )
                 .await;
                 send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
@@ -573,14 +590,25 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     *session_cost,
                     *session_has_untracked,
                 );
-                let approved = prompt_yes_no_ratatui(
-                    renderer,
-                    stdin,
-                    &sb,
-                    &format!("AI wants to delete runbook: {}{}", runbook_name, job_info),
-                    &format!("Approve deleting ~/.daemoneye/runbooks/{}?", runbook_name),
-                )
-                .await;
+                let _ = renderer.commit(&format!(
+                    "\n  ⚙ AI wants to delete runbook: {}{}",
+                    runbook_name, job_info
+                ));
+                let approved = if approval.prompt_auto_approves(
+                    &super::approval::PromptKind::RunbookDelete(&runbook_name),
+                ) {
+                    let _ = renderer.commit("  ✓ auto-approved (session)\n");
+                    true
+                } else {
+                    prompt_yes_no_ratatui(
+                        renderer,
+                        stdin,
+                        &sb,
+                        "",
+                        &format!("Approve deleting ~/.daemoneye/runbooks/{}?", runbook_name),
+                    )
+                    .await
+                };
                 send_request(&mut tx, Request::RunbookDeleteResponse { id, approved }).await?;
             }
             Response::EditFilePrompt {

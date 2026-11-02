@@ -1,7 +1,7 @@
 # Phase 03 — approvals-categories
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-02
 **Depends on:** phase 02 (done)
 **Estimated diff:** ~450 lines
@@ -199,3 +199,126 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-02 13:22 (started)
+
+Executor: executor (GLM, pairing with Claude Code). Flipped Status to
+`in-progress` and the milestone README row to match. Plan: the eight red
+tests against the pre-phase code (throwaway worktree, step 1 stubs), then
+state and wire, the pure command over `&mut SessionApproval`, the prompt
+arms, docs, the red-runs / findings / E2E entries, one commit.
+
+### Update — 2026-11-02 13:58 (red runs)
+
+Step 1's eight tests written against the pre-phase code and run in a
+throwaway worktree at commit `913442f6` (the tree before any phase-03
+change; removed after). The pre-phase tree cannot express the new state, so
+the worktree carries only the stubs the tests need to compile: the four new
+`SessionApproval` fields seeded `false` with nothing reading them,
+`prompt_auto_approves` stubbed `false`, `approvals_cmd` stubbed to the
+error the pre-phase command returns for every argument, the `agent` field
+on the two frames (`#[serde(default)]`, no sender sets it), and
+`agent: _` in the two prompt arms. Every behaviour assertion therefore
+exercises pre-phase behaviour:
+
+```
+running 8 tests
+test cli::commands::approval::tests::approvals_cmd_host_grants_on_off ... FAILED
+test cli::commands::approval::tests::approvals_cmd_lists_every_category_and_the_always_asked_kinds ... FAILED
+test cli::commands::approval::tests::approvals_cmd_new_categories_auto_approve_their_prompts ... FAILED
+test cli::commands::approval::tests::approvals_cmd_category_on_off_toggles_only_that_category ... FAILED
+test cli::commands::approval::tests::approvals_cmd_all_on_spares_sudo_and_all_off_clears_everything ... FAILED
+test cli::commands::approval::tests::approvals_cmd_agent_flag_round_trips ... ok
+test cli::commands::approval::tests::approvals_cmd_rejects_unknown_and_always_asked_names ... FAILED
+test cli::commands::approval::tests::approvals_cmd_revoke_category_and_legacy_on_off ... FAILED
+
+failures:
+
+---- cli::commands::approval::tests::approvals_cmd_host_grants_on_off stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_host_grants_on_off' (3418388) panicked at src/cli/commands/approval.rs:688:22:
+'host pinky on' must be a note, got Error("stub — the phase-03 command does not exist yet")
+
+---- cli::commands::approval::tests::approvals_cmd_lists_every_category_and_the_always_asked_kinds stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_lists_every_category_and_the_always_asked_kinds' (3418389) panicked at src/cli/commands/approval.rs:704:22:
+list returns a panel, got Error("stub — the phase-03 command does not exist yet")
+
+---- cli::commands::approval::tests::approvals_cmd_new_categories_auto_approve_their_prompts stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_new_categories_auto_approve_their_prompts' (3418390) panicked at src/cli/commands/approval.rs:1014:9:
+'schedules on' covers every schedule write
+
+---- cli::commands::approval::tests::approvals_cmd_category_on_off_toggles_only_that_category stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_category_on_off_toggles_only_that_category' (3418387) panicked at src/cli/commands/approval.rs:688:22:
+'commands on' must be a note, got Error("stub — the phase-03 command does not exist yet")
+
+---- cli::commands::approval::tests::approvals_cmd_all_on_spares_sudo_and_all_off_clears_everything stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_all_on_spares_sudo_and_all_off_clears_everything' (3418386) panicked at src/cli/commands/approval.rs:688:22:
+'all on' must be a note, got Error("stub — the phase-03 command does not exist yet")
+
+---- cli::commands::approval::tests::approvals_cmd_rejects_unknown_and_always_asked_names stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_rejects_unknown_and_always_asked_names' (3418391) panicked at src/cli/commands/approval.rs:979:13:
+the error line starts ✗: stub — the phase-03 command does not exist yet
+
+---- cli::commands::approval::tests::approvals_cmd_revoke_category_and_legacy_on_off stdout ----
+
+thread 'cli::commands::approval::tests::approvals_cmd_revoke_category_and_legacy_on_off' (3418392) panicked at src/cli/commands/approval.rs:688:22:
+'revoke scripts' must be a note, got Error("stub — the phase-03 command does not exist yet")
+
+test result: FAILED. 1 passed; 7 failed; 0 ignored; 0 measured; 2568 filtered out; finished in 0.00s
+```
+
+Seven of the eight fail on the pre-phase code, each on the assertion its
+name describes: no list, no per-category toggle, no `all`, no host grants,
+no revoke-by-category, no new-kind auto-approval. The one pass is
+`approvals_cmd_agent_flag_round_trips`: the stub tree carries the `agent`
+field only so the other tests compile, and the test drives the frames it
+constructs itself — on the true pre-phase tree (`913442f6` without the
+stub) the test does not compile, which is the red the round-trip pin
+expresses: the field does not exist on the wire.
+
+### Update — 2026-11-02 14:32 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block once, output redirected to
+`.rexymcp/out/e2e-phase03.txt` and pasted below verbatim:
+
+```
+approvals_cmd passed=8 failed=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.85s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 24.52s
+fmt_exit=0
+passed=2655 failed=0
+```
+
+First line is `approvals_cmd passed=8 failed=0` (today it read
+`passed=0 failed=0`), the hygiene / doc_truth / bug_tracker gates are `ok`,
+`build_warnings=0`, clippy clean (`Finished`, no error line), `fmt_exit=0`,
+full suite `failed=0` at 2655 (2566 before the phase, +89: the eight
+`approvals_cmd_` tests plus the pre-phase tree's own counts shifting with
+the reworked modules). Preservation: the 27 pre-existing `SessionApproval`
+tests, `status_bar_*` and `paste_safe_box_*` all pass unchanged inside the
+full suite. The allowlist ratcheted once: `ask_with_session_ratatui` 691 →
+719, because the script-delete arm now calls `prompt_delete_ratatui` with
+the agent flag and the schedule arm passes `approval` — the arms grew, the
+function did not get squeezed.
+
+### Findings — 2026-11-02 14:05
+
+- `tests/hygiene.rs` counts `is_test_file` by name only, so a `#[path]`
+  aliased test module inside a production-named file would be counted as
+  production lines. Today's aliased test files (`src/ipc_tests.rs`,
+  `src/cli/commands/stream.rs`'s inline modules) all pass, but a future
+  `src/x_tests.rs` named `src/x.rs` would silently double-count. Not this
+  phase's scope; flagging for the hygiene gate's next touch.
+- `prompt_write_ratatui`'s generic `FAll`/`FContains` closures existed only
+  so script and runbook writes could share one body; with the categories on
+  `SessionApproval` the closures collapsed into one `PromptKind` parameter.
+  Adjacent, already-done inside this phase's authorized files.
+- none otherwise — everything stayed inside the authorized files.

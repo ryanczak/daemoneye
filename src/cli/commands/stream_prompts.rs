@@ -442,7 +442,7 @@ pub(super) async fn prompt_yes_no_ratatui(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn prompt_write_ratatui<FAll, FInsert, FContains>(
+pub(super) async fn prompt_write_ratatui<FInsert>(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     status: &crate::cli::render::StatusBarState<'_>,
@@ -451,14 +451,11 @@ pub(super) async fn prompt_write_ratatui<FAll, FInsert, FContains>(
     content: &str,
     existing_content: Option<&str>,
     kind: &str,
+    prompt_kind: super::approval::PromptKind<'_>,
     insert_for_session: FInsert,
-    is_all_approved: FAll,
-    is_name_approved: FContains,
 ) -> bool
 where
-    FAll: Fn(&super::approval::SessionApproval) -> bool,
     FInsert: Fn(&mut super::approval::SessionApproval, &str),
-    FContains: Fn(&super::approval::SessionApproval, &str) -> bool,
 {
     let _ = renderer.commit(&format!("\n  ⚙ AI wants to write {}: {}\n", kind, name));
 
@@ -468,10 +465,7 @@ where
         let _ = renderer.commit(&format!("  {}\n", line));
     }
 
-    let all_approved = is_all_approved(approval);
-    let name_approved = is_name_approved(approval, name);
-
-    if all_approved || name_approved {
+    if approval.prompt_auto_approves(&prompt_kind) {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
         return true;
     }
@@ -497,10 +491,93 @@ where
     }
 }
 
+/// The delete prompts' shared flow: show what will be removed, auto-approve
+/// when the session's `deletes` category (or, for an agent config, the
+/// agent's own session name) covers it, else ask and record an `A` answer
+/// under the session's name set for that kind.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn prompt_delete_ratatui(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    status: &crate::cli::render::StatusBarState<'_>,
+    approval: &mut super::approval::SessionApproval,
+    agent: bool,
+    name: &str,
+    kind: &str,
+    path_label: &str,
+) -> bool {
+    let _ = renderer.commit(&format!(
+        "\n  ⚙ AI wants to delete {kind}: {name}\n  → {path_label}\n"
+    ));
+
+    let auto = approval.prompt_auto_approves(&delete_kind(agent, name));
+    if auto {
+        let _ = renderer.commit("  ✓ auto-approved (session)\n");
+        return true;
+    }
+
+    let prompt_text = build_approval_prompt("session", false);
+    let (approved, is_session, _user_msg) =
+        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
+
+    if approved {
+        if is_session {
+            record_delete_for_session(approval, agent, name);
+            let _ = renderer.commit(&format!(
+                "  ✓ approved — {kind} deletes are auto-approved for this session\n"
+            ));
+        } else {
+            let _ = renderer.commit("  ✓ approved\n");
+        }
+        true
+    } else {
+        let _ = renderer.commit("  ✗ denied\n");
+        false
+    }
+}
+
+/// The [`PromptKind`] a delete prompt answers: an agent delete may be
+/// covered by the agent's own session name, the other deletes only by
+/// `deletes`.
+fn delete_kind(agent: bool, name: &str) -> super::approval::PromptKind<'_> {
+    if agent {
+        super::approval::PromptKind::AgentDelete(name)
+    } else {
+        super::approval::PromptKind::ScriptDelete(name)
+    }
+}
+
+/// Record an `A` (approve for session) answer on a delete: a script/agent
+/// config delete inserts the name into the session's set for that kind;
+/// a runbook delete has no per-name state today, so it records nothing.
+fn record_delete_for_session(
+    approval: &mut super::approval::SessionApproval,
+    agent: bool,
+    name: &str,
+) {
+    if agent {
+        approval.agents.insert(agent_name_of(name));
+    } else {
+        approval.scripts.insert(name.to_string());
+    }
+}
+
+/// Strip the senders' prefixes from an agent frame's `script_name`
+/// (`"agents/<name>"` for a write, `"agent: <name>"` for a delete) and
+/// return the bare agent name. The delete arm passes the bare name today;
+/// keeping the strip here costs nothing and keeps both callers safe.
+pub(super) fn agent_name_of(script_name: &str) -> String {
+    script_name
+        .trim_start_matches("agents/")
+        .trim_start_matches("agent: ")
+        .to_string()
+}
+
 pub(super) async fn prompt_schedule_write_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     status: &crate::cli::render::StatusBarState<'_>,
+    approval: &mut super::approval::SessionApproval,
     name: &str,
     kind: &str,
     action: &str,
@@ -509,7 +586,15 @@ pub(super) async fn prompt_schedule_write_ratatui(
         "\n  ⚙ AI wants to schedule: {} ({})\n  Action: {}\n",
         name, kind, action
     ));
-    prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await
+    if approval.prompt_auto_approves(&super::approval::PromptKind::ScheduleWrite) {
+        let _ = renderer.commit("  ✓ auto-approved (session)\n");
+        return true;
+    }
+    let approved = prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await;
+    if approved {
+        let _ = renderer.commit("  ✓ approved\n");
+    }
+    approved
 }
 
 /// A sudo edit is never auto-approved: neither the session-wide file-edit

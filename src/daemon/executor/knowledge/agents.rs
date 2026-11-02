@@ -72,6 +72,7 @@ where
             script_name: format!("agents/{}", name),
             content: config_str.clone(),
             existing_content,
+            agent: true,
         },
     )
     .await?;
@@ -204,6 +205,7 @@ where
         Response::ScriptDeletePrompt {
             id: id.to_string(),
             script_name: format!("agent: {}", name),
+            agent: true,
         },
     )
     .await?;
