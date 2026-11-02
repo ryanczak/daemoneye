@@ -27,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
         session_id: "repro-session",
         approval_hint: "",
         model: "repro-model",
+        turn: 0,
         prompt_tokens: 0,
         context_window: 100_000,
         daemon_up: true,

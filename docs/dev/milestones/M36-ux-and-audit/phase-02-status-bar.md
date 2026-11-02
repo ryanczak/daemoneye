@@ -1,7 +1,7 @@
 # Phase 02 — status-bar
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-02
 **Depends on:** phase 01 (done)
 **Estimated diff:** ~300 lines

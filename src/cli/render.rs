@@ -75,6 +75,9 @@ pub struct StatusBarState<'a> {
     pub session_id: &'a str,
     pub approval_hint: &'a str,
     pub model: &'a str,
+    /// The chat's turn counter: 0 before the first turn, the resumed count
+    /// after `--resume`.
+    pub turn: usize,
     pub prompt_tokens: u32,
     pub context_window: u32,
     pub daemon_up: bool,

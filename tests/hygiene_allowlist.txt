@@ -12,10 +12,10 @@ fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
 fn src/ai/backends/openai.rs OpenAiClient::chat 238
 fn src/cli/commands/ask.rs run_ask_raw 169
-fn src/cli/commands/chat_loop.rs read_input_line_inner_ratatui 183
-fn src/cli/commands/chat_loop.rs run_chat_ratatui 526
+fn src/cli/commands/chat_loop.rs read_input_line_inner_ratatui 189
+fn src/cli/commands/chat_loop.rs run_chat_ratatui 537
 fn src/cli/commands/setup.rs run_setup 256
-fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 678
+fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 691
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/status.rs run_status 435

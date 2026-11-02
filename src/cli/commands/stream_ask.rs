@@ -4,12 +4,14 @@
 use super::*;
 
 /// The status bar each prompt in a turn draws over: the session's id, the
-/// session's model, approval hint, token count and cost. The daemon is shown
-/// as down while a prompt holds the live region.
+/// session's model, the turn, approval hint, token count and cost. The
+/// daemon is shown as down while a prompt holds the live region.
+#[allow(clippy::too_many_arguments)] // 8 params: every field of the StatusBarState the prompt draws
 fn prompt_status<'a>(
     session_id: &'a str,
     hint: &'a str,
     model: &'a str,
+    turn: usize,
     prompt_tokens: u32,
     context_window: u32,
     cost_usd: f64,
@@ -19,6 +21,7 @@ fn prompt_status<'a>(
         session_id,
         approval_hint: hint,
         model,
+        turn,
         prompt_tokens,
         context_window,
         daemon_up: false,
@@ -53,6 +56,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
     let TokenCtx {
         prompt_tokens,
         context_window,
+        turn,
     } = tok;
     let RatatuiQueryCtx {
         chat_width,
@@ -208,6 +212,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id: session_id.unwrap_or(""),
                     approval_hint: &approval.hint(),
                     model,
+                    turn,
                     prompt_tokens: *prompt_tokens,
                     context_window,
                     daemon_up: false,
@@ -253,6 +258,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id: session_id.unwrap_or(""),
                     approval_hint: &approval.hint(),
                     model,
+                    turn,
                     prompt_tokens: *prompt_tokens,
                     context_window,
                     daemon_up: false,
@@ -292,6 +298,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id: session_id.unwrap_or(""),
                     approval_hint: &approval.hint(),
                     model,
+                    turn,
                     prompt_tokens: *prompt_tokens,
                     context_window,
                     daemon_up: false,
@@ -370,6 +377,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -403,6 +411,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -417,6 +426,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -431,6 +441,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -457,6 +468,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -491,6 +503,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -512,6 +525,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -553,6 +567,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -582,6 +597,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     session_id.unwrap_or(""),
                     &hint,
                     ctx.model,
+                    turn,
                     *prompt_tokens,
                     context_window,
                     *session_cost,
@@ -722,6 +738,7 @@ mod tests {
             "0123456789abcdef",
             "approve? y/n",
             "claude-opus-4-6",
+            3,
             1234,
             200_000,
             0.5,

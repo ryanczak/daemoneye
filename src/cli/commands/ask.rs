@@ -54,6 +54,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
         TokenCtx {
             prompt_tokens: &mut 0,
             context_window: 0,
+            turn: 1,
         },
         RatatuiQueryCtx {
             chat_width: Some(terminal_width()),

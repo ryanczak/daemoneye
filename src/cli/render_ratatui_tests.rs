@@ -22,6 +22,7 @@ fn draw_picker_panel_shows_the_window_and_marks_the_selection() {
         session_id: "abcdef12",
         approval_hint: "",
         model: "m",
+        turn: 0,
         prompt_tokens: 0,
         context_window: 0,
         daemon_up: true,
@@ -851,6 +852,7 @@ pub(super) fn default_status() -> StatusBarState<'static> {
         session_id: "abcdef12-3456",
         approval_hint: "cmds: auto",
         model: "test-model",
+        turn: 0,
         prompt_tokens: 0,
         context_window: 200_000,
         daemon_up: true,
@@ -866,11 +868,281 @@ pub(super) fn approval_test_status() -> StatusBarState<'static> {
         session_id: "test-session",
         approval_hint: "",
         model: "test-model",
+        turn: 0,
         prompt_tokens: 0,
         context_window: 200_000,
         daemon_up: false,
         tools_total: 0,
         cost_usd: 0.0,
         has_untracked: false,
+    }
+}
+
+// ── Phase 02 (M36): the status bar's line builder ───────────────────────────
+
+/// A state for the status-bar line tests: session `9d46ede3-…`, model
+/// `glm-4.6`, 41 234 of 200 000 tokens, the approvals hint from the design.
+fn bar_status<'a>(
+    session_id: &'a str,
+    hint: &'a str,
+    turn: usize,
+    prompt_tokens: u32,
+    context_window: u32,
+) -> StatusBarState<'a> {
+    StatusBarState {
+        session_id,
+        approval_hint: hint,
+        model: "glm-4.6",
+        turn,
+        prompt_tokens,
+        context_window,
+        daemon_up: true,
+        tools_total: 0,
+        cost_usd: 0.0,
+        has_untracked: false,
+    }
+}
+
+fn bar_line(
+    turn: usize,
+    prompt_tokens: u32,
+    context_window: u32,
+    hint: &str,
+    width: u16,
+) -> ratatui::text::Line<'static> {
+    status_bar_line(
+        &bar_status(
+            "9d46ede3-a1b2-c3d4-e5f6-a7b8c9d0e1f2",
+            hint,
+            turn,
+            prompt_tokens,
+            context_window,
+        ),
+        std::time::Duration::from_secs(182),
+        &crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor),
+        width,
+    )
+}
+
+fn bar_text(line: &ratatui::text::Line<'_>) -> String {
+    line.spans.iter().flat_map(|s| s.content.chars()).collect()
+}
+
+#[test]
+fn status_bar_line_orders_turn_ctx_model_session_uptime() {
+    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 200);
+    let text = bar_text(&line);
+    for field in [
+        "turn 6",
+        "ctx 41k/200k (20%)",
+        "glm-4.6",
+        "session:9d46ede3…",
+        "up 3m 2s",
+    ] {
+        assert!(
+            text.contains(field),
+            "the bar must contain '{field}': {text:?}"
+        );
+    }
+    let t = &text;
+    let order = [
+        t.find("turn 6"),
+        t.find("ctx 41k/200k (20%)"),
+        t.find("glm-4.6"),
+        t.find("session:9d46ede3…"),
+        t.find("up 3m 2s"),
+    ];
+    let mut sorted = order;
+    sorted.sort();
+    assert_eq!(
+        order, sorted,
+        "the five fields appear left to right: {text:?}"
+    );
+    // The hint ends flush against the right edge of the given width.
+    assert_eq!(
+        text.chars().count(),
+        200,
+        "the bar fills the width: {text:?}"
+    );
+    assert!(
+        text.ends_with("⚡approvals: all · Ctrl+C revokes"),
+        "the hint sits at the right edge: {text:?}"
+    );
+}
+
+#[test]
+fn status_bar_ctx_formats_tokens_compactly() {
+    let text_of = |p: u32, w: u32| {
+        let line = bar_line(1, p, w, "", 200);
+        bar_text(&line)
+    };
+    let t = text_of(950, 200_000);
+    assert!(t.contains("ctx 950/200k"), "below 1 000 as is: {t:?}");
+    let t = text_of(4_321, 200_000);
+    assert!(
+        t.contains("ctx 4.3k/200k"),
+        "below 10 000 with one decimal: {t:?}"
+    );
+    let t = text_of(41_234, 200_000);
+    assert!(
+        t.contains("ctx 41k/200k"),
+        "below 1 000 000 as whole thousands: {t:?}"
+    );
+    let t = text_of(200_000, 200_000);
+    assert!(
+        t.contains("ctx 200k/200k"),
+        "the window itself as whole thousands: {t:?}"
+    );
+    let t = text_of(1_048_576, 2_000_000);
+    assert!(
+        t.contains("ctx 1.0M/2.0M"),
+        "from 1 000 000 as millions with one decimal: {t:?}"
+    );
+    let t = text_of(0, 200_000);
+    assert!(t.contains("ctx — "), "no usage yet reads ctx —: {t:?}");
+    let t = text_of(41_234, 0);
+    assert!(
+        t.contains("ctx 41k ") && !t.contains('%'),
+        "an unknown window drops the window and the percentage: {t:?}"
+    );
+}
+
+#[test]
+fn status_bar_ctx_colours_at_75_and_90_percent() {
+    let ctx_span_color = |p: u32, w: u32| {
+        let line = bar_line(1, p, w, "", 200);
+        let idx = line
+            .spans
+            .iter()
+            .position(|s| s.content.contains("/200k"))
+            .expect("a span holds the context segment");
+        line.spans[idx].style.fg.unwrap()
+    };
+    assert_eq!(
+        ctx_span_color(148_000, 200_000),
+        ratatui::style::Color::Gray,
+        "74% stays gray"
+    );
+    assert_eq!(
+        ctx_span_color(150_000, 200_000),
+        crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor)
+            .yellow(),
+        "75% turns amber"
+    );
+    assert_eq!(
+        ctx_span_color(178_000, 200_000),
+        crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor)
+            .yellow(),
+        "89% stays amber"
+    );
+    assert_eq!(
+        ctx_span_color(180_000, 200_000),
+        crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor).red(),
+        "90% turns red"
+    );
+    // The rest of the bar stays gray at the thresholds.
+    let line = bar_line(1, 180_000, 200_000, "", 200);
+    for span in &line.spans {
+        if span.content.contains("/200k") {
+            continue;
+        }
+        assert_eq!(
+            span.style.fg,
+            Some(ratatui::style::Color::Gray),
+            "only the context segment colours: {span:?}"
+        );
+    }
+}
+
+#[test]
+fn status_bar_is_readable_gray_not_dim() {
+    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 200);
+    assert!(!line.spans.is_empty(), "the line has spans");
+    for span in &line.spans {
+        assert!(
+            !span
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::DIM),
+            "no span carries DIM: {span:?}"
+        );
+        assert_ne!(
+            span.style.fg,
+            Some(ratatui::style::Color::DarkGray),
+            "no span is DarkGray: {span:?}"
+        );
+    }
+}
+
+#[test]
+fn status_bar_drops_hint_before_clipping() {
+    // Width where only the left part fits: the hint is dropped whole, the
+    // left part intact.
+    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 70);
+    let text = bar_text(&line);
+    assert!(
+        !text.contains("approvals"),
+        "the hint is dropped before clipping: {text:?}"
+    );
+    assert!(
+        text.contains("up 3m 2s"),
+        "the left part survives intact: {text:?}"
+    );
+    assert!(
+        text.chars().count() <= 70,
+        "the bar never exceeds the width: {text:?}"
+    );
+
+    // Narrower still: the line ends in `…` and stays within the width.
+    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 30);
+    let text = bar_text(&line);
+    assert!(
+        text.ends_with('…'),
+        "the clipped line ends in the ellipsis: {text:?}"
+    );
+    assert_eq!(
+        text.chars().count(),
+        30,
+        "no line exceeds the width: {text:?}"
+    );
+}
+
+#[test]
+fn status_bar_shows_turn_on_every_panel() {
+    for draw in 0..6 {
+        let mut renderer = make_test_renderer();
+        let mut input = InputLine::new();
+        input.insert_str("typed");
+        let status = StatusBarState {
+            turn: 6,
+            ..approval_test_status()
+        };
+        match draw {
+            0 => renderer.draw(&input, &status).unwrap(),
+            1 => renderer
+                .draw_spinner("(◉)", "scrying", 3, "", &status)
+                .unwrap(),
+            2 => renderer.draw_prompt("password:", &input, &status).unwrap(),
+            3 => renderer
+                .draw_approval_panel("approve command", "session", &input, &status)
+                .unwrap(),
+            4 => renderer
+                .draw_credential_panel("sudo password", "[sudo] password required", &input, &status)
+                .unwrap(),
+            5 => renderer
+                .draw_picker_panel("agents · 1/1", &["s0  host:local".to_string()], 0, &status)
+                .unwrap(),
+            _ => unreachable!(),
+        }
+        let buf = renderer.terminal.backend().buffer();
+        let all_text: String = buf
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        assert!(
+            all_text.contains("turn 6"),
+            "draw path {draw} must put turn 6 on its status row: {all_text:?}"
+        );
     }
 }

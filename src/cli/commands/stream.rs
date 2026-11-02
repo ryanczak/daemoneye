@@ -96,6 +96,8 @@ pub(super) struct AskTmuxCtx<'a> {
 pub(super) struct TokenCtx<'a> {
     pub(super) prompt_tokens: &'a mut u32,
     pub(super) context_window: u32,
+    /// The chat's turn counter, for the status bar (`daemoneye ask` passes 1).
+    pub(super) turn: usize,
 }
 
 /// Context for the ratatui-path query function.

@@ -417,10 +417,10 @@ fn render_live_region(
     frame: &mut ratatui::Frame,
     area: Rect,
     input_text: &ratatui::text::Text<'_>,
-    session_id: &str,
-    model: &str,
-    start_time: std::time::Instant,
+    status: &StatusBarState<'_>,
     cursor_pos: Option<(u16, u16)>, // (col, row) within content area (before scroll)
+    start_time: std::time::Instant,
+    palette: &crate::cli::palette::Palette,
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
     let _spinner_rect = spinner_rect; // reserved, blank in this mode
@@ -459,7 +459,7 @@ fn render_live_region(
     }
 
     // ── Status bar ─────────────────────────────────────────────
-    render_status_bar(frame, chunks[1], session_id, model, start_time);
+    render_status_bar(frame, chunks[1], status, start_time, palette);
 }
 
 /// The approval options line: bright-yellow key letters in blood-red
@@ -523,9 +523,9 @@ fn render_prompt_region(
     area: Rect,
     prompt: &str,
     input_text: &str,
-    session_id: &str,
-    model: &str,
+    status: &StatusBarState<'_>,
     start_time: std::time::Instant,
+    palette: &crate::cli::palette::Palette,
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
 
@@ -535,7 +535,7 @@ fn render_prompt_region(
             .split('\n')
             .map(|l| Line::from(Span::raw(l)))
             .collect();
-        render_live_region(frame, area, &it, session_id, model, start_time, None);
+        render_live_region(frame, area, &it, status, None, start_time, palette);
         return;
     }
 
@@ -572,7 +572,7 @@ fn render_prompt_region(
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
-    render_status_bar(frame, chunks[1], session_id, model, start_time);
+    render_status_bar(frame, chunks[1], status, start_time, palette);
 }
 
 /// Render the live region with a spinner message replacing the input box content.
@@ -583,9 +583,9 @@ fn render_spinner_region(
     area: Rect,
     spinner_line: Line<'static>,
     typeahead_text: &str,
-    session_id: &str,
-    model: &str,
+    status: &StatusBarState<'_>,
     start_time: std::time::Instant,
+    palette: &crate::cli::palette::Palette,
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
 
@@ -599,7 +599,7 @@ fn render_spinner_region(
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
-    render_status_bar(frame, chunks[1], session_id, model, start_time);
+    render_status_bar(frame, chunks[1], status, start_time, palette);
 }
 
 /// Clip `s` to at most `max` characters, marking truncation with a trailing '…'.
@@ -637,30 +637,116 @@ fn short_session(id: &str) -> String {
         format!("{head}…")
     }
 }
-/// The dim status bar under the live region:
-/// ` session:<short id> · <model> · up <uptime> `.
+/// Compact token count for the status bar: below 1 000 as is (`950`); below
+/// 10 000 with one decimal (`4321` → `4.3k`); below 1 000 000 as whole
+/// thousands (`41234` → `41k`); from 1 000 000 as millions with one decimal
+/// (`1048576` → `1.0M`).
+fn compact_tokens(n: u32) -> String {
+    if n < 1_000 {
+        format!("{n}")
+    } else if n < 10_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else if n < 1_000_000 {
+        format!("{}k", n / 1_000)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
+}
+
+/// Build the status bar's single line from the state, the elapsed uptime,
+/// the palette and the pane width. Pure: no frame, no terminal.
+///
+/// Left part: `turn N · ctx … · model · session:<short id> · up <uptime>`;
+/// the approval hint sits flush against the right edge. When the two do not
+/// both fit with a space between, the hint is dropped whole; when the left
+/// part alone does not fit, it is clipped with a trailing `…`. Every span is
+/// a readable gray except the context segment, which turns amber at ≥ 75 %
+/// of the window and red at ≥ 90 %.
+fn status_bar_line(
+    status: &StatusBarState<'_>,
+    uptime: std::time::Duration,
+    palette: &crate::cli::palette::Palette,
+    width: u16,
+) -> Line<'static> {
+    let ctx_text = if status.prompt_tokens == 0 {
+        "—".to_string()
+    } else if status.context_window == 0 {
+        compact_tokens(status.prompt_tokens)
+    } else {
+        format!(
+            "{}/{} ({}%)",
+            compact_tokens(status.prompt_tokens),
+            compact_tokens(status.context_window),
+            (status.prompt_tokens as f64 / status.context_window as f64 * 100.0).floor() as u32,
+        )
+    };
+    let left = format!(
+        " turn {} · ctx {} · {} · session:{} · up {}",
+        status.turn,
+        ctx_text,
+        status.model,
+        short_session(status.session_id),
+        fmt_uptime(uptime),
+    );
+
+    let gray = Style::default().fg(Color::Gray);
+    let ctx_style = if status.prompt_tokens == 0 || status.context_window == 0 {
+        gray
+    } else {
+        let pct = status.prompt_tokens as f64 / status.context_window as f64 * 100.0;
+        if pct >= 90.0 {
+            gray.fg(palette.red())
+        } else if pct >= 75.0 {
+            gray.fg(palette.yellow())
+        } else {
+            gray
+        }
+    };
+
+    let left_width = left.chars().count();
+    let hint = status.approval_hint;
+    let hint_width = hint.chars().count();
+    let fits_with_hint = !hint.is_empty() && width as usize > left_width + hint_width;
+
+    let mut spans: Vec<Span<'static>> = if left_width > width as usize {
+        vec![Span::styled(
+            truncate_with_ellipsis(&left, width as usize),
+            gray,
+        )]
+    } else {
+        // Split at the context segment so it alone carries the budget colour.
+        let marker = " · ctx ";
+        let split = left.find(marker).map(|i| i + marker.len()).unwrap_or(0);
+        let (prefix, rest) = left.split_at(split);
+        let suffix = &rest[ctx_text.len().min(rest.len())..];
+        vec![
+            Span::styled(prefix.to_string(), gray),
+            Span::styled(ctx_text.clone(), ctx_style),
+            Span::styled(suffix.to_string(), gray),
+        ]
+    };
+
+    if fits_with_hint {
+        let gap = " ".repeat(width as usize - left_width - hint_width);
+        spans.push(Span::styled(gap, gray));
+        spans.push(Span::styled(hint.to_string(), gray));
+    }
+    Line::from(spans)
+}
+
+/// The readable-gray status bar under the live region:
+/// ` turn N · ctx T/W (P%) · model · session:<short id> · up <uptime>`,
+/// with the approval hint flush against the right edge.
 fn render_status_bar(
     frame: &mut ratatui::Frame,
     area: Rect,
-    session_id: &str,
-    model: &str,
+    status: &StatusBarState<'_>,
     start_time: std::time::Instant,
+    palette: &crate::cli::palette::Palette,
 ) {
-    let status_text = format!(
-        " session:{} · {} · up {} ",
-        short_session(session_id),
-        model,
-        fmt_uptime(start_time.elapsed()),
-    );
-    let status_block = Block::default().borders(Borders::NONE).style(
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::DIM),
-    );
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::raw(status_text))).block(status_block),
-        area,
-    );
+    let line = status_bar_line(status, start_time.elapsed(), palette, area.width);
+    let status_block = Block::default().borders(Borders::NONE);
+    frame.render_widget(Paragraph::new(line).block(status_block), area);
 }
 
 /// The panel an approval or credential dialog draws in: rounded, a red

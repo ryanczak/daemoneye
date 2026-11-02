@@ -78,9 +78,8 @@ impl<B: Backend> RatatuiRenderer<B> {
 
     /// Draw the live region: input box and status bar.
     pub fn draw(&mut self, input: &InputLine, status: &StatusBarState<'_>) -> Result<(), B::Error> {
-        let session_id = status.session_id.to_string();
-        let model = status.model.to_string();
         let start_time = self.start_time;
+        let palette = self.palette;
 
         let _completed = self.terminal.draw(|frame| {
             let area = frame.area();
@@ -102,10 +101,10 @@ impl<B: Backend> RatatuiRenderer<B> {
                 frame,
                 area,
                 &input_text,
-                &session_id,
-                &model,
-                start_time,
+                status,
                 cursor_pos,
+                start_time,
+                &palette,
             );
         })?;
         Ok(())
@@ -123,9 +122,8 @@ impl<B: Backend> RatatuiRenderer<B> {
         typeahead_text: &str,
         status: &StatusBarState<'_>,
     ) -> Result<(), B::Error> {
-        let session_id = status.session_id.to_string();
-        let model = status.model.to_string();
         let start_time = self.start_time;
+        let palette = self.palette;
 
         let blood_red = Style::default()
             .fg(self.palette.red())
@@ -153,9 +151,9 @@ impl<B: Backend> RatatuiRenderer<B> {
                 area,
                 spinner_line.clone(),
                 typeahead_text,
-                &session_id,
-                &model,
+                status,
                 start_time,
+                &palette,
             );
         })?;
         Ok(())
@@ -173,9 +171,8 @@ impl<B: Backend> RatatuiRenderer<B> {
         status: &StatusBarState<'_>,
     ) -> Result<(), B::Error> {
         let input_text = input.as_str();
-        let session_id = status.session_id.to_string();
-        let model = status.model.to_string();
         let start_time = self.start_time;
+        let palette = self.palette;
         let prompt_owned = prompt.to_string();
 
         let _completed = self.terminal.draw(|frame| {
@@ -185,9 +182,9 @@ impl<B: Backend> RatatuiRenderer<B> {
                 area,
                 &prompt_owned,
                 &input_text,
-                &session_id,
-                &model,
+                status,
                 start_time,
+                &palette,
             );
         })?;
         Ok(())
@@ -212,9 +209,8 @@ impl<B: Backend> RatatuiRenderer<B> {
         }
 
         let input_text = input.as_str();
-        let session_id = status.session_id.to_string();
-        let model = status.model.to_string();
         let start_time = self.start_time;
+        let palette = self.palette;
         let title_owned = title.to_string();
         let session_label_owned = session_label.to_string();
 
@@ -240,7 +236,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             .block(panel);
             frame.render_widget(content, chunks[0]);
 
-            render_status_bar(frame, chunks[1], &session_id, &model, start_time);
+            render_status_bar(frame, chunks[1], status, start_time, &palette);
         })?;
 
         Ok(())
@@ -264,9 +260,8 @@ impl<B: Backend> RatatuiRenderer<B> {
         }
 
         let input_text = input.as_str();
-        let session_id = status.session_id.to_string();
-        let model = status.model.to_string();
         let start_time = self.start_time;
+        let palette = self.palette;
         let title_owned = title.to_string();
         let detail_owned = detail.to_string();
 
@@ -297,7 +292,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             .block(panel);
             frame.render_widget(content, chunks[0]);
 
-            render_status_bar(frame, chunks[1], &session_id, &model, start_time);
+            render_status_bar(frame, chunks[1], status, start_time, &palette);
         })?;
 
         Ok(())
@@ -324,9 +319,8 @@ impl<B: Backend> RatatuiRenderer<B> {
             );
         }
 
-        let session_id = status.session_id.to_string();
-        let model = status.model.to_string();
         let start_time = self.start_time;
+        let palette = self.palette;
         let title_owned = title.to_string();
 
         self.terminal.draw(|frame| {
@@ -365,7 +359,7 @@ impl<B: Backend> RatatuiRenderer<B> {
                 .collect();
             frame.render_widget(Paragraph::new(lines).block(panel), chunks[0]);
 
-            render_status_bar(frame, chunks[1], &session_id, &model, start_time);
+            render_status_bar(frame, chunks[1], status, start_time, &palette);
         })?;
 
         Ok(())
