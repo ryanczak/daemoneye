@@ -1,7 +1,7 @@
 # Phase 02 — status-bar
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-02
 **Depends on:** phase 01 (done)
 **Estimated diff:** ~300 lines
@@ -127,8 +127,13 @@ in the milestone README fixes the layout.
 
 ## Acceptance criteria
 
-- [ ] The E2E block's first line is `status_bar passed=6 failed=0`
-      (today `status_bar passed=0 failed=0`).
+- [ ] The E2E block's first line is `status_bar passed=7 failed=0`
+      (after the first dispatch it reads `passed=6`; bug-02-1 adds
+      `status_bar_fits_a_wide_hint_exactly`).
+- [ ] bug-02-1: `status_bar_fits_a_wide_hint_exactly` passes, and every
+      width assertion in the `status_bar_` tests measures display width
+      (`Line::width()`), not `chars().count()`. The red-runs entry for the
+      re-dispatch shows the new test failing on the bounced tree.
 - [ ] The red-runs entry shows the new tests failing on the pre-phase code.
 - [ ] The phase-01 tests (`paste_safe_box_*`) and the approval panel tests
       (`approval_panel_*`) pass unchanged (preservation).
@@ -416,3 +421,26 @@ kill: (-3219088): No such process
 **Commit:** 3af66a364d47abd0ca814d93d4b3179459f20d02
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-02 (bounced)
+
+- **Verdict:** bounced, 1 bug: [bug-02-1](bugs/bug-02-1.md) (minor).
+- **Reviewer re-run:** `fmt_exit=0`, `build_warnings=0`, clippy clean,
+  `passed=2646 failed=0`, `status_bar_` 6 passed.
+- **The defect:** `status_bar_line` measures the left part and the hint with
+  `chars().count()`. The hint's `⚡` is two columns wide, so with any active
+  approval the bar is one column wider than the pane and its last cell
+  (`s` of `revokes`) is clipped. The tests measure in chars too, so they
+  pass.
+- **Accepted as is:** `#[allow(clippy::too_many_arguments)]` on
+  `prompt_status`, with its reason inline. The tree already carries the same
+  allow in about fifteen places, so it follows the repo's convention. The
+  one-line `turn: 0` in `examples/reanchor_repro.rs` was needed to compile;
+  the phase's Authorizations should have listed it.
+
+**Notes for executor (re-dispatch):** fix only bug-02-1. Measure display
+width (ratatui's `Span::width()` / `Line::width()`, which use
+`unicode-width`) wherever `status_bar_line` decides the fit, the gap and the
+clip, and in the `status_bar_` tests' width assertions. Write
+`status_bar_fits_a_wide_hint_exactly` first and paste its red run. The other
+six tests and the rest of the phase stand.
