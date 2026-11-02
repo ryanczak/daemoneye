@@ -4,18 +4,18 @@ use ratatui::backend::TestBackend;
 
 // ── Helpers for spinner-row tests ──────────────────────────
 
-/// Find the y-coordinate of the row containing the first '┌' (top-left
-/// corner of the input box).
+/// The y of the input box's top rule — the first row made entirely of `─`.
+/// Committed panels never produce such a row (their rule rows carry corners),
+/// so the plain run is the box's signature. (The box has no corners since the
+/// side borders became blank paste-safe columns.)
 pub(super) fn corner_row(buf: &ratatui::buffer::Buffer) -> u16 {
     let cols = buf.area.width;
     for y in 0..buf.area.height {
-        for x in 0..cols {
-            if buf[(x, y)].symbol() == "┌" {
-                return y;
-            }
+        if (0..cols).all(|x| buf[(x, y)].symbol() == "─") {
+            return y;
         }
     }
-    panic!("no '┌' found in buffer");
+    panic!("no full-width ─ rule row found in buffer");
 }
 
 /// Collect an entire row's symbols into a single String.
@@ -26,6 +26,25 @@ pub(super) fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
         s.push_str(buf[(x, y)].symbol());
     }
     s
+}
+
+/// Locate the input box in a rendered buffer: the y of its top rule, the y of
+/// its bottom rule, and the rows strictly between them. The box's rules are
+/// the only rows in the live region made entirely of `─` (committed panels
+/// carry corners on their rule rows), so a full-width plain run is the box's
+/// signature. The first such row is the top rule; the next is the bottom.
+pub(super) fn box_rules(buf: &ratatui::buffer::Buffer) -> (u16, u16, Vec<u16>) {
+    let cols = buf.area.width;
+    let is_rule = |y: u16| (0..cols).all(|x| buf[(x, y)].symbol() == "─");
+    let rules: Vec<u16> = (0..buf.area.height).filter(|y| is_rule(*y)).collect();
+    let Some(top) = rules.first().copied() else {
+        panic!("no full-width ─ rule row found in buffer");
+    };
+    let Some(bottom) = rules.into_iter().find(|y| *y > top) else {
+        panic!("no second full-width ─ rule row found in buffer");
+    };
+    let content_rows: Vec<u16> = (top + 1..bottom).collect();
+    (top, bottom, content_rows)
 }
 
 #[test]
@@ -176,7 +195,8 @@ fn short_region_collapses_spinner_row() {
         .draw_spinner("(◉)", "scrying", 1, "", &status)
         .unwrap();
 
-    // A box border should still be present.
+    // A box border should still be present: the top rule is a row made
+    // entirely of ─.
     let buf = renderer.terminal.backend().buffer();
     let all_text: String = buf
         .content
@@ -184,8 +204,8 @@ fn short_region_collapses_spinner_row() {
         .flat_map(|c| c.symbol().chars())
         .collect();
     assert!(
-        all_text.contains('┌'),
-        "short region should still render the input box border, got: {}",
+        all_text.contains('─'),
+        "short region should still render the input box rule, got: {}",
         all_text
     );
 }
@@ -215,6 +235,148 @@ fn prompt_region_at_height_four_does_not_lose_prompt() {
         all_text.contains("password:"),
         "prompt region at height 4 must render the prompt text, got: {}",
         all_text
+    );
+}
+
+#[test]
+fn paste_safe_box_keeps_top_and_bottom_rules() {
+    let mut renderer = make_test_renderer();
+
+    let mut input = InputLine::new();
+    input.insert_str("alpha\nbeta\ngamma");
+
+    renderer.draw(&input, &default_status()).unwrap();
+
+    let buf = renderer.terminal.backend().buffer();
+
+    let (top, bottom, content_rows) = box_rules(buf);
+
+    // The rule rows themselves: every column is a plain ─.
+    assert!(
+        (0..buf.area.width).all(|x| buf[(x, top)].symbol() == "─"),
+        "top rule row {top} must be ─ across the width, got: {:?}",
+        row_text(buf, top)
+    );
+    assert!(
+        (0..buf.area.width).all(|x| buf[(x, bottom)].symbol() == "─"),
+        "bottom rule row {bottom} must be ─ across the width, got: {:?}",
+        row_text(buf, bottom)
+    );
+
+    // And there really is content between them.
+    assert!(
+        !content_rows.is_empty(),
+        "the box must have content rows between its rules"
+    );
+}
+
+#[test]
+fn paste_safe_box_has_blank_side_columns() {
+    let mut renderer = make_test_renderer();
+
+    let mut input = InputLine::new();
+    input.insert_str("alpha\nbeta\ngamma");
+
+    renderer.draw(&input, &default_status()).unwrap();
+
+    let buf = renderer.terminal.backend().buffer();
+
+    let (_top, _bottom, content_rows) = box_rules(buf);
+    assert!(
+        !content_rows.is_empty(),
+        "the box must have content rows between its rules"
+    );
+
+    // First and last column of every content row are blank.
+    for y in &content_rows {
+        let row = row_text(buf, *y);
+        assert_eq!(
+            row.chars().next(),
+            Some(' '),
+            "left column of content row {y} must be blank, got: {row:?}"
+        );
+        assert_eq!(
+            row.chars().last(),
+            Some(' '),
+            "right column of content row {y} must be blank, got: {row:?}"
+        );
+    }
+
+    // And nowhere in the live region is a │.
+    for y in 0..buf.area.height {
+        let row = row_text(buf, y);
+        assert!(
+            !row.contains('│'),
+            "no row of the live region may contain │, row {y}: {row:?}"
+        );
+    }
+}
+
+#[test]
+fn paste_safe_box_blank_under_spinner_and_prompt() {
+    let mut renderer = make_test_renderer();
+
+    let status = default_status();
+
+    renderer
+        .draw_spinner("(◉)", "scrying", 3, "queued text", &status)
+        .unwrap();
+    let buf = renderer.terminal.backend().buffer();
+    for y in 0..buf.area.height {
+        let row = row_text(buf, y);
+        assert!(
+            !row.contains('│'),
+            "spinner region must not contain │, row {y}: {row:?}"
+        );
+    }
+    let (top, bottom, content_rows) = box_rules(buf);
+    assert!(
+        !content_rows.is_empty()
+            && content_rows
+                .iter()
+                .all(|y| row_text(buf, *y).starts_with(' ') && row_text(buf, *y).ends_with(' ')),
+        "spinner region content rows must have blank side columns, rows {content_rows:?}"
+    );
+    assert!(
+        (0..buf.area.width).all(|x| buf[(x, top)].symbol() == "─"),
+        "spinner region top rule must be ─ across the width, got: {:?}",
+        row_text(buf, top)
+    );
+    assert!(
+        (0..buf.area.width).all(|x| buf[(x, bottom)].symbol() == "─"),
+        "spinner region bottom rule must be ─ across the width, got: {:?}",
+        row_text(buf, bottom)
+    );
+
+    let mut renderer = make_test_renderer();
+    let mut input = InputLine::new();
+    input.insert_str("typed input");
+    renderer.draw_prompt("password:", &input, &status).unwrap();
+    let buf = renderer.terminal.backend().buffer();
+    for y in 0..buf.area.height {
+        let row = row_text(buf, y);
+        assert!(
+            !row.contains('│'),
+            "prompt region must not contain │, row {y}: {row:?}"
+        );
+    }
+    let (top, bottom, content_rows) = box_rules(buf);
+    assert!(
+        !content_rows.is_empty()
+            && content_rows
+                .iter()
+                .all(|y| row_text(buf, *y).starts_with(' ') && row_text(buf, *y).ends_with(' ')),
+        "prompt region content rows must have blank side columns, rows {content_rows:?}"
+    );
+    assert!(
+        (0..buf.area.width).all(|x| buf[(x, top)].symbol() == "─"),
+        "prompt region top rule must be ─ across the width, got: {:?}",
+        row_text(buf, top)
+    );
+    assert!(
+        (0..buf.area.width).all(|x| buf[(x, bottom)].symbol() == "─"),
+        "prompt region bottom rule must be ─ across the width, got: {:?}",
+        row_text(buf, bottom)
     );
 }
 

@@ -5,7 +5,7 @@ use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Padding, Paragraph, Widget, Wrap};
 
 /// Convert a string with ANSI escape sequences into a vector of styled `Span`s
 /// suitable for ratatui rendering.  Each contiguous run of characters sharing
@@ -401,6 +401,17 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
 #[path = "render_ratatui_draw.rs"]
 mod draw;
 
+/// The input box's `Block`: top and bottom rules only — the side columns are
+/// blank so a multi-line copy from the terminal has no `│` in it — with
+/// horizontal padding 1 so the inner area is where `Borders::ALL` put it.
+fn input_box_block() -> Block<'static> {
+    Block::default()
+        .borders(Borders::TOP | Borders::BOTTOM)
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(Color::Gray))
+        .padding(Padding::horizontal(1))
+}
+
 /// Render the live (non-committed) region: input box + status bar.
 fn render_live_region(
     frame: &mut ratatui::Frame,
@@ -433,12 +444,8 @@ fn render_live_region(
         0
     };
 
-    let input_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::Gray));
     let input_para = Paragraph::new(input_text.clone())
-        .block(input_block)
+        .block(input_box_block())
         .scroll((scroll_offset, 0));
     frame.render_widget(input_para, content_area);
 
@@ -559,12 +566,8 @@ fn render_prompt_region(
         .split('\n')
         .map(|l| Line::from(Span::raw(l)))
         .collect();
-    let input_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::Gray));
     let input_para = Paragraph::new(input_text_obj)
-        .block(input_block)
+        .block(input_box_block())
         .wrap(Wrap { trim: false });
     frame.render_widget(input_para, chunks[0]);
 
@@ -592,11 +595,7 @@ fn render_spinner_region(
 
     // ── Bordered input box holding the kept text ───────────────
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
-    let input_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::Gray));
-    let input_para = Paragraph::new(typeahead_text.to_string()).block(input_block);
+    let input_para = Paragraph::new(typeahead_text.to_string()).block(input_box_block());
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────

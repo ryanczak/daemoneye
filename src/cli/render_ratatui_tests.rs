@@ -129,15 +129,11 @@ fn live_region_shows_input_text_and_status_bar() {
         "status bar should contain model name, got: {}",
         all_text
     );
-    // Input box border should be present.
+    // Input box top rule should be present (the box has no corners or side
+    // borders: they became blank paste-safe columns).
     assert!(
-        all_text.contains('┌'),
-        "input box top border should be present, got: {}",
-        all_text
-    );
-    assert!(
-        all_text.contains('│'),
-        "input box side border should be present, got: {}",
+        all_text.contains('─'),
+        "input box top rule should be present, got: {}",
         all_text
     );
     // Input text should be rendered.

@@ -1,7 +1,7 @@
 # Phase 01 — input-box-paste
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-01
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -147,3 +147,65 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-02 03:18 (started)
+
+Executor: executor-2 (Claude Opus 4.5). Flipped Status to `in-progress` and the
+milestone README row to match. Starting with the red tests, then the block
+helper.
+
+### Update — 2026-11-01 19:47 (red runs)
+
+Step 1's three tests, written against the pre-phase code and run before the
+helper existed:
+
+```
+running 3 tests
+test cli::render_ratatui::layout_tests::paste_safe_box_keeps_top_and_bottom_rules ... FAILED
+test cli::render_ratatui::layout_tests::paste_safe_box_has_blank_side_columns ... FAILED
+test cli::render_ratatui::layout_tests::paste_safe_box_blank_under_spinner_and_prompt ... FAILED
+failures:
+---- cli::render_ratatui::layout_tests::paste_safe_box_keeps_top_and_bottom_rules stdout ----
+thread '...' panicked at src/cli/render_ratatui_layout_tests.rs:43:9:
+no full-width ─ rule row found in buffer
+---- cli::render_ratatui::layout_tests::paste_safe_box_has_blank_side_columns stdout ----
+thread '...' panicked at src/cli/render_ratatui_layout_tests.rs:43:9:
+no full-width ─ rule row found in buffer
+---- cli::render_ratatui::layout_tests::paste_safe_box_blank_under_spinner_and_prompt stdout ----
+thread '...' panicked at src/cli/render_ratatui_layout_tests.rs:328:9:
+spinner region must not contain │, row 2: "│queued text                                               │"
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 2558 filtered out; finished in 0.00s
+```
+
+The `keeps_top_and_bottom_rules` / `has_blank_side_columns` failures show the
+pre-phase box drew its rules as `┌────┐` / `└────┘` rows with corners — never a
+full-width plain `─` run — and the spinner failure shows `│queued text…│`
+side borders in the live region, exactly the paste hazard.
+
+### Findings — 2026-11-01 19:47
+
+none — everything I touched stayed inside the phase's authorized files.
+
+### Update — 2026-11-01 19:50 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block once, output redirected to
+`.rexymcp/out/e2e-phase01.txt` and pasted below verbatim:
+
+```
+paste_safe passed=3 failed=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2640 failed=0
+```
+
+First line is `paste_safe passed=3 failed=0` (was `passed=0 failed=0`), the
+hygiene / doc_truth / bug_tracker gates are `ok`, `build_warnings=0`, clippy
+clean, `fmt_exit=0`, full suite `failed=0` — every acceptance criterion's
+command line is green. The new `input_box_block` helper is used at all three
+render sites (`render_live_region`, `render_spinner_region`,
+`render_prompt_region`), and `input_content_width` plus every cursor
+assertion passed unchanged.
