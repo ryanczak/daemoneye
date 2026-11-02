@@ -1,7 +1,7 @@
 # Phase 02 — status-bar
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-02
 **Depends on:** phase 01 (done)
 **Estimated diff:** ~300 lines
@@ -508,3 +508,145 @@ width (ratatui's `Span::width()` / `Line::width()`, which use
 clip, and in the `status_bar_` tests' width assertions. Write
 `status_bar_fits_a_wide_hint_exactly` first and paste its red run. The other
 six tests and the rest of the phase stand.
+
+### Update — 2026-11-02 19:00 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Bug-02-1 is fixed and the phase's E2E is green. The fix: `status_bar_line` now measures the left part, the hint, the fit decision, the gap arithmetic and the clip with display width (`Span::raw(...).width()` / `Line::width()`, ratatui's unicode-width path) instead of `chars().count()`, so the two-column `⚡` no longer overflows the pane by one column; `truncate_with_ellipsis` clips by display width too via a small `take_width` helper (a wide glyph is never split mid-cell). The new `status_bar_fits_a_wide_hint_exactly` was written first and run red on the bounced tree (`f6b1d9f5`) — it failed exactly as the bug describes, line width 104 vs width 103 — and every width assertion in the `status_bar_` tests now measures `Line::width()`. E2E block (captured verbatim in `.rexymcp/out/e2e-phase02-r2.txt` and pasted in the new end-to-end entry): `status_bar passed=7 failed=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker `ok`, clippy clean, `fmt_exit=0`, full suite `passed=2647 failed=0`; `paste_safe_box_*` and `approval_panel_*` pass unchanged. Committed as `d756af74`, tree clean, phase left at `in-progress` for the server's completion tail.
+
+**Notes for review**
+
+- Deviation from the bounce note's letter, none from its intent: ratatui 0.30 re-exports no truncating helper (`unicode_truncate`'s crate is transitive-only and unnameable without a new dependency, which this phase cannot authorize), so the display-width clip is a 15-line helper (`take_width`) over `Span::raw(ch).width()` — the same measurement source the reviewer named.
+- `take_width` drops a whole column rather than splitting a wide glyph, so a truncated line can be one column short of `max` when the boundary falls mid-glyph; the doc comment states why. All ASCII-clipping behaviour is unchanged (the existing three `truncate_with_ellipsis` tests pass untouched, one of their two char-count asserts now measures width).
+- The allowlist did not move this round — the fix is inside the same functions; the three ratcheted entries still match.
+- The first E2E run of this round caught two real pre-commit failures (a clippy `int_plus_one` on `boundary - 1`, and `fmt` drift on the new asserts), both fixed before the captured run; the pasted transcript is the post-fix run.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.12s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-947e630ce8e8635d)
+kill: (3339531): No such process
+kill: (-3340198): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-55151dc2a3f1453f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-f920d215d69f41da)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-820c53c972d9b621)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-448dcbf0c0dd5ebc)
+     Running tests/integration.rs (target/debug/deps/integration-a704381cf0548134)
+     Running tests/isolation.rs (target/debug/deps/isolation-0272e2131c7fc4f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-8f8b55305473d8e9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b7e6e4bc38231a68)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-02-status-bar.md` — +64 -0
+- `src/cli/render_ratatui.rs` — +26 -7
+- `src/cli/render_ratatui_tests.rs` — +39 -10
+
+**Commit:** d756af74fe1cf81246855f898439926763bd9a72
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
