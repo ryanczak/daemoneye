@@ -1,7 +1,7 @@
 # Phase 03 — approvals-categories
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-02
 **Depends on:** phase 02 (done)
 **Estimated diff:** ~450 lines
@@ -322,3 +322,153 @@ function did not get squeezed.
   `SessionApproval` the closures collapsed into one `PromptKind` parameter.
   Adjacent, already-done inside this phase's authorized files.
 - none otherwise — everything stayed inside the authorized files.
+
+### Update — 2026-11-02 22:57 (complete, server-authored)
+
+**Summary:** All nine spec tasks are complete and committed (`25d4242f`); the working tree is clean, the phase doc still reads `in-progress`, and the completion tail is the server's to write.
+
+**Summary + Notes for review**
+
+`/approvals` now covers all eight categories — `commands`, `sudo`, `scripts`, `runbooks`, `files`, `schedules`, `agents`, `deletes` — plus the per-host grants and an always-asked block (unconfigured host, ghost escape hatch, own `/shell` shells, sudo file edit). The grammar lives in one pure `approvals_cmd(&mut SessionApproval, &str)` in `approval.rs` (list/`<category> on|off` with per-name clearing on `off`/`revoke`, `all on` sparing sudo, `all off`/`revoke`/`reset` clearing everything including hosts, `host <name> [sudo] on|off`, bare `on|off` aliases still meaning commands, and an error naming the valid categories for everything else including always-asked names); `slash.rs` only renders the outcome. `SessionApproval` gains `schedules`/`deletes` flags and an `agents` flag + name set (all `false` from `from_config`, no new config keys), the new `prompt_auto_approves(PromptKind)` predicate sits beside `auto_approves`, and the hint reports the three new kinds. `ScriptWritePrompt`/`ScriptDeletePrompt` carry `#[serde(default)] agent: bool`, set `true` by the two `knowledge/agents.rs` senders — no `script_name`-prefix branching anywhere; the schedule, script/agent write, script-delete and runbook-delete prompt arms consult the state and commit the same `✓ auto-approved (session)` line as the existing auto-approvals. The eight `approvals_cmd_` tests were written first and run red against `913442f6` in a throwaway worktree (7 failed + the wire test, which cannot compile without the field — the honest red for a wire pin; the red-runs entry explains). E2E block: `approvals_cmd passed=8 failed=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all `ok`, clippy clean, `fmt_exit=0`, full suite `passed=2655 failed=0`; the pre-existing `SessionApproval`, `status_bar_*` and `paste_safe_box_*` tests pass unchanged. One allowlist ratchet (`ask_with_session_ratatui` 691 → 719) with the reason in the Update Log; docs updated are `HELP_TEXT`, README's `/approvals` paragraph and slash-table row, `docs/REQUIREMENTS.md` FR-1.2.19, and one clarifying line in the config template's `[approvals]` comment (assets, not a config key).
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.17s
+
+
+LINT
+    Checking daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.82s
+
+
+TEST
+e_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.12s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.30s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-947e630ce8e8635d)
+kill: (3434433): No such process
+kill: (-3435117): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-55151dc2a3f1453f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-f920d215d69f41da)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-820c53c972d9b621)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-448dcbf0c0dd5ebc)
+     Running tests/integration.rs (target/debug/deps/integration-a704381cf0548134)
+     Running tests/isolation.rs (target/debug/deps/isolation-0272e2131c7fc4f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-8f8b55305473d8e9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b7e6e4bc38231a68)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +2 -2
+- `assets/etc/config.toml` — +3 -1
+- `docs/REQUIREMENTS.md` — +5 -4
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-03-approvals-categories.md` — +124 -1
+- `src/cli/commands/approval.rs` — +779 -1
+- `src/cli/commands/chat.rs` — +1 -1
+- `src/cli/commands/slash.rs` — +4 -59
+- `src/cli/commands/stream_ask.rs` — +49 -21
+- `src/cli/commands/stream_prompts.rs` — +95 -10
+- `src/daemon/executor/knowledge/agents.rs` — +2 -0
+- `src/daemon/executor/knowledge/artifacts.rs` — +2 -0
+- `src/ipc.rs` — +16 -2
+- `src/ipc_tests.rs` — +4 -0
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** 25d4242fbd108ed5a3e18d4edf451756fc660e70
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
