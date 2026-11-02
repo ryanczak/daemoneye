@@ -1,7 +1,7 @@
 # Phase 03 — approvals-categories
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-02 — bug-03-1 major, bug-03-2 minor; the criteria marked *bounce 1* below are the open work)
 **Drafted:** 2026-11-02
 **Depends on:** phase 02 (done)
 **Estimated diff:** ~450 lines
@@ -159,6 +159,36 @@ and `deletes` when on.
       eight categories and the `all` / `host` / `revoke <category>` forms.
 - [ ] The E2E block shows `hygiene`, `doc_truth` and `bug_tracker` `ok`,
       `build_warnings=0`, clippy clean, `fmt_exit=0`, and `failed=0`.
+
+*Bounce 1 (2026-11-02, [bug-03-1](bugs/bug-03-1.md) major,
+[bug-03-2](bugs/bug-03-2.md) minor) — each criterion below was run against
+`25d4242f` and fails there:*
+
+- [ ] *bounce 1* `grep -nE 'scripts\.insert|agents\.insert' src/cli/commands/stream_prompts.rs`
+      prints nothing (today: lines 559 and 561 — a delete prompt's `A`
+      answer writes into the *write* grant sets). bug-03-1.
+- [ ] *bounce 1* `grep -n "agent's own session name" src/cli/commands/stream_prompts.rs`
+      prints nothing (today: lines 496 and 540 — the claim is not what
+      `prompt_auto_approves` does). bug-03-1.
+- [ ] *bounce 1* Script, agent and runbook delete prompts offer the same
+      answers, and a delete prompt's confirmation line names only a grant
+      `prompt_auto_approves` honours on the next call of that kind. bug-03-1.
+- [ ] *bounce 1* `grep -n revoke src/cli/commands/chat.rs` prints the
+      `/approvals` `HELP_TEXT` entry (today: nothing), and that entry names
+      the `<category>|all on|off`, `host <name> [sudo] on|off` and
+      `revoke [category]` forms. bug-03-2.
+- [ ] *bounce 1* `approvals_cmd_category_on_off_toggles_only_that_category`
+      asserts the `<category> off` reply for every category but `sudo`
+      contains `now require approval` and never `requires` (today
+      `scripts off` replies `✓ scripts now requires approval`). bug-03-2.
+- [ ] *bounce 1* `approvals_cmd_rejects_unknown_and_always_asked_names`
+      asserts the replies to `host pinky sudo` and to bare `host` contain
+      the argument once and never `host host` (today
+      `✗ unknown: /approvals host host pinky sudo — …`). bug-03-2.
+- [ ] *bounce 1* The E2E block's first line is still
+      `approvals_cmd passed=8 failed=0` — the two pins go into the existing
+      tests — and the block is re-run and pasted in a new
+      `### Update — <date> (end-to-end verification, bounce 1)` entry.
 
 ## Test plan
 
