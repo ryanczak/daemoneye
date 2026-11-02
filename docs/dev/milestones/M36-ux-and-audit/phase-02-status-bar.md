@@ -172,3 +172,86 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-02 05:25 (started)
+
+Executor: executor (GLM, pairing with Claude Code). Flipped Status to
+`in-progress` and the milestone README row to match. Plan: red tests against
+the pre-phase renderer, then the pure builder `status_bar_line`, then the
+callers (`turn` through `TokenCtx`), then the E2E block.
+
+### Update — 2026-11-02 06:10 (red runs)
+
+Step 1's six tests, written against the pre-phase code (commit `963e9e71`,
+the tree before any phase-02 change) and run in a throwaway worktree. The
+pure-function tests needed the not-yet-existing `status_bar_line`, so their
+harness stubbed it with an empty `Line` — the point stands: every assertion
+the new behaviour makes fails on the pre-phase code:
+
+```
+running 6 tests
+test cli::render_ratatui::tests::status_bar_is_readable_gray_not_dim ... ok
+test cli::render_ratatui::tests::status_bar_drops_hint_before_clipping ... FAILED
+test cli::render_ratatui::tests::status_bar_ctx_formats_tokens_compactly ... FAILED
+test cli::render_ratatui::tests::status_bar_ctx_colours_at_75_and_90_percent ... FAILED
+test cli::render_ratatui::tests::status_bar_line_orders_turn_ctx_model_session_uptime ... FAILED
+test cli::render_ratatui::tests::status_bar_shows_turn_on_every_panel ... FAILED
+
+failures:
+---- cli::render_ratatui::tests::status_bar_drops_hint_before_clipping stdout ----
+the left part survives intact: ""
+---- cli::render_ratatui::tests::status_bar_ctx_formats_tokens_compactly stdout ----
+below 1 000 as is: ""
+---- cli::render_ratatui::tests::status_bar_ctx_colours_at_75_and_90_percent stdout ----
+a span holds the context segment
+---- cli::render_ratatui::tests::status_bar_line_orders_turn_ctx_model_session_uptime stdout ----
+the bar must contain 'turn 6': ""
+---- cli::render_ratatui::tests::status_bar_shows_turn_on_every_panel stdout ----
+draw path 0 must put turn 6 on its status row: "                ────… typed ────… session:test-ses… · test-model · up 0s"
+test result: FAILED. 1 passed; 5 failed; 0 ignored; 0 measured; 2561 filtered out; finished in 0.00s
+```
+
+The `is_readable_gray_not_dim` vacuous pass is expected red-run noise: with
+the stub's empty line there is no span to violate the rule — on the real
+implementation it asserts over the real spans. The five real failures show
+the pre-phase bar carries no turn, no ctx, no hint and the old
+`session:<id> · <model> · up <t>` text.
+
+### Findings — 2026-11-02 06:10
+
+- `TokenCtx` had no turn, so `stream_ask.rs`'s twelve `StatusBarState`
+  literals each rebuilt it; `prompt_status` grew a `turn` parameter (8
+  params now, `#[allow(clippy::too_many_arguments)]` added with the reason
+  inline). Adjacent, not phase scope: `prompt_status` could take the
+  `StatusBarState` wholesale once every caller holds one.
+- `examples/reanchor_repro.rs` builds a `StatusBarState` literal too; it is
+  outside the authorized files, but it does not compile without the new
+  field, so it got `turn: 0` (one line). Flagging for the record.
+- none otherwise — everything stayed inside the authorized files.
+
+### Update — 2026-11-02 06:20 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block once, output redirected
+to `.rexymcp/out/e2e-phase02.txt` and pasted below verbatim:
+
+```
+status_bar passed=6 failed=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.97s
+fmt_exit=0
+passed=2646 failed=0
+```
+
+First line is `status_bar passed=6 failed=0` (was `passed=0 failed=0`), the
+hygiene / doc_truth / bug_tracker gates are `ok`, `build_warnings=0`, clippy
+clean (`Finished`, no error line), `fmt_exit=0`, full suite `failed=0`.
+Preservation: `paste_safe_box_*` (3) and `approval_panel_*` (5) pass
+unchanged inside the full suite. The allowlist ratchet was used three times:
+`run_chat_ratatui` 526→537, `read_input_line_inner_ratatui` 183→189 and
+`ask_with_session_ratatui` 678→691 — every one is the new `turn` field plus
+its plumbing (the `TokenCtx` field, the `RatatuiInputCtx` field, and the
+`prompt_status` parameter), not squeezed code.
+
