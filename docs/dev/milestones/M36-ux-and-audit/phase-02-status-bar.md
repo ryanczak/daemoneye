@@ -1,7 +1,7 @@
 # Phase 02 — status-bar
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-02
 **Depends on:** phase 01 (done)
 **Estimated diff:** ~300 lines
@@ -650,3 +650,31 @@ kill: (-3340198): No such process
 **Commit:** d756af74fe1cf81246855f898439926763bd9a72
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-02
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — [bug-02-1](bugs/bug-02-1.md) (minor): the bar measured its
+  hint in chars, so the two-column `⚡` overflowed the pane by one column.
+  Fixed in `d756af74`: fit, gap and clip use display width
+  (`Span::width()` / `Line::width()`), `truncate_with_ellipsis` clips by
+  width through `take_width`, and `status_bar_fits_a_wide_hint_exactly`
+  (red on the bounced tree: 104 vs 103 columns) pins the boundary from both
+  sides.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** `examples/reanchor_repro.rs` gained `turn: 0` to
+  compile (the phase's Authorizations missed it, an architect omission);
+  `#[allow(clippy::too_many_arguments)]` on `prompt_status`, accepted as the
+  repo's existing convention.
+- **Calibration:** the bounce is the architect's `missing_spec_test` — the
+  spec pinned "never exceeds the width" without a wide-glyph case, though
+  the hint it named starts with one. Data, not yet a trend: a width rule
+  needs a display-width example. Run lengths: 181 turns (round 1 of phase
+  01), then 340 turns for this round's ~70-line fix; round-2 Update Log
+  entries were inserted above round 1's rather than appended.
+- **Reviewer re-run:** `fmt_exit=0`, `build_warnings=0`, clippy clean,
+  `passed=2647 failed=0`, `status_bar_` 7 passed.
+- **Noted, not this phase's:** the doc comment of `truncate_with_ellipsis`
+  sits above `picker_window`'s doc comment in `render_ratatui.rs` (an older
+  misplacement this phase edited in place); phase 05 rewrites that wrapping
+  code and can move it.
