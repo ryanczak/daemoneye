@@ -140,7 +140,7 @@ self-maintained config (decision 8), reload first so the edit can use it.
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
 | 01 | input-box-paste ([phase-01-input-box-paste.md](phase-01-input-box-paste.md)) — the input box keeps its top and bottom rules and draws a space where its side borders were, so a multi-line paste arrives intact; cursor and scroll math unchanged | design item 1 | done |
-| 02 | status-bar — `turn · ctx N/M (p%) · model · session · up`, readable gray, amber/red budget thresholds, the approvals hint at the right edge; the renderer learns the turn and the budget | design item 3 | todo |
+| 02 | status-bar ([phase-02-status-bar.md](phase-02-status-bar.md)) — `turn · ctx N/M (p%) · model · session · up`, readable gray, amber/red budget thresholds, the approvals hint at the right edge; the renderer learns the turn and the budget | design item 3 | todo |
 | 03 | approvals-categories — `SessionApproval` gains a flag per prompt kind (schedules, agents, script/runbook/agent deletes); `/approvals [list]` shows every category and the always-asked kinds; `/approvals <category> on\|off`, `/approvals all on\|off`; every client prompt arm consults its flag | design item 2 | todo |
 | 04 | top-attach — in `top`'s Shells panel, Enter (or `a`) opens the selected shell read-only through `ShellTail` + `TailModel`, `q`/Esc returns; the disk refresh leaves the key-handling path | design item 4, P5 | todo |
 | 05 | panel-wrap — one wrapper by display width (`unicode-width`) with control characters shown visibly, used by the approval panel, the markdown committer and the viewer; code blocks, headings, long words and CJK wrap instead of clipping | S1, B8, P6 (wrapping) | todo |

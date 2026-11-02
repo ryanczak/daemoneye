@@ -7,9 +7,10 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** none drafted. Phase 01 (input-box-paste) is `done`
-(approved first try, 2026-11-02). Next: `/rexymcp:architect next` drafts
-phase 02 (status-bar). Twenty phases are planned in the README's table.
+**Active phase:** phase 02 — status-bar
+([`phase-02-status-bar.md`](milestones/M36-ux-and-audit/phase-02-status-bar.md)),
+`todo`. Dispatch with `/rexymcp:dispatch phase-02-status-bar`. Phase 01 is
+`done`; twenty phases are planned in the README's table.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
