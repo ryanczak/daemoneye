@@ -1,7 +1,7 @@
 # Phase 01 — input-box-paste
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-01
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -209,3 +209,155 @@ command line is green. The new `input_box_block` helper is used at all three
 render sites (`render_live_region`, `render_spinner_region`,
 `render_prompt_region`), and `input_content_width` plus every cursor
 assertion passed unchanged.
+
+### Update — 2026-11-02 03:53 (complete, server-authored)
+
+**Summary:** </think>Everything is complete:
+
+- Task 1-8 done
+- All acceptance criteria met
+- Committed, clean tree
+- Status left at in-progress (server flips to review)
+
+Final message: Summary + Notes for review.</think>
+**Summary**
+
+The chat input box no longer draws `│` on its sides: one new helper, `input_box_block()`, builds the block for all three render sites (`render_live_region`, `render_spinner_region`, `render_prompt_region`) with `Borders::TOP | Borders::BOTTOM`, plain type, the existing gray border style, and `Padding::horizontal(1)` — ratatui's `inner()` subtracts padding after borders, so the inner rectangle, wrap width (`input_content_width` = 58 on a 60-wide backend) and cursor arithmetic are exactly where they were, and no cursor/wrap code changed. The rules now render as full-width plain `─` runs without corners, which is the signature the box's tests locate it by: `corner_row`/`box_rules` find the first rows made entirely of `─` instead of searching for `┌`, and the four assertions that required `┌` or a side `│` on the input box were inverted to assert the paste-safe behaviour (blank side columns, no `│` anywhere in the live region). The three new `paste_safe_box_*` tests were written first and are shown failing on the pre-phase code in the red-runs entry. E2E block output: `paste_safe passed=3 failed=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all `ok`, clippy clean, `fmt_exit=0`, full suite `passed=2640 failed=0`. Committed as `571b8cb0`; working tree clean; phase doc left at `in-progress` for the server's completion tail.
+
+**Notes for review**
+
+- The spec's constraint said "the first and last columns of the row above the box's content are `" "`" — with top/bottom-only borders, no glyph is drawn on the content rows' side columns at all (they render as reset cells, displayed as space), which satisfies the intent; the tests assert `" "` either way.
+- ratatui 0.30's `Padding` lives at `ratatui::widgets::Padding` (re-exported from `ratatui-widgets`), exactly as the spec sketched — no divergence.
+- The old `corner_row` helper and `box_rules` now share the "first full-width `─` row" logic; `corner_row` is kept as the single-row variant for its existing callers.
+- No live run was done, per the phase's test plan — the milestone's live check (paste three lines on pinky) still covers that.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.10s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test webhook_ghost_e2e_deterministic ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-947e630ce8e8635d)
+kill: (3091843): No such process
+kill: (-3092532): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-55151dc2a3f1453f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-f920d215d69f41da)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-820c53c972d9b621)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-448dcbf0c0dd5ebc)
+     Running tests/integration.rs (target/debug/deps/integration-a704381cf0548134)
+     Running tests/isolation.rs (target/debug/deps/isolation-0272e2131c7fc4f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-8f8b55305473d8e9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b7e6e4bc38231a68)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-01-input-box-paste.md` — +63 -1
+- `src/cli/render_ratatui.rs` — +15 -16
+- `src/cli/render_ratatui_layout_tests.rs` — +172 -10
+- `src/cli/render_ratatui_tests.rs` — +4 -8
+
+**Commit:** 571b8cb0d2016926d42e4c959b11353be765b6ea
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
