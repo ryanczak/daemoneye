@@ -1,7 +1,7 @@
 # Phase 01 — input-box-paste
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-01
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -361,3 +361,12 @@ kill: (-3092532): No such process
 **Commit:** 571b8cb0d2016926d42e4c959b11353be765b6ea
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-02
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (the "started" entry's self-description as Claude Opus 4.5 is the model's own mislabel; the server's entry names the endpoint)
+- **Scope deviations:** none
+- **Calibration:** none for the spec. Two observations, held as data: the run took 181 turns for a ~190-line diff, and the server-authored completion entry carries the model's raw `</think>` reasoning tail ahead of its summary — a rexyMCP bookkeeping artifact, not a phase defect.
+- **Reviewer re-run:** `fmt_exit=0`, `build_warnings=0`, clippy clean, `passed=2640 failed=0`, `paste_safe_box_` 3 passed.
