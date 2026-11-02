@@ -602,9 +602,11 @@ fn render_spinner_region(
     render_status_bar(frame, chunks[1], status, start_time, palette);
 }
 
-/// Clip `s` to at most `max` characters, marking truncation with a trailing '…'.
-/// Returns `s` unchanged when it already fits. The '…' counts toward `max`, so a
-/// truncated result is exactly `max` chars wide.
+/// Clip `s` to at most `max` display columns, marking truncation with a
+/// trailing '…'. Returns `s` unchanged when it already fits. The '…' counts
+/// toward `max`, so a truncated result is at most `max` columns wide (one
+/// column is dropped rather than splitting a wide glyph — a `…`-headed
+/// remainder is never clearer than a shorter kept prefix).
 /// The rows `[start, end)` a picker of `len` rows shows in `height` lines:
 /// all of them when they fit, otherwise a window that ends at `selected` once
 /// it has moved past the first `height` rows.
@@ -617,14 +619,31 @@ pub(crate) fn picker_window(len: usize, selected: usize, height: usize) -> (usiz
 }
 
 fn truncate_with_ellipsis(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
+    if Span::raw(s).width() <= max {
         s.to_string()
     } else if max == 0 {
         String::new()
     } else {
-        let kept: String = s.chars().take(max - 1).collect();
+        let kept = take_width(s, max - 1);
         format!("{kept}…")
     }
+}
+
+/// The longest prefix of `s` whose display width is at most `max` columns. A
+/// grapheme wider than the remaining budget is not split; the prefix ends
+/// before it.
+fn take_width(s: &str, max: usize) -> String {
+    let mut kept = String::new();
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let w = Span::raw(ch.to_string()).width();
+        if used + w > max {
+            break;
+        }
+        used += w;
+        kept.push(ch);
+    }
+    kept
 }
 
 /// Abbreviate a session id for the status bar: the first 8 chars followed by '…'
@@ -703,9 +722,9 @@ fn status_bar_line(
         }
     };
 
-    let left_width = left.chars().count();
+    let left_width = Span::raw(&left).width();
     let hint = status.approval_hint;
-    let hint_width = hint.chars().count();
+    let hint_width = Span::raw(hint).width();
     let fits_with_hint = !hint.is_empty() && width as usize > left_width + hint_width;
 
     let mut spans: Vec<Span<'static>> = if left_width > width as usize {

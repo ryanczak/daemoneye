@@ -178,6 +178,70 @@ E2E
 
 <!-- entries appended below this line -->
 
+### Update — 2026-11-02 18:32 (started, re-dispatch)
+
+Executor: executor (GLM, pairing with Claude Code), round 2. Bug-02-1 only:
+`status_bar_line`'s fit / gap / clip arithmetic and the tests' width assertions
+move from `chars().count()` to display width (`Span::width()` /
+`Line::width()`); `truncate_with_ellipsis` gains a width-exact clip used only
+by the bar. The new `status_bar_fits_a_wide_hint_exactly` is written first and
+run red against the bounced tree before any fix. Plan: red run → fix → green →
+E2E block → commit.
+
+### Update — 2026-11-02 18:44 (red run, bug-02-1)
+
+`status_bar_fits_a_wide_hint_exactly` written first and run against the
+bounced tree (HEAD `f6b1d9f5`, no fix applied). It fails at assertion (a),
+exactly as bug-02-1 describes — the line is one column wider than the width:
+
+```
+running 1 test
+test cli::render_ratatui::tests::status_bar_fits_a_wide_hint_exactly ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2567 filtered out; finished in 0.00s
+
+thread 'cli::render_ratatui::tests::status_bar_fits_a_wide_hint_exactly' (3308664) panicked at src/cli/render_ratatui_tests.rs:1120:5:
+assertion `left == right` failed: at the boundary width the line fills it exactly: Line::from_iter([Span::from(" turn 6 · ctx ").gray(), Span::from("41k/200k (20%)").gray(), Span::from(" · glm-4.6 · session:9d46ede3… · up 3m 2s").gray(), Span::from("  ").gray(), Span::from("⚡approvals: all · Ctrl+C revokes").gray()])
+  left: 104
+ right: 103
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+The `left` operand is `Line::width()` of the built line (104 columns), the
+`right` the width the bar was given (103): with `⚡` the two-column hint makes
+`chars().count()` arithmetic keep a hint that does not fit.
+
+### Findings — 2026-11-02 18:51
+
+- The round-1 red-runs entry's throwaway-worktree procedure was repeated for
+  this round's red run (commit `f6b1d9f5`, the bounced tree); the worktree is
+  removed again.
+- none otherwise — everything stayed inside the authorized files.
+
+### Update — 2026-11-02 18:57 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block once, output redirected to
+`.rexymcp/out/e2e-phase02-r2.txt` and pasted below verbatim:
+
+```
+status_bar passed=7 failed=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2647 failed=0
+```
+
+First line is `status_bar passed=7 failed=0` (the round-1 entry read
+`passed=6` — the seventh is `status_bar_fits_a_wide_hint_exactly`), the
+hygiene / doc_truth / bug_tracker gates are `ok`, `build_warnings=0`, clippy
+clean (`Finished`, no error line), `fmt_exit=0`, full suite `failed=0`.
+Preservation: `paste_safe_box_*` (3) and `approval_panel_*` (5) pass
+unchanged inside the full suite. The allowlist did not move this round — the
+fix is inside the same functions, and the three ratcheted entries still match
+their current sizes.
+
 ### Update — 2026-11-02 05:25 (started)
 
 Executor: executor (GLM, pairing with Claude Code). Flipped Status to

@@ -805,7 +805,7 @@ fn truncate_with_ellipsis_leaves_short_string_unchanged() {
 #[test]
 fn truncate_with_ellipsis_marks_overflow() {
     let result = truncate_with_ellipsis("hello world", 8);
-    assert_eq!(result.chars().count(), 8);
+    assert_eq!(Span::raw(&result).width(), 8, "clipped to the width");
     assert!(result.ends_with('…'));
     assert_eq!(result, "hello w…");
 }
@@ -959,11 +959,7 @@ fn status_bar_line_orders_turn_ctx_model_session_uptime() {
         "the five fields appear left to right: {text:?}"
     );
     // The hint ends flush against the right edge of the given width.
-    assert_eq!(
-        text.chars().count(),
-        200,
-        "the bar fills the width: {text:?}"
-    );
+    assert_eq!(line.width(), 200, "the bar fills the width: {text:?}");
     assert!(
         text.ends_with("⚡approvals: all · Ctrl+C revokes"),
         "the hint sits at the right edge: {text:?}"
@@ -1089,7 +1085,7 @@ fn status_bar_drops_hint_before_clipping() {
         "the left part survives intact: {text:?}"
     );
     assert!(
-        text.chars().count() <= 70,
+        line.width() <= 70,
         "the bar never exceeds the width: {text:?}"
     );
 
@@ -1100,10 +1096,43 @@ fn status_bar_drops_hint_before_clipping() {
         text.ends_with('…'),
         "the clipped line ends in the ellipsis: {text:?}"
     );
+    assert_eq!(line.width(), 30, "no line exceeds the width: {text:?}");
+}
+
+#[test]
+fn status_bar_fits_a_wide_hint_exactly() {
+    let hint = "⚡approvals: all · Ctrl+C revokes";
+    // The narrowest width where the left part and the hint fit with one
+    // space between them: the left part's display width, plus the hint's
+    // display width (the ⚡ alone is two columns), plus one.
+    let left = " turn 6 · ctx 41k/200k (20%) · glm-4.6 · session:9d46ede3… · up 3m 2s";
+    let boundary = Span::raw(left).width() + Span::raw(hint).width() + 1;
+
+    let line = bar_line(6, 41_234, 200_000, hint, boundary as u16);
     assert_eq!(
-        text.chars().count(),
-        30,
-        "no line exceeds the width: {text:?}"
+        line.width(),
+        boundary,
+        "at the boundary width the line fills it exactly: {line:?}"
+    );
+    assert!(
+        bar_text(&line).ends_with("revokes"),
+        "the hint's last character is on screen: {line:?}"
+    );
+
+    // One column narrower: the hint is dropped whole, the left part intact.
+    let line = bar_line(6, 41_234, 200_000, hint, boundary as u16 - 1);
+    let text = bar_text(&line);
+    assert!(
+        !text.contains("approvals"),
+        "one column narrower the hint is dropped: {text:?}"
+    );
+    assert!(
+        text.ends_with("up 3m 2s"),
+        "the left part survives intact: {text:?}"
+    );
+    assert!(
+        line.width() < boundary,
+        "no line exceeds the width: {line:?}"
     );
 }
 
