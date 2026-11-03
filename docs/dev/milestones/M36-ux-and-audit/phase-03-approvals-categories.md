@@ -1,7 +1,7 @@
 # Phase 03 — approvals-categories
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced 2026-11-02 — bug-03-1 major, bug-03-2 minor; the criteria marked *bounce 1* below are the open work)
+**Status:** review
 **Drafted:** 2026-11-02
 **Depends on:** phase 02 (done)
 **Estimated diff:** ~450 lines
@@ -613,3 +613,163 @@ swapped its inline branch for the shared call).
   branch for the shared call. The arms grew 3 lines net; the function did
   not get squeezed.
 - none otherwise — everything stayed inside the bounce-1 authorized files.
+
+### Update — 2026-11-03 04:31 (complete, server-authored)
+
+**Summary:** </think>All tasks complete. Let me do the final checklist verification:
+
+- [x] Phase doc's Status: line still says `in-progress` ✓ (line 4)
+- [x] Milestone README's phase-table row still says `in-progress` ✓ (line 144)
+- [x] I did NOT hand-write a `(complete)` Update Log entry ✓ (I wrote started, red runs, findings, E2E entries only)
+- [x] `cargo fmt --all` was run immediately before `git add` ✓
+- [x] All verification commands ran clean ✓ (E2E block: approvals_cmd passed=8 failed=0, build_warnings=0, hygiene/doc_truth/bug_tracker ok, clippy clean, fmt_exit=0, passed=2655 failed=0)
+- [x] Final message: Summary + Notes for review — this is the last turn
+- [x] `git status --short` shows nothing ✓
+- [x] `git log -1 --stat` shows the commit includes every file touched ✓
+
+Now write the final summary message.</think>
+**Summary + Notes for review**
+
+Both bounce-1 bugs are fixed and committed as `65b6d1e9` (single `fix:` commit; working tree clean; phase doc and README row left at `in-progress` for the server to flip).
+
+**bug-03-1 (major):** `prompt_delete_ratatui` no longer offers `[A]pprove for session` on any delete and no longer writes into the write-grant sets — a delete has no per-name session grant, so all three delete prompts (script, agent, runbook) are now the same plain Y/N shape the runbook delete already had, recording nothing, with only the `✓ auto-approved (session)` (under `deletes`) and `✓ approved` confirmations, both of which name a grant `prompt_auto_approves` honours on the next call of that kind. The function takes the `PromptKind` itself instead of the `agent` bool, the runbook arm folds into it, and the two false "agent's own session name" doc comments are gone. `grep -nE 'scripts\.insert|agents\.insert' stream_prompts.rs` and `grep -n "agent's own session name" stream_prompts.rs` both print nothing; the full `prompt_auto_approves` predicate is unchanged.
+
+**bug-03-2 (minor):** `HELP_TEXT`'s `/approvals` row now uses the table's detail-line convention and names `<category>|all on|off`, `host <name> [sudo] on|off`, `revoke [category]` (`grep -n revoke chat.rs` prints it). The plural exception is inverted to match the bug report: `sudo` is the one singular (`✓ sudo now requires approval`), every other category reads `now require approval`. The host refusals quote the argument exactly once — `host host` is gone (`unknown_category` now receives `other`/`original` directly).
+
+The two pins went into the existing tests per the criteria: the off-reply number pin in `approvals_cmd_category_on_off_toggles_only_that_category` (every category but `sudo` asserts `now require approval` and never `requires`) and the argument-once pin plus `host pinky sudo` in `approvals_cmd_rejects_unknown_and_always_asked_names`. Both failed on `25d4242f` in a throwaway worktree carrying only the 21-line pin diff (red run pasted in a new red-runs entry, verbatim) and pass on the fixed tree. E2E block re-run once and pasted in a new `(end-to-end verification, bounce 1)` entry: `approvals_cmd passed=8 failed=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all `ok`, clippy clean, `fmt_exit=0`, full suite `passed=2655 failed=0`. Preservation holds — the pre-existing `SessionApproval`, `status_bar_*` and `paste_safe_box_*` tests pass unchanged.
+
+**Deviations / notes for review:** (1) `prompt_delete_ratatui`'s signature changed from `agent: bool` to `kind: PromptKind` — the cleanest way to make one function serve all three deletes; both in-scope callers updated. (2) Allowlist ratchet `ask_with_session_ratatui` 719 → 722, reason in the Findings entry. (3) Docs: a new one-line README paragraph states deletes ask plain `[y/N]` (bug-03-1's DoD implies the docs must not claim an `A` on deletes); `docs/REQUIREMENTS.md` FR-1.2.19 gained the same clause, and FR-1.2.13's runbook-crud row names the shared delete question. (4) `prompt_with_session_approve`/`build_approval_prompt` remain in use by the write/edit paths, so nothing was deleted beyond `record_delete_for_session`.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-947e630ce8e8635d)
+kill: (3523774): No such process
+kill: (-3524448): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-55151dc2a3f1453f)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-f920d215d69f41da)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-820c53c972d9b621)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-448dcbf0c0dd5ebc)
+     Running tests/integration.rs (target/debug/deps/integration-a704381cf0548134)
+     Running tests/isolation.rs (target/debug/deps/isolation-0272e2131c7fc4f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-8f8b55305473d8e9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b7e6e4bc38231a68)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +2 -0
+- `docs/REQUIREMENTS.md` — +2 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-03-approvals-categories.md` — +111 -0
+- `src/cli/commands/approval.rs` — +27 -7
+- `src/cli/commands/chat.rs` — +2 -1
+- `src/cli/commands/stream_ask.rs` — +20 -17
+- `src/cli/commands/stream_prompts.rs` — +11 -51
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** 65b6d1e938d22966ea091f2489b13e67d2f8fa51
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
