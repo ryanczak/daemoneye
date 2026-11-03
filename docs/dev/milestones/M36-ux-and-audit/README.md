@@ -72,6 +72,24 @@ the same code, so they ship together.
    effect, seeded like the other knowledge memories and held to the
    `Config` structs by `tests/doc_truth.rs` the way the template already
    is.
+9. **OSC 7501 program status** (added 2026-11-03, PE request). DaemonEye
+   speaks the Program Status Protocol
+   ([digest](osc7501-spec.md), from
+   <https://mitchellh.com/writing/program-status-osc7501>) on both sides.
+   **Consume:** the daemon's PTY shells parse the reports the programs in
+   them emit (Claude Code, cargo, terraform, …) into per-shell records, held
+   to the spec's grammar, limits, lifetime and security rules (a bad report
+   is dropped whole; `msg`/`title` are masked like other shell output); the
+   records reach the AI and the user where a shell's state already shows —
+   `list_shells`, `read_shell_screen`'s header, `watch_shell` (wait until a
+   program reports `blocked`/`done`/`error`) and `top`'s Shells panel — and
+   the program's own word outranks the screen-scraped `PaneStatus`. Only
+   the feature-detection reply is ever written back. **Emit:** the chat
+   client reports its own state to the user's terminal — `working` during a
+   turn, `blocked:kind=permission` (or `auth` at a credential prompt) while
+   an approval waits, `idle` between turns, `clear` on exit. Scope, the
+   tmux passthrough question the spec leaves open, and whether this is one
+   phase or two are settled at drafting.
 
 **Rules every phase carries:**
 
@@ -118,6 +136,10 @@ the same code, so they ship together.
   leaves the file unparseable is refused naming the TOML error and the
   file is unchanged. `read_memory config-reference` lists the edited key
   with its range and default.
+- A program in a daemon shell that emits `OSC 7501 ; state=blocked:kind=permission:app=x ST`
+  shows as blocked (with its `app`) in `list_shells` and `top`, and
+  `watch_shell` on it returns on that report; during a chat approval prompt
+  a 7501-aware outer terminal sees the client as `blocked`.
 - The four gates pass; `cargo test` passes at 2637 tests plus the new ones.
 - `2.8.0` is released per `REXYMCP.md` § Versioning.
 
@@ -131,11 +153,12 @@ the same code, so they ship together.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 21 (phase 04 split into 04a/04b on 2026-11-03).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 22 (phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03).
 Phases 01–04 are the PE's four items; 05–07 the approval-prompt findings
 that share their code; 08–16 the remaining `major` rows, most severe
 first; 17 the shell-lifecycle fix; 18 the performance tail; 19–20 the
-self-maintained config (decision 8), reload first so the edit can use it.
+self-maintained config (decision 8), reload first so the edit can use it. 21 is OSC 7501 (decision 9), after the
+config so the shell-state surfaces it extends have settled.
 
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
@@ -160,6 +183,7 @@ self-maintained config (decision 8), reload first so the edit can use it.
 | 18 | perf-tail — `read_shell_log` walks records with a cursor off the runtime; one index connection and schema check per daemon, the offset from the append; prompt assembly stops rebuilding an empty corpus each turn; `ip_limits` pruned; the `build_match_expr` sentence in CLAUDE.md | P2, P3, B17, P4, P8, L2 | todo |
 | 19 | config-reload — the daemon holds its `Config` behind one shared, swappable handle that every per-request reader goes through; `Request::Reload` / `daemoneye reload` re-read and validate `config.toml`, swap the runtime-safe sections, re-init masking and stream timeouts, and reply with the keys that changed and the keys that wait for a restart; an invalid file is refused and the running config stays | decision 8 | todo |
 | 20 | self-config — `read_file` and `edit_file` admit `etc/config.toml` (masked read, always-asked edit with a masked diff, `Config` validation before the write, a reload after it); the `config-reference` knowledge memory, seeded and in `--overwrite-memory`, gated by `doc_truth` against the `Config` structs; the `read_file` / `edit_file` rows in CLAUDE.md and README follow | decision 8 | todo |
+| 21 | program-status — OSC 7501: daemon shells parse program reports into per-shell records (spec grammar, limits, lifetime, security; masked) surfaced in `list_shells`, `read_shell_screen`, `watch_shell` and `top`; the chat client emits its own working/blocked/idle state; may split consume/emit at drafting | decision 9 | todo |
 
 ## Notes
 

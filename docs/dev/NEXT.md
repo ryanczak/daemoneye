@@ -7,11 +7,11 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 04a — shells-select
-([`phase-04a-shells-select.md`](milestones/M36-ux-and-audit/phase-04a-shells-select.md)),
-`todo`. Dispatch with `/rexymcp:dispatch phase-04a-shells-select`; phase 04b
-(top-attach) follows. Phases 01–03 are `done`; twenty-one phases are planned
-in the README's table (04 split into 04a/04b on 2026-11-03).
+**Active phase:** phase 04b — top-attach
+([`phase-04b-top-attach.md`](milestones/M36-ux-and-audit/phase-04b-top-attach.md)),
+dispatched 2026-11-03. Phases 01–04a are `done`; twenty-two phases are planned
+in the README's table (04 split into 04a/04b, and 21 — OSC 7501 program
+status, PE decision 9 — added, both on 2026-11-03).
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
