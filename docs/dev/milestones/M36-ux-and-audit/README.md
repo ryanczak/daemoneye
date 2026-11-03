@@ -131,7 +131,7 @@ the same code, so they ship together.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 20.
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 21 (phase 04 split into 04a/04b on 2026-11-03).
 Phases 01–04 are the PE's four items; 05–07 the approval-prompt findings
 that share their code; 08–16 the remaining `major` rows, most severe
 first; 17 the shell-lifecycle fix; 18 the performance tail; 19–20 the
@@ -142,7 +142,8 @@ self-maintained config (decision 8), reload first so the edit can use it.
 | 01 | input-box-paste ([phase-01-input-box-paste.md](phase-01-input-box-paste.md)) — the input box keeps its top and bottom rules and draws a space where its side borders were, so a multi-line paste arrives intact; cursor and scroll math unchanged | design item 1 | done |
 | 02 | status-bar ([phase-02-status-bar.md](phase-02-status-bar.md)) — `turn · ctx N/M (p%) · model · session · up`, readable gray, amber/red budget thresholds, the approvals hint at the right edge; the renderer learns the turn and the budget | design item 3 | done |
 | 03 | approvals-categories ([phase-03-approvals-categories.md](phase-03-approvals-categories.md)) — `SessionApproval` gains a flag per prompt kind (schedules, agents, script/runbook/agent deletes); `/approvals [list]` shows every category and the always-asked kinds; `/approvals <category> on\|off`, `/approvals all on\|off`; every client prompt arm consults its flag | design item 2 | done        |
-| 04 | top-attach ([phase-04-top-attach.md](phase-04-top-attach.md)) — in `top`'s Shells panel, Enter (or `a`) opens the selected shell read-only through `ShellTail` + `TailModel`, `q`/Esc returns; the disk refresh leaves the key-handling path | design item 4, P5 | todo |
+| 04a | shells-select ([phase-04a-shells-select.md](phase-04a-shells-select.md)) — `top`'s Shells panel gets a selected row (keys move it, refresh keeps it by id); the disk refresh runs on a blocking thread, one in flight (split from 04 on 2026-11-03) | design item 4, P5 | todo |
+| 04b | top-attach ([phase-04b-top-attach.md](phase-04b-top-attach.md)) — Enter (or `a`) on the selected shell opens it read-only through `ShellTail` + `TailModel`, `q`/Esc returns to the panels as they were | design item 4 | todo |
 | 05 | panel-wrap — one wrapper by display width (`unicode-width`) with control characters shown visibly, used by the approval panel, the markdown committer and the viewer; code blocks, headings, long words and CJK wrap instead of clipping | S1, B8, P6 (wrapping) | todo |
 | 06 | approval-diff — write and edit approvals commit their diff as styled spans (no literal `[32m`), wrapped, with the row count shown and the full content one key away when clipped | B7 | todo |
 | 07 | approval-input — the approval and credential readers go through `read_key`: y/n/a on Enter, bracketed paste as one value, focus events and arrows ignored, UTF-8 decoded | S2, S3 | todo |
