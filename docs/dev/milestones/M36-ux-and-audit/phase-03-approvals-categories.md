@@ -1,7 +1,7 @@
 # Phase 03 — approvals-categories
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-02
 **Depends on:** phase 02 (done)
 **Estimated diff:** ~450 lines
@@ -773,3 +773,11 @@ kill: (-3524448): No such process
 **Commit:** 65b6d1e938d22966ea091f2489b13e67d2f8fa51
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-02
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bugs: bug-03-1 major, bug-03-2 minor — both fixed in `65b6d1e9`)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** round 1 added an `[A]pprove for session` answer to deletes that the spec never defined, and pointed it at the write grants (bug-03-1); round 2 removed it. All three delete prompts now share `prompt_delete_ratatui` (Y/N, answered without asking only by `deletes`). Display defects deferred to phase-05: FINDINGS L3 (agent-delete name/path, duplicate runbook header) and L4 (`HELP_TEXT` alignment).
+- **Calibration:** the bounce-1 red-runs and grep fences carry annotations (`'…'`, `(x2)`, `(no output — exit 1; …)`). That breaks the verbatim-capture rule, but the reviewer confirmed the same reds independently. The E2E fence matches `.rexymcp/out/e2e-phase03-bounce1.txt` byte for byte.

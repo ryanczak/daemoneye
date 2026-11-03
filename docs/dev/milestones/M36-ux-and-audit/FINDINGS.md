@@ -69,6 +69,8 @@ go at the bottom with `Phase` set to the phase that saw them.
 |---|---------------|------|--------|
 | L1 | `executor/dispatch_artifacts.rs` · `await_agent_result` → `mailbox_path` | model-supplied `agent_name` and `job_id` reach the path unvalidated; it reads only `.json` files that parse as `MailboxResult` | act: phase-13, validate with the agent-name and id grammars already in `agents/mod.rs` |
 | L2 | `memory/index/search.rs` · `build_match_expr` | keeps alphanumeric tokens only and does not quote them, contrary to CLAUDE.md; harmless | act: phase-18, the CLAUDE.md sentence follows the code |
+| L3 | `cli/commands/stream_ask.rs` · `ScriptDeletePrompt` / `RunbookDeletePrompt` arms | seen at phase-03 review: an agent delete renders `delete agent: agent: <name>` and names the path `~/.daemoneye/scripts/agent: <name>` (the config lives in `agents/<name>/`; the wrong path predates M36); the runbook arm commits its own `⚙ AI wants to delete runbook` header and `prompt_delete_ratatui` commits a second; `prompt_yes_no_ratatui("", …)` commits an empty `⚙` line | defer: phase-05 (prompt panels) — display only, the answers are right |
+| L4 | `cli/commands/chat.rs` · `HELP_TEXT` | seen at phase-03 review: the `/approvals` row runs 62 columns into the right-hand column, and its detail line puts `/prompt` at column 35, not 40 like the other rows | defer: phase-05 — cosmetic |
 
 ## Clean by inspection
 
