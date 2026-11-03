@@ -502,3 +502,114 @@ kill: (-3435117): No such process
 **Commit:** 25d4242fbd108ed5a3e18d4edf451756fc660e70
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-03 03:10 (started, bounce 1)
+
+Executor: executor (GLM-5.3-Flash-FP4-Local), resuming per the bounce-1
+criteria. The tree is at `dc12253a` (bug reports filed, phase doc
+in-progress). Plan: the two bug-03-2 pins into the existing
+`approvals_cmd_` tests, the delete-prompt rework over `stream_prompts.rs` /
+`stream_ask.rs` (no `A` on deletes, all three delete prompts answer the
+same), `HELP_TEXT` forms, a red run of the pins against `25d4242f` in a
+throwaway worktree, then greps, the E2E block, and one `fix:` commit.
+
+### Update — 2026-11-03 03:40 (red runs, bounce 1)
+
+The two bug-03-2 pins went into the existing tests (per the bounce-1
+criteria: "the two pins go into the existing tests") and ran against
+`25d4242f` — the phase-03 commit the bugs were filed on — in a throwaway
+worktree that carried only the pin diffs (21 lines, both in `approval.rs`'s
+test module):
+
+```
+running 8 tests
+test cli::commands::approval::tests::approvals_cmd_lists_every_category_and_the_always_asked_kinds ... ok
+test cli::commands::approval::tests::approvals_cmd_new_categories_auto_approve_their_prompts ... ok
+test cli::commands::approval::tests::approvals_cmd_agent_flag_round_trips ... ok
+test cli::commands::approval::tests::approvals_cmd_all_on_spares_sudo_and_all_off_clears_everything ... ok
+test cli::commands::approval::tests::approvals_cmd_host_grants_on_off ... ok
+test cli::commands::approval::tests::approvals_cmd_category_on_off_toggles_only_that_category ... FAILED
+test cli::commands::approval::tests::approvals_cmd_rejects_unknown_and_always_asked_names ... FAILED
+test cli::commands::approval::tests::approvals_cmd_revoke_category_and_legacy_on_off ... ok
+
+failures:
+
+---- cli::commands::approval::tests::approvals_cmd_category_on_off_toggles_only_that_category stdout ----
+
+thread '…' panicked at src/cli/commands/approval.rs:1044:17:
+every category but sudo is plural: ✓ commands now requires approval
+
+---- cli::commands::approval::tests::approvals_cmd_rejects_unknown_and_always_asked_names stdout ----
+
+thread '…' panicked at src/cli/commands/approval.rs:1255:13:
+the host form's refusal never doubles 'host': ✗ unknown: /approvals host host — valid categories: … · host <name> [sudo] on|off
+ (x2)
+failures:
+    cli::commands::approval::tests::approvals_cmd_category_on_off_toggles_only_that_category
+    cli::commands::approval::tests::approvals_cmd_rejects_unknown_and_always_asked_names
+
+test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 2568 filtered out; finished in 0.00s
+```
+
+Both pins fail on the pre-fix code, each naming the behaviour its bug
+report describes: the plural exception is inverted (`commands off` says
+`requires`), and the host refusal doubles the `host` verb. The other six
+`approvals_cmd_` tests pass unchanged — the pins added assertions, they did
+not move the grammar. The bug-03-1 criteria are grep-pins (the delete
+prompt's `A` and its doc comments), not assertion pins, so their red run is
+the grep itself: both greps print matches on `25d4242f` (the bug report
+records them: `stream_prompts.rs` 559, 561, 496, 540) and print nothing
+after the fix, quoted below.
+
+### Update — 2026-11-03 03:50 (end-to-end verification, bounce 1)
+
+The bounce-1 greps first, on the fixed tree:
+
+```
+$ grep -nE 'scripts\.insert|agents\.insert' src/cli/commands/stream_prompts.rs
+(no output — exit 1; was lines 559 and 561)
+$ grep -n "agent's own session name" src/cli/commands/stream_prompts.rs
+(no output — exit 1; was lines 496 and 540)
+$ grep -n revoke src/cli/commands/chat.rs
+65:             revoke [category]   /prompt    list or switch system prompt
+```
+
+Then the phase doc's § End-to-end verification block, run once, output
+redirected to `.rexymcp/out/e2e-phase03-bounce1.txt` and pasted verbatim:
+
+```
+approvals_cmd passed=8 failed=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.01s
+fmt_exit=0
+passed=2655 failed=0
+```
+
+First line is still `approvals_cmd passed=8 failed=0` — the two pins went
+into the existing tests, which now pass on the fixed tree and failed on
+`25d4242f` (red-runs entry above). The three delete prompts share
+`prompt_delete_ratatui`: script (`stream_ask.rs:461`), runbook
+(`stream_ask.rs:604`), agent (the same arm, `agent: true`), all Y/N with
+the same `✓ auto-approved (session)` / `✓ approved` lines, and a delete's
+confirmation names only `deletes`, which `prompt_auto_approves` honours on
+the next call of that kind. The pre-existing `SessionApproval` tests,
+`status_bar_*` and `paste_safe_box_*` pass unchanged inside the full suite
+(`passed=2655 failed=0`). Allowlist ratchet: `ask_with_session_ratatui`
+719 → 722 (the script-delete arm picks the `PromptKind`, the runbook arm
+swapped its inline branch for the shared call).
+
+### Findings — 2026-11-03 (bounce 1)
+
+- `prompt_delete_ratatui` now takes the `PromptKind` itself instead of the
+  `agent` bool, so the script arm and the runbook arm call the same function
+  with the same Y/N shape — the runbook arm's inline branch in
+  `stream_ask.rs` collapsed into the shared one (−17 lines there).
+- `tests/hygiene.rs`'s allowlist re-ratcheted for
+  `ask_with_session_ratatui` (719 → 722): the script-delete arm gained the
+  two-line `PromptKind` pick, the runbook-delete arm swapped its inline
+  branch for the shared call. The arms grew 3 lines net; the function did
+  not get squeezed.
+- none otherwise — everything stayed inside the bounce-1 authorized files.

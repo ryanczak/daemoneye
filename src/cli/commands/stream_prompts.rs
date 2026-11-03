@@ -492,74 +492,34 @@ where
 }
 
 /// The delete prompts' shared flow: show what will be removed, auto-approve
-/// when the session's `deletes` category (or, for an agent config, the
-/// agent's own session name) covers it, else ask and record an `A` answer
-/// under the session's name set for that kind.
-#[allow(clippy::too_many_arguments)]
+/// when the session's `deletes` category covers it, else ask Y/N. A delete
+/// has no per-name session grant: `deletes` is the only thing that answers
+/// one without asking, so the prompt offers Y/N and records nothing.
+#[allow(clippy::too_many_arguments)] // 8 params: renderer, stdin, status, approval, kind, name, label, path
 pub(super) async fn prompt_delete_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     status: &crate::cli::render::StatusBarState<'_>,
     approval: &mut super::approval::SessionApproval,
-    agent: bool,
+    kind: super::approval::PromptKind<'_>,
     name: &str,
-    kind: &str,
+    kind_label: &str,
     path_label: &str,
 ) -> bool {
     let _ = renderer.commit(&format!(
-        "\n  ⚙ AI wants to delete {kind}: {name}\n  → {path_label}\n"
+        "\n  ⚙ AI wants to delete {kind_label}: {name}\n  → {path_label}\n"
     ));
 
-    let auto = approval.prompt_auto_approves(&delete_kind(agent, name));
-    if auto {
+    if approval.prompt_auto_approves(&kind) {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
         return true;
     }
 
-    let prompt_text = build_approval_prompt("session", false);
-    let (approved, is_session, _user_msg) =
-        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
-
+    let approved = prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await;
     if approved {
-        if is_session {
-            record_delete_for_session(approval, agent, name);
-            let _ = renderer.commit(&format!(
-                "  ✓ approved — {kind} deletes are auto-approved for this session\n"
-            ));
-        } else {
-            let _ = renderer.commit("  ✓ approved\n");
-        }
-        true
-    } else {
-        let _ = renderer.commit("  ✗ denied\n");
-        false
+        let _ = renderer.commit("  ✓ approved\n");
     }
-}
-
-/// The [`PromptKind`] a delete prompt answers: an agent delete may be
-/// covered by the agent's own session name, the other deletes only by
-/// `deletes`.
-fn delete_kind(agent: bool, name: &str) -> super::approval::PromptKind<'_> {
-    if agent {
-        super::approval::PromptKind::AgentDelete(name)
-    } else {
-        super::approval::PromptKind::ScriptDelete(name)
-    }
-}
-
-/// Record an `A` (approve for session) answer on a delete: a script/agent
-/// config delete inserts the name into the session's set for that kind;
-/// a runbook delete has no per-name state today, so it records nothing.
-fn record_delete_for_session(
-    approval: &mut super::approval::SessionApproval,
-    agent: bool,
-    name: &str,
-) {
-    if agent {
-        approval.agents.insert(agent_name_of(name));
-    } else {
-        approval.scripts.insert(name.to_string());
-    }
+    approved
 }
 
 /// Strip the senders' prefixes from an agent frame's `script_name`

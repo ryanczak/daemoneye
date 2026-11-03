@@ -387,7 +387,7 @@ pub(super) fn approvals_cmd(a: &mut SessionApproval, args: &str) -> ApprovalCmdO
                         gate_category(a, category);
                         ApprovalCmdOutcome::Note(format!(
                             "✓ {category} now require{} approval",
-                            if *category == "deletes" { "" } else { "s" }
+                            if *category == "sudo" { "s" } else { "" }
                         ))
                     }
                     Some(unknown) => {
@@ -414,7 +414,7 @@ pub(super) fn approvals_cmd(a: &mut SessionApproval, args: &str) -> ApprovalCmdO
                         &format!("commands on {name}"),
                         other,
                     ),
-                    _ => ApprovalCmdOutcome::Error(unknown_category(&format!("host {other}"))),
+                    _ => ApprovalCmdOutcome::Error(unknown_category(other)),
                 };
             }
             if words.len() == 2 && matches!(words[1], "on" | "off") && CATEGORIES.contains(&verb) {
@@ -422,11 +422,10 @@ pub(super) fn approvals_cmd(a: &mut SessionApproval, args: &str) -> ApprovalCmdO
                 set_category(a, verb, on);
                 return ApprovalCmdOutcome::Note(if on {
                     format!("✓ {verb} auto-approved for this session")
+                } else if verb == "sudo" {
+                    "✓ sudo now requires approval".to_string()
                 } else {
-                    format!(
-                        "✓ {verb} now require{} approval",
-                        if verb == "deletes" { "" } else { "s" }
-                    )
+                    format!("✓ {verb} now require approval")
                 });
             }
             ApprovalCmdOutcome::Error(unknown_category(other))
@@ -488,7 +487,7 @@ fn host_switch(
             set.remove(name);
             ApprovalCmdOutcome::Note(format!("✓ {what} now require approval"))
         }
-        _ => ApprovalCmdOutcome::Error(unknown_category(&format!("host {original}"))),
+        _ => ApprovalCmdOutcome::Error(unknown_category(original)),
     }
 }
 
@@ -1035,6 +1034,17 @@ mod tests {
             let off = apply(&mut a, &format!("{category} off"));
             assert!(off.contains("✓"), "'{category} off' confirms: {off}");
             assert_state(&a, category, "gated");
+            if category == "sudo" {
+                assert!(
+                    off.contains("now requires approval"),
+                    "sudo is the one singular category: {off}"
+                );
+            } else {
+                assert!(
+                    off.contains("now require approval") && !off.contains("requires"),
+                    "every category but sudo is plural: {off}"
+                );
+            }
             if seed.is_some() {
                 let names_empty = match category {
                     "scripts" => a.scripts.is_empty(),
@@ -1224,6 +1234,7 @@ mod tests {
             "scripts maybe",
             "host",
             "host pinky",
+            "host pinky sudo",
         ] {
             let mut a = SessionApproval::default();
             set_all(&mut a);
@@ -1234,6 +1245,15 @@ mod tests {
             assert!(
                 err.contains("commands"),
                 "the error names the valid categories: {err}"
+            );
+            let expected = format!("/approvals {args}");
+            assert!(
+                err.matches(&expected).count() == 1,
+                "the refusal quotes the argument exactly once: {err}"
+            );
+            assert!(
+                !err.contains("host host"),
+                "the host form's refusal never doubles 'host': {err}"
             );
             let ApprovalCmdOutcome::Panel(lines) = approvals_cmd(&mut a.clone(), "list") else {
                 panic!("list returns a panel");
