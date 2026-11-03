@@ -1,7 +1,7 @@
 # Phase 04a — shells-select
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-03
 **Depends on:** phase 03 (done)
 **Estimated diff:** ~250 lines
@@ -150,3 +150,94 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-03 06:51 (started)
+
+Executor: GLM-5.3-Flash-FP4-Local, dispatch 1. Read the phase doc, STANDARDS,
+`top_tui.rs` / `top_tui_draw.rs` / `top_load.rs`, FINDINGS P5, the README
+paragraph and the hygiene gate. Spec step 1 next: the four red tests against
+the current code.
+
+### Update — 2026-11-03 07:47 (red runs)
+
+The four step-1 tests, run against the pre-phase tree (worktree at `b58d5d9b`,
+the only change the stubs the spec asks for: the `shells_selected` field, the
+`disk_in_flight` parameter `plan_refresh` ignores, the empty `apply_disk`)
+— both `shells_selection_` tests and the two refresh/apply tests fail:
+
+```
+$ cargo test shells_selection_
+test cli::commands::top_tui::tests::shells_selection_draws_reversed ... FAILED
+test cli::commands::top_tui::tests::shells_selection_moves_follows_and_survives_refresh ... FAILED
+
+---- cli::commands::top_tui::tests::shells_selection_moves_follows_and_survives_refresh stdout ----
+
+thread 'cli::commands::top_tui::tests::shells_selection_moves_follows_and_survives_refresh' (3629804) panicked at src/cli/commands/top_tui.rs:2479:9:
+assertion `left == right` failed: ↓ moves the selection
+  left: 0
+ right: 1
+
+---- cli::commands::top_tui::tests::shells_selection_draws_reversed stdout ----
+
+thread 'cli::commands::top_tui::tests::shells_selection_draws_reversed' (3629803) panicked at src/cli/commands/top_tui.rs:2582:9:
+assertion `left == right` failed: the selected shell's row is reversed: [("daemoneye · daemon not running · pinky · 07:40:58                               ", false), ("╭ 1 Runs ──────────────────────────────────────────────────────────────────────╮", false), ("│none                                                                          │", false), ("╰──────────────────────────────────────────────────────────────────────────────╯", false), ("╭ 2 Budget ────────────────────────────────────────────────────────────────────╮", false), ("│spend: $0.50 (no cap)                                                         │", false), ("│tokens today: 100                                                             │", false), ("│rate (60 s): 0.0 tok/s                                                        │", false), ("│refused today: 0                                                              │", false), ("╰──────────────────────────────────────────────────────────────────────────────╯", false), ("╭ 3 Shells ────────────────────────────────────────────────────────────────────╮", false), ("│s1 chat:s1s1 - -                                                              │", false), ("│s2 chat:s2s2 - -                                                              │", false), ("│s3 chat:s3s3 - -                                                              │", false), ("╰──────────────────────────────────────────────────────────────────────────────╯", false), ("╭ 4 Activity ──────────────────────────────────────────────────────────────────╮", false), ("│none                                                                          │", false), ("│                                                                              │", false), ("│                                                                              │", false), ("│                                                                              │", false), ("│                                                                              │", false), ("│                                                                              │", false), ("╰──────────────────────────────────────────────────────────────────────────────╯", false), ("q quit · ↑↓ scroll · tab focus · f follow · / filter · focus: Shells · following", false)]
+  left: 0
+ right: 1
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 2578 filtered out; finished in 0.00s
+
+$ cargo test plan_refresh_holds_disk
+thread 'cli::commands::top_tui::tests::plan_refresh_holds_disk_while_one_is_in_flight' (3629824) panicked at src/cli/commands/top_tui.rs:2603:9:
+a changed fingerprint does not queue a second disk refresh
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2579 filtered out; finished in 0.00s
+
+$ cargo test apply_disk_keeps
+thread 'cli::commands::top_tui::tests::apply_disk_keeps_taken_at_follow_and_detail' (3629848) panicked at src/cli/commands/top_tui.rs:2657:9:
+assertion `left == right` failed: follow re-targets the fresh live row
+  left: 0
+ right: 1
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2579 filtered out; finished in 0.03s
+```
+
+### Findings — 2026-11-03 07:52
+
+- `draw_at` already drew the Runs panel's selected row reversed regardless of
+  focus; the shells row follows that same rule (the spec's "drawn reversed as
+  the selected run is"), so no focus check was added.
+- The window-follow lives in `follow_shells`, called from the four Shells
+  scroll arms and `restore_shell_selection` — `clamp_offsets` keeps only its
+  clamping role, which is what lets `esc_restores_focus_selection_and_offsets`
+  keep restoring a window that was not at the selection.
+- The hygiene ratchet grew by one entry: `top_tui.rs` crossed the 800-line
+  production cap (848) with the selection + P5 code; pinned at 848 so it
+  cannot grow further.
+- none otherwise — everything stayed inside the authorized files.
+
+### Update — 2026-11-03 07:56 (end-to-end verification)
+
+The block in § End-to-end verification, run verbatim once (an earlier run of
+the same block is the one whose `fmt_exit=1` fixed this file — its only diff
+was rustfmt rewrapping this phase's new lines; the block below is the run on
+the formatted tree):
+
+```
+shells_selection passed=2 failed=0
+refresh passed=2 failed=0
+blocking_sites=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.18s
+fmt_exit=0
+passed=2659 failed=0
+```
+
+The three `test result:` lines are `--test hygiene`, `--test doc_truth` and
+`--test bug_tracker` in order — all `ok`. The `Finished` line is clippy's
+tail (clean, `-D warnings`). The preservation tests named in the acceptance
+criteria, `enter_opens_the_selected_runs_detail` and
+`esc_restores_focus_selection_and_offsets`, are in the `passed=2659 failed=0`
+full-suite line (also visible green in the `--lib` runs above).

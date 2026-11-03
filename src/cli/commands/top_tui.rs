@@ -22,9 +22,9 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::cli::commands::top::{
-    ActivityRow, BarLevel, Liveness, PanelRects, TopFingerprint, TopRunRow, activity_text,
-    budget_bar, budget_text, collapse_activity, filter_activity, fingerprint, header_text,
-    plan_layout, rect_or_area, run_fades, runs_text, shells_text,
+    ActivityRow, BarLevel, Liveness, PanelRects, ShellsPanel, TopFingerprint, TopRunRow,
+    activity_text, budget_bar, budget_text, collapse_activity, filter_activity, fingerprint,
+    header_text, plan_layout, rect_or_area, run_fades, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
 /// Poll the disk fingerprint every this long.
@@ -38,11 +38,14 @@ const BAR_CHROME: usize = 7;
 /// Replace the model's Shells panel and daemon header with fresh answers
 /// from the daemon: one read-only `Request::ShellList` and one
 /// `Request::Status`, the header's facts on the same 2 s cadence as the
-/// shells. A test drives it without a daemon behind the [`ShellFetcher`]
-/// seam.
+/// shells. The selection stays on the shell it was on; a shell that has
+/// gone clamps it into the new rows. A test drives it without a daemon
+/// behind the [`ShellFetcher`] seam.
 pub(crate) async fn shells_refresh(model: &mut TopModel, fetch: &impl ShellFetcher) {
+    let keep = model.selected_shell_id();
     model.snapshot.shells = fetch.shells().await;
     model.snapshot.daemon = fetch.daemon().await;
+    model.restore_shell_selection(keep);
 }
 
 /// The daemon answers the live loop asks for: its shells and the header's
@@ -90,8 +93,10 @@ pub fn plan_refresh(
     now: TopFingerprint,
     since_disk: Duration,
     since_shells: Duration,
+    disk_in_flight: bool,
 ) -> Refresh {
-    let disk = last.is_none() || last != Some(now) || since_disk >= DISK_MAX_AGE;
+    let disk =
+        !disk_in_flight && (last.is_none() || last != Some(now) || since_disk >= DISK_MAX_AGE);
     let shells = since_shells >= SHELLS_INTERVAL;
     Refresh { disk, shells }
 }
@@ -115,8 +120,12 @@ pub struct TopModel {
     /// The panel the scroll keys act on.
     pub focus: Panel,
     /// The index of the Shells body line drawn first; clamped to the
-    /// content and the panel's inner height.
+    /// content and the panel's inner height, and following the selected
+    /// shell.
     pub shells_top: usize,
+    /// The selected shell row's index into the Shells panel's rows; 0 when
+    /// the panel has none.
+    pub shells_selected: usize,
     /// The index of the Activity body line drawn first while not tailing.
     pub activity_top: usize,
     /// The Activity panel shows its newest rows until the user scrolls it.
@@ -176,6 +185,7 @@ impl TopModel {
             follow: true,
             focus: Panel::Runs,
             shells_top: 0,
+            shells_selected: 0,
             activity_top: 0,
             tailing: true,
             activity_anchor: None,
@@ -319,9 +329,9 @@ impl TopModel {
         h.saturating_sub(1).max(1)
     }
 
-    /// One line up on the focused panel. Runs moves the selection and stops
-    /// follow; Shells and Activity move their top offset and stop Activity
-    /// tailing; Budget ignores the key.
+    /// One line up on the focused panel. Runs and Shells move their
+    /// selection (Runs stops follow); Activity moves its top offset and
+    /// stops tailing; Budget ignores the key.
     fn scroll_up(&mut self, n: usize) {
         match self.focus {
             Panel::Runs => {
@@ -329,7 +339,12 @@ impl TopModel {
                 self.follow = false;
             }
             Panel::Budget => {}
-            Panel::Shells => self.shells_top = self.shells_top.saturating_sub(n),
+            Panel::Shells => {
+                if self.shells_row_count().is_some() {
+                    self.shells_selected = self.shells_selected.saturating_sub(n);
+                    self.follow_shells();
+                }
+            }
             Panel::Activity => {
                 self.activity_top = self.activity_top.saturating_sub(n);
                 self.tailing = false;
@@ -347,9 +362,10 @@ impl TopModel {
             }
             Panel::Budget => {}
             Panel::Shells => {
-                self.shells_top = (self.shells_top + n).min(
-                    self.last_window_top(shells_lines(&self.snapshot.shells), self.heights.shells),
-                );
+                if let Some(rows) = self.shells_row_count() {
+                    self.shells_selected = (self.shells_selected + n).min(rows - 1);
+                    self.follow_shells();
+                }
             }
             Panel::Activity => {
                 self.activity_top += n;
@@ -358,8 +374,9 @@ impl TopModel {
         }
     }
 
-    /// The top of the focused panel. Runs selects the first run; Shells and
-    /// Activity go to their first body line; Budget ignores the key.
+    /// The top of the focused panel. Runs and Shells select their first row
+    /// (Runs stops follow); Activity goes to its first body line and stops
+    /// tailing; Budget ignores the key.
     fn scroll_home(&mut self) {
         match self.focus {
             Panel::Runs => {
@@ -367,7 +384,12 @@ impl TopModel {
                 self.follow = false;
             }
             Panel::Budget => {}
-            Panel::Shells => self.shells_top = 0,
+            Panel::Shells => {
+                if self.shells_row_count().is_some() {
+                    self.shells_selected = 0;
+                    self.follow_shells();
+                }
+            }
             Panel::Activity => {
                 self.activity_top = 0;
                 self.tailing = false;
@@ -375,9 +397,10 @@ impl TopModel {
         }
     }
 
-    /// The bottom of the focused panel. Runs selects the last run; Shells
-    /// and Activity scroll to their last full window; Budget ignores the
-    /// key. Scrolling Activity to its bottom resumes tailing.
+    /// The bottom of the focused panel. Runs and Shells select their last
+    /// row (Runs stops follow); Activity scrolls to its last full window;
+    /// Budget ignores the key. Scrolling Activity to its bottom resumes
+    /// tailing.
     fn scroll_end(&mut self) {
         match self.focus {
             Panel::Runs => {
@@ -386,8 +409,10 @@ impl TopModel {
             }
             Panel::Budget => {}
             Panel::Shells => {
-                let total = shells_lines(&self.snapshot.shells);
-                self.shells_top = self.last_window_top(total, self.heights.shells);
+                if let Some(rows) = self.shells_row_count() {
+                    self.shells_selected = rows - 1;
+                    self.follow_shells();
+                }
             }
             Panel::Activity => {
                 self.tailing = true;
@@ -465,13 +490,83 @@ impl TopModel {
     /// Everything the loop applies after a refresh, in one place: hold the
     /// Activity anchor, re-measure the stored heights against the fresh
     /// content — the panels are sized to their content, so a refresh
-    /// resizes them without a terminal resize — and clamp the offsets.
-    /// The loop calls this after every disk and shells refresh and on
-    /// resize; it never clamps on its own.
+    /// resizes them without a terminal resize — clamp the offsets, and
+    /// keep the Shells window on its selection. The loop calls this after
+    /// every disk and shells refresh and on resize; it never clamps on its
+    /// own.
     pub fn after_refresh(&mut self, size: Option<ratatui::layout::Rect>) {
         self.hold_activity();
         refresh_heights(self, size);
         self.clamp_offsets();
+        self.follow_shells();
+    }
+
+    /// Apply one disk read to the model: the three panels replaced, the
+    /// frame's `taken_at` kept — the header clock is the draw time, not the
+    /// read's — follow re-targeted and an open detail reloaded. The loop
+    /// calls it with a blocking read's result; [`Self::after_refresh`]
+    /// follows.
+    fn apply_disk(&mut self, disk: crate::cli::commands::top::DiskPanels) {
+        let taken_at = self.snapshot.taken_at;
+        self.snapshot.runs = disk.runs;
+        self.snapshot.budget = disk.budget;
+        self.snapshot.activity = disk.activity;
+        self.snapshot.taken_at = taken_at;
+        if self.follow {
+            self.selected = follow_target(&self.snapshot.runs);
+        }
+        self.reload_detail();
+    }
+
+    /// The Shells panel's shell-row count: `None` when the panel shows the
+    /// daemon-down mark or `none` — nothing selectable.
+    fn shells_row_count(&self) -> Option<usize> {
+        match &self.snapshot.shells {
+            ShellsPanel::Rows(rows) if !rows.is_empty() => Some(rows.len()),
+            _ => None,
+        }
+    }
+
+    /// The selected shell's id, when the panel has a row at the selection.
+    fn selected_shell_id(&self) -> Option<String> {
+        match &self.snapshot.shells {
+            ShellsPanel::Rows(rows) => rows.get(self.shells_selected).map(|s| s.id.clone()),
+            ShellsPanel::DaemonDown => None,
+        }
+    }
+
+    /// Put the selection back on `id` after a Shells refresh: the same shell
+    /// keeps it, a gone or absent one clamps into the new rows, and the
+    /// window follows the selection.
+    fn restore_shell_selection(&mut self, id: Option<String>) {
+        if let Some(id) = id
+            && let ShellsPanel::Rows(rows) = &self.snapshot.shells
+            && let Some(idx) = rows.iter().position(|s| s.id == id)
+        {
+            self.shells_selected = idx;
+        }
+        self.follow_shells();
+    }
+
+    /// Keep the Shells window on the selected row and the selection inside
+    /// the rows: the panel's window follows the selection, as the Runs
+    /// panel's does. A panel with no rows selects nothing.
+    fn follow_shells(&mut self) {
+        let rows = match &self.snapshot.shells {
+            ShellsPanel::Rows(rows) => rows.len(),
+            ShellsPanel::DaemonDown => 0,
+        };
+        self.shells_selected = self.shells_selected.min(rows.saturating_sub(1));
+        let inner = self.heights.shells;
+        if inner == 0 {
+            return;
+        }
+        self.shells_top = self.shells_top.min(self.last_window_top(rows, inner));
+        if self.shells_selected < self.shells_top {
+            self.shells_top = self.shells_selected;
+        } else if self.shells_selected >= self.shells_top + inner {
+            self.shells_top = self.shells_selected + 1 - inner;
+        }
     }
 }
 
@@ -679,6 +774,8 @@ pub(crate) async fn run_tui(
     let mut last_fp = None;
     let mut since_disk = Duration::ZERO;
     let mut since_shells = Duration::ZERO;
+    let mut disk_in_flight = false;
+    let (disk_tx, mut disk_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -717,20 +814,16 @@ pub(crate) async fn run_tui(
                 since_disk += TICK;
                 since_shells += TICK;
                 let now_fp = fingerprint();
-                let plan = plan_refresh(last_fp, now_fp, since_disk, since_shells);
-                if plan.disk {
-                    let taken_at = model.snapshot.taken_at;
-                    let disk = crate::cli::commands::top::disk_panels(config_cap);
-                    model.snapshot.runs = disk.runs;
-                    model.snapshot.budget = disk.budget;
-                    model.snapshot.activity = disk.activity;
-                    model.snapshot.taken_at = taken_at;
-                    if model.follow {
-                        model.selected = follow_target(&model.snapshot.runs);
-                    }
-                    model.reload_detail();
-                    model.after_refresh(size);
-                    since_disk = Duration::ZERO;
+                let plan =
+                    plan_refresh(last_fp, now_fp, since_disk, since_shells, disk_in_flight);
+                if plan.disk && !disk_in_flight {
+                    let tx = disk_tx.clone();
+                    let cap = config_cap;
+                    tokio::task::spawn_blocking(move || {
+                        let disk = crate::cli::commands::top::disk_panels(cap);
+                        let _ = tx.send(disk);
+                    });
+                    disk_in_flight = true;
                     last_fp = Some(now_fp);
                 }
                 if plan.shells {
@@ -738,6 +831,13 @@ pub(crate) async fn run_tui(
                     model.after_refresh(size);
                     since_shells = Duration::ZERO;
                 }
+                terminal.draw(|f| draw(f, &model))?;
+            }
+            Some(disk) = disk_rx.recv() => {
+                disk_in_flight = false;
+                since_disk = Duration::ZERO;
+                model.apply_disk(disk);
+                model.after_refresh(size);
                 terminal.draw(|f| draw(f, &model))?;
             }
         }
@@ -753,6 +853,8 @@ mod tests {
     use super::*;
     use crate::cli::commands::top::{DaemonHeader, ShellsPanel, TopRunRow};
     use chrono::{DateTime, Utc};
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
 
     fn row(id: &str, l: Liveness) -> TopRunRow {
         TopRunRow {
@@ -786,32 +888,51 @@ mod tests {
     fn plan_refresh_rereads_disk_only_on_change_or_age() {
         let f = fp(10);
         // No last fingerprint: the first tick reads.
-        assert!(plan_refresh(None, f, Duration::from_secs(0), Duration::from_secs(0)).disk);
+        assert!(
+            plan_refresh(
+                None,
+                f,
+                Duration::from_secs(0),
+                Duration::from_secs(0),
+                false
+            )
+            .disk
+        );
         // Same fingerprint at 1 s: nothing moved on disk, skip the read.
-        assert!(!plan_refresh(Some(f), f, Duration::from_secs(1), Duration::from_secs(1)).disk);
+        assert!(
+            !plan_refresh(
+                Some(f),
+                f,
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                false
+            )
+            .disk
+        );
         // Changed fingerprint at 1 s: read.
         assert!(
             plan_refresh(
                 Some(f),
                 fp(11),
                 Duration::from_secs(1),
-                Duration::from_secs(1)
+                Duration::from_secs(1),
+                false
             )
             .disk
         );
         // Same fingerprint at 5 s: ages and the liveness window moved, read.
-        assert!(plan_refresh(Some(f), f, DISK_MAX_AGE, Duration::from_secs(5)).disk);
+        assert!(plan_refresh(Some(f), f, DISK_MAX_AGE, Duration::from_secs(5), false).disk);
     }
 
     #[test]
     fn plan_refresh_asks_for_shells_every_two_seconds() {
         let f = fp(10);
         assert!(
-            !plan_refresh(Some(f), f, Duration::ZERO, Duration::from_secs(1)).shells,
+            !plan_refresh(Some(f), f, Duration::ZERO, Duration::from_secs(1), false).shells,
             "shells are not re-read before 2 s"
         );
         assert!(
-            plan_refresh(Some(f), f, Duration::ZERO, Duration::from_secs(2)).shells,
+            plan_refresh(Some(f), f, Duration::ZERO, Duration::from_secs(2), false).shells,
             "shells are re-read at 2 s"
         );
     }
@@ -1485,9 +1606,9 @@ mod tests {
         let selected = model.selected;
         let activity_top = model.activity_top;
         press(&mut model, KeyCode::Down);
-        assert!(
-            model.shells_top > 0,
-            "↓ moves the Shells offset when Shells is focused"
+        assert_eq!(
+            model.shells_selected, 1,
+            "↓ moves the Shells selection when Shells is focused"
         );
         assert_eq!(
             model.selected, selected,
@@ -1499,16 +1620,23 @@ mod tests {
             model.activity_top, activity_top,
             "the Activity offset does not move when Shells is focused"
         );
-        let shells_top = model.shells_top;
-        press(&mut model, KeyCode::Down);
+        for _ in 0..4 {
+            press(&mut model, KeyCode::Down);
+        }
         assert!(
-            model.shells_top > shells_top,
-            "another ↓ moves the Shells offset again"
+            model.shells_top > 0,
+            "the window follows the selection past its edge"
         );
+        let (shells_top, shells_selected) = (model.shells_top, model.shells_selected);
         press(&mut model, KeyCode::Up);
         assert_eq!(
+            model.shells_selected,
+            shells_selected - 1,
+            "↑ moves the Shells selection back one"
+        );
+        assert_eq!(
             model.shells_top, shells_top,
-            "↑ moves the Shells offset back one"
+            "the window holds while the selection fits"
         );
         model.focus = Panel::Budget;
         for code in [
@@ -1523,6 +1651,11 @@ mod tests {
             assert_eq!(
                 model.shells_top, shells_top,
                 "a scroll key on Budget leaves the Shells offset"
+            );
+            assert_eq!(
+                model.shells_selected,
+                shells_selected - 1,
+                "a scroll key on Budget leaves the Shells selection"
             );
             assert!(model.follow, "a scroll key on Budget leaves the follow");
             assert!(model.tailing, "a scroll key on Budget leaves the tailing");
@@ -1541,16 +1674,29 @@ mod tests {
         };
         model.focus = Panel::Shells;
         press(&mut model, KeyCode::Up);
-        assert_eq!(model.shells_top, 0, "↑ at the top stays 0");
+        assert_eq!(
+            model.shells_selected, 0,
+            "↑ at the top stays on the first shell"
+        );
+        assert_eq!(model.shells_top, 0, "↑ at the top leaves the window");
         press(&mut model, KeyCode::End);
+        assert_eq!(model.shells_selected, 19, "End selects the last shell");
         assert_eq!(
             model.shells_top, 14,
             "End shows the last full window: 20 - 6"
         );
         press(&mut model, KeyCode::Down);
-        assert_eq!(model.shells_top, 14, "↓ at the bottom stays 14");
+        assert_eq!(model.shells_selected, 19, "↓ at the last shell stays");
+        assert_eq!(model.shells_top, 14, "↓ at the bottom leaves the window");
         press(&mut model, KeyCode::Up);
-        assert_eq!(model.shells_top, 13, "one ↑ from the bottom moves one line");
+        assert_eq!(
+            model.shells_selected, 18,
+            "one ↑ from the bottom moves one shell"
+        );
+        assert_eq!(
+            model.shells_top, 14,
+            "the window holds while the selection fits"
+        );
         let shells: Vec<_> = (1..=3).map(|i| shell(&format!("s{i}"))).collect();
         let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
         model.heights = PanelHeights {
@@ -1561,6 +1707,7 @@ mod tests {
         };
         model.focus = Panel::Shells;
         press(&mut model, KeyCode::End);
+        assert_eq!(model.shells_selected, 2, "End selects the last shell");
         assert_eq!(
             model.shells_top, 0,
             "End on content that fits stays at the top"
@@ -1664,10 +1811,12 @@ mod tests {
         press(&mut model, KeyCode::Down);
         assert!(!model.follow, "scrolling Runs stops the follow");
         model.focus = Panel::Shells;
-        press(&mut model, KeyCode::Down);
-        press(&mut model, KeyCode::Down);
-        let shells_top = model.shells_top;
-        assert!(shells_top > 0, "the Shells panel scrolled");
+        for _ in 0..7 {
+            press(&mut model, KeyCode::Down);
+        }
+        let (shells_top, shells_selected) = (model.shells_top, model.shells_selected);
+        assert!(shells_top > 0, "the Shells window followed the selection");
+        assert_eq!(shells_selected, 7, "the Shells selection moved to s7");
         assert!(!model.follow, "the Runs follow stopped");
         assert!(model.tailing, "Activity still tails until it is scrolled");
         model.focus = Panel::Activity;
@@ -1677,6 +1826,10 @@ mod tests {
         press(&mut model, KeyCode::Char('f'));
         assert!(model.follow, "f resumes the Runs follow");
         assert!(model.tailing, "f resumes Activity tailing");
+        assert_eq!(
+            model.shells_selected, shells_selected,
+            "f leaves the Shells selection where it was"
+        );
         assert_eq!(
             model.shells_top, shells_top,
             "f leaves the Shells scroll where it was"
@@ -2413,5 +2566,282 @@ mod tests {
                 .draw(|f| draw(f, &model))
                 .unwrap_or_else(|_| panic!("the detail draws at {w}x{h}"));
         }
+    }
+
+    // ── Shells selection (M36 phase-04a) ─────────────────────────────────────
+
+    /// Each drawn row as `(text, any cell reversed)`.
+    fn drawn_rows_reversed(
+        terminal: &Terminal<ratatui::backend::TestBackend>,
+    ) -> Vec<(String, bool)> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                let mut text = String::new();
+                let mut reversed = false;
+                for x in 0..buffer.area.width {
+                    let cell = &buffer[(x, y)];
+                    text.push_str(cell.symbol());
+                    reversed |= cell.modifier.contains(ratatui::style::Modifier::REVERSED);
+                }
+                (text, reversed)
+            })
+            .collect()
+    }
+
+    /// A `SeqFetcher` answers the refreshes with its queued `ShellsPanel`s
+    /// in order, then `DaemonDown`.
+    struct SeqFetcher {
+        shells: RefCell<VecDeque<ShellsPanel>>,
+    }
+
+    impl ShellFetcher for SeqFetcher {
+        async fn shells(&self) -> ShellsPanel {
+            self.shells
+                .borrow_mut()
+                .pop_front()
+                .unwrap_or(ShellsPanel::DaemonDown)
+        }
+
+        async fn daemon(&self) -> Option<DaemonHeader> {
+            None
+        }
+    }
+
+    #[test]
+    fn shells_selection_moves_follows_and_survives_refresh() {
+        let shells: Vec<_> = (1..=20).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 6,
+            activity: 10,
+            detail: 0,
+        };
+        model.focus = Panel::Shells;
+        assert_eq!(
+            model.shells_selected, 0,
+            "the panel starts on the first shell"
+        );
+        press(&mut model, KeyCode::Down);
+        assert_eq!(model.shells_selected, 1, "↓ moves the selection");
+        assert_eq!(
+            model.shells_top, 0,
+            "the window holds while the selection fits"
+        );
+        for _ in 0..6 {
+            press(&mut model, KeyCode::Down);
+        }
+        assert_eq!(model.shells_selected, 7, "six more ↓ move six shells");
+        assert_eq!(model.shells_top, 2, "the window follows: 7 + 1 - 6");
+        press(&mut model, KeyCode::Up);
+        assert_eq!(model.shells_selected, 6, "↑ moves the selection back one");
+        assert_eq!(
+            model.shells_top, 2,
+            "the window holds while the selection fits"
+        );
+        press(&mut model, KeyCode::End);
+        assert_eq!(model.shells_selected, 19, "End selects the last shell");
+        assert_eq!(
+            model.shells_top, 14,
+            "the window shows the last full window"
+        );
+        press(&mut model, KeyCode::Down);
+        assert_eq!(model.shells_selected, 19, "↓ at the last shell stays");
+        press(&mut model, KeyCode::Home);
+        assert_eq!(model.shells_selected, 0, "Home selects the first shell");
+        assert_eq!(model.shells_top, 0, "the window follows Home");
+        press(&mut model, KeyCode::PageDown);
+        assert_eq!(model.shells_selected, 5, "PageDown moves a page: 6 - 1");
+
+        // A shells refresh keeps the selection on the same shell id.
+        let shells: Vec<_> = (1..=10).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 6,
+            activity: 10,
+            detail: 0,
+        };
+        model.focus = Panel::Shells;
+        for _ in 0..4 {
+            press(&mut model, KeyCode::Down);
+        }
+        assert_eq!(model.shells_selected, 4, "setup: s5 is selected");
+        let fetch = SeqFetcher {
+            shells: RefCell::new(VecDeque::from(vec![ShellsPanel::Rows(vec![
+                shell("s9"),
+                shell("s5"),
+                shell("s7"),
+            ])])),
+        };
+        tokio::runtime::Runtime::new()
+            .expect("a runtime")
+            .block_on(shells_refresh(&mut model, &fetch));
+        assert_eq!(
+            model.shells_selected, 1,
+            "the refresh keeps the selection on s5"
+        );
+        // The selected shell is gone: the selection clamps into the new list.
+        let fetch = SeqFetcher {
+            shells: RefCell::new(VecDeque::from(vec![ShellsPanel::Rows(vec![
+                shell("s9"),
+                shell("s7"),
+            ])])),
+        };
+        tokio::runtime::Runtime::new()
+            .expect("a runtime")
+            .block_on(shells_refresh(&mut model, &fetch));
+        assert_eq!(
+            model.shells_selected, 1,
+            "a gone shell's selection clamps into the new rows"
+        );
+        // No rows: the keys do nothing.
+        let fetch = SeqFetcher {
+            shells: RefCell::new(VecDeque::from(vec![ShellsPanel::Rows(vec![])])),
+        };
+        tokio::runtime::Runtime::new()
+            .expect("a runtime")
+            .block_on(shells_refresh(&mut model, &fetch));
+        press(&mut model, KeyCode::Down);
+        assert_eq!(model.shells_selected, 0, "an empty panel ignores ↓");
+        assert_eq!(model.shells_top, 0, "an empty panel leaves the window");
+        let fetch = SeqFetcher {
+            shells: RefCell::new(VecDeque::from(vec![ShellsPanel::DaemonDown])),
+        };
+        tokio::runtime::Runtime::new()
+            .expect("a runtime")
+            .block_on(shells_refresh(&mut model, &fetch));
+        press(&mut model, KeyCode::End);
+        assert_eq!(model.shells_selected, 0, "daemon down, the keys do nothing");
+    }
+
+    #[test]
+    fn shells_selection_draws_reversed() {
+        let shells: Vec<_> = (1..=3).map(|i| shell(&format!("s{i}"))).collect();
+        let mut model = TopModel::new(snapshot_with_shells(vec![], shells));
+        model.heights = PanelHeights {
+            runs: 3,
+            shells: 6,
+            activity: 10,
+            detail: 0,
+        };
+        model.focus = Panel::Shells;
+        press(&mut model, KeyCode::Down);
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        let rows = drawn_rows_reversed(&terminal);
+        let reversed_rows = |needle: &str| {
+            rows.iter()
+                .filter(|(t, r)| *r && t.contains(needle))
+                .count()
+        };
+        assert_eq!(
+            reversed_rows("s2 "),
+            1,
+            "the selected shell's row is reversed: {rows:?}"
+        );
+        assert_eq!(
+            reversed_rows("s1 "),
+            0,
+            "an unselected shell's row is not reversed: {rows:?}"
+        );
+        assert_eq!(
+            reversed_rows("s3 "),
+            0,
+            "an unselected shell's row is not reversed: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn plan_refresh_holds_disk_while_one_is_in_flight() {
+        let f = fp(10);
+        // A changed fingerprint while one is in flight asks for nothing.
+        assert!(
+            !plan_refresh(
+                Some(f),
+                fp(11),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                true
+            )
+            .disk,
+            "a changed fingerprint does not queue a second disk refresh"
+        );
+        // An aged snapshot while one is in flight asks for nothing.
+        assert!(
+            !plan_refresh(Some(f), f, DISK_MAX_AGE, Duration::from_secs(5), true).disk,
+            "an aged snapshot does not queue a second disk refresh"
+        );
+        // The first read is held too: at most one in flight.
+        assert!(
+            !plan_refresh(None, f, Duration::ZERO, Duration::ZERO, true).disk,
+            "no last fingerprint does not queue a second disk refresh"
+        );
+        // The same asks land once the refresh has come back.
+        assert!(
+            plan_refresh(
+                Some(f),
+                fp(11),
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                false
+            )
+            .disk,
+            "a changed fingerprint asks once the refresh landed"
+        );
+        assert!(
+            plan_refresh(Some(f), f, DISK_MAX_AGE, Duration::from_secs(5), false).disk,
+            "an aged snapshot asks once the refresh landed"
+        );
+        assert!(
+            plan_refresh(None, f, Duration::ZERO, Duration::ZERO, false).disk,
+            "the first read asks once the refresh landed"
+        );
+    }
+
+    #[test]
+    fn apply_disk_keeps_taken_at_follow_and_detail() {
+        let _g = HomeGuard::new();
+        write_detail_log(1);
+        let mut model = TopModel::new(snapshot(vec![row("r01", Liveness::Live)]));
+        let taken = model.snapshot.taken_at;
+        open_detail_on(&mut model);
+        assert!(model.detail.is_some(), "setup: the detail is open");
+        write_detail_log(3);
+        let disk = crate::cli::commands::top::DiskPanels {
+            runs: vec![row("r02", Liveness::Done), row(DETAIL_ID, Liveness::Live)],
+            budget: crate::cli::commands::top::BudgetPanel {
+                ai_cost: 1.5,
+                cap: 10.0,
+                tokens: 200,
+                refused: 1,
+                tok_per_s: 0.0,
+            },
+            activity: vec![activity_row("10:00:00", "ai_cost", "model01")],
+        };
+        model.apply_disk(disk);
+        assert_eq!(
+            model.snapshot.taken_at, taken,
+            "the frame's taken_at is kept"
+        );
+        assert!(model.follow, "the apply does not touch follow");
+        assert_eq!(model.selected, 1, "follow re-targets the fresh live row");
+        assert_eq!(
+            model.snapshot.budget.ai_cost, 1.5,
+            "the Budget panel is replaced"
+        );
+        assert_eq!(
+            model.snapshot.activity.len(),
+            1,
+            "the Activity panel is replaced"
+        );
+        assert_eq!(model.snapshot.runs.len(), 2, "the Runs panel is replaced");
+        let detail = model.detail.as_ref().expect("the detail stays open");
+        assert!(
+            detail.text.contains("note-002"),
+            "the open detail reloaded from disk: {}",
+            detail.text
+        );
     }
 }

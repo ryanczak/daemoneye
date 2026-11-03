@@ -93,13 +93,14 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
     block.render(rects.budget, frame.buffer_mut());
     Paragraph::new(budget_lines).render(inner, frame.buffer_mut());
 
+    let shells_sel = shells_selected_line(model, inner_height(rects.shells));
     let shells_window = window_text(&shells_body, model.shells_top, inner_height(rects.shells));
     draw_panel(
         frame,
         rects.shells,
         &panel_title(Panel::Shells),
         &shells_window,
-        None,
+        shells_sel,
         &[],
         model.focus == Panel::Shells,
     );
@@ -147,6 +148,20 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
         footer.push_str(&format!(" \u{b7} filter: {}", model.filter));
     }
     Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
+}
+
+/// The selected shell's line index inside the Shells panel's drawn window,
+/// `None` when the panel has no rows — the daemon-down mark and `none` are
+/// never drawn reversed — or the selection is scrolled out. `shells_text`
+/// emits one line per row, so body line i is shell row i.
+fn shells_selected_line(model: &TopModel, inner_h: usize) -> Option<usize> {
+    let rows = match &model.snapshot.shells {
+        ShellsPanel::Rows(rows) if !rows.is_empty() => rows.len(),
+        _ => return None,
+    };
+    let sel = model.shells_selected.min(rows - 1);
+    let range = visible_range(rows, inner_h, model.shells_top);
+    range.contains(&sel).then(|| sel - range.start)
 }
 
 /// A panel's title text: `<n> <Name>`. `draw_panel` and `panel_title_line`
