@@ -1,7 +1,7 @@
 # Phase 04a — shells-select
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-03
 **Depends on:** phase 03 (done)
 **Estimated diff:** ~250 lines
@@ -384,3 +384,11 @@ kill: (-3658163): No such process
 **Commit:** bd726b2c92c4e89953f96bf1031084274d8063cd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-03
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** `top_tui.rs` crossed the 800-line production cap (848) and got a new allowlist entry, which the spec didn't foresee. The PE accepted it on 2026-11-03 as an ordinary ratchet entry; phase 04b raises it by what its arm adds.
+- **Calibration:** the split-and-pin refinement worked. The executor finished in 189 turns where the unsplit phase went 514 with no write, using the async shape exactly as pinned (`spawn_blocking` feeding an `mpsc` arm, an in-flight `bool`). The red-run fence is verbatim.

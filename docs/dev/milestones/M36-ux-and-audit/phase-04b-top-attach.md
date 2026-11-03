@@ -73,7 +73,9 @@ key reaches the shell as input, a signal or a resize.
   `tail_key_action` over a translation of crossterm's `KeyEvent` to
   `cli::input::Key`, then `TailModel::act`. No second key table, no second
   grid painter.
-- **A child module:** `top_tui.rs` is near the 800-line production cap, so
+- **A child module:** `top_tui.rs` is past the 800-line production cap
+  (allowlisted at 848 after phase 04a; the PE accepted it as a ratchet
+  entry, so raise that line by what this phase adds there and say why), so
   the view's state, its key translation and its forwarding task live in a
   new child module of `top_tui.rs` (declared as `top_tui_draw.rs` is), with
   its own inline tests. The forwarding task is generic over
