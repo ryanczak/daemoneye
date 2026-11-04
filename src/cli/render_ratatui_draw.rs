@@ -422,7 +422,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             Style::default()
         };
         for line in body {
-            for seg in crate::cli::render::wrap_line_hard(line, inner.saturating_sub(2)) {
+            for seg in crate::cli::render::wrap_display(line, inner.saturating_sub(2)) {
                 lines.push(Line::from(Span::styled(format!("  {}", seg), body_style)));
             }
         }

@@ -142,7 +142,7 @@ fn push_wrapped(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind
 /// Row-kind-independent hard wrap, for machine output that must not be
 /// re-flowed on word boundaries.
 fn push_wrapped_hard(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind, idx: usize) {
-    for line in crate::cli::render::wrap_line_hard(text, width) {
+    for line in crate::cli::render::wrap_display(text, width) {
         rows.push(ViewRow {
             text: line,
             kind,

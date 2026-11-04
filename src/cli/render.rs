@@ -1,35 +1,65 @@
-/// Count the visible (printable) characters in a string, skipping ANSI escape
-/// sequences.  Used to measure word width correctly when the pending word
-/// contains bold or colour codes injected by the markdown renderer.
-pub fn wrap_line_hard(s: &str, width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for hard_line in s.split('\n') {
-        let mut current_line = String::new();
-        let mut current_vis = 0;
-        let mut in_esc = false;
+use unicode_width::UnicodeWidthStr;
 
-        for ch in hard_line.chars() {
-            current_line.push(ch);
-            if in_esc {
-                if ch.is_ascii_alphabetic() {
-                    in_esc = false;
-                }
-            } else if ch == '\x1b' {
-                in_esc = true;
-            } else {
-                current_vis += 1;
-                if current_vis == width {
-                    lines.push(current_line);
-                    current_line = String::new();
-                    current_vis = 0;
-                }
-            }
-        }
-        if !current_line.is_empty() || lines.is_empty() {
-            lines.push(current_line);
-        }
+/// Show `ch` as visible text: control and format characters become their
+/// Rust-style escape form, so a reader sees the byte that would otherwise act
+/// invisibly on the terminal. `ch` of width 0 (zero-width format characters)
+/// is shown so it is not silently dropped.
+fn visible_control(ch: char) -> Option<String> {
+    let is_control = ch.is_control() || ('\u{80}'..='\u{9f}').contains(&ch);
+    let is_format = matches!(ch,
+        '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2066}'..='\u{2069}'
+        | '\u{feff}'
+    );
+    if !is_control && !is_format {
+        return None;
     }
-    lines
+    Some(match ch {
+        '\t' => "\\t".to_string(),
+        '\r' => "\\r".to_string(),
+        '\0' => "\\0".to_string(),
+        '\u{1b}' => "\\x1b".to_string(),
+        '\u{7f}' => "\\x7f".to_string(),
+        '\u{9b}' => "\\u{9b}".to_string(),
+        '\u{85}' => "\\u{85}".to_string(),
+        '\u{feff}' => "\\u{feff}".to_string(),
+        _ => {
+            let mut out = String::new();
+            for b in ch.escape_default() {
+                out.push(b);
+            }
+            out
+        }
+    })
+}
+
+/// Hard-wrap `text` at `width` display columns (measured with
+/// `unicode-width`), one row per hard line at least. A character that does
+/// not fit in the rest of the row starts the next row: a wide character is
+/// never split across the edge and no character is dropped. Every control or
+/// invisible format character except `\n` is shown in its visible escape form
+/// (`visible_control`), which counts toward the row's width like any other
+/// text and is never split across rows. Joining the rows of a hard line gives
+/// back that line with the escapes undone.
+pub fn wrap_display(text: &str, width: usize) -> Vec<String> {
+    let mut rows = Vec::new();
+    for hard_line in text.split('\n') {
+        let mut row = String::new();
+        let mut used = 0usize;
+        for ch in hard_line.chars() {
+            let shown = visible_control(ch).unwrap_or_else(|| ch.to_string());
+            let w = UnicodeWidthStr::width(shown.as_str());
+            if !row.is_empty() && used + w > width {
+                rows.push(std::mem::take(&mut row));
+                used = 0;
+            }
+            row.push_str(&shown);
+            used += w;
+        }
+        rows.push(row);
+    }
+    rows
 }
 
 pub fn visual_len(s: &str) -> usize {

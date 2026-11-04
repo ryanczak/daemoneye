@@ -39,6 +39,9 @@ serde_json = "1.0.154"
 similar = "3.2.1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "io-util", "io-std", "signal", "time", "process"] }
 toml = "1.1.8"
+# Display-width-aware text measurement for the panel/viewer wrappers — a char
+# count clips CJK and emoji rows to half their real width.
+unicode-width = "0.2.3"
 uuid = { version = "1.29.0", features = ["v4"] }
 zeroize = "1.9.1"
 # Terminal emulation for the shell screen model — turns a raw PTY byte stream
