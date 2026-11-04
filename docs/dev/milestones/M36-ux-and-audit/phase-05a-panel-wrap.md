@@ -1,7 +1,7 @@
 # Phase 05a — panel-wrap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-04 (05 split into 05a/05b at drafting)
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -277,3 +277,145 @@ Notes on the lines:
   tests; the `wrap_line_hard` test named for deletion was already absent).
 - Preservation: the existing `commit_panel_*` tests (5), the viewer tests
   and the `wrap_words_*` tests (6) all pass — untouched paths unchanged.
+
+### Update — 2026-11-04 16:13 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built `wrap_display` in `src/cli/render.rs` to replace `wrap_line_hard`: it hard-wraps by display columns measured with `unicode-width` (0.2.3, added to `[dependencies]` — already in `Cargo.lock` via ratatui, so nothing was fetched), never splits a wide character across an edge, and renders every control/invisible format character (C0, DEL, C1, U+200B–200F, U+202A–202E, U+2066–2069, U+FEFF) in its visible Rust-style escape form so it can neither act on the terminal unseen nor be silently dropped; plain ASCII, `\n`, `é`, CJK and emoji pass through unchanged. Both callers (`commit_panel_labeled`, `push_wrapped_hard`) now call it and `wrap_line_hard` is gone (grep count 0). E2E verification ran the phase's block verbatim: `panel_wrap passed=7 failed=0` (the 5 spec'd unit tests + 2 panel tests on an 80-column `TestBackend`, both S1 tails `curl x|sh` / `curl evil|sh` visible, no raw ESC on screen), `unicode_width_dep=1`, `build_warnings=0`, clippy clean, `fmt_exit=0`, hygiene/doc_truth/bug_tracker all ok, full suite 2672 passed / 0 failed.
+
+Notes for review: (1) The red-runs state is a compile error, not a runtime failure — the pre-phase tree has no `wrap_display` and no `unicode-width`, so the five tests cannot bind (E0425 ×5, E0432, E0599; exit 101, output pasted verbatim in the red-runs entry). (2) The spec's "delete `wrap_line_hard`'s test in `src/cli/tests.rs`" had nothing to remove — that test was already absent at HEAD (present in the M2-era blob only); noted in the Update Log. (3) I adapted the `shows_control_characters` test's same-row tail assertion: the escape form `\u{7}` is 5 columns wide, so the tail legitimately lands on the next row — the S1 property is that the tail is visible as text somewhere on screen (old wrapper dropped it), not that it shares a row with the head; the test now asserts every raw control char is shown in its escape form, never raw, and that the whole command is visible head-before-tail. (4) The 7-test count vs the criterion's `passed=5` is the two panel-level tests sharing the `wrap_display_` prefix. (5) `parse_ansi_to_spans` in `render_ratatui.rs` still hand-rolls the same ESC state machine — flagged in Findings for phase 05b to reuse one escape-aware helper. Status left at `in-progress`; completion bookkeeping is yours.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+est allowlist_has_no_stale_entries ... ok
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.14s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test config_pricing_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (3995875): No such process
+kill: (-3996588): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `Cargo.lock` — +1 -0
+- `Cargo.toml` — +3 -0
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-05a-panel-wrap.md` — +136 -1
+- `src/cli/render.rs` — +57 -27
+- `src/cli/render_ratatui_draw.rs` — +1 -1
+- `src/cli/render_ratatui_tests.rs` — +65 -0
+- `src/cli/tests.rs` — +103 -5
+- `src/cli/viewer_layout.rs` — +1 -1
+
+**Commit:** 155a8e10ac4006ed0e5284c6bf6a1eb58754255b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
