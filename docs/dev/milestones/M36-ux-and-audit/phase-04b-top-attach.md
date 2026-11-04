@@ -1,7 +1,7 @@
 # Phase 04b — top-attach
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-02 (split and refined 2026-11-03)
 **Depends on:** phase 04a (the Shells selection)
 **Estimated diff:** ~350 lines
@@ -198,3 +198,143 @@ answered by the channel pattern `run_tui` already uses for crossterm
 events. Read the referenced files once, write the red tests, then the code.
 Each Spec step ends in a file write or a command run; do not write a design
 document as a reply.
+
+### Update — 2026-11-03 (escalation)
+
+**Chosen lever:** resume (`continue_phase` from run `16127027`'s log).
+**Rationale:** the PE stopped the run at turn 139 (`user_stop`) after it
+wrote `src/cli/commands/top_tui_attach.rs` (518 lines: `AttachView`,
+`open_attach`, the generic `forward_frames`, `translate_key`, `attach_key`
+and the five tests) at turn 99, then lost the files to a compaction at turn
+118 and spent the last 20 turns re-reading them. The design is right and on
+disk; what is missing is a short, enumerable wiring list, so resuming
+preserves the work where a re-dispatch would re-derive it.
+
+### Notes for executor — 2026-11-03 (resume)
+
+`src/cli/commands/top_tui_attach.rs` exists and is the design — do not
+rewrite it or re-read `tail.rs` / `tail_view.rs`; its imports already name
+what it uses. The remaining edits, in order: (1) declare it in
+`top_tui.rs` beside `mod draw;`; (2) add `attach: Option<…>` and
+`attach_note: Option<String>` to `TopModel`, and `attach_candidate()`
+(Shells focused, not editing, a row selected → its id); (3) in
+`handle_key`: any key clears `attach_note`; with a view open, keys go to
+`attach_key` (false → `attach = None` and abort its task; `Ctrl-C` still
+sets `quit`); otherwise `Enter`/`a` on a candidate asks the loop to open;
+(4) a `run_tui` select arm that receives from the open view's `frames` —
+`Some` applies, `None` marks the model exited and keeps the view; put that
+in one method on the view and have the stream test call it instead of
+setting `exited` by hand; (5) `draw`: with a view open, `render_tail` the
+whole frame; footer `enter attach` while Shells has rows; (6) the tests use
+`press`, `shell`, `row`, `snapshot`, `snapshot_with_shells`,
+`snapshot_with_all` and `activity_row` from `top_tui.rs`'s private test
+module — make those `pub(super)` and import them with
+`use super::super::tests::{…}`; (7) `open_attach_frames`: a closed
+connection before the first frame is an `Err`, not a string fed to the JSON
+parser. Then build, test, and Spec steps 4–8. Holding the `JoinHandle` in
+the view to abort it is fine; only awaiting it inside `select!` is not.
+
+### Update — 2026-11-03 20:46 (started, resumed)
+
+Executor: executor-3 (resume of run `16127027`). `top_tui_attach.rs` was
+already on disk from the prior run; I declared it in `top_tui.rs`, wired
+`attach`/`attach_note`/`attach_requested` and `attach_candidate()` into
+`TopModel`, routed keys in `handle_key`, added the `select!` frame arm
+(`attach_frame`, applying through `AttachView::apply_frame`), drew the view
+with `render_tail` and the `enter attach` footer hint, made `top_tui.rs`'s
+test helpers `pub(super)`, and fixed `open_attach_frames`'s
+closed-before-first-frame path. All five `top_attach_` tests pass. Now
+writing the red-runs entry from the pre-wiring run kept in the test output.
+
+### Update — 2026-11-03 21:20 (red runs)
+
+Step 1's five tests, written before the wiring (the module's own file was
+left by the prior run; the trigger, the key routing, the draw arm and the
+note-clearing were stubs or absent), run against that state:
+
+```
+running 5 tests
+test cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it ... FAILED
+test cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell ... FAILED
+test cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels ... FAILED
+test cli::commands::top_tui::attach::tests::top_attach_keys_close_on_q_esc_ctrl_o_and_ctrl_c_quits_top ... ok
+test cli::commands::top_tui::attach::tests::top_attach_stream_end_marks_exited_and_keeps_the_view ... ok
+
+failures:
+
+---- cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it stdout ----
+
+thread 'cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it' (3768432) panicked at src/cli/commands/top_tui_attach.rs:463:9:
+the next key clears the note
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell stdout ----
+
+thread 'cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell' (3768430) panicked at src/cli/commands/top_tui_attach.rs:225:9:
+assertion `left == right` failed: Enter on Shells names the selected shell
+  left: None
+ right: Some("s2")
+
+---- cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels stdout ----
+
+thread 'cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels' (3768434) panicked at src/cli/commands/top_tui_attach.rs:502:14:
+setup: a shell is selected
+ (x2)
+failures:
+    cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell
+    cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it
+    cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 2580 filtered out; finished in 0.01s
+```
+
+The two passing tests (`…_keys_close…`, `…_stream_end…`) are the module's
+own unit tests over `attach_key` and the forwarding task, which the prior
+run wrote and which pass against the unwired module — the red half is the
+three tests that need the `TopModel` wiring.
+
+### Findings — 2026-11-03
+
+- The attach view's task abort needs a `JoinHandle` kept on the view, and the
+  frame receive in `select!` must be `frames.recv()` directly — a `try_recv`
+  polling variant starves under the loop's other arms.
+- `attach_candidate` requires `shells_selected > 0`: a fresh model's
+  `shells_selected == 0` is "no selection moved yet", not "row 0 selected",
+  which is what keeps a bare Enter on Shells from opening shell 1.
+
+### Update — 2026-11-03 21:35 (end-to-end verification)
+
+```sh
+bash <<'E2E'
+cargo test top_attach_ 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "top_attach passed=" p, "failed=" f}'
+cat src/cli/commands/top*.rs | grep -cE 'ShellInput|ShellSignal|ShellResize' | sed 's/^/readonly_hits=/'
+touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+for t in hygiene doc_truth bug_tracker; do cargo test --test $t 2>&1 | grep -E '^test result'; done
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+cargo fmt --all --check; echo "fmt_exit=$?"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+E2E
+```
+
+Actual output of that block, one run, unedited:
+
+```
+top_attach passed=5 failed=0
+readonly_hits=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.85s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2664 failed=0
+```
+
+`hygiene`, `doc_truth` and `bug_tracker` all `ok`; `build_warnings=0`;
+clippy clean; `fmt_exit=0`; the whole suite `passed=2664 failed=0`.
+The ratchet: `file src/cli/commands/top_tui.rs 954` in
+`tests/hygiene_allowlist.txt` (was 848 after phase 04a; the attach wiring
+added the trigger fields, `attach_candidate`, the key routing, the select
+arm's helpers and the loop's open step — the view's own state, keys and
+forwarding live in the new child module so the growth is the wiring, not
+the view).

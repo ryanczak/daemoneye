@@ -15,7 +15,7 @@ fn src/cli/commands/ask.rs run_ask_raw 169
 fn src/cli/commands/chat_loop.rs read_input_line_inner_ratatui 189
 fn src/cli/commands/chat_loop.rs run_chat_ratatui 537
 fn src/cli/commands/setup.rs run_setup 256
-file src/cli/commands/top_tui.rs 848
+file src/cli/commands/top_tui.rs 954
 fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 722
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216

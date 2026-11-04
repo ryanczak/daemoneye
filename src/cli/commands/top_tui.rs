@@ -27,6 +27,7 @@ use crate::cli::commands::top::{
     header_text, plan_layout, rect_or_area, run_fades, runs_text, shells_text,
 };
 use crate::cli::viewer::AltScreenGuard;
+use crate::ipc::Response;
 /// Poll the disk fingerprint every this long.
 const TICK: Duration = Duration::from_millis(500);
 
@@ -148,6 +149,12 @@ pub struct TopModel {
     /// The detail view's scroll: the index of the detail text's first
     /// visible line. Clamped through [`Self::clamp_offsets`].
     pub detail_top: usize,
+    /// The open attach view on a shell, when one is.
+    pub attach: Option<AttachBox>,
+    /// Why the last attach open failed; cleared by the next key.
+    pub attach_note: Option<String>,
+    /// Set while a key asked for the attach view to open; the loop opens it.
+    pub attach_requested: bool,
 }
 
 /// The open detail view: which run it shows and the text it draws — the
@@ -195,6 +202,9 @@ impl TopModel {
             quit: false,
             detail: None,
             detail_top: 0,
+            attach: None,
+            attach_note: None,
+            attach_requested: false,
         }
     }
 
@@ -282,6 +292,22 @@ impl TopModel {
             }
             self.clamp_offsets();
             return;
+        }
+        if self.attach.is_some() {
+            self.attach_key(key);
+            self.clamp_offsets();
+            return;
+        }
+        self.attach_note = None;
+        if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+            match (key.code, self.focus) {
+                (KeyCode::Enter | KeyCode::Char('a'), Panel::Shells)
+                    if self.attach_candidate().is_some() =>
+                {
+                    self.attach_requested = true;
+                }
+                _ => {}
+            }
         }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
@@ -520,7 +546,7 @@ impl TopModel {
 
     /// The Shells panel's shell-row count: `None` when the panel shows the
     /// daemon-down mark or `none` — nothing selectable.
-    fn shells_row_count(&self) -> Option<usize> {
+    pub(crate) fn shells_row_count(&self) -> Option<usize> {
         match &self.snapshot.shells {
             ShellsPanel::Rows(rows) if !rows.is_empty() => Some(rows.len()),
             _ => None,
@@ -528,7 +554,7 @@ impl TopModel {
     }
 
     /// The selected shell's id, when the panel has a row at the selection.
-    fn selected_shell_id(&self) -> Option<String> {
+    pub(crate) fn selected_shell_id(&self) -> Option<String> {
         match &self.snapshot.shells {
             ShellsPanel::Rows(rows) => rows.get(self.shells_selected).map(|s| s.id.clone()),
             ShellsPanel::DaemonDown => None,
@@ -567,6 +593,48 @@ impl TopModel {
         } else if self.shells_selected >= self.shells_top + inner {
             self.shells_top = self.shells_selected + 1 - inner;
         }
+    }
+
+    /// The selected shell's id when a key may open the attach view on it:
+    /// Shells focused, not editing the filter, and a row selected. The
+    /// panel starts on row 0 with the selection not yet moved — only the
+    /// selection keys move it, so a fresh model on Shells opens nothing
+    /// until the user has moved the selection.
+    pub fn attach_candidate(&self) -> Option<String> {
+        if self.focus != Panel::Shells || self.editing {
+            return None;
+        }
+        self.shells_row_count()
+            .filter(|_| self.shells_selected > 0)
+            .and_then(|_| self.selected_shell_id())
+    }
+
+    /// Apply one key to the open attach view; the tail viewer's key table
+    /// decides what it means. `Ctrl-C` closes the view and quits `top`.
+    /// Returns nothing: the view's own state is the answer.
+    fn attach_key(&mut self, key: KeyEvent) {
+        self.attach_note = None;
+        let Some(view) = self.attach.as_mut() else {
+            return;
+        };
+        let page = self.heights.shells.max(1);
+        if !attach_key(&mut view.view, key, page)
+            && let Some(boxed) = self.attach.take()
+        {
+            boxed.view.task.abort();
+        }
+        self.clamp_offsets();
+    }
+
+    /// Apply one frame the attach view's channel gave: `Some` feeds the
+    /// model, `None` marks the stream ended and keeps the view. Kept on the
+    /// model so the select arm reads as one step.
+    fn apply_attach_frame(&mut self, frame: Option<Response>) {
+        let Some(view) = self.attach.as_mut() else {
+            return;
+        };
+        view.view.apply_frame(frame);
+        self.clamp_offsets();
     }
 }
 
@@ -713,6 +781,37 @@ pub use draw::draw;
 use draw::inner_height;
 #[cfg(test)]
 use draw::{draw_at, visible_range};
+#[path = "top_tui_attach.rs"]
+mod attach;
+use attach::attach_key;
+pub(crate) use attach::{AttachBox, AttachOpen, open_attach};
+
+/// Wait for one frame from the open attach view's channel: `Some` applies
+/// it, `None` marks the model's stream ended and keeps the view. Called
+/// from `run_tui`'s select arm; the receive is cancel-safe, and the channel
+/// closing (its task ended) is the stream ending too.
+async fn attach_frame(model: &mut TopModel) -> Option<Response> {
+    model.attach.as_mut()?.view.frames.recv().await
+}
+
+/// Open the attach view the last key asked for: the request, the first
+/// frame, and the forwarding task. A failure names itself in the footer and
+/// the panels stay.
+async fn open_requested_attach(model: &mut TopModel) {
+    let Some(id) = model
+        .attach_requested
+        .then(|| model.attach_candidate())
+        .flatten()
+    else {
+        model.attach_requested = false;
+        return;
+    };
+    model.attach_requested = false;
+    match open_attach(&id).await {
+        AttachOpen::Opened(view) => model.attach = Some(AttachBox { view: *view }),
+        AttachOpen::Failed(msg) => model.attach_note = Some(msg),
+    }
+}
 
 /// The live loop. Enters raw mode, the alternate screen and a hidden cursor;
 /// the `AltScreenGuard` teardown leaves all three, so `?` cannot strand the
@@ -805,6 +904,9 @@ pub(crate) async fn run_tui(
                     Some(_) => {}
                     None => break Ok(()),
                 }
+                if model.attach_requested && model.attach.is_none() {
+                    open_requested_attach(&mut model).await;
+                }
                 if model.quit {
                     break Ok(());
                 }
@@ -840,6 +942,10 @@ pub(crate) async fn run_tui(
                 model.after_refresh(size);
                 terminal.draw(|f| draw(f, &model))?;
             }
+            frame = attach_frame(&mut model), if model.attach.is_some() => {
+                model.apply_attach_frame(frame);
+                terminal.draw(|f| draw(f, &model))?;
+            }
         }
     };
 
@@ -856,7 +962,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::VecDeque;
 
-    fn row(id: &str, l: Liveness) -> TopRunRow {
+    pub(super) fn row(id: &str, l: Liveness) -> TopRunRow {
         TopRunRow {
             id: id.to_string(),
             kind: "ghost".to_string(),
@@ -973,7 +1079,7 @@ mod tests {
         assert_eq!(model.selected, 0, "follow snaps back to the live row");
     }
 
-    fn press(model: &mut TopModel, code: KeyCode) {
+    pub(super) fn press(model: &mut TopModel, code: KeyCode) {
         model.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
@@ -1018,11 +1124,11 @@ mod tests {
 
     // ── the screen ──────────────────────────────────────────────────────────
 
-    fn snapshot(runs: Vec<TopRunRow>) -> crate::cli::commands::top::TopSnapshot {
+    pub(super) fn snapshot(runs: Vec<TopRunRow>) -> crate::cli::commands::top::TopSnapshot {
         snapshot_with(runs, vec![])
     }
 
-    fn shell(id: &str) -> crate::ipc::ShellInfo {
+    pub(super) fn shell(id: &str) -> crate::ipc::ShellInfo {
         crate::ipc::ShellInfo {
             id: id.to_string(),
             host: "local".to_string(),
@@ -1036,7 +1142,7 @@ mod tests {
         }
     }
 
-    fn snapshot_with(
+    pub(super) fn snapshot_with(
         runs: Vec<TopRunRow>,
         activity: Vec<crate::cli::commands::top::ActivityRow>,
     ) -> crate::cli::commands::top::TopSnapshot {
@@ -1057,7 +1163,7 @@ mod tests {
         }
     }
 
-    fn snapshot_with_shells(
+    pub(super) fn snapshot_with_shells(
         runs: Vec<TopRunRow>,
         shells: Vec<crate::ipc::ShellInfo>,
     ) -> crate::cli::commands::top::TopSnapshot {
@@ -1066,7 +1172,7 @@ mod tests {
         snap
     }
 
-    fn snapshot_with_all(
+    pub(super) fn snapshot_with_all(
         runs: Vec<TopRunRow>,
         activity: Vec<crate::cli::commands::top::ActivityRow>,
         shells: Vec<crate::ipc::ShellInfo>,
@@ -1076,7 +1182,7 @@ mod tests {
         snap
     }
 
-    fn activity_row(
+    pub(super) fn activity_row(
         time: &str,
         name: &str,
         summary: &str,

@@ -21,6 +21,10 @@ pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
 /// footer, with the detail's own footer naming `esc back`.
 pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<FixedOffset>) {
     let area = frame.area();
+    if let Some(attach) = &model.attach {
+        crate::cli::tail::render_tail(frame, &attach.view.tail);
+        return;
+    }
     let (rects, _heights) = layout_at(model, area);
     if let Some(detail) = &model.detail {
         draw_detail_at(frame, model, detail, &rects, area, now);
