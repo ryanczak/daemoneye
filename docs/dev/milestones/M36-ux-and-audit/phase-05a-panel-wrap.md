@@ -1,7 +1,7 @@
 # Phase 05a — panel-wrap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-04 (05 split into 05a/05b at drafting)
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -419,3 +419,20 @@ kill: (-3996588): No such process
 **Commit:** 155a8e10ac4006ed0e5284c6bf6a1eb58754255b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. Two extra tests (`…_empty_input_is_one_empty_row`,
+  `…_approval_panel_rows_fit_the_terminal`) share the `wrap_display_` prefix,
+  so the E2E reads `passed=7`, not the pinned 5. That is a spec gap (the
+  prefix filter can't distinguish extra tests), not a defect.
+- **Calibration:** 266 turns for about 200 lines, against about 500 per pass
+  on 04b: a small surface in a small number of files was the right shape.
+  The red state was a compile error. I checked by reading that the panel test
+  fails at runtime against `wrap_line_hard` (the CJK row is cut at 80
+  columns; the ESC case puts a raw `\x1b` on screen). Gates re-run green:
+  fmt 0, 0 warnings, clippy clean, `passed=2672 failed=0`. Side effect
+  logged as FINDINGS L6 (the viewer shows tabs as `\t`), deferred to 05b.
