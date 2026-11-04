@@ -210,12 +210,14 @@ mod tests {
 
     #[test]
     fn top_attach_enter_or_a_opens_only_on_a_selected_shell() {
+        // A fresh model is already on row 0: the drawn selection is the
+        // selection, so a bare Enter opens the first shell.
         let mut model = TopModel::new(snapshot_with_shells(vec![], vec![shell("s1"), shell("s2")]));
         model.focus = Panel::Shells;
         assert_eq!(
             model.attach_candidate(),
-            None,
-            "no selection yet, nothing to open"
+            Some("s1".to_string()),
+            "row 0 is selected: Enter names it"
         );
         press(&mut model, KeyCode::Down);
         assert_eq!(
@@ -258,6 +260,27 @@ mod tests {
             None,
             "editing the filter, Enter is text, not an open"
         );
+    }
+
+    // ── the trigger on row 0 ─────────────────────────────────────────────
+
+    #[test]
+    fn top_attach_enter_on_the_first_shell_opens_it() {
+        // One shell, Shells focused, the selection never moved: row 0 is
+        // still the selected row, and both keys open it.
+        let mut model = TopModel::new(snapshot_with_shells(vec![], vec![shell("s1")]));
+        model.focus = Panel::Shells;
+        assert_eq!(model.shells_selected, 0, "the panel starts on row 0");
+        press(&mut model, KeyCode::Enter);
+        assert_eq!(
+            model.attach_candidate(),
+            Some("s1".to_string()),
+            "Enter opens the first shell"
+        );
+        assert!(model.attach_requested, "the key asked for the open");
+        assert!(model.attach.is_none(), "the loop opens it, not the key");
+        press(&mut model, KeyCode::Char('a'));
+        assert!(model.attach_requested, "'a' asks for the open again");
     }
 
     // ── the keys ─────────────────────────────────────────────────────────
@@ -452,7 +475,7 @@ mod tests {
         view.task.abort();
     }
 
-    // ── opening failures ─────────────────────────────────────────────────
+    // ── opening failures and the footer ──────────────────────────────────
 
     #[test]
     fn top_attach_open_error_leaves_the_panels_and_names_it() {
@@ -471,6 +494,48 @@ mod tests {
         );
         press(&mut model, KeyCode::Down);
         assert!(model.attach_note.is_none(), "the next key clears the note");
+    }
+
+    #[test]
+    fn top_attach_footer_names_enter_attach_and_the_open_error() {
+        let footer_of = |model: &TopModel| {
+            let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+            terminal.draw(|f| draw(f, model)).unwrap();
+            super::super::tests::drawn_rows(&terminal)
+                .last()
+                .cloned()
+                .unwrap()
+        };
+        // Shells focused with rows: the footer names the open.
+        let mut model = TopModel::new(snapshot_with_shells(vec![], vec![shell("s1")]));
+        model.focus = Panel::Shells;
+        let footer = footer_of(&model);
+        assert!(
+            footer.contains("enter attach"),
+            "Shells with rows names the open: {footer:?}"
+        );
+        // Runs focused: the hint is not there.
+        model.focus = Panel::Runs;
+        let footer = footer_of(&model);
+        assert!(
+            !footer.contains("enter attach"),
+            "Runs focused, the hint is not there: {footer:?}"
+        );
+        // A failed open names its message in the footer.
+        model.focus = Panel::Shells;
+        model.attach_note = Some("no live shell s1".to_string());
+        let footer = footer_of(&model);
+        assert!(
+            footer.contains("no live shell s1"),
+            "the footer shows the error: {footer:?}"
+        );
+        // The next key clears it.
+        press(&mut model, KeyCode::Down);
+        let footer = footer_of(&model);
+        assert!(
+            !footer.contains("no live shell s1"),
+            "the next key clears the note: {footer:?}"
+        );
     }
 
     // ── the drawn view and the restore ───────────────────────────────────

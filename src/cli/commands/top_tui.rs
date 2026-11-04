@@ -597,15 +597,13 @@ impl TopModel {
 
     /// The selected shell's id when a key may open the attach view on it:
     /// Shells focused, not editing the filter, and a row selected. The
-    /// panel starts on row 0 with the selection not yet moved — only the
-    /// selection keys move it, so a fresh model on Shells opens nothing
-    /// until the user has moved the selection.
+    /// drawn selection is the selection — the panel starts on row 0
+    /// selected, so a bare `Enter` on a populated Shells opens that row.
     pub fn attach_candidate(&self) -> Option<String> {
         if self.focus != Panel::Shells || self.editing {
             return None;
         }
         self.shells_row_count()
-            .filter(|_| self.shells_selected > 0)
             .and_then(|_| self.selected_shell_id())
     }
 
@@ -1220,7 +1218,7 @@ mod tests {
 
     /// The drawn screen as rows, one `String` per row, so a title needle is
     /// matched within a single row and not across the whole screen.
-    fn drawn_rows(terminal: &Terminal<ratatui::backend::TestBackend>) -> Vec<String> {
+    pub(super) fn drawn_rows(terminal: &Terminal<ratatui::backend::TestBackend>) -> Vec<String> {
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
             .map(|y| {

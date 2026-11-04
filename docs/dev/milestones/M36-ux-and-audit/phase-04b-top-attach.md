@@ -518,3 +518,106 @@ passed=7 failed=0` and the whole suite at **2666**, not 2664 (and not
 more). Mutation-check each: restore the guard / remove the footer text,
 confirm the new test fails, revert, and paste the failing `test result:`
 line. `top_tui.rs`'s ratchet line moves only by what (1) changes there.
+
+### Update — 2026-11-04 03:40 (started, resumed)
+
+Executor: executor-4 (resume of bounce 1). Green gates and a clean tree are
+noted and not treated as done. Two edits remain per the bounce note:
+(1) drop `attach_candidate`'s `shells_selected > 0` guard so row 0 opens,
+fix the trigger test's unmoved-selection assertion, and add
+`top_attach_enter_on_the_first_shell_opens_it`; (2) draw `enter attach` in
+the footer while Shells is focused with rows and show `attach_note` when
+set, with `top_attach_footer_names_enter_attach_and_the_open_error`
+asserting on the drawn `TestBackend` text. Mutation checks for both, then
+the red-runs entry, E2E, and the commit.
+
+### Update — 2026-11-04 04:27 (red runs)
+
+The two bounce-1 fixes, mutation-checked against the bounced code — each
+new test run against the code it pins, then the code restored:
+
+**bug-04b-1, the `shells_selected > 0` guard restored** (both trigger tests
+fail; the guard then removed again):
+
+```
+running 7 tests
+test cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it ... ok
+test cli::commands::top_tui::attach::tests::top_attach_enter_on_the_first_shell_opens_it ... FAILED
+test cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell ... FAILED
+test cli::commands::top_tui::attach::tests::top_attach_keys_close_on_q_esc_ctrl_o_and_ctrl_c_quits_top ... ok
+test cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels ... ok
+test cli::commands::top_tui::attach::tests::top_attach_footer_names_enter_attach_and_the_open_error ... ok
+test cli::commands::top_tui::attach::tests::top_attach_stream_end_marks_exited_and_keeps_the_view ... ok
+thread 'cli::commands::top_tui::attach::tests::top_attach_enter_on_the_first_shell_opens_it' (3849330) panicked at src/cli/commands/top_tui_attach.rs:275:9:
+assertion `left == right` failed: Enter opens the first shell
+  left: None
+ right: Some("s1")
+thread 'cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell' (3849331) panicked at src/cli/commands/top_tui_attach.rs:217:9:
+assertion `left == right` failed: row 0 is selected: Enter names it
+  left: None
+ right: Some("s1")
+test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 2580 filtered out; finished in 0.01s
+```
+
+**bug-04b-2, the footer text removed** (the footer test fails; the text
+then restored):
+
+```
+thread 'cli::commands::top_tui::attach::tests::top_attach_footer_names_enter_attach_and_the_open_error' (3851109) panicked at src/cli/commands/top_tui_attach.rs:516:9:
+Shells with rows names the open: " tab focus · f follow · / filter · focus: Shells · following · tailing          "
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2586 filtered out; finished in 0.00s
+```
+
+With both fixes in place: `top_attach passed=7 failed=0`.
+
+### Findings — 2026-11-04
+
+- The footer can overflow its one-line rect once `enter attach` and an
+  `attach_note` are appended (the base line is 90 chars at 80 columns).
+  `draw_at` now drops leftmost key-hint segments (never `q quit`) until the
+  line fits, so the newest, most specific segment stays visible.
+- `attach_candidate` now reads the drawn selection as the selection: the
+  panel starts on row 0 selected, so `shells_selected == 0` is row 0, not
+  "unmoved" — the old guard made the top row unattachable.
+
+### Update — 2026-11-04 04:40 (end-to-end verification)
+
+```sh
+bash <<'E2E'
+cargo test top_attach_ 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "top_attach passed=" p, "failed=" f}'
+cat src/cli/commands/top*.rs | grep -cE 'ShellInput|ShellSignal|ShellResize' | sed 's/^/readonly_hits=/'
+grep -c 'enter attach' src/cli/commands/top_tui_draw.rs | sed 's/^/footer_hint=/'
+touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+for t in hygiene doc_truth bug_tracker; do cargo test --test $t 2>&1 | grep -E '^test result'; done
+cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
+cargo fmt --all --check; echo "fmt_exit=$?"
+cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+E2E
+```
+
+Actual output of that block, one run, unedited:
+
+```
+top_attach passed=7 failed=0
+readonly_hits=0
+footer_hint=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2666 failed=0
+```
+
+`top_attach passed=7 failed=0` (bug-04b-1 and bug-04b-2's tests in),
+`readonly_hits=0`, `footer_hint=1`, `build_warnings=0`, `hygiene`,
+`doc_truth` and `bug_tracker` all `ok`, clippy clean, `fmt_exit=0`, and the
+whole suite at **2666** — the bounce note's exact finish condition.
+Preservation checks also pass:
+`enter_opens_the_selected_runs_detail`,
+`esc_restores_focus_selection_and_offsets`,
+`shells_selection_moves_follows_and_survives_refresh`, and the three
+`tail_loop_*` tests. `top_tui.rs` shrank to 952 production lines (the
+guard's removal), still over the 800 cap, so the allowlist line stays and
+does not grow.

@@ -148,8 +148,24 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
         "q quit \u{b7} \u{2191}\u{2193} scroll \u{b7} tab focus \u{b7} f follow \u{b7} / filter \u{b7} focus: {} \u{b7} {mode} \u{b7} {activity_mode}",
         model.focus.label()
     );
+    if model.focus == Panel::Shells && model.shells_row_count().is_some() {
+        footer.push_str(" \u{b7} enter attach");
+    }
+    if let Some(note) = &model.attach_note {
+        footer.push_str(&format!(" \u{b7} {note}"));
+    }
     if !model.filter.is_empty() {
         footer.push_str(&format!(" \u{b7} filter: {}", model.filter));
+    }
+    // An overflow would cut the right end — the newest segments, the attach
+    // hint and an open error. Drop key hints from the left (never `q quit`,
+    // how the user leaves) until the line fits.
+    let width = rects.footer.width as usize;
+    while footer.chars().count() > width {
+        let Some(sep) = footer.char_indices().skip(2).find(|(_, c)| *c == '\u{b7}') else {
+            break;
+        };
+        footer = footer[sep.0 + 2..].to_string();
     }
     Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
 }
