@@ -1,7 +1,7 @@
 # Bug 1 on phase-04b: the first shell row can never be attached
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (d8da67cc, approved 2026-11-04)
 **Filed:** 2026-11-03
 
 ## What's wrong
@@ -34,8 +34,8 @@ as the first row; 04a never had an "unselected" state.
 
 ## Definition of done
 
-- [ ] `top_attach_enter_on_the_first_shell_opens_it` (new) passes: one
+- [x] `top_attach_enter_on_the_first_shell_opens_it` (new) passes: one
       shell, Shells focused, no movement — `Enter` and `a` each request the
       open on `s1` (fails today).
-- [ ] The trigger test no longer asserts `None` for an unmoved selection on
+- [x] The trigger test no longer asserts `None` for an unmoved selection on
       a populated panel.

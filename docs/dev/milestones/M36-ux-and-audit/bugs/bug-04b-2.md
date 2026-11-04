@@ -1,7 +1,7 @@
 # Bug 2 on phase-04b: the footer has no attach hint and never shows an open error
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (d8da67cc, approved 2026-11-04)
 **Filed:** 2026-11-03
 
 ## What's wrong
@@ -32,7 +32,7 @@ the rendering.
 
 ## Definition of done
 
-- [ ] `top_attach_footer_names_enter_attach_and_the_open_error` (new)
+- [x] `top_attach_footer_names_enter_attach_and_the_open_error` (new)
       passes on a `TestBackend`: `enter attach` in the footer with Shells
       focused and rows, absent with Runs focused; with `attach_note` set,
       the drawn footer shows the message, and after the next key it is gone

@@ -1,7 +1,7 @@
 # Phase 04b — top-attach
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-02 (split and refined 2026-11-03)
 **Depends on:** phase 04a (the Shells selection)
 **Estimated diff:** ~350 lines
@@ -784,3 +784,19 @@ kill: (-3872729): No such process
 **Commit:** d8da67ccc5a1f50840a66a4dd3d78c7353ea0e2c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-04
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-04b-1 row 0 unattachable; bug-04b-2 footer hint and
+  error never drawn, though the completion summary claimed them)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** the footer overflow trim (unrequested; reasonable,
+  but it drops `q quit` despite its comment — FINDINGS L5, deferred to
+  phase-05)
+- **Calibration:** three runs (phase 04 stopped at 514 turns, 04b stopped
+  at 139 then resumed to 503, the bounce fix at 504) for ~350 lines: the
+  `top_tui` + `tail` surface costs this model ~500 turns per pass in
+  reading alone. Gates re-run green: fmt 0, 0 warnings, clippy clean,
+  `passed=2666 failed=0`, `top_attach passed=7`, `footer_hint=1`,
+  `readonly_hits=0`; both mutation checks pasted with failing output.
