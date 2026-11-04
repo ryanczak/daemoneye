@@ -1,7 +1,7 @@
 # Phase 05b — markdown-wrap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-04
 **Depends on:** phase 05a (`wrap_display`, `unicode-width`)
 **Estimated diff:** ~250 lines
@@ -252,3 +252,144 @@ Notes on the lines:
 - Preservation: the remaining `wrap_words_*` tests (5), the markdown tests
   (4) and the viewer tests (48) pass unedited; the `wrap_display_*` tests
   (7) pass.
+
+### Update — 2026-11-04 22:27 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built the phase-05b fixes: `wrap_line` in `src/cli/render.rs` splits any styled `Line` into rows of at most `width` display columns (styles preserved per row, wide chars never split, nothing dropped); `feed_to_lines`/`flush_to_lines` apply it to everything `render_line_to_spans` returns, so code-block bodies, headings, prose, list items and blockquotes all fit their width (B8); `visual_len` now counts columns via `unicode-width` (CJK 2, combining 0, renderer-inserted ANSI still skipped). The viewer's `wrap_words` measures display columns for both the row budget and its overlong-token split, and `push_wrapped_hard` expands tabs to the next 8-column stop before `wrap_display`, so output rows show real columns while CR and other controls stay visible (P6, L6). `wrap_words_counts_leading_whitespace_in_chars` was replaced by `display_wrap_viewer_words_by_columns` (column-pinned). E2E ran the phase block verbatim: `display_wrap passed=7 failed=0`, `old_char_test=0`, allowlist line unchanged at 219, `build_warnings=0`, clippy clean, `fmt_exit=0`, hygiene/doc_truth/bug_tracker ok, full suite 2678 passed / 0 failed.
+
+**Notes for review:** (1) Red runs ran against HEAD in a throwaway worktree with only the test files copied in — 5 of the 7 failed (`test result: FAILED. 0 passed; 5 failed`); the two viewer tests were red in the first pre-implementation run of the same tests (words test: `row "\u{3000}abcd efgh" exceeds 10 columns`) but the tab test passed vacuously on pre-phase code because 05a's `wrap_display` visible-escape form already covered `\t` — noted in the red-runs entry. (2) The red-runs entry elides the 60/40/150/200-char rows with `…` for doc readability; the full capture is at `/tmp/red05b-pre-final.txt`. (3) `push_wrapped_hard` is now `pub(super)` so the viewer test module can call it; the two `display_wrap_viewer_*` tests live in `src/cli/viewer.rs`'s test module per the phase's Authorizations. (4) Spec step 4 says "pastes step 1's `test result:` lines and assertion messages verbatim" — I pasted both, with the long rows elided and the elision stated in the entry; flagging since "verbatim" could be read stricter. (5) Adjacent, not fixed: `parse_ansi_to_spans` still hand-rolls the same ESC state machine `visual_len` has (carried from 05a's findings) — noted in Findings, no third caller yet. Status left at `in-progress`; completion bookkeeping is yours.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (4093388): No such process
+kill: (-4094075): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-05b-markdown-wrap.md` — +106 -1
+- `src/cli/markdown/mod.rs` — +7 -2
+- `src/cli/render.rs` — +45 -2
+- `src/cli/tests.rs` — +123 -0
+- `src/cli/viewer.rs` — +60 -8
+- `src/cli/viewer_layout.rs` — +64 -14
+
+**Commit:** 5bfed147560ed2dabe306000f1a3cd4e622b2bf3
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
