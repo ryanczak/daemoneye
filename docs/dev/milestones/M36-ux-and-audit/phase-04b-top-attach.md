@@ -1,7 +1,7 @@
 # Phase 04b — top-attach
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-04b-1, bug-04b-2)
 **Drafted:** 2026-11-02 (split and refined 2026-11-03)
 **Depends on:** phase 04a (the Shells selection)
 **Estimated diff:** ~350 lines
@@ -124,8 +124,14 @@ key reaches the shell as input, a signal or a resize.
 
 ## Acceptance criteria
 
-- [ ] The E2E block's first line is `top_attach passed=5 failed=0` (today
-      `top_attach passed=0 failed=0`).
+- [ ] **Bounce 1:** the E2E block's first line is `top_attach passed=7
+      failed=0` (today `passed=5`): the five tests plus
+      `top_attach_enter_on_the_first_shell_opens_it` (bug-04b-1) and
+      `top_attach_footer_names_enter_attach_and_the_open_error` (bug-04b-2).
+- [ ] **Bounce 1:** `grep -c 'enter attach' src/cli/commands/top_tui_draw.rs`
+      prints at least 1 (today 0), and the E2E block includes that line.
+- [ ] **Bounce 1:** `grep -c 'shells_selected > 0' src/cli/commands/top_tui.rs`
+      prints 0 (today 1).
 - [ ] The E2E block's `readonly_hits=0` line holds over every
       `src/cli/commands/top*.rs` file (preservation: today 0, and the new
       module must keep it).
@@ -151,6 +157,7 @@ watches it update, and returns with `q`.
 bash <<'E2E'
 cargo test top_attach_ 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "top_attach passed=" p, "failed=" f}'
 cat src/cli/commands/top*.rs | grep -cE 'ShellInput|ShellSignal|ShellResize' | sed 's/^/readonly_hits=/'
+grep -c 'enter attach' src/cli/commands/top_tui_draw.rs | sed 's/^/footer_hint=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
@@ -484,3 +491,30 @@ kill: (-3795069): No such process
 **Commit:** 508906f3f4e854c14b12a1a180114d0fb2a73e07
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-03 (bounce 1)
+
+Gates re-run green (fmt 0, 0 warnings, clippy clean, `passed=2664
+failed=0`), `readonly_hits=0`, the restore-on-close test and the frame arm
+are right. Bounced on two behaviours: the first shell row cannot be
+attached (bug-04b-1) and the footer was never changed — no hint, no error
+(bug-04b-2), though the completion summary claimed both.
+
+### Notes for executor — 2026-11-03 (bounce 1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything else in `508906f3` is approved — the module,
+the select arm, the restore, the docs, the ratchet — do not redo it.
+Exactly two edits remain, both in files you already wrote:
+(1) `attach_candidate` must accept the selection on row 0 (drop the
+`shells_selected > 0` guard; nothing else changes about when it opens) —
+fix the trigger test's unmoved-selection assertion and add
+`top_attach_enter_on_the_first_shell_opens_it`; (2) the footer in
+`top_tui_draw.rs` names `enter attach` while Shells is focused with rows,
+and shows `attach_note` when set — add
+`top_attach_footer_names_enter_attach_and_the_open_error`, asserting on the
+drawn `TestBackend` text, not the field. Finish condition: `top_attach
+passed=7 failed=0` and the whole suite at **2666**, not 2664 (and not
+more). Mutation-check each: restore the guard / remove the footer text,
+confirm the new test fails, revert, and paste the failing `test result:`
+line. `top_tui.rs`'s ratchet line moves only by what (1) changes there.
