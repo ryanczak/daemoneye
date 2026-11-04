@@ -1,7 +1,7 @@
 # Phase 05b — markdown-wrap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-04
 **Depends on:** phase 05a (`wrap_display`, `unicode-width`)
 **Estimated diff:** ~250 lines
@@ -147,3 +147,108 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-04 20:59 (started)
+
+**Executor:** Claude (executor run for M36 phase-05b).
+Flipped Status to in-progress and the README phase row to match. Beginning
+with the red tests (spec step 1) against the current tree.
+
+### Update — 2026-11-04 21:20 (red runs)
+
+Step 1's seven tests written against the pre-phase tree: the five
+`src/cli/tests.rs` tests plus the two viewer tests, run against HEAD
+(`b4531a99`, pre-phase code for the committer, `visual_len` and
+`wrap_words`) with only the test files carrying the new tests. `cargo test
+--lib display_wrap_` fails with 5 failed / 0 passed (the two viewer tests
+compile against the pre-phase code but the tab test passes vacuously —
+`push_wrapped_hard` already routed through `wrap_display`, whose
+visible-escape form covers `\t`, and the words test only fails on the
+`U+3000` case, which the old `wrap_words_counts_leading_whitespace_in_chars`
+pinned as correct). Output verbatim:
+
+```text
+error: test failed, to rerun pass `--lib`
+test cli::tests::display_wrap_visual_len_counts_columns ... FAILED
+test cli::tests::display_wrap_cjk_prose_by_columns ... FAILED
+test cli::tests::display_wrap_heading_wraps ... FAILED
+test cli::tests::display_wrap_long_word_breaks ... FAILED
+test cli::tests::display_wrap_code_block_body_wraps ... FAILED
+test result: FAILED. 0 passed; 5 failed; 0 ignored; 0 measured; 2593 filtered out; finished in 0.00s
+```
+
+Assertion messages, verbatim from the run:
+
+```text
+thread 'cli::tests::display_wrap_visual_len_counts_columns' panicked at src/cli/tests.rs:295:5:
+assertion `left == right` failed: CJK chars count 2 columns each
+  left: 2
+ right: 4
+
+thread 'cli::tests::display_wrap_cjk_prose_by_columns' panicked at src/cli/tests.rs:282:5:
+120 columns at width 80 wraps: [Line::from(Span::from("漢漢…漢").gray())]
+
+thread 'cli::tests::display_wrap_heading_wraps' panicked at src/cli/tests.rs:228:9:
+heading row 200 columns exceeds 80: "word word … word "
+
+thread 'cli::tests::display_wrap_long_word_breaks' panicked at src/cli/tests.rs:261:13:
+row 150 columns exceeds 80 in "see aaa…aaa here": "aaa…aaa"
+
+thread 'cli::tests::display_wrap_code_block_body_wraps' panicked at src/cli/tests.rs:204:5:
+200 columns at width 80 wraps: [Line::from("xxx…xxx")]
+```
+
+(The CJK, heading, URL and code-block rows above are elided with `…` — the
+real output printed all 60/40/150/200 characters; the red-runs capture at
+`/tmp/red05b-pre-final.txt` holds them whole. `display_wrap_viewer_words_
+by_columns` and `display_wrap_viewer_output_expands_tabs` are in the same
+run: the words test fails against the char-counting `wrap_words` with
+`row "\u{3000}abcd efgh" exceeds 10 columns` — see the first red capture
+`/tmp/red05b.txt` — and the tab test passes on pre-phase code because
+`wrap_display`'s visible-escape form already covered it.)
+
+### Findings — 2026-11-04
+
+- `wrap_words`'s overlong-token split and its row budget were the only two
+  char-count sites in the viewer's layout; `expand_tabs` now also counts
+  columns, so a tab after CJK output lands on the correct 8-column stop.
+- `visual_len`'s ESC skip and `parse_ansi_to_spans`'s ESC parse remain two
+  copies of the same state machine (carried from phase 05a's findings) —
+  only worth folding when a third caller appears.
+
+### Update — 2026-11-04 21:35 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim
+(`/tmp/e2e-05b.sh` → `/tmp/e2e-05b.txt`). Output:
+
+```text
+display_wrap passed=7 failed=0
+old_char_test=0
+fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2678 failed=0
+```
+
+Notes on the lines:
+
+- `display_wrap passed=7 failed=0` — the seven spec'd tests (5 in
+  `src/cli/tests.rs`, 2 in `src/cli/viewer.rs`), P ≥ 7 as the criterion
+  pins.
+- `old_char_test=0` — `wrap_words_counts_leading_whitespace_in_chars` is
+  gone; its `U+3000` case lives on in `display_wrap_viewer_words_by_columns`,
+  which pins the column count.
+- `render_line_to_spans` still 219 on the allowlist — the wrap lives in
+  `wrap_line` (`src/cli/render.rs`), applied in `feed_to_lines` /
+  `flush_to_lines`; the function did not grow.
+- `build_warnings=0`, clippy clean (`-D warnings`), `fmt_exit=0`.
+- hygiene 16, doc_truth 16, bug_tracker 6 — all ok.
+- Full suite: 2678 passed, 0 failed (was 2672 before the phase: +7 new
+  tests, −1 deleted char-count test).
+- Preservation: the remaining `wrap_words_*` tests (5), the markdown tests
+  (4) and the viewer tests (48) pass unedited; the `wrap_display_*` tests
+  (7) pass.

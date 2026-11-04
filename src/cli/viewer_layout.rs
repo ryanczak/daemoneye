@@ -140,15 +140,62 @@ fn push_wrapped(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind
 }
 
 /// Row-kind-independent hard wrap, for machine output that must not be
-/// re-flowed on word boundaries.
-fn push_wrapped_hard(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: RowKind, idx: usize) {
-    for line in crate::cli::render::wrap_display(text, width) {
-        rows.push(ViewRow {
-            text: line,
-            kind,
-            block: idx,
-        });
+/// re-flowed on word boundaries. A tab expands to the next 8-column stop —
+/// this is a read-only transcript of command output, not the approval
+/// panel's visible-escape form — and every other control character stays
+/// visible as phase 05a made it.
+pub(super) fn push_wrapped_hard(
+    rows: &mut Vec<ViewRow>,
+    text: &str,
+    width: usize,
+    kind: RowKind,
+    idx: usize,
+) {
+    for line in text.split('\n') {
+        let expanded = expand_tabs(line);
+        for row in crate::cli::render::wrap_display(&expanded, width) {
+            rows.push(ViewRow {
+                text: row,
+                kind,
+                block: idx,
+            });
+        }
     }
+}
+
+/// Expand each tab to the next 8-column stop, counting the display columns
+/// already used on the line.
+fn expand_tabs(line: &str) -> String {
+    if !line.contains('\t') {
+        return line.to_string();
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut col = 0usize;
+    for ch in line.chars() {
+        if ch == '\t' {
+            let stop = 8 - (col % 8);
+            for _ in 0..stop {
+                out.push(' ');
+            }
+            col += stop;
+        } else {
+            out.push(ch);
+            col += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        }
+    }
+    out
+}
+
+/// Display columns of `s`, per `unicode-width`.
+fn str_width(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// Display columns of `ch`; a control character counts 0 — prose in the
+/// viewer is model text, and output rows reach `wrap_display` only after
+/// `push_wrapped_hard` expanded their tabs.
+fn char_width(ch: char) -> usize {
+    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
 }
 
 /// Wrap a prose line on word boundaries: whole words are kept together and a
@@ -156,7 +203,8 @@ fn push_wrapped_hard(rows: &mut Vec<ViewRow>, text: &str, width: usize, kind: Ro
 /// Leading/trailing whitespace per hard line is preserved so rejoining the
 /// rows with single spaces round-trips the input.
 ///
-/// Widths count chars.
+/// Widths count display columns (`unicode-width`), so CJK prose wraps within
+/// its width and a full-width space costs 2.
 ///
 /// A hard line that is only whitespace keeps that whitespace as its one row:
 /// `has_content` is set for it up front, because `flush` writes an empty row
@@ -172,6 +220,7 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
         let trailing_len = hard_line.len() - hard_line.trim_end().len();
         let (leading, rest) = hard_line.split_at(leading_len);
         let (body, trailing) = rest.split_at(rest.len() - trailing_len);
+        let leading_cols = str_width(leading);
 
         let mut line = String::with_capacity(width);
         let mut has_content = false;
@@ -190,14 +239,14 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
             *has_content = false;
         };
 
-        // `leading_len` is bytes, for `split_at`; the row budget is chars.
-        let mut space_remaining: usize = width.saturating_sub(leading.chars().count());
+        // `leading_len` is bytes, for `split_at`; the row budget is columns.
+        let mut space_remaining: usize = width.saturating_sub(leading_cols);
 
         for tok in body.split(' ') {
             if tok.is_empty() {
                 continue;
             }
-            let token_len = tok.chars().count();
+            let token_len = str_width(tok);
             if token_len > width {
                 // An overlong token breaks on char boundaries, filling the
                 // current row first.
@@ -206,13 +255,14 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
                     space_remaining = width;
                 }
                 for ch in tok.chars() {
-                    if space_remaining == 0 {
+                    let w = char_width(ch);
+                    if space_remaining < w {
                         flush(&mut line, &mut out, &mut has_content);
                         space_remaining = width;
                     }
                     line.push(ch);
                     has_content = true;
-                    space_remaining -= 1;
+                    space_remaining -= w;
                 }
                 continue;
             }

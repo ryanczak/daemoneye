@@ -1,5 +1,6 @@
 // ── cli module tests ──────────────────────────────────────────────────────────
 
+use crate::cli::markdown::MarkdownRenderer;
 use crate::cli::render::*;
 use crate::daemon::utils::command_has_sudo;
 
@@ -176,4 +177,126 @@ fn wrap_display_leaves_plain_text_alone() {
 #[test]
 fn wrap_display_empty_input_is_one_empty_row() {
     assert_eq!(wrap_display("", 20), vec![String::new()]);
+}
+
+// ── display_wrap: M36 phase-05b (B8, P6, L6) ────────────────────────────────
+
+/// The display width of a styled row: the sum over its spans of each span's
+/// text width. Styled spans must count only their text.
+fn line_width(line: &ratatui::text::Line<'_>) -> usize {
+    line.spans
+        .iter()
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+        .sum()
+}
+
+fn line_text(line: &ratatui::text::Line<'_>) -> String {
+    line.spans.iter().map(|s| s.content.as_ref()).collect()
+}
+
+#[test]
+fn display_wrap_code_block_body_wraps() {
+    let mut md = MarkdownRenderer::new();
+    let width = 80;
+    let body = "x".repeat(200);
+    let _ = md.feed_to_lines("```bash\n", width);
+    let lines = md.feed_to_lines(&format!("{body}\n"), width);
+    assert!(lines.len() >= 3, "200 columns at width 80 wraps: {lines:?}");
+    for line in &lines {
+        assert!(
+            line_width(line) <= 80,
+            "row {} columns exceeds width 80: {:?}",
+            line_width(line),
+            line_text(line)
+        );
+    }
+    let joined: String = lines.iter().map(|l| line_text(l)).collect();
+    assert_eq!(joined, body, "the rows join back to the line");
+}
+
+#[test]
+fn display_wrap_heading_wraps() {
+    let mut md = MarkdownRenderer::new();
+    let lines = md.feed_to_lines(&format!("## {}\n", "word ".repeat(40)), 80);
+    assert!(lines.len() >= 2, "a long heading wraps: {lines:?}");
+    let mut heading_rows = 0;
+    for line in &lines {
+        if line_text(line).is_empty() {
+            continue;
+        }
+        heading_rows += 1;
+        assert!(
+            line_width(line) <= 80,
+            "heading row {} columns exceeds 80: {:?}",
+            line_width(line),
+            line_text(line)
+        );
+        assert!(
+            line.spans
+                .iter()
+                .all(|s| s.style.add_modifier == ratatui::style::Modifier::BOLD),
+            "every heading row stays bold: {line:?}"
+        );
+    }
+    assert!(heading_rows >= 2, "the heading text spans several rows");
+}
+
+#[test]
+fn display_wrap_long_word_breaks() {
+    let url = "a".repeat(150);
+    let forms = [
+        format!("see {url} here"),
+        format!("- see {url} here"),
+        format!("1. see {url} here"),
+        format!("> see {url} here"),
+    ];
+    for form in forms {
+        let mut md = MarkdownRenderer::new();
+        let lines = md.feed_to_lines(&format!("{form}\n"), 80);
+        assert!(
+            lines.len() >= 2,
+            "a 150-char URL wraps: {form:?} -> {lines:?}"
+        );
+        for line in &lines {
+            assert!(
+                line_width(line) <= 80,
+                "row {} columns exceeds 80 in {form:?}: {:?}",
+                line_width(line),
+                line_text(line)
+            );
+        }
+        let joined: String = lines.iter().map(|l| line_text(l)).collect();
+        assert_eq!(
+            joined.chars().filter(|c| *c == 'a').count(),
+            150,
+            "the URL is intact across the rows: {joined:?}"
+        );
+    }
+}
+
+#[test]
+fn display_wrap_cjk_prose_by_columns() {
+    let mut md = MarkdownRenderer::new();
+    let prose = "漢".repeat(60);
+    let lines = md.feed_to_lines(&format!("{prose}\n"), 80);
+    assert!(lines.len() >= 2, "120 columns at width 80 wraps: {lines:?}");
+    for line in &lines {
+        assert!(
+            line_width(line) <= 80,
+            "row {} columns exceeds 80: {:?}",
+            line_width(line),
+            line_text(line)
+        );
+    }
+}
+
+#[test]
+fn display_wrap_visual_len_counts_columns() {
+    assert_eq!(visual_len("漢字"), 4, "CJK chars count 2 columns each");
+    let styled = "\x1b[1mword\x1b[0m";
+    assert_eq!(
+        visual_len(styled),
+        4,
+        "SGR-wrapped text counts its text only"
+    );
 }

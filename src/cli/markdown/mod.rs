@@ -1,6 +1,6 @@
 mod syntax;
 
-use crate::cli::render::{terminal_width, visual_len};
+use crate::cli::render::{terminal_width, visual_len, wrap_line};
 use syntax::highlight_code;
 
 /// Streaming word-wrap writer.
@@ -241,7 +241,9 @@ impl MarkdownRenderer {
                 '\n' => {
                     let text = std::mem::take(&mut self.line_buf);
                     if !text.is_empty() {
-                        lines.extend(self.render_line_to_spans(&text, width));
+                        for rendered in self.render_line_to_spans(&text, width) {
+                            lines.extend(wrap_line(rendered, width));
+                        }
                     } else {
                         // Empty line
                         lines.push(ratatui::text::Line::from(vec![]));
@@ -263,6 +265,9 @@ impl MarkdownRenderer {
         }
         let text = std::mem::take(&mut self.line_buf);
         self.render_line_to_spans(&text, width)
+            .into_iter()
+            .flat_map(|line| wrap_line(line, width))
+            .collect()
     }
 
     /// Feed a streaming token into the renderer.

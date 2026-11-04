@@ -1063,14 +1063,6 @@ mod tests {
         assert_eq!(kept, "x".repeat(12), "every char kept once: {rows:?}");
     }
 
-    /// M32 #7: a full-width space (3 bytes, 1 char) leaves 9 chars on a
-    /// 10-wide row, so `abcd efgh` still fits on the first row.
-    #[test]
-    fn wrap_words_counts_leading_whitespace_in_chars() {
-        let text = "\u{3000}abcd efgh";
-        assert_eq!(wrap_words(text, 10), vec![text.to_string()]);
-    }
-
     #[test]
     fn output_rows_keep_hard_wrap() {
         let token = "y".repeat(30);
@@ -1572,4 +1564,64 @@ mod tests {
             );
         }
     }
+}
+#[test]
+fn display_wrap_viewer_words_by_columns() {
+    // The U+3000 case that replaces the old char-count test: the leading
+    // ideographic space is 2 columns, so `abcd efgh` (8) no longer fits
+    // after it on a 10-column row.
+    let text = "\u{3000}abcd efgh";
+    let rows = wrap_words(text, 10);
+    for row in &rows {
+        assert!(
+            unicode_width::UnicodeWidthStr::width(row.as_str()) <= 10,
+            "row {row:?} exceeds 10 columns"
+        );
+    }
+    let rejoined: String = rows.join(" ").trim_start().to_string();
+    assert_eq!(rejoined, "abcd efgh", "words survive: {rows:?}");
+    // CJK words wrap by columns at width 10.
+    let cjk = "漢字漢字 漢字漢字 漢字漢字";
+    let rows = wrap_words(cjk, 10);
+    for row in &rows {
+        assert!(
+            unicode_width::UnicodeWidthStr::width(row.as_str()) <= 10,
+            "row {row:?} exceeds 10 columns"
+        );
+    }
+}
+
+#[test]
+fn display_wrap_viewer_output_expands_tabs() {
+    use layout::push_wrapped_hard;
+    let mut rows = Vec::new();
+    push_wrapped_hard(
+        &mut rows,
+        "a\tb",
+        20,
+        crate::cli::viewer::RowKind::Output,
+        0,
+    );
+    assert_eq!(rows.len(), 1, "one row for one line: {rows:?}");
+    let text = &rows[0].text;
+    assert!(
+        !text.contains('\t') && !text.contains("\\t"),
+        "no tab survives: {text:?}"
+    );
+    let b_col = text.find('b').expect("b is present");
+    assert_eq!(b_col, 8, "b sits at the next 8-column stop: {text:?}");
+    // A CR stays visible, in the viewer's own escape form.
+    let mut rows = Vec::new();
+    push_wrapped_hard(
+        &mut rows,
+        "a\rb",
+        20,
+        crate::cli::viewer::RowKind::Output,
+        0,
+    );
+    assert!(
+        rows[0].text.contains("\\r"),
+        "a CR still shows as \\r: {:?}",
+        rows[0].text
+    );
 }

@@ -1,4 +1,5 @@
-use unicode_width::UnicodeWidthStr;
+use ratatui::text::{Line, Span};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Show `ch` as visible text: control and format characters become their
 /// Rust-style escape form, so a reader sees the byte that would otherwise act
@@ -62,6 +63,10 @@ pub fn wrap_display(text: &str, width: usize) -> Vec<String> {
     rows
 }
 
+/// The display width of `s` in terminal columns: the ANSI sequences the
+/// renderer inserts itself are skipped, every other character counts what
+/// `unicode-width` says (CJK 2, combining 0). Control characters count 0 —
+/// they are measured only where a wrapper shows them in escape form.
 pub fn visual_len(s: &str) -> usize {
     let mut count = 0usize;
     let mut in_esc = false;
@@ -73,7 +78,7 @@ pub fn visual_len(s: &str) -> usize {
         } else if ch == '\x1b' {
             in_esc = true;
         } else {
-            count += 1;
+            count += UnicodeWidthChar::width(ch).unwrap_or(0);
         }
     }
     count
@@ -98,6 +103,44 @@ pub fn terminal_width() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .map(|w| w.saturating_sub(1))
         .unwrap_or(79)
+}
+
+/// Split a styled line into rows of at most `width` display columns, so the
+/// markdown committer never returns a row wider than its width. Styles are
+/// preserved row by row: a continuation row carries the style of the text it
+/// holds (a heading's second row is still bold, a code row keeps its
+/// highlighting). A wide character never splits across the edge and no
+/// character is dropped. Width is measured with `unicode-width`; spans are
+/// already parsed, so the visible-escape rule of `wrap_display` does not
+/// apply here.
+pub fn wrap_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 || line.width() <= width {
+        return vec![line];
+    }
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for span in line.spans {
+        let style = span.style;
+        let mut current = String::new();
+        for ch in span.content.chars() {
+            let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if !current.is_empty() && used + w > width {
+                spans.push(Span::styled(std::mem::take(&mut current), style));
+                rows.push(Line::from(std::mem::take(&mut spans)));
+                used = 0;
+            }
+            current.push(ch);
+            used += w;
+        }
+        if !current.is_empty() {
+            spans.push(Span::styled(current, style));
+        }
+    }
+    if !spans.is_empty() {
+        rows.push(Line::from(spans));
+    }
+    rows
 }
 
 /// The status-bar fields passed as a single reference to every rendering function.
