@@ -7,11 +7,12 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 04b — top-attach
-([`phase-04b-top-attach.md`](milestones/M36-ux-and-audit/phase-04b-top-attach.md)),
-dispatched 2026-11-03. Phases 01–04a are `done`; twenty-two phases are planned
-in the README's table (04 split into 04a/04b, and 21 — OSC 7501 program
-status, PE decision 9 — added, both on 2026-11-03).
+**Active phase:** phase 05a — panel-wrap
+([`phase-05a-panel-wrap.md`](milestones/M36-ux-and-audit/phase-05a-panel-wrap.md)),
+drafted 2026-11-04 (finding S1, critical). Phases 01–04b are `done`;
+twenty-three phases are planned in the README's table (04 split into 04a/04b
+and 21 — OSC 7501 program status, PE decision 9 — added on 2026-11-03; 05
+split into 05a/05b on 2026-11-04).
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

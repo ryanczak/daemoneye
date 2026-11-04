@@ -153,7 +153,7 @@ the same code, so they ship together.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 22 (phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 23 (phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04).
 Phases 01–04 are the PE's four items; 05–07 the approval-prompt findings
 that share their code; 08–16 the remaining `major` rows, most severe
 first; 17 the shell-lifecycle fix; 18 the performance tail; 19–20 the
@@ -167,7 +167,8 @@ config so the shell-state surfaces it extends have settled.
 | 03 | approvals-categories ([phase-03-approvals-categories.md](phase-03-approvals-categories.md)) — `SessionApproval` gains a flag per prompt kind (schedules, agents, script/runbook/agent deletes); `/approvals [list]` shows every category and the always-asked kinds; `/approvals <category> on\|off`, `/approvals all on\|off`; every client prompt arm consults its flag | design item 2 | done        |
 | 04a | shells-select ([phase-04a-shells-select.md](phase-04a-shells-select.md)) — `top`'s Shells panel gets a selected row (keys move it, refresh keeps it by id); the disk refresh runs on a blocking thread, one in flight (split from 04 on 2026-11-03) | design item 4, P5 | done |
 | 04b | top-attach ([phase-04b-top-attach.md](phase-04b-top-attach.md)) — Enter (or `a`) on the selected shell opens it read-only through `ShellTail` + `TailModel`, `q`/Esc returns to the panels as they were | design item 4 | done |
-| 05 | panel-wrap — one wrapper by display width (`unicode-width`) with control characters shown visibly, used by the approval panel, the markdown committer and the viewer; code blocks, headings, long words and CJK wrap instead of clipping | S1, B8, P6 (wrapping) | todo |
+| 05a | panel-wrap ([phase-05a-panel-wrap.md](phase-05a-panel-wrap.md)) — `wrap_display` replaces `wrap_line_hard`: rows measured by display width (`unicode-width`), control and bidi characters shown visibly, used by the approval panel and the viewer's hard wrap (split from 05 on 2026-11-04) | S1 | todo |
+| 05b | markdown-wrap — the markdown committer (code-block bodies, headings, long words, CJK) and the viewer's `wrap_words` measure by display width and wrap instead of clipping | B8, P6 (wrapping) | todo |
 | 06 | approval-diff — write and edit approvals commit their diff as styled spans (no literal `[32m`), wrapped, with the row count shown and the full content one key away when clipped | B7 | todo |
 | 07 | approval-input — the approval and credential readers go through `read_key`: y/n/a on Enter, bracketed paste as one value, focus events and arrows ignored, UTF-8 decoded | S2, S3 | todo |
 | 08 | char-boundary-panics — the webhook fingerprint, `PendingCall::summary`, the malformed-frame logging and the ISO duration overflow stop panicking on model- or sender-supplied text | B3, B4, B16, B14 | todo |
