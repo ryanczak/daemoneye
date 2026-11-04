@@ -1,7 +1,7 @@
 # Phase 05b — markdown-wrap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-04
 **Depends on:** phase 05a (`wrap_display`, `unicode-width`)
 **Estimated diff:** ~250 lines
@@ -393,3 +393,21 @@ kill: (-4094075): No such process
 **Commit:** 5bfed147560ed2dabe306000f1a3cd4e622b2bf3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-04
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none. Nits, not bounced:
+  - The red-runs entry elides long rows with `…`, stated openly, though the
+    spec asked for the output verbatim.
+  - Its claim that the tab test "passes vacuously" on the pre-phase code is
+    wrong. The test asserts no `\t` and `b` at column 8, and
+    `push_wrapped_hard` was private then.
+  - The two `display_wrap_viewer_*` tests sit at the top level of
+    `viewer.rs`, not in its test module. That is still test-only, since
+    `#[test]` functions are.
+- **Calibration:** 274 turns for about 300 lines, in line with 05a (266).
+  Gates re-run green: fmt 0, 0 warnings, clippy clean, `passed=2678
+  failed=0`, `display_wrap passed=7`, `render_line_to_spans` still 219.
