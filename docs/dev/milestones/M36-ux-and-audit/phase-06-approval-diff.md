@@ -1,7 +1,7 @@
 # Phase 06 — approval-diff
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-04
 **Depends on:** phase 05b (`wrap_line`)
 **Estimated diff:** ~300 lines
@@ -161,3 +161,117 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-05 00:50 (started)
+
+**Executor:** Claude (executor run for M36 phase-06).
+Flipped Status to in-progress and the README phase row to match. Starting
+with the red tests (spec step 1) against the current tree.
+
+### Update — 2026-11-05 01:05 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** The run was stopped by the user (`user_stop`) after turn 64 had waited about 8 minutes on the model with no reply. The endpoint is healthy again. The only work done was the status flip, and the spec was never tested, so resuming from the existing diff is the right lever: re-dispatching would only redo the reading.
+
+### Update — 2026-11-05 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** Diagnosis of the first run: five turns (49, 50, 59–61) hit the 32,768-token output limit while the model reasoned through the whole phase, so it never emitted a tool call. The PE raised `max_tokens` to 65536 and restarted `rexymcp serve`, which also ended the first resume at turn 21 with no source edits. Resume again on the new limit, with guidance to write one file per turn.
+
+### Update — 2026-11-05 06:13 (red runs)
+
+Step 1's six tests written against the pre-phase tree and run. Three of them
+(`approval_diff_rows_carry_styles_not_escapes`, `approval_diff_header_counts_
+lines`, `approval_diff_full_is_uncapped`, `approval_diff_clipped_footer_names_
+key`) first failed to compile against the pre-phase `Vec<String>` return —
+the red state the shape pinning produces — and were then re-expressed against
+the phase's `DiffView` accessors, at which point the whole set ran and failed
+on assertion:
+
+```text
+test cli::commands::stream::tests::approval_diff_ctrl_o_is_not_an_answer ... FAILED
+test cli::diff::tests::approval_diff_header_counts_lines ... FAILED
+test cli::diff::tests::approval_diff_full_is_uncapped ... FAILED
+test cli::diff::tests::approval_diff_clipped_footer_names_key ... FAILED
+test cli::diff::tests::approval_diff_rows_carry_styles_not_escapes ... FAILED
+test cli::render_ratatui::tests::approval_diff_long_line_wraps_at_commit ... FAILED
+test result: FAILED. 0 passed; 6 failed; 0 ignored; 0 measured; 2599 filtered out; finished in 0.00s
+```
+
+The assertion messages, verbatim (nothing elided):
+
+```text
+thread 'cli::commands::stream::tests::approval_diff_ctrl_o_is_not_an_answer' panicked at src/cli/commands/stream.rs:502:9:
+assertion `left == right` failed: ctrl+o opens the viewer when viewing is offered
+  left: Typed
+ right: View
+
+thread 'cli::diff::tests::approval_diff_header_counts_lines' panicked at src/cli/diff.rs:228:9:
+a new file's header counts its lines: "\u{1b}[1mnew file: x.sh\u{1b}[0m"
+
+thread 'cli::diff::tests::approval_diff_rows_carry_styles_not_escapes' panicked at src/cli/diff.rs:218:17:
+a row holds ESC: "\u{1b}[1mnew file: new.sh\u{1b}[0m"
+
+thread 'cli::diff::tests::approval_diff_full_is_uncapped' panicked at src/cli/diff.rs:284:9:
+assertion `left == right` failed: the viewer's diff holds all 120 lines, uncapped: 80 rows
+  left: 80
+ right: 120
+
+thread 'cli::diff::tests::approval_diff_clipped_footer_names_key' panicked at src/cli/diff.rs:256:9:
+the footer names the key: "\u{1b}[2m  … (40 more lines)\u{1b}[0m"
+
+thread 'cli::render_ratatui::tests::approval_diff_long_line_wraps_at_commit' panicked at src/cli/render_ratatui_tests.rs:1305:9:
+a row holds SGR text: "\u{1b}[32m+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u{1b}[0m"
+```
+
+(An intermediate compile-fail run — all six tests naming the not-yet-existing
+`DiffView` — captured 15 `error[E0609]: no field `rows`` entries and `error:
+could not compile `daemoneye` (lib test) due to 15 previous errors`; the
+assertion-failure capture above is from the runnable red state. The
+intermediate capture is preserved at `/tmp/red06-full.txt` and
+`/tmp/red06-part1.txt`.)
+
+### Findings — 2026-11-05
+
+- `prompt_with_session_approve` lost its only two callers to the Ctrl+O-aware
+  variant and was deleted; the other four callers of `read_approval_input_with`
+  keep the plain reader with `viewing: false`, so their key semantics are
+  untouched.
+- `open_diff_viewer` builds the viewer's transcript from `DiffView::full` by
+  rejoining the span text and re-prefixing the prompt's two-space indent — a
+  string round-trip through the styled rows. A span-aware viewer block would
+  avoid it, but `Block` is plain-text today; left as is.
+- The `tests/hygiene_allowlist.txt` needed no entry: hygiene passes with the
+  touched files' new sizes.
+
+### Update — 2026-11-05 06:20 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim (`/tmp/e2e-06.sh`
+→ `/tmp/e2e-06.txt`). Output:
+
+```text
+approval_diff passed=6 failed=0
+diff_commit_plain=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.86s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.21s
+fmt_exit=0
+passed=2684 failed=0
+```
+
+Notes on the lines:
+
+- `approval_diff passed=6 failed=0` — the six spec'd tests, P ≥ 6 as the
+  criterion pins.
+- `diff_commit_plain=0` — both `renderer.commit(&format!("  {}\n", line))`
+  sites in `stream_prompts.rs` are gone; the diffs go through
+  `commit_diff_view` → `commit_styled`.
+- `build_warnings=0`, clippy clean (`-D warnings`), `fmt_exit=0`.
+- hygiene 16, doc_truth 16, bug_tracker 6 — all ok.
+- Full suite: 2684 passed, 0 failed (was 2678 before the phase: +6 new
+  `approval_diff_` tests).
+- Preservation: the seven `diff.rs` tests pass (adapted from ANSI strings to
+  spans, meanings kept), the eight `parse_approval_decision_*` tests and
+  `approval_read_times_out` pass unedited.

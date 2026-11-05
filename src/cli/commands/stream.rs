@@ -489,6 +489,33 @@ mod tests {
         assert_eq!(output_footer(300, 9), "… 291 more lines · ctrl+o");
         assert_eq!(output_footer(10, 9), "… 1 more lines · ctrl+o");
     }
+
+    // ── approval first-key (M36 phase-06) ──────────────────────────────
+
+    /// The approval prompt's decision on its first key, as a pure function:
+    /// `Answer(c)` for y/n/a, `Submit` for Enter, `Ignore` for Ctrl+O when
+    /// viewing is not offered, `View` for Ctrl+O when it is, and `Typed`
+    /// (start a message) for a letter.
+    #[test]
+    fn approval_diff_ctrl_o_is_not_an_answer() {
+        use super::prompts::{ApprovalKey, approval_first_key};
+        assert_eq!(
+            approval_first_key(0x0f, true),
+            ApprovalKey::View,
+            "ctrl+o opens the viewer when viewing is offered"
+        );
+        assert_eq!(
+            approval_first_key(0x0f, false),
+            ApprovalKey::Ignore,
+            "ctrl+o is ignored where viewing is not offered"
+        );
+        assert_eq!(approval_first_key(b'y', true), ApprovalKey::Answer('y'));
+        assert_eq!(approval_first_key(b'Y', true), ApprovalKey::Answer('y'));
+        assert_eq!(approval_first_key(b'n', true), ApprovalKey::Answer('n'));
+        assert_eq!(approval_first_key(b'a', true), ApprovalKey::Answer('a'));
+        assert_eq!(approval_first_key(b'\r', true), ApprovalKey::Submit);
+        assert_eq!(approval_first_key(b'x', true), ApprovalKey::Typed);
+    }
 }
 
 #[cfg(test)]

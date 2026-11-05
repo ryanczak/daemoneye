@@ -474,6 +474,11 @@ impl<B: Backend> RatatuiRenderer<B> {
             .unwrap_or(78)
     }
 
+    /// The pane's full width in columns — what committed rows wrap against.
+    pub fn width(&self) -> usize {
+        self.terminal.size().map(|s| s.width as usize).unwrap_or(80)
+    }
+
     /// Restore the terminal to its original state (exit raw mode, show
     /// cursor, clear inline viewport rows).
     pub fn restore(&mut self) {

@@ -6,6 +6,43 @@ use super::*;
 
 // ── Ratatui interactive approval primitives ──────────────────────────────────
 
+/// The approval prompt's decision on its first raw byte, as a pure function
+/// the tests call directly (`AsyncStdin` has no test seam). `offered` is
+/// whether the prompt offers the Ctrl+O viewer (the write and edit prompts).
+/// The sentinel `read_approval_input_with` returns on a Ctrl+O first key:
+/// not an answer, a request to open the viewer.
+pub(super) const VIEW_SIGNAL: &str = "\u{0f}";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ApprovalKey {
+    /// A single-key answer: y/n/a, already lowercased.
+    Answer(char),
+    /// Enter on an empty line: an empty answer.
+    Submit,
+    /// Start a typed message with this byte.
+    Typed,
+    /// Open the transcript viewer (Ctrl+O where viewing is offered).
+    View,
+    /// Not an answer and not a message: ignore the key.
+    Ignore,
+}
+
+/// y/n/a answer at once; Enter submits the empty line; Ctrl+O opens the
+/// viewer where the prompt offers it and is ignored where it does not; any
+/// other printable byte starts a typed message.
+pub(super) fn approval_first_key(b: u8, offered: bool) -> ApprovalKey {
+    match b {
+        b'y' | b'Y' => ApprovalKey::Answer('y'),
+        b'n' | b'N' => ApprovalKey::Answer('n'),
+        b'a' | b'A' => ApprovalKey::Answer('a'),
+        b'\r' | b'\n' => ApprovalKey::Submit,
+        0x0f if offered => ApprovalKey::View,
+        0x0f => ApprovalKey::Ignore,
+        b if b >= 0x20 => ApprovalKey::Typed,
+        _ => ApprovalKey::Ignore,
+    }
+}
+
 /// Map a key event to a stream outcome the interrupt filter must not
 /// swallow. FocusGained (ESC [ I) means the user switched back to this
 /// pane and the viewport may need re-pinning; Ctrl+O opens the transcript
@@ -79,7 +116,7 @@ async fn read_approval_input(
     status: &crate::cli::render::StatusBarState<'_>,
     deadline: tokio::time::Instant,
 ) -> Option<String> {
-    read_approval_input_with(renderer, stdin, deadline, |r, line| {
+    read_approval_input_with(renderer, stdin, deadline, false, |r, line| {
         let _ = r.draw_prompt(prompt_text, line, status);
     })
     .await
@@ -95,7 +132,7 @@ async fn read_approval_input_panel(
     status: &crate::cli::render::StatusBarState<'_>,
     deadline: tokio::time::Instant,
 ) -> Option<String> {
-    read_approval_input_with(renderer, stdin, deadline, |r, line| {
+    read_approval_input_with(renderer, stdin, deadline, false, |r, line| {
         let _ = r.draw_approval_panel(title, session_label, line, status);
     })
     .await
@@ -106,10 +143,15 @@ async fn read_approval_input_panel(
 /// `y`, `n` or `a` as the first key answers at once; Enter on an empty
 /// line, Ctrl+C and Escape answer with an empty string; anything else
 /// starts a typed message, ended by Enter. `None` when the deadline passes.
+/// `viewing` is whether Ctrl+O opens the transcript viewer on this prompt:
+/// a Ctrl+O first key is then not an answer — the loop redraws and keeps
+/// waiting against the same deadline; where viewing is not offered the key
+/// is ignored the same way.
 async fn read_approval_input_with(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     deadline: tokio::time::Instant,
+    viewing: bool,
     redraw: impl Fn(
         &mut crate::cli::render_ratatui::RatatuiRendererStdout,
         &crate::cli::input::InputLine,
@@ -121,51 +163,135 @@ async fn read_approval_input_with(
     let mut line = InputLine::new();
     redraw(renderer, &line);
 
-    // Read the first byte to decide: single-key shortcut vs. full line edit.
-    let first = read_byte_by(deadline, stdin.read_byte()).await?;
-    let ch = first as char;
-    match ch.to_ascii_lowercase() {
-        'y' | 'n' | 'a' => {
-            // Show the key the user pressed in the input box, then return.
-            line.insert(ch);
-            redraw(renderer, &line);
-            Some(ch.to_string())
-        }
-        '\r' | '\n' => {
-            // Empty input (Enter pressed immediately)
-            Some(String::new())
-        }
-        _ => {
-            // Start of a typed message — use the input editor.
-            line.insert(ch);
-            redraw(renderer, &line);
+    loop {
+        // Read the first byte to decide: single-key shortcut vs. full line edit.
+        let first = read_byte_by(deadline, stdin.read_byte()).await?;
+        match approval_first_key(first, viewing) {
+            ApprovalKey::Answer(ch) => {
+                // Show the key the user pressed in the input box, then return.
+                line.insert(ch);
+                redraw(renderer, &line);
+                return Some(ch.to_string());
+            }
+            ApprovalKey::Submit => return Some(String::new()),
+            ApprovalKey::View => return Some(String::from(VIEW_SIGNAL)),
+            ApprovalKey::Ignore => {
+                redraw(renderer, &line);
+                continue;
+            }
+            ApprovalKey::Typed => {
+                // Start of a typed message — use the input editor.
+                line.insert(first as char);
+                redraw(renderer, &line);
 
-            loop {
-                let b = read_byte_by(deadline, stdin.read_byte()).await?;
-                match b {
-                    b'\r' | b'\n' => return Some(line.as_str()),
-                    b'\x7f' | b'\x08' => {
-                        line.backspace();
-                        redraw(renderer, &line);
-                    }
-                    b'\x03' => {
-                        // Ctrl+C — cancel, return empty
-                        return Some(String::new());
-                    }
-                    b'\x1b' => {
-                        // Escape — cancel, return empty
-                        return Some(String::new());
-                    }
-                    b => {
-                        if b >= 0x20 {
-                            line.insert(b as char);
-                            redraw(renderer, &line);
-                        }
-                    }
+                return typed_message(renderer, stdin, deadline, &mut line, redraw).await;
+            }
+        }
+    }
+}
+
+/// The typed-message tail of the approval reader: edits until Enter, Ctrl+C
+/// or Escape, `None` when the deadline passes. Shares the deadline with the
+/// first key.
+async fn typed_message(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    deadline: tokio::time::Instant,
+    line: &mut crate::cli::input::InputLine,
+    redraw: impl Fn(
+        &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+        &crate::cli::input::InputLine,
+    ),
+) -> Option<String> {
+    loop {
+        let b = read_byte_by(deadline, stdin.read_byte()).await?;
+        match b {
+            b'\r' | b'\n' => return Some(line.as_str()),
+            b'\x7f' | b'\x08' => {
+                line.backspace();
+                redraw(renderer, line);
+            }
+            b'\x03' => {
+                // Ctrl+C — cancel, return empty
+                return Some(String::new());
+            }
+            b'\x1b' => {
+                // Escape — cancel, return empty
+                return Some(String::new());
+            }
+            b => {
+                if b >= 0x20 {
+                    line.insert(b as char);
+                    redraw(renderer, line);
                 }
             }
         }
     }
+}
+
+/// Open the transcript viewer on a transcript holding only the diff. The
+/// viewer runs expanded (`Block::Output` never opens collapsed), is not
+/// capped at 80 lines, and its teardown re-pins the inline viewport.
+async fn open_diff_viewer(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    view: &crate::cli::diff::DiffView,
+) {
+    let mut transcript = crate::cli::transcript::Transcript::new();
+    let full_text: String = view
+        .full
+        .iter()
+        .map(|line| {
+            let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+            text.trim_start_matches(INDENT_TRIM).to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    transcript.push(crate::cli::transcript::Block::Output {
+        tool_call_id: String::new(),
+        full: full_text,
+        shown: 0,
+    });
+    match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()) {
+        Ok(mut sigwinch) => {
+            if let Err(e) = crate::cli::viewer::run_transcript_viewer(
+                stdin,
+                &mut sigwinch,
+                renderer,
+                &transcript,
+            )
+            .await
+            {
+                let _ = renderer.commit(&format!("  ✗ viewer: {e}\n"));
+            }
+        }
+        Err(e) => {
+            // No SIGWINCH stream: the viewer still works, resize handling
+            // just cannot fire. Name the failure instead of opening a
+            // viewer that would misbehave on resize.
+            let _ = renderer.commit(&format!("  ✗ viewer unavailable (sigwinch: {e})\n"));
+        }
+    }
+}
+
+/// The indent the prompt puts before every diff row.
+const INDENT_TRIM: &str = "  ";
+
+/// Commit a diff view into scrollback: every row wrapped at the renderer's
+/// width with `wrap_line` (styles kept, nothing clipped, no `…`), pushed
+/// through `commit_styled` so styling becomes cell attributes rather than
+/// literal SGR text.
+fn commit_diff_view(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    view: &crate::cli::diff::DiffView,
+) {
+    let width = renderer.width();
+    let rows: Vec<ratatui::text::Line<'static>> = view
+        .rows
+        .iter()
+        .flat_map(|line| crate::cli::render::wrap_line(line.clone(), width))
+        .collect();
+    let _ = renderer.commit_styled(&rows);
 }
 
 /// The tail of a declined approval: a redirect line when the user typed a
@@ -187,27 +313,36 @@ fn commit_declined(
     }
 }
 
-/// Display info text and prompt Y/N/A with typed-message support.
-/// Returns `(approved, is_approve_session, user_message)`.
-async fn prompt_with_session_approve(
+/// `prompt_with_session_approve` for the write and edit prompts: the plain
+/// prompt shape, Ctrl+O offered. The reader loops on Ctrl+O — each press
+/// opens the transcript viewer on `view`'s uncapped diff — and returns to
+/// the same prompt, still waiting against its original deadline. Ctrl+O is
+/// not an answer; nothing is committed for it.
+async fn prompt_with_session_approve_view(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     status: &crate::cli::render::StatusBarState<'_>,
-    info_lines: &[&str],
     prompt_text: &str,
+    view: &crate::cli::diff::DiffView,
 ) -> (bool, bool, Option<String>) {
-    // Commit info lines to scrollback (these are permanent).
-    for line in info_lines {
-        let _ = renderer.commit(&format!("{}\n", line));
-    }
-    // Read the decision in the live region.
     let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
-    let Some(input) = read_approval_input(renderer, stdin, prompt_text, status, deadline).await
-    else {
-        let _ = renderer.commit("  ⏱ approval timed out — the command was not run\n");
-        return (false, false, None);
-    };
-    parse_approval_response(&input)
+    loop {
+        match read_approval_input_with(renderer, stdin, deadline, true, |r, line| {
+            let _ = r.draw_prompt(prompt_text, line, status);
+        })
+        .await
+        {
+            None => {
+                let _ = renderer.commit("  ⏱ approval timed out — the command was not run\n");
+                return (false, false, None);
+            }
+            Some(input) if input == VIEW_SIGNAL => {
+                open_diff_viewer(renderer, stdin, view).await;
+                continue;
+            }
+            Some(input) => return parse_approval_response(&input),
+        }
+    }
 }
 
 // ── Ratatui prompt functions (called from ask_with_session_ratatui) ──────────
@@ -460,10 +595,8 @@ where
     let _ = renderer.commit(&format!("\n  ⚙ AI wants to write {}: {}\n", kind, name));
 
     // Render diff
-    let diff_lines = crate::cli::diff::render_diff(name, existing_content, content);
-    for line in &diff_lines {
-        let _ = renderer.commit(&format!("  {}\n", line));
-    }
+    let view = crate::cli::diff::render_diff(name, existing_content, content);
+    commit_diff_view(renderer, &view);
 
     if approval.prompt_auto_approves(&prompt_kind) {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
@@ -472,7 +605,7 @@ where
 
     let prompt_text = build_approval_prompt("session", false);
     let (approved, is_session, _user_msg) =
-        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
+        prompt_with_session_approve_view(renderer, stdin, status, &prompt_text, &view).await;
 
     if approved {
         if is_session {
@@ -609,11 +742,8 @@ pub(super) async fn prompt_edit_file_ratatui(
     };
     let diff_existing = existing_content;
     let diff_new = new_content;
-    let diff_lines =
-        crate::cli::diff::render_diff(diff_name, diff_existing, diff_new.unwrap_or(""));
-    for line in &diff_lines {
-        let _ = renderer.commit(&format!("  {}\n", line));
-    }
+    let view = crate::cli::diff::render_diff(diff_name, diff_existing, diff_new.unwrap_or(""));
+    commit_diff_view(renderer, &view);
 
     let all_approved = approval.file_edits_all;
 
@@ -624,7 +754,7 @@ pub(super) async fn prompt_edit_file_ratatui(
 
     let prompt_text = build_approval_prompt("session", true);
     let (approved, is_session, user_msg) =
-        prompt_with_session_approve(renderer, stdin, status, &[], &prompt_text).await;
+        prompt_with_session_approve_view(renderer, stdin, status, &prompt_text, &view).await;
 
     if approved {
         if edit_file_grants_session(is_session, all_approved, sudo) {

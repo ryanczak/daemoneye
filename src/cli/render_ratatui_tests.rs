@@ -1240,3 +1240,76 @@ fn wrap_display_approval_panel_rows_fit_the_terminal() {
         );
     }
 }
+
+// ── approval_diff (M36 phase-06, B7) ─────────────────────────────────────────
+
+use crate::cli::diff::render_diff;
+
+/// The rows the write/edit prompts commit for a diff, at the renderer's
+/// width: `wrap_line` split, `commit_styled` pushed — the phase's commit
+/// path, so the test exercises exactly what the prompt does.
+fn commit_diff_rows(
+    renderer: &mut RatatuiRenderer<TestBackend>,
+    view: &crate::cli::diff::DiffView,
+) {
+    let width = renderer.width();
+    let rows: Vec<Line<'static>> = view
+        .rows
+        .iter()
+        .flat_map(|line| crate::cli::render::wrap_line(line.clone(), width))
+        .collect();
+    let _ = renderer.commit_styled(&rows);
+}
+
+/// A 200-char `+` line committed at width 80 fills more than one row of the
+/// renderer's history, every row is green, none holds `…`, and the rows' text
+/// joins back to the line.
+#[test]
+fn approval_diff_long_line_wraps_at_commit() {
+    let mut renderer = test_renderer(
+        80,
+        24,
+        VIEWPORT_ROWS,
+        crate::cli::palette::ColorDepth::Truecolor,
+    );
+    let status = approval_test_status();
+    renderer.draw(&InputLine::new(), &status).unwrap();
+
+    let long = "x".repeat(200);
+    let view = render_diff("big.sh", None, &format!("{long}\n"));
+    assert_eq!(view.rows.len(), 2, "header plus one content row");
+    commit_diff_rows(&mut renderer, &view);
+
+    let rows: Vec<Line<'static>> = renderer.history.iter().cloned().collect();
+    // The prompt's two-space indent plus the row's own text.
+    let body: Vec<String> = rows[1..]
+        .iter()
+        .map(|r| {
+            let text: String = r.spans.iter().map(|s| s.content.as_ref()).collect();
+            text.trim_start_matches("  ").to_string()
+        })
+        .collect();
+    let joined: String = body
+        .iter()
+        .map(|r| r.strip_prefix('+').unwrap_or(r))
+        .collect::<Vec<_>>()
+        .concat();
+    assert_eq!(
+        joined, long,
+        "the rows' text joins back to the line: {joined:?}"
+    );
+    assert!(
+        body.len() > 1,
+        "a 200-char line fills more than one history row: {body:?}"
+    );
+    assert!(
+        body.iter().all(|r| !r.contains('…')),
+        "no row is truncated with an ellipsis: {body:?}"
+    );
+    for row in &body {
+        assert!(
+            !row.contains("[32m") && !row.contains('\x1b'),
+            "a row holds SGR text: {row:?}"
+        );
+    }
+}
