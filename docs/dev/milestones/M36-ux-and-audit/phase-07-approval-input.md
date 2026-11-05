@@ -1,7 +1,7 @@
 # Phase 07 — approval-input
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bugs/bug-07-1.md)
 **Drafted:** 2026-11-05
 **Depends on:** phase 06 (the Ctrl+O viewer at write/edit approvals)
 **Estimated diff:** ~300 lines
@@ -125,7 +125,12 @@ the session, `n`/`no`/empty deny, and anything else is a redirect.
 ## Acceptance criteria
 
 - [ ] The E2E block's first line reads `approval_input passed=P failed=0`
-      with P ≥ 8. Today it reads `passed=0`.
+      with P ≥ 9. After the first pass it reads `passed=8`.
+- [ ] (bug-07-1) `approval_input_credential_reader_returns_the_value`
+      passes. It drives the credential reader loop, not just
+      `credential_step`, from `make_pipe_stdin`: a pasted `hunter2` plus LF,
+      then Enter, returns `hunter2`, and `x y` Escape returns empty. Today
+      the test does not exist, and the reader returns empty on every Enter.
 - [ ] The E2E block shows `raw_byte_reads=0`: neither reader in
       `stream_prompts.rs` calls `stdin.read_byte()` directly. Today the
       count is 3.
@@ -170,6 +175,32 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-05 (bounce 1, bug-07-1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+that the phase is done.** The approval line (`approval_step`, both approval
+readers), `credential_step`, the eight `approval_input_*` tests, the
+`InputLine::clear()` addition and the generic `read_byte_by` are approved
+as committed in `bbc26a04`. Do not redo them.
+
+There is exactly one defect left, in `bugs/bug-07-1.md`:
+`prompt_credential_ratatui` returns an empty password on Enter.
+`credential_step` moves the value out with `mem::take` into
+`ApprovalStep::Done(text)`, and the reader's `Done(_) => break` discards
+that text and returns the emptied `cred_real`. The reader must return the
+value the user entered.
+
+1. Write `approval_input_credential_reader_returns_the_value` against the
+   current tree so that it drives the reader loop (choose the seam, for
+   example a loop function taking a redraw closure the way
+   `read_approval_input_with` does). Run it and keep the red output.
+2. Fix the reader. Mutation-check: re-break the fix, confirm the new test
+   fails, revert, and state the result in the Update Log.
+3. Finish condition: `cargo test approval_input_` reports **9 passed**, and
+   the full suite reports **passed=2693 failed=0**, not 2692. Re-run
+   § End-to-end verification and paste it in a new entry. Commit as
+   `fix: the sudo prompt returns the entered password (M36 phase-07, bug-07-1)`.
 
 ### Update — 2026-11-05 08:42 (progress)
 
