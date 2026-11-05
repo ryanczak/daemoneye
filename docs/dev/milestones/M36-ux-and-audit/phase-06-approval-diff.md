@@ -1,7 +1,7 @@
 # Phase 06 — approval-diff
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-04
 **Depends on:** phase 05b (`wrap_line`)
 **Estimated diff:** ~300 lines
@@ -424,3 +424,15 @@ kill: (-10768): No such process
 **Commit:** da30e32bab325d5eb75e6d64f315f29033728d4b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-05
+
+- **Verdict:** approved_first_try
+- **Bounces:** none. There were two resumes, which are not bounces. The first run (63 turns) was stopped by the PE after five replies hit the 32,768-token output limit without making a tool call. The first resume was ended by the `rexymcp serve` restart at turn 21. The second resume ran 467 turns with `max_tokens = 65536` and had no parse failures.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Gates (reviewer re-run):** `fmt_exit=0`, `build_warnings=0`, clippy clean, `passed=2684 failed=0`; all six `approval_diff_` tests pass and `diff_commit_plain=0`.
+- **Scope deviations (nits, not bounced):**
+  1. `approval_first_key` ignores every control byte as a first key. Before, those bytes started a typed message (Ctrl+C or Escape as the first key used to insert the byte and wait). That contradicts the Findings claim that the other readers' "key semantics are untouched". The new behaviour is saner, and phase 07 replaces this reader with `read_key`, so it stands.
+  2. A blank row now separates hunks in a unified diff. This is cosmetic and was not specified.
+  3. The `VIEW_SIGNAL` sentinel string stands in for an enum return. It is fine for now, and phase 07 can fold it in.
+- **Calibration:** with this executor, a phase that asks for four connected pieces of work drives the model to plan all of them in a single reasoning reply. At 32K that reply was cut off before any tool call, five times; at 64K it got through. One occurrence, so I'm holding it rather than folding it. If it recurs, either keep `max_tokens` at 64K or split such phases.
