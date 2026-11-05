@@ -1,7 +1,7 @@
 # Phase 07 — approval-input
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-05
 **Depends on:** phase 06 (the Ctrl+O viewer at write/edit approvals)
 **Estimated diff:** ~300 lines
@@ -345,3 +345,140 @@ Notes on the lines:
   `approval_read_times_out` (unedited, now against the generic
   `read_byte_by` seam), the `read_key_*` tests (unread) and the other five
   `approval_diff_*` tests pass.
+
+### Update — 2026-11-05 21:51 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 07 (approval-input) is implemented and committed as `bbc26a04`. Both readers in `stream_prompts.rs` now loop `read_key` → pure step function → redraw: `approval_step` edits the approval line and only Enter submits it (PE decision 2026-11-01 — a redirect typed as `abort that` is a redirect, `a` alone records nothing, pastes arrive as one value with CR/LF flattened, focus events/arrows/mouse/`Char('\0')` are ignored, chars arrive decoded), and `credential_step` does the same for the sudo prompt with CR/LF removed from pastes, no deadline, and the masked `•` display rebuilt per edit. `approval_first_key`/`ApprovalKey` are gone, `read_byte_by` is generic over its `Option` payload so the key reader shares the F7 deadline seam with `approval_read_times_out` unedited, and `InputLine` gained a `clear()` for the deny path. E2E block ran verbatim: `approval_input passed=8 failed=0`, `raw_byte_reads=0` (was 3), `first_key_fn=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all ok, clippy clean, `fmt_exit=0`, full suite `passed=2692 failed=0` (was 2684: +8). The red-runs entry captures both red shapes — the compile red (9 × `E0432` unresolved imports) and the shimmed assertion red (all 8 failing, verbatim output) — from a throwaway worktree at `3db76bb2`.
+
+**Notes for review:** (1) The red run's compile shape is the honest pre-phase state; the assertion-failure shape came from a do-nothing step shim so the tests compile and fail on their claims rather than their imports — the shim lived only in the throwaway worktree and is not in the commit. (2) `VIEW_SIGNAL` survives as the reader's return sentinel (the spec says folding it into the enum return is allowed but not required); `read_approval_input_with` keeps its `viewing: bool` and the write/edit prompts get a sibling `read_approval_input_with_view` whose only difference is `offered: true`. (3) `approval_read_times_out` is unedited because `read_byte_by` became generic over `Option<T>` rather than being deleted — the seam name the phase doc references is preserved. (4) `prompt_credential_ratatui` rebuilds the bullet display from the real value each edit rather than mirroring edits into a second buffer, so a paste that changes length can't desync the mask. (5) No allowlist change needed; hint strings needed no edit (`build_approval_prompt` already said "Approve? [Y]es [A]pprove for session [N]o or type a message ›", which matches Enter-submit semantics).
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (161559): No such process
+kill: (-162256): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-07-approval-input.md` — +176 -1
+- `src/cli/commands/stream.rs` — +246 -15
+- `src/cli/commands/stream_prompts.rs` — +133 -112
+- `src/cli/input/editor.rs` — +6 -0
+
+**Commit:** bbc26a04b1523dbb98e300621d4fcd5e24fdeaaa
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
