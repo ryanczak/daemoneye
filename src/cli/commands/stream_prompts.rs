@@ -6,40 +6,86 @@ use super::*;
 
 // ── Ratatui interactive approval primitives ──────────────────────────────────
 
-/// The approval prompt's decision on its first raw byte, as a pure function
-/// the tests call directly (`AsyncStdin` has no test seam). `offered` is
-/// whether the prompt offers the Ctrl+O viewer (the write and edit prompts).
 /// The sentinel `read_approval_input_with` returns on a Ctrl+O first key:
 /// not an answer, a request to open the viewer.
 pub(super) const VIEW_SIGNAL: &str = "\u{0f}";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ApprovalKey {
-    /// A single-key answer: y/n/a, already lowercased.
-    Answer(char),
-    /// Enter on an empty line: an empty answer.
-    Submit,
-    /// Start a typed message with this byte.
-    Typed,
+/// What one key does to the approval line or the credential value. Pure
+/// step functions the tests drive with `Key` sequences; the async readers
+/// only loop `read_key` → step → redraw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ApprovalStep {
+    /// Keep editing: nothing to submit yet.
+    Pending,
+    /// Submit this text (empty for a deny).
+    Done(String),
     /// Open the transcript viewer (Ctrl+O where viewing is offered).
     View,
-    /// Not an answer and not a message: ignore the key.
-    Ignore,
 }
 
-/// y/n/a answer at once; Enter submits the empty line; Ctrl+O opens the
-/// viewer where the prompt offers it and is ignored where it does not; any
-/// other printable byte starts a typed message.
-pub(super) fn approval_first_key(b: u8, offered: bool) -> ApprovalKey {
-    match b {
-        b'y' | b'Y' => ApprovalKey::Answer('y'),
-        b'n' | b'N' => ApprovalKey::Answer('n'),
-        b'a' | b'A' => ApprovalKey::Answer('a'),
-        b'\r' | b'\n' => ApprovalKey::Submit,
-        0x0f if offered => ApprovalKey::View,
-        0x0f => ApprovalKey::Ignore,
-        b if b >= 0x20 => ApprovalKey::Typed,
-        _ => ApprovalKey::Ignore,
+/// One key against the approval line (PE decision 2026-11-01: y/n/a take
+/// effect on Enter). Every key edits the line and only Enter submits it, so
+/// a redirect typed as `abort that` never approves. The submitted text goes
+/// to `parse_approval_response` unchanged. A paste is one value whose CR/LF
+/// become spaces; it never submits. Ctrl+C and a bare Escape submit the
+/// empty line. `offered` is whether Ctrl+O opens the diff viewer (the write
+/// and edit prompts).
+pub(super) fn approval_step(
+    line: &mut crate::cli::input::InputLine,
+    key: &Key,
+    offered: bool,
+) -> ApprovalStep {
+    match key {
+        Key::Enter => ApprovalStep::Done(line.as_str()),
+        Key::Char('\x1b') | Key::CtrlC => {
+            line.clear();
+            ApprovalStep::Done(String::new())
+        }
+        Key::CtrlO if offered => ApprovalStep::View,
+        Key::Char(c) if !c.is_control() => {
+            line.insert(*c);
+            ApprovalStep::Pending
+        }
+        Key::Backspace => {
+            line.backspace();
+            ApprovalStep::Pending
+        }
+        Key::Paste(text) => {
+            let flat: String = text
+                .chars()
+                .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                .collect();
+            line.insert_str(&flat);
+            ApprovalStep::Pending
+        }
+        _ => ApprovalStep::Pending,
+    }
+}
+
+/// One key against the credential value: a printable `Char` or a paste (its
+/// CR/LF removed) appends, Backspace removes one char, Enter submits,
+/// Ctrl+C and a bare Escape clear the value and submit it empty. Everything
+/// else is ignored. No deadline: the prompt has none today and gets none.
+pub(super) fn credential_step(value: &mut String, key: &Key) -> ApprovalStep {
+    match key {
+        Key::Enter => ApprovalStep::Done(std::mem::take(value)),
+        Key::Char('\x1b') | Key::CtrlC => {
+            value.clear();
+            ApprovalStep::Done(String::new())
+        }
+        Key::Char(c) if !c.is_control() => {
+            value.push(*c);
+            ApprovalStep::Pending
+        }
+        Key::Backspace => {
+            value.pop();
+            ApprovalStep::Pending
+        }
+        Key::Paste(text) => {
+            value.extend(text.chars().filter(|&c| c != '\n' && c != '\r'));
+            ApprovalStep::Pending
+        }
+        _ => ApprovalStep::Pending,
     }
 }
 
@@ -86,23 +132,32 @@ pub(super) fn parse_approval_response(input: &str) -> (bool, bool, Option<String
     }
 }
 
-/// One bounded stdin read: `None` at the deadline, `None` at EOF, `Some(b)`
-/// when a byte arrives in time. Named so the deadline behavior is testable
-/// without a terminal.
-pub(crate) async fn read_byte_by<F>(deadline: tokio::time::Instant, fut: F) -> Option<u8>
+/// One bounded read: `None` at the deadline, `None` at EOF, `Some(v)` when a
+/// value arrives in time. The deadline seam behind the approval reads
+/// (F7); named for its original byte reader. Generic over the read's
+/// `Option` payload so both the byte-level and key-level readers share it.
+pub(crate) async fn read_byte_by<F, T>(deadline: tokio::time::Instant, fut: F) -> Option<T>
 where
-    F: std::future::Future<Output = Option<u8>>,
+    F: std::future::Future<Output = Option<T>>,
 {
     tokio::time::timeout_at(deadline, fut).await.ok().flatten()
 }
 
-/// Read a single keypress or full line under crossterm raw mode, rendering
-/// the prompt and input in the live region (not scrollback).
+/// One bounded key read: `None` at the deadline, `None` at EOF, `Some(k)`
+/// when a key arrives in time. Wraps the generic [`read_byte_by`] seam.
+async fn read_key_by(deadline: tokio::time::Instant, stdin: &AsyncStdin) -> Option<Key> {
+    read_byte_by(deadline, read_key(stdin)).await
+}
+
+/// Read the approval line through `read_key`, rendering the prompt and input
+/// in the live region (not scrollback).
 ///
-/// If the first character is Y, N, or A (case-insensitive), returns it
-/// immediately.  Otherwise reads the full line using the input editor,
-/// redrawing the live region on each keystroke so the user sees their
-/// typed text in place.
+/// Every key edits the line via [`approval_step`] and only Enter submits it
+/// (PE decision 2026-11-01): a redirect typed as `abort that` is a redirect,
+/// never an approval, and `a` alone records nothing. `viewing` is whether
+/// Ctrl+O opens the transcript viewer on this prompt — the write and edit
+/// prompts — where the step returns [`ApprovalStep::View`] and the caller
+/// re-enters the read against its original deadline.
 ///
 /// The read is bounded by `deadline`: past it the function returns `None`
 /// (F7) so the caller can commit the timeout, send nothing, and return to the
@@ -138,15 +193,13 @@ async fn read_approval_input_panel(
     .await
 }
 
-/// The approval input state machine both prompt shapes share. `redraw`
-/// paints the current input; it runs once on entry and after every edit.
-/// `y`, `n` or `a` as the first key answers at once; Enter on an empty
-/// line, Ctrl+C and Escape answer with an empty string; anything else
-/// starts a typed message, ended by Enter. `None` when the deadline passes.
-/// `viewing` is whether Ctrl+O opens the transcript viewer on this prompt:
-/// a Ctrl+O first key is then not an answer — the loop redraws and keeps
-/// waiting against the same deadline; where viewing is not offered the key
-/// is ignored the same way.
+/// The approval reader both prompt shapes share: loop `read_key` →
+/// [`approval_step`] → redraw. `redraw` paints the current input; it runs
+/// once on entry and after every edit. Returns the submitted text — the
+/// empty string on Ctrl+C, a bare Escape or Enter on an empty line — and
+/// `None` when the deadline passes. A `ApprovalStep::View` is not returned
+/// here: `viewing` is false for both shapes that call this, so Ctrl+O is
+/// ignored.
 async fn read_approval_input_with(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -164,67 +217,39 @@ async fn read_approval_input_with(
     redraw(renderer, &line);
 
     loop {
-        // Read the first byte to decide: single-key shortcut vs. full line edit.
-        let first = read_byte_by(deadline, stdin.read_byte()).await?;
-        match approval_first_key(first, viewing) {
-            ApprovalKey::Answer(ch) => {
-                // Show the key the user pressed in the input box, then return.
-                line.insert(ch);
-                redraw(renderer, &line);
-                return Some(ch.to_string());
-            }
-            ApprovalKey::Submit => return Some(String::new()),
-            ApprovalKey::View => return Some(String::from(VIEW_SIGNAL)),
-            ApprovalKey::Ignore => {
-                redraw(renderer, &line);
-                continue;
-            }
-            ApprovalKey::Typed => {
-                // Start of a typed message — use the input editor.
-                line.insert(first as char);
-                redraw(renderer, &line);
-
-                return typed_message(renderer, stdin, deadline, &mut line, redraw).await;
-            }
+        let key = read_key_by(deadline, stdin).await?;
+        match approval_step(&mut line, &key, viewing) {
+            ApprovalStep::Pending => redraw(renderer, &line),
+            ApprovalStep::Done(text) => return Some(text),
+            ApprovalStep::View => return Some(String::from(VIEW_SIGNAL)),
         }
     }
 }
 
-/// The typed-message tail of the approval reader: edits until Enter, Ctrl+C
-/// or Escape, `None` when the deadline passes. Shares the deadline with the
-/// first key.
-async fn typed_message(
+/// The approval reader the write and edit prompts use: like
+/// [`read_approval_input_with`] but a Ctrl+O opens the diff viewer and the
+/// read re-enters against the same deadline. Its single caller does not
+/// need the `Clone` the generic loop shape suggested — dropped.
+async fn read_approval_input_with_view(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     deadline: tokio::time::Instant,
-    line: &mut crate::cli::input::InputLine,
     redraw: impl Fn(
         &mut crate::cli::render_ratatui::RatatuiRendererStdout,
         &crate::cli::input::InputLine,
     ),
 ) -> Option<String> {
+    use crate::cli::input::InputLine;
+
+    let mut line = InputLine::new();
+    redraw(renderer, &line);
+
     loop {
-        let b = read_byte_by(deadline, stdin.read_byte()).await?;
-        match b {
-            b'\r' | b'\n' => return Some(line.as_str()),
-            b'\x7f' | b'\x08' => {
-                line.backspace();
-                redraw(renderer, line);
-            }
-            b'\x03' => {
-                // Ctrl+C — cancel, return empty
-                return Some(String::new());
-            }
-            b'\x1b' => {
-                // Escape — cancel, return empty
-                return Some(String::new());
-            }
-            b => {
-                if b >= 0x20 {
-                    line.insert(b as char);
-                    redraw(renderer, line);
-                }
-            }
+        let key = read_key_by(deadline, stdin).await?;
+        match approval_step(&mut line, &key, true) {
+            ApprovalStep::Pending => redraw(renderer, &line),
+            ApprovalStep::Done(text) => return Some(text),
+            ApprovalStep::View => return Some(String::from(VIEW_SIGNAL)),
         }
     }
 }
@@ -327,7 +352,7 @@ async fn prompt_with_session_approve_view(
 ) -> (bool, bool, Option<String>) {
     let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
     loop {
-        match read_approval_input_with(renderer, stdin, deadline, true, |r, line| {
+        match read_approval_input_with_view(renderer, stdin, deadline, |r, line| {
             let _ = r.draw_prompt(prompt_text, line, status);
         })
         .await
@@ -503,26 +528,22 @@ pub(super) async fn prompt_credential_ratatui(
     let mut cred_display = crate::cli::input::InputLine::new();
     let _ = renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
 
-    while let Some(b) = stdin.read_byte().await {
-        match b {
-            b'\r' | b'\n' => break,
-            b'\x7f' | b'\x08' => {
-                cred_real.pop();
-                cred_display.backspace();
+    loop {
+        let key = match read_key(stdin).await {
+            Some(key) => key,
+            None => break,
+        };
+        match credential_step(&mut cred_real, &key) {
+            ApprovalStep::Pending => {
+                cred_display.clear();
+                for _ in 0..cred_real.chars().count() {
+                    cred_display.insert('•');
+                }
                 let _ =
                     renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
             }
-            b'\x03' | b'\x1b' => {
-                cred_real.clear();
-                break;
-            }
-            c if c >= 0x20 => {
-                cred_real.push(c as char);
-                cred_display.insert('•');
-                let _ =
-                    renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
-            }
-            _ => {}
+            ApprovalStep::Done(_) => break,
+            ApprovalStep::View => {}
         }
     }
 

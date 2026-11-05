@@ -164,6 +164,12 @@ impl InputLine {
         self.buf.iter().collect()
     }
 
+    /// Empty the buffer and park the cursor at the start.
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.cursor = 0;
+    }
+
     /// Return the cursor position as a character index (0..=buf.len()).
     pub fn cursor_pos(&self) -> usize {
         self.cursor

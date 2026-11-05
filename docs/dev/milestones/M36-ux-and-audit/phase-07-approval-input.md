@@ -1,7 +1,7 @@
 # Phase 07 — approval-input
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-05
 **Depends on:** phase 06 (the Ctrl+O viewer at write/edit approvals)
 **Estimated diff:** ~300 lines
@@ -170,3 +170,178 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-05 08:42 (progress)
+
+Started phase 07. Plan: write the eight `approval_input_*` tests against the
+current tree and capture their red output, then implement the approval and
+credential step functions on `read_key`, wire both readers to them, and run
+the E2E block. Status flipped to in-progress here and in the milestone README.
+
+### Update — 2026-11-05 09:05 (red runs)
+
+The eight `approval_input_*` tests were written against the pre-phase tree
+(`3db76bb2`) and run there in a throwaway worktree. Two red shapes:
+
+**Compile red (the first run, `/tmp/red07-compile-errors.txt`):** the tests
+import `ApprovalStep` / `approval_step` / `credential_step`, which do not
+exist yet — 9 × `error[E0432]: unresolved imports`:
+
+```text
+error[E0432]: unresolved imports `super::prompts::ApprovalStep`, `super::prompts::approval_step`
+   --> src/cli/commands/stream.rs:501:30
+    |
+501 |         use super::prompts::{ApprovalStep, approval_step};
+    |                              ^^^^^^^^^^^^  ^^^^^^^^^^^^^ no `approval_step` in `cli::commands::stream::prompts`
+    |                              |
+    |                              no `ApprovalStep` in `cli::commands::stream::prompts`
+    |
+help: a similar name exists in the module
+    |
+501 -         use super::prompts::{ApprovalStep, approval_step};
+501 +         use super::prompts::{ApprovalKey, approval_step};
+    |
+```
+
+(9 of these: 6 × `{ApprovalStep, approval_step}` at stream.rs 501/554/578/612/
+637/658, 3 × `{ApprovalStep, credential_step}` at 679/698/724 — the full text
+is preserved in `/tmp/red07-compile-errors.txt`.) `error: could not compile
+'daemoneye' (lib test) due to 9 previous errors`.
+
+**Assertion red (a shimmed run — the same tree plus do-nothing step shims so
+the tests compile; `/tmp/red07-asserts.txt`):** all eight fail:
+
+```text
+running 8 tests
+test cli::commands::stream::tests::approval_input_ctrl_c_and_escape_deny ... FAILED
+test cli::commands::stream::tests::approval_input_credential_ignores_focus_and_arrows ... FAILED
+test cli::commands::stream::tests::approval_input_ignores_focus_and_arrows ... FAILED
+test cli::commands::stream::tests::approval_input_letter_waits_for_enter ... FAILED
+test cli::commands::stream::tests::approval_input_paste_is_one_value ... FAILED
+test cli::commands::stream::tests::approval_input_credential_escape_clears ... FAILED
+test cli::commands::stream::tests::approval_input_decodes_utf8 ... FAILED
+test cli::commands::stream::tests::approval_input_credential_paste_is_the_value ... FAILED
+
+failures:
+
+---- cli::commands::stream::tests::approval_input_ctrl_c_and_escape_deny stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_ctrl_c_and_escape_deny' (148268) panicked at src/cli/commands/stream.rs:652:9:
+assertion `left == right` failed: Ctrl+C submits the empty line
+  left: Pending
+ right: Done("")
+
+---- cli::commands::stream::tests::approval_input_credential_ignores_focus_and_arrows stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_credential_ignores_focus_and_arrows' (148266) panicked at src/cli/commands/stream.rs:724:9:
+assertion `left == right` failed: each char arrives decoded
+  left: ""
+ right: "päß"
+
+---- cli::commands::stream::tests::approval_input_ignores_focus_and_arrows stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_ignores_focus_and_arrows' (148270) panicked at src/cli/commands/stream.rs:639:9:
+assertion `left == right` failed: y + Enter submits y after the ignored keys
+  left: Pending
+ right: Done("y")
+
+---- cli::commands::stream::tests::approval_input_letter_waits_for_enter stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_letter_waits_for_enter' (148271) panicked at src/cli/commands/stream.rs:568:9:
+assertion `left == right` failed: Enter submits the whole typed line
+  left: Pending
+ right: Done("abort that")
+
+---- cli::commands::stream::tests::approval_input_paste_is_one_value stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_paste_is_one_value' (148272) panicked at src/cli/commands/stream.rs:599:9:
+assertion `left == right` failed: the paste's CR/LF became spaces
+  left: ""
+ right: "yes please"
+
+---- cli::commands::stream::tests::approval_input_credential_escape_clears stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_credential_escape_clears' (148265) panicked at src/cli/commands/stream.rs:742:9:
+assertion `left == right` failed
+  left: ""
+ right: "xy"
+
+---- cli::commands::stream::tests::approval_input_decodes_utf8 stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_decodes_utf8' (148269) panicked at src/cli/commands/stream.rs:680:9:
+assertion `left == right` failed
+  left: ""
+ right: "café"
+
+---- cli::commands::stream::tests::approval_input_credential_paste_is_the_value stdout ----
+
+thread 'cli::commands::stream::tests::approval_input_credential_paste_is_the_value' (148267) panicked at src/cli/commands/stream.rs:699:9:
+assertion `left == right` failed: the paste's trailing LF was removed
+  left: ""
+ right: "hunter2"
+ (x2)
+failures:
+    cli::commands::stream::tests::approval_input_credential_escape_clears
+    cli::commands::stream::tests::approval_input_credential_ignores_focus_and_arrows
+    cli::commands::stream::tests::approval_input_credential_paste_is_the_value
+    cli::commands::stream::tests::approval_input_ctrl_c_and_escape_deny
+    cli::commands::stream::tests::approval_input_decodes_utf8
+    cli::commands::stream::tests::approval_input_ignores_focus_and_arrows
+    cli::commands::stream::tests::approval_input_letter_waits_for_enter
+    cli::commands::stream::tests::approval_input_paste_is_one_value
+
+test result: FAILED. 0 passed; 8 failed; 0 ignored; 0 measured; 2605 filtered out; finished in 0.00s
+```
+
+The shims were thrown away with the worktree; the checked-in step functions
+are the real implementation.
+
+### Findings — 2026-11-05
+
+- `read_approval_input_with` kept its `viewing: bool` and both readers now
+  return the `VIEW_SIGNAL` sentinel through the same `ApprovalStep::View`
+  arm; the write/edit prompts' loop is a separate
+  `read_approval_input_with_view` whose only difference is `offered: true`,
+  so `approval_step` stays one pure function and `approval_first_key` /
+  `ApprovalKey` are gone (the phase-06 test is rewritten against the step
+  function, name and meaning kept).
+- `InputLine` gained a `clear()` (buffer + cursor reset) — the credential
+  redraw rebuilds its bullet line and Ctrl+C/Escape empty the approval
+  line. The pre-existing chat-input clear site (`*line = InputLine::new()`)
+  is untouched; no other call site changed behaviour.
+- No `tests/hygiene_allowlist.txt` entry needed: hygiene passes with the
+  touched files' new sizes.
+
+### Update — 2026-11-05 09:20 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block verbatim (`/tmp/e2e-07.txt`).
+Output:
+
+```text
+approval_input passed=8 failed=0
+raw_byte_reads=0
+first_key_fn=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.27s
+fmt_exit=0
+passed=2692 failed=0
+```
+
+Notes on the lines:
+
+- `approval_input passed=8 failed=0` — the eight spec'd tests, P ≥ 8 as the
+  criterion pins.
+- `raw_byte_reads=0` — no `stdin.read_byte()` call remains in
+  `stream_prompts.rs` (was 3); both readers go through `read_key`.
+- `first_key_fn=0` — `approval_first_key` and `ApprovalKey` are gone.
+- `build_warnings=0`, clippy clean (`-D warnings`), `fmt_exit=0`.
+- hygiene 16, doc_truth 16, bug_tracker 6 — all ok.
+- Full suite: 2692 passed, 0 failed (was 2684 before the phase: +8 new
+  `approval_input_` tests).
+- Preservation: the eight `parse_approval_decision_*` tests,
+  `approval_read_times_out` (unedited, now against the generic
+  `read_byte_by` seam), the `read_key_*` tests (unread) and the other five
+  `approval_diff_*` tests pass.

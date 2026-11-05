@@ -492,29 +492,260 @@ mod tests {
 
     // ── approval first-key (M36 phase-06) ──────────────────────────────
 
-    /// The approval prompt's decision on its first key, as a pure function:
-    /// `Answer(c)` for y/n/a, `Submit` for Enter, `Ignore` for Ctrl+O when
-    /// viewing is not offered, `View` for Ctrl+O when it is, and `Typed`
-    /// (start a message) for a letter.
+    /// Ctrl+O at an approval is never an answer: it views where viewing is
+    /// offered (the write/edit prompts, via the step function's `View`)
+    /// and is ignored elsewhere. Kept through phase-07's rewrite of the
+    /// reader as the `approval_step` step function.
     #[test]
     fn approval_diff_ctrl_o_is_not_an_answer() {
-        use super::prompts::{ApprovalKey, approval_first_key};
+        use super::prompts::{ApprovalStep, approval_step};
+        let offered = |key: &Key| {
+            let mut line = InputLine::new();
+            approval_step(&mut line, key, true)
+        };
+        let not_offered = |key: &Key| {
+            let mut line = InputLine::new();
+            approval_step(&mut line, key, false)
+        };
         assert_eq!(
-            approval_first_key(0x0f, true),
-            ApprovalKey::View,
+            offered(&Key::CtrlO),
+            ApprovalStep::View,
             "ctrl+o opens the viewer when viewing is offered"
         );
         assert_eq!(
-            approval_first_key(0x0f, false),
-            ApprovalKey::Ignore,
+            not_offered(&Key::CtrlO),
+            ApprovalStep::Pending,
             "ctrl+o is ignored where viewing is not offered"
         );
-        assert_eq!(approval_first_key(b'y', true), ApprovalKey::Answer('y'));
-        assert_eq!(approval_first_key(b'Y', true), ApprovalKey::Answer('y'));
-        assert_eq!(approval_first_key(b'n', true), ApprovalKey::Answer('n'));
-        assert_eq!(approval_first_key(b'a', true), ApprovalKey::Answer('a'));
-        assert_eq!(approval_first_key(b'\r', true), ApprovalKey::Submit);
-        assert_eq!(approval_first_key(b'x', true), ApprovalKey::Typed);
+        assert_eq!(
+            offered(&Key::Enter),
+            ApprovalStep::Done(String::new()),
+            "Enter submits the empty line"
+        );
+        for (key, ch) in [
+            (Key::Char('y'), 'y'),
+            (Key::Char('Y'), 'Y'),
+            (Key::Char('n'), 'n'),
+            (Key::Char('a'), 'a'),
+        ] {
+            let mut line = InputLine::new();
+            assert_eq!(
+                approval_step(&mut line, &key, true),
+                ApprovalStep::Pending,
+                "{ch} edits the line and waits for Enter"
+            );
+            assert_eq!(line.as_str(), ch.to_string(), "{ch} landed in the line");
+        }
+        let mut line = InputLine::new();
+        assert_eq!(
+            approval_step(&mut line, &Key::Char('x'), true),
+            ApprovalStep::Pending,
+            "a letter starts a redirect, not an answer"
+        );
+    }
+
+    // ── approval input (M36 phase-07, S2/S3) ───────────────────────────
+
+    /// `a` no longer answers at once: every key edits the line and only
+    /// Enter submits it, so `abort that` + Enter is a redirect — not an
+    /// approval and not a session grant — and `y` needs its Enter.
+    #[test]
+    fn approval_input_letter_waits_for_enter() {
+        use super::prompts::{ApprovalStep, approval_step};
+        let mut line = InputLine::new();
+        assert_eq!(
+            approval_step(&mut line, &Key::Char('a'), false),
+            ApprovalStep::Pending,
+            "a alone is pending, not an answer"
+        );
+        for c in "bort that".chars() {
+            assert_eq!(
+                approval_step(&mut line, &Key::Char(c), false),
+                ApprovalStep::Pending,
+                "{c} edits the line"
+            );
+        }
+        assert_eq!(
+            approval_step(&mut line, &Key::Enter, false),
+            ApprovalStep::Done("abort that".into()),
+            "Enter submits the whole typed line"
+        );
+        let (approved, is_session, msg) = parse_approval_response("abort that");
+        assert!(!approved, "a typed redirect never approves");
+        assert!(!is_session, "a typed redirect never grants the session");
+        assert_eq!(msg, Some("abort that".to_string()));
+
+        let mut line = InputLine::new();
+        approval_step(&mut line, &Key::Char('y'), false);
+        assert_eq!(
+            approval_step(&mut line, &Key::Enter, false),
+            ApprovalStep::Done("y".into()),
+            "y + Enter submits y"
+        );
+    }
+
+    /// A bracketed paste is one value: it never submits even with a newline
+    /// in it — the CR/LF become spaces — and Enter submits the flattened
+    /// line.
+    #[test]
+    fn approval_input_paste_is_one_value() {
+        use super::prompts::{ApprovalStep, approval_step};
+        let mut line = InputLine::new();
+        assert_eq!(
+            approval_step(&mut line, &Key::Paste("yes\nplease".into()), false),
+            ApprovalStep::Pending,
+            "a paste never submits"
+        );
+        assert_eq!(
+            line.as_str(),
+            "yes please",
+            "the paste's CR/LF became spaces"
+        );
+        assert_eq!(
+            approval_step(&mut line, &Key::Enter, false),
+            ApprovalStep::Done("yes please".into()),
+            "Enter submits the pasted value as one"
+        );
+    }
+
+    /// Focus events, arrow keys, a mouse report and a control byte never
+    /// edit the approval line: it stays empty and pending, and y + Enter
+    /// still submits y.
+    #[test]
+    fn approval_input_ignores_focus_and_arrows() {
+        use super::prompts::{ApprovalStep, approval_step};
+        let mut line = InputLine::new();
+        for key in [
+            Key::FocusGained,
+            Key::FocusLost,
+            Key::Up,
+            Key::Left,
+            Key::Mouse {
+                button: 0,
+                col: 3,
+                row: 2,
+                pressed: true,
+            },
+            Key::Char('\0'),
+        ] {
+            assert_eq!(
+                approval_step(&mut line, &key, false),
+                ApprovalStep::Pending,
+                "{key:?} leaves the line pending"
+            );
+            assert!(line.is_empty(), "{key:?} never edits the line");
+        }
+        approval_step(&mut line, &Key::Char('y'), false);
+        assert_eq!(
+            approval_step(&mut line, &Key::Enter, false),
+            ApprovalStep::Done("y".into()),
+            "y + Enter submits y after the ignored keys"
+        );
+    }
+
+    /// Ctrl+C and a bare Escape deny at once: each submits the empty line,
+    /// even with text already on it.
+    #[test]
+    fn approval_input_ctrl_c_and_escape_deny() {
+        use super::prompts::{ApprovalStep, approval_step};
+        let mut line = InputLine::new();
+        assert_eq!(
+            approval_step(&mut line, &Key::CtrlC, false),
+            ApprovalStep::Done(String::new()),
+            "Ctrl+C submits the empty line"
+        );
+        let mut line = InputLine::new();
+        approval_step(&mut line, &Key::Char('a'), false);
+        approval_step(&mut line, &Key::Char('b'), false);
+        assert_eq!(
+            approval_step(&mut line, &Key::Char('\x1b'), false),
+            ApprovalStep::Done(String::new()),
+            "a bare Escape submits the empty line, discarding the text"
+        );
+    }
+
+    /// A printable `Char` is inserted decoded: `c a f é` + Enter submits
+    /// `café`, not the mangled bytes the old `b as char` read produced.
+    #[test]
+    fn approval_input_decodes_utf8() {
+        use super::prompts::{ApprovalStep, approval_step};
+        let mut line = InputLine::new();
+        for c in ['c', 'a', 'f', 'é'] {
+            assert_eq!(
+                approval_step(&mut line, &Key::Char(c), false),
+                ApprovalStep::Pending,
+                "{c} edits the line"
+            );
+        }
+        assert_eq!(line.as_str(), "café");
+        assert_eq!(
+            approval_step(&mut line, &Key::Enter, false),
+            ApprovalStep::Done("café".into()),
+            "Enter submits the decoded text"
+        );
+    }
+
+    /// A pasted password is one value with its CR/LF removed: it stays
+    /// pending and Enter submits it whole.
+    #[test]
+    fn approval_input_credential_paste_is_the_value() {
+        use super::prompts::{ApprovalStep, credential_step};
+        let mut value = String::new();
+        assert_eq!(
+            credential_step(&mut value, &Key::Paste("hunter2\n".into())),
+            ApprovalStep::Pending,
+            "a paste never submits"
+        );
+        assert_eq!(value, "hunter2", "the paste's trailing LF was removed");
+        assert_eq!(
+            credential_step(&mut value, &Key::Enter),
+            ApprovalStep::Done("hunter2".into()),
+            "Enter submits the whole pasted value"
+        );
+    }
+
+    /// Focus events and arrows never edit the credential; `p ä ß` then
+    /// Backspace submits `pä` — non-ASCII chars count one each.
+    #[test]
+    fn approval_input_credential_ignores_focus_and_arrows() {
+        use super::prompts::{ApprovalStep, credential_step};
+        let mut value = String::new();
+        for key in [Key::FocusGained, Key::FocusLost, Key::Up, Key::Left] {
+            assert_eq!(
+                credential_step(&mut value, &key),
+                ApprovalStep::Pending,
+                "{key:?} is ignored"
+            );
+            assert!(value.is_empty(), "{key:?} never edits the value");
+        }
+        for c in ['p', 'ä', 'ß'] {
+            credential_step(&mut value, &Key::Char(c));
+        }
+        assert_eq!(value, "päß", "each char arrives decoded");
+        credential_step(&mut value, &Key::Backspace);
+        assert_eq!(value, "pä", "Backspace removes one char");
+        assert_eq!(
+            credential_step(&mut value, &Key::Enter),
+            ApprovalStep::Done("pä".into()),
+            "Enter submits the edited value"
+        );
+    }
+
+    /// Escape clears the credential and submits it empty.
+    #[test]
+    fn approval_input_credential_escape_clears() {
+        use super::prompts::{ApprovalStep, credential_step};
+        let mut value = String::new();
+        for c in ['x', 'y'] {
+            credential_step(&mut value, &Key::Char(c));
+        }
+        assert_eq!(value, "xy");
+        assert_eq!(
+            credential_step(&mut value, &Key::Char('\x1b')),
+            ApprovalStep::Done(String::new()),
+            "a bare Escape clears the value and submits it empty"
+        );
+        assert!(value.is_empty(), "the cleared value is not left behind");
     }
 }
 
