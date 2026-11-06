@@ -1,7 +1,7 @@
 # Phase 08 — char-boundary-panics
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-05
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -495,3 +495,36 @@ kill: (-398954): No such process
 **Commit:** a8873c5e1d4de887e58c8c4b7718385e37fa6a42
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-06
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. The first run was not a review bounce: it was cancelled
+  (`user_stop`) at turn 923 without writing any code, after an exploration
+  loop caused by the open-ended "choose the seam" wording. That was a spec
+  bug. The refined re-dispatch named each test's seam and added
+  `checked_next_run`. It finished in 213 turns, with no bug filed.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** none.
+  - `digest.rs` now delegates to the std `floor_char_boundary`, which the
+    spec allowed.
+  - `invalid_interval` was extracted to keep `run_schedule_command` under
+    its allowlisted size. The allowlist did not change.
+- **Red evidence:** some of the pasted red runs show the executor's own
+  wrong assertions (9 vs 8 bytes, 141 vs 142) rather than the pre-phase
+  code failing. The run labelled "summary arms still `[..40]`" shows the
+  summary tests passing, so that label is wrong. I accepted the tests
+  anyway, because each one fails on the pre-phase code by construction:
+  - `[..40]` on 20 three-byte CJK chars cuts inside a char, since 40 is not
+    a multiple of 3.
+  - `PT18446744073709551615M` overflows the unchecked `u64` multiply.
+  - `char_boundary_stored_interval_overflow` has a genuine red run against
+    the unchecked `advance`.
+  - The helper is new, and `byte_slices=0` proves the call sites changed.
+- **Calibration:** "drive the real call site, choose the seam" sent a
+  local executor into a 900-turn exploration loop when the call site had no
+  test seam (`process_alert`, the `schedule_command` arm). A spec should
+  name the function each test calls, or state that a grep criterion
+  covers the call site. This is one occurrence, so it has not been folded.
+  It pairs with phase 07's lesson in the other direction: the test must
+  reach the wiring, but the spec names how.
