@@ -150,20 +150,9 @@ async fn read_key_by(deadline: tokio::time::Instant, stdin: &AsyncStdin) -> Opti
 }
 
 /// Read the approval line through `read_key`, rendering the prompt and input
-/// in the live region (not scrollback).
-///
-/// Every key edits the line via [`approval_step`] and only Enter submits it
-/// (PE decision 2026-11-01): a redirect typed as `abort that` is a redirect,
-/// never an approval, and `a` alone records nothing. `viewing` is whether
-/// Ctrl+O opens the transcript viewer on this prompt — the write and edit
-/// prompts — where the step returns [`ApprovalStep::View`] and the caller
-/// re-enters the read against its original deadline.
-///
-/// The read is bounded by `deadline`: past it the function returns `None`
-/// (F7) so the caller can commit the timeout, send nothing, and return to the
-/// response loop before the daemon's own timeout lands. Without the bound the
-/// panel outlives the daemon's wait and the next line typed fails with
-/// `Broken pipe`.
+/// in the live region (not scrollback). Bounded by `deadline`: past it the
+/// function returns `None` (F7) so the caller commits the timeout before the
+/// daemon's own wait lands and the next line typed never fails `Broken pipe`.
 async fn read_approval_input(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -513,6 +502,25 @@ pub(super) fn tool_call_panel_label(background: bool) -> &'static str {
     }
 }
 
+/// The credential reader: loop `read_key` → [`credential_step`] → redraw,
+/// returning the submitted value or `None` at EOF.
+pub(super) async fn read_credential_with(
+    stdin: &AsyncStdin,
+    mut redraw: impl FnMut(&str),
+) -> Option<String> {
+    let mut value = String::new();
+    redraw(&value);
+
+    loop {
+        let key = read_key(stdin).await?;
+        match credential_step(&mut value, &key) {
+            ApprovalStep::Pending => redraw(&value),
+            ApprovalStep::Done(text) => return Some(text),
+            ApprovalStep::View => {}
+        }
+    }
+}
+
 pub(super) async fn prompt_credential_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -521,35 +529,24 @@ pub(super) async fn prompt_credential_ratatui(
 ) -> String {
     let _ = renderer.commit(&format!("\n⚠ {}\n", prompt));
 
-    // Read the credential in the live region, showing • for each char.
-    // Two buffers: cred_real holds the actual typed value; cred_display holds masked bullets.
+    // Read the credential in the live region, showing one • per char: the
+    // display is rebuilt from the real value on every edit, so a paste that
+    // changes the length cannot desync the mask.
     let prompt_text = "  Password: ";
-    let mut cred_real = String::new();
     let mut cred_display = crate::cli::input::InputLine::new();
-    let _ = renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
-
-    loop {
-        let key = match read_key(stdin).await {
-            Some(key) => key,
-            None => break,
-        };
-        match credential_step(&mut cred_real, &key) {
-            ApprovalStep::Pending => {
-                cred_display.clear();
-                for _ in 0..cred_real.chars().count() {
-                    cred_display.insert('•');
-                }
-                let _ =
-                    renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
-            }
-            ApprovalStep::Done(_) => break,
-            ApprovalStep::View => {}
+    let credential = read_credential_with(stdin, |value| {
+        cred_display.clear();
+        for _ in 0..value.chars().count() {
+            cred_display.insert('•');
         }
-    }
+        let _ = renderer.draw_credential_panel("sudo password", prompt, &cred_display, status);
+    })
+    .await
+    .unwrap_or_default();
 
     // Commit the final masked line to scrollback.
     let _ = renderer.commit(&format!("{}\n", prompt_text));
-    cred_real
+    credential
 }
 
 pub(super) async fn prompt_pane_select_ratatui(

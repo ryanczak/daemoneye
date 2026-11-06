@@ -513,3 +513,102 @@ kill: (-162256): No such process
 **Commit:** bbc26a04b1523dbb98e300621d4fcd5e24fdeaaa
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-05 23:55 (red runs, bug-07-1)
+
+`approval_input_credential_reader_returns_the_value` was written against the
+pre-fix tree (`bbc26a04`) and run there in a throwaway worktree
+(`/tmp/red07-3`). The defect is in the reader loop, which only exists in
+`prompt_credential_ratatui`, so the worktree ran the test against a shim
+holding that loop verbatim (`Done(_) => break`, the reader's own buffer
+returned) — the exact pre-phase shape, without the renderer. Two shapes:
+
+**Compile red (the bare test against the unshimmed `bbc26a04` tree,
+`/tmp/red07-2`):** `read_credential_with` does not exist yet — 2 ×
+`error[E0425]: cannot find function read_credential_with in this scope`
+(stream.rs:808 and 818), `error: could not compile 'daemoneye' (lib test)
+due to 2 previous errors`. No `test result:` line: compilation failed before
+any test ran.
+
+**Assertion red (the shimmed run, `/tmp/red07-3`):** the test compiles and
+fails on its claim — the reader returns the emptied buffer, not the typed
+value:
+
+```text
+running 1 test
+test cli::commands::stream::stream_seam_tests::approval_input_credential_reader_returns_the_value ... FAILED
+
+failures:
+
+---- cli::commands::stream::stream_seam_tests::approval_input_credential_reader_returns_the_value stdout ----
+
+thread 'cli::commands::stream::stream_seam_tests::approval_input_credential_reader_returns_the_value' (219569) panicked at src/cli/commands/stream.rs:811:9:
+assertion `left == right` failed: Enter returns the pasted value
+  left: ""
+ right: "hunter2"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    cli::commands::stream::stream_seam_tests::approval_input_credential_reader_returns_the_value
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2613 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+The shim lived only in the throwaway worktree and is not in the commit. The
+reader was then fixed in the real tree (`read_credential_with` takes the
+`Done` payload); the mutation check below re-breaks it and confirms this test
+fails again.
+
+### Findings — 2026-11-05
+
+- The defect was a two-owner split: `credential_step` moved the value out
+  with `mem::take` into `ApprovalStep::Done(text)` while the reader kept its
+  own buffer and discarded the payload. The fix puts the value in the
+  reader's hands only — `read_credential_with` owns the `String`, the step
+  keeps editing through `&mut`, and the reader returns `Done`'s payload.
+- Splitting the loop out of `prompt_credential_ratatui` into
+  `read_credential_with` (redraw closure, like `read_approval_input_with`)
+  made the reader testable without a renderer; the bullet display is now
+  rebuilt from the real value on every edit, so the two buffers cannot
+  desync.
+- No allowlist change: the reader split added 8 net lines to
+  `stream_prompts.rs` (797 → 805 production lines), which crossed the
+  hygiene cap of 800, so two doc comments that restated neighbours were
+  trimmed (the deadline tail of `read_approval_input`, the
+  `read_credential_with` detail) — the file is back to 794 and hygiene is
+  green without an entry.
+
+### Update — 2026-11-06 00:04 (end-to-end verification, bug-07-1)
+
+Ran the phase doc's § End-to-end verification block verbatim (`/tmp/e2e-07b.sh`
+→ `/tmp/e2e-07b.txt`). Output:
+
+```text
+approval_input passed=9 failed=0
+raw_byte_reads=0
+first_key_fn=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2693 failed=0
+```
+
+Notes on the lines:
+
+- `approval_input passed=9 failed=0` — the eight spec'd tests plus the new
+  `approval_input_credential_reader_returns_the_value`, P ≥ 9 as the
+  criterion pins.
+- `raw_byte_reads=0`, `first_key_fn=0`, `build_warnings=0` — unchanged from
+  round 1; the fix touched no reader seam.
+- hygiene 16, doc_truth 16, bug_tracker 6 — all ok.
+- Full suite: 2693 passed, 0 failed (was 2692: +1, the new reader test).
+- Mutation check: re-breaking the fix (`Done(_) => return
+  Some(String::new())` in `read_credential_with`, the payload discarded)
+  failed `approval_input_credential_reader_returns_the_value` again —
+  `left: "" right: "hunter2"` — then reverted and it passes. The test
+  genuinely drives the reader loop, not only `credential_step`.

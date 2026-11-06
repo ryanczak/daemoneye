@@ -792,6 +792,39 @@ mod stream_seam_tests {
         }
     }
 
+    // ── credential reader (M36 phase-07, bug-07-1) ─────────────────────
+
+    /// The sudo prompt returns the value the user entered: the reader loop,
+    /// not only `credential_step`, hands back what was typed — a bracketed
+    /// paste of `hunter2` plus a trailing LF, then Enter, returns `hunter2`
+    /// (before bug-07-1 it returned the emptied buffer), and `x y` then a
+    /// bare Escape returns empty.
+    #[tokio::test]
+    async fn approval_input_credential_reader_returns_the_value() {
+        let (stdin, wf) = make_pipe_stdin();
+        let mut bytes: Vec<u8> = vec![0x1b, b'[', b'2', b'0', b'0', b'~'];
+        bytes.extend_from_slice(b"hunter2\n");
+        bytes.extend_from_slice(&[0x1b, b'[', b'2', b'0', b'1', b'~', b'\r']);
+        write_bytes(&wf, &bytes).await;
+        let redraws = std::cell::Cell::new(0u32);
+        let value = read_credential_with(&stdin, |_| redraws.set(redraws.get() + 1))
+            .await
+            .expect("the reader returns on Enter");
+        assert_eq!(value, "hunter2", "Enter returns the pasted value");
+        assert_eq!(
+            redraws.get(),
+            2,
+            "the reader redraws once on entry and once after the paste"
+        );
+
+        let (stdin, wf) = make_pipe_stdin();
+        write_bytes(&wf, b"xy\x1b").await;
+        let value = read_credential_with(&stdin, |_| {})
+            .await
+            .expect("the reader returns on Escape");
+        assert_eq!(value, "", "a bare Escape clears and returns empty");
+    }
+
     /// The regression guard for bug-phase-11-1 / bug-phase-11-2: a daemon read
     /// that is interrupted (dropped) mid-line must NOT lose the partial bytes —
     /// the next read completes the same message intact.
