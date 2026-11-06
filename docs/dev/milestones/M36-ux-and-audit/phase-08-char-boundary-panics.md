@@ -1,7 +1,7 @@
 # Phase 08 — char-boundary-panics
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-05
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -60,35 +60,45 @@ reaches a byte slice or unchecked arithmetic and panics a daemon task.
   that can exceed `i64::MAX`.
 - Preservation: the existing `parse_iso_duration` tests and the `summary()`
   tests in `pending.rs` stay green unedited.
-- **Lesson from phase 07:** a pure helper with tests is not enough on its
-  own. Each finding gets a test that drives its real call site, or the
-  smallest function that contains the slice, with the offending input.
+- **Seams are named; do not search for others.** Every test below names
+  the function it calls. Do **not** build a `WebhookState`, run
+  `process_alert`, start a daemon, or call the `schedule_command` executor
+  arm. Do not read `tests/isolation.rs`, `tests/integration.rs`,
+  `src/daemon/spend.rs` or `src/ai/mod.rs`. For B3 and B16, the
+  `byte_slices=0` criterion proves the call sites changed, and the helper
+  test proves the helper is safe.
+- **One duration seam:** add a pure `checked_next_run(from: DateTime<Utc>,
+  secs: u64) -> Option<DateTime<Utc>>` in `src/scheduler.rs`, returning
+  `None` when the seconds do not fit a `TimeDelta` or the sum does not fit a
+  `DateTime`. The `schedule_command` interval path in
+  `src/daemon/executor/schedule.rs`, `advance` and `skip_to_future` all call
+  it. The tool path maps `None` to the existing `Invalid interval` reply.
 
 ## Spec
 
 1. **Red tests first.** Write the tests below against the current tree, run
    them, and keep the failing output (panics included) for step 4. All carry
    the `char_boundary_` prefix:
-   - `char_boundary_webhook_fingerprint`: an alert whose fingerprint has a
-     multibyte char across byte 8 and across byte 16 goes through the code
-     that formats and logs the fingerprint without panicking. Choose the
-     seam: extract it if `process_alert` has none.
+   - `char_boundary_webhook_fingerprint`: the helper, called with
+     `abcdefgü` at 8 and with a 15-ASCII + `ü` string at 16, does not panic
+     and returns a prefix of its input of at most that many bytes. ASCII
+     input of 20 bytes cut at 16 returns its first 16 bytes.
    - `char_boundary_search_summary`: a `SearchRepository` whose query is 20
      CJK chars has a `summary()` that does not panic and is a prefix of the
      query. A 50-char ASCII query still summarizes to its first 40 chars.
    - `char_boundary_foreground_summary`: the same for a `Foreground` `cmd`.
-   - `char_boundary_frame_preview`: the malformed-frame preview for a
-     120+-byte string with a multibyte char straddling byte 120 does not
-     panic, through whatever function the three backends now share.
-   - `char_boundary_iso_overflow`: `parse_iso_duration` handles
-     `P200000000000D` and `PT18446744073709551615S` without panicking and
-     returns `None` (or a value the caller then refuses). The schedule
-     tool's interval path refuses `P100000000D` with `Invalid interval`.
-     `P36500D` is still accepted.
+   - `char_boundary_frame_preview`: the helper, called with 119 ASCII bytes
+     followed by `é` and more text, cut at 120, returns the 119 ASCII bytes
+     and does not panic.
+   - `char_boundary_iso_overflow`: `parse_iso_duration` returns `None` for
+     `PT18446744073709551615M` (the `u64` multiply overflows) and does not
+     panic on `P200000000000D`. `checked_next_run(now, secs)` returns `None`
+     for the seconds of `P200000000000D` and of `P100000000D`, and `Some`
+     for the seconds of `P36500D`.
    - `char_boundary_stored_interval_overflow`: an `Every` with a huge
      `interval_secs` survives `advance` and `skip_to_future` and ends with
      `next_run == DateTime::<Utc>::MAX_UTC`.
-2. **Implement** in this order, running `cargo build` after each: the
+2. **Implement**, one edit per turn, in this order, running `cargo build` after each: the
    helper, the webhook sites, the summary arms, the three backends, the
    duration parser and the schedule caller, then `advance` and
    `skip_to_future`.
@@ -151,3 +161,29 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-06 (refined re-dispatch)
+
+The first run spent 923 turns, 900 of them on `bash` greps and
+`read_file`, and wrote no code. It was hunting for a way to drive
+`process_alert` and the schedule tool end to end. The spec now names every
+seam, under § Constraints and Spec step 1. Everything you need is in the
+files § Authorizations lists. Read the four finding sites once, then start
+writing the tests. Your first `patch` should land within about 30 turns.
+Nothing from the first run is on disk except this doc's status flip.
+
+### Update — 2026-11-06 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the run was cancelled (`user_stop`) at turn 923 with no code
+written. Resuming would keep the open-ended "choose the seam" wording that
+caused the exploration loop, so the spec now names each test's seam and adds
+`checked_next_run` as the one duration seam.
+
+### Update — 2026-11-06 00:24 (started)
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local (the run's own line misnamed the model; corrected by the architect)
+
+Read the phase doc, `STANDARDS.md`, and the four finding sites (B3, B4, B16,
+B14). Flipped the phase doc and the README row to `in-progress`. Beginning
+with the red tests per the spec's task order.
