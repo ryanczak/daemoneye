@@ -1,7 +1,7 @@
 # Phase 07 — approval-input
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-05
 **Depends on:** phase 06 (the Ctrl+O viewer at write/edit approvals)
 **Estimated diff:** ~300 lines
@@ -759,3 +759,28 @@ kill: (-231431): No such process
 **Commit:** 5045e266d0d2bad491d08c80348e4a69dd87cfc6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-05
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 — bug-07-1 (blocker): the sudo prompt sent an empty password
+  on Enter. `credential_step` moved the value into `Done` with `mem::take`,
+  and the reader discarded the payload. Fixed in `5045e266`:
+  `read_credential_with` returns `Done`'s payload, and the new test
+  `approval_input_credential_reader_returns_the_value` drives the reader loop
+  from `make_pipe_stdin`. The red runs and the mutation check are recorded as
+  output.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (bounce run 377 turns, no
+  replies cut off at the 64K output limit)
+- **Scope deviations:** none. Nits, not bounced:
+  - The approval loop is duplicated in `read_approval_input_with` and
+    `read_approval_input_with_view`. The `viewing` flag on the former is now
+    always `false`.
+  - To stay under the 800-line file cap, the fix trimmed two doc comments
+    instead of adding an allowlist line. An allowlist entry would have been
+    acceptable.
+- **Calibration:** the bug came from the spec. It pinned tests on the pure step
+  functions only, so nothing covered the wiring between a step's output and the
+  reader's return value. When a phase splits logic into a pure step plus an IO
+  loop, require at least one test that drives the loop through its stdin seam.
+  This is the first occurrence and has not been folded.
