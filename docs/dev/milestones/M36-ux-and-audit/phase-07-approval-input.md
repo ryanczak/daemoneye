@@ -1,7 +1,7 @@
 # Phase 07 — approval-input
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced: bugs/bug-07-1.md)
+**Status:** review
 **Drafted:** 2026-11-05
 **Depends on:** phase 06 (the Ctrl+O viewer at write/edit approvals)
 **Estimated diff:** ~300 lines
@@ -612,3 +612,150 @@ Notes on the lines:
   failed `approval_input_credential_reader_returns_the_value` again —
   `left: "" right: "hunter2"` — then reverted and it passes. The test
   genuinely drives the reader loop, not only `credential_step`.
+
+### Update — 2026-11-06 00:07 (complete, server-authored)
+
+**Summary:** </think>The tree is clean, the commit is in, status remains `in-progress` as required (server flips it to `review`). All tasks are done. Let me do a final verification of the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` ✓ (line 4)
+- [x] Milestone README's phase-table row still says `in-progress` ✓ (line 173)
+- [x] No hand-written `(complete)` entry ✓ (I wrote red-runs, findings, and end-to-end entries — all executor-owned per the phase spec tasks)
+- [x] `cargo fmt --all` run immediately before `git add` ✓
+- [x] All verification commands ran clean ✓ (E2E block output: approval_input passed=9 failed=0, raw_byte_reads=0, first_key_fn=0, build_warnings=0, hygiene/doc_truth/bug_tracker ok, clippy clean, fmt_exit=0, passed=2693 failed=0)
+- [x] Final message = substantive Summary + Notes for review — writing now
+- [x] `git status --short` shows nothing ✓
+- [x] `git log -1 --stat` shows all three touched files ✓
+
+Now write the final summary message.</think>
+**Summary:** Fixed bug-07-1 — the sudo prompt's empty password — and committed as `5045e266`. The loop moves out of `prompt_credential_ratatui` into a new `read_credential_with` (the seam the bug doc suggested: redraw closure, like `read_approval_input_with`), which owns the value and returns `ApprovalStep::Done`'s payload — the string the user entered — instead of discarding it and returning the buffer `credential_step` had already emptied with `mem::take`. The bullet display is rebuilt from the real value on every edit, and the prompt keeps having no deadline (out of scope to add one). New test `approval_input_credential_reader_returns_the_value` drives the reader loop from `make_pipe_stdin` (bracketed paste of `hunter2` + trailing LF, then Enter → `hunter2`; `x y` then bare Escape → empty), not just `credential_step`.
+
+**Notes for review:** (1) Red output is captured in the new `(red runs, bug-07-1)` entry — the compile red against the unshimmed `bbc26a04` tree (2 × `E0425 cannot find function read_credential_with`), and the assertion red against a worktree shim holding the pre-phase loop verbatim (`Done(_) => break`), which failed with `left: "" right: "hunter2"`. The shim lived only in the throwaway worktree. (2) Mutation check done and recorded: re-breaking the fix (`Done(_) => return Some(String::new())`) failed the new test again, then reverted. (3) Splitting the loop out pushed `stream_prompts.rs` to 805 production lines, over hygiene's 800 cap — two doc comments that restated neighbours were trimmed instead of raising an allowlist count (stated in the Findings entry); no `tests/hygiene_allowlist.txt` change. (4) E2E block ran verbatim: `approval_input passed=9 failed=0` (was 8), `raw_byte_reads=0`, `first_key_fn=0`, `build_warnings=0`, hygiene 16 / doc_truth 16 / bug_tracker 6 all ok, clippy clean, `fmt_exit=0`, full suite **passed=2693 failed=0** (was 2692, +1) — the bug doc's finish condition is met. Preservation tests (`parse_approval_decision_*`, `approval_read_times_out`, `read_key_*`, `approval_diff_*`) pass unedited. (5) Status left at `in-progress (bounced: bugs/bug-07-1.md)` for the server's bookkeeping; the bug doc's Status line is still `open` — flipping it to `fixed` is the approve-side edit, per the M32 precedent where the approval commit flips the bug doc.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+
+test functions_fit_the_cap ... ok
+test allowlist_has_no_stale_entries ... ok
+test test_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test config_pricing_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (230813): No such process
+kill: (-231431): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-07-approval-input.md` — +99 -0
+- `src/cli/commands/stream.rs` — +33 -0
+- `src/cli/commands/stream_prompts.rs` — +34 -37
+
+**Commit:** 5045e266d0d2bad491d08c80348e4a69dd87cfc6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
