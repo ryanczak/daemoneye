@@ -55,14 +55,14 @@ pub async fn process_alert(
             log::debug!(
                 "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
                 alert.alert_name,
-                &alert.fingerprint[..alert.fingerprint.len().min(16)]
+                crate::util::truncate_chars(&alert.fingerprint, 16)
             );
             crate::daemon::utils::log_event(
                 "webhook_discarded",
                 serde_json::json!({
                     "reason": "duplicate",
                     "alert_name": alert.alert_name,
-                    "fingerprint": &alert.fingerprint[..alert.fingerprint.len().min(16)],
+                    "fingerprint": crate::util::truncate_chars(&alert.fingerprint, 16),
                 }),
             );
             return None;
@@ -87,7 +87,7 @@ pub async fn process_alert(
     let description = crate::ai::filter::mask_sensitive(&alert.description);
 
     // 3. Format human-readable alert message.
-    let fp_short = &alert.fingerprint[..alert.fingerprint.len().min(8)];
+    let fp_short = crate::util::truncate_chars(&alert.fingerprint, 8);
     let formatted = if description.is_empty() || description == summary {
         format!(
             "[{}] {} — {} ({})",

@@ -18,6 +18,13 @@ pub(super) struct ScheduleArgs<'a> {
     pub cron: Option<&'a str>,
 }
 
+fn invalid_interval(iso: &str) -> String {
+    format!(
+        "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
+        iso
+    )
+}
+
 pub(super) async fn run_schedule_command<W, R>(
     args: ScheduleArgs<'_>,
     session_id: Option<&str>,
@@ -102,16 +109,12 @@ where
             }
         }
     } else if let Some(iso) = interval {
-        let secs = match crate::scheduler::parse_iso_duration(iso) {
-            Some(s) => s,
-            None => {
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Invalid interval '{}'. Use ISO 8601 duration format, e.g. PT1M (1 minute), PT5M (5 minutes), PT1H (1 hour), P1D (1 day).",
-                    iso
-                )));
-            }
+        let Some(secs) = crate::scheduler::parse_iso_duration(iso) else {
+            return Ok(ToolCallOutcome::Result(invalid_interval(iso)));
         };
-        let next = chrono::Utc::now() + chrono::Duration::seconds(secs as i64);
+        let Some(next) = crate::scheduler::checked_next_run(chrono::Utc::now(), secs) else {
+            return Ok(ToolCallOutcome::Result(invalid_interval(iso)));
+        };
         ScheduleKind::Every {
             interval_secs: secs,
             next_run: next,

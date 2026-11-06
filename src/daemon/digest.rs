@@ -415,17 +415,10 @@ fn soft_truncate(s: &str, head: usize, tail: usize) -> String {
     )
 }
 
-/// Largest char boundary `<= index` (stable-Rust equivalent of the unstable
-/// `str::floor_char_boundary`).
+/// Largest char boundary `<= index`, shared with the rest of the tree via
+/// [`crate::util::truncate_chars`] (std's `str::floor_char_boundary`).
 fn floor_char_boundary(s: &str, index: usize) -> usize {
-    if index >= s.len() {
-        return s.len();
-    }
-    let mut i = index;
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
+    s.floor_char_boundary(index)
 }
 
 /// Smallest char boundary `>= index` (stable-Rust equivalent of the unstable

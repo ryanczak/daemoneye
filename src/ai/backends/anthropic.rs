@@ -360,7 +360,7 @@ impl AiClient for AnthropicClient {
                                     if malformed_frames == 1 {
                                         log::warn!(
                                             "malformed SSE frame from Anthropic: {}",
-                                            &data[..data.len().min(120)]
+                                            crate::util::truncate_chars(&data, 120)
                                         );
                                     }
                                 }

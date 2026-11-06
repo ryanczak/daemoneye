@@ -301,7 +301,7 @@ impl AiClient for OpenAiClient {
                                     if malformed_frames == 1 {
                                         log::warn!(
                                             "malformed SSE frame from OpenAI: {}",
-                                            &data[..data.len().min(120)]
+                                            crate::util::truncate_chars(&data, 120)
                                         );
                                     }
                                 }

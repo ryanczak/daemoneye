@@ -1138,11 +1138,7 @@ impl PendingCall {
                 category.as_deref().unwrap_or("all").to_string()
             }
             PendingCall::SearchRepository { query, .. } => {
-                let q = if query.len() > 40 {
-                    &query[..40]
-                } else {
-                    query.as_str()
-                };
+                let q = crate::util::truncate_chars(query, 40);
                 format!("\"{q}\"")
             }
             // A foreground run may name the shell it targets and the host it
@@ -1152,11 +1148,7 @@ impl PendingCall {
             PendingCall::Foreground {
                 cmd, shell, host, ..
             } => {
-                let q = if cmd.len() > 40 {
-                    &cmd[..40]
-                } else {
-                    cmd.as_str()
-                };
+                let q = crate::util::truncate_chars(cmd, 40);
                 match (shell, host) {
                     (Some(s), Some(h)) => format!("\"{q}\" in {s} on {h}"),
                     (Some(s), None) => format!("\"{q}\" in {s}"),
@@ -2109,6 +2101,86 @@ mod tests {
             category: "knowledge".to_string(),
         };
         assert_eq!(call.summary(), "knowledge/api-key");
+    }
+
+    #[test]
+    fn char_boundary_search_summary() {
+        // B4: a query of 20 CJK chars is 60 bytes; the old byte slice at 40
+        // panicked the client handler mid-turn.
+        let query = "日".repeat(20);
+        let call = PendingCall::SearchRepository {
+            id: "x".to_string(),
+            thought_signature: None,
+            query,
+            kind: "all".to_string(),
+        };
+        let s = call.summary();
+        let inner = s
+            .strip_prefix('"')
+            .and_then(|r| r.strip_suffix('"'))
+            .expect("quoted summary");
+        assert!(
+            call_query_prefix_of(inner),
+            "summary must be a prefix of the query"
+        );
+        assert!(
+            inner.chars().count() <= 20,
+            "cut is by char, never past the query"
+        );
+
+        // ASCII still summarizes to its first 40 chars inside quotes.
+        let ascii = "a".repeat(50);
+        let call = PendingCall::SearchRepository {
+            id: "x".to_string(),
+            thought_signature: None,
+            query: ascii,
+            kind: "all".to_string(),
+        };
+        let s = call.summary();
+        assert_eq!(s, format!("\"{}\"", "a".repeat(40)));
+    }
+
+    #[test]
+    fn char_boundary_foreground_summary() {
+        // B4: a 20-CJK-char cmd is 60 bytes; the old byte slice at 40 panicked.
+        let cmd = "語".repeat(20);
+        let prefix_of = cmd.clone();
+        let call = PendingCall::Foreground {
+            id: "x".to_string(),
+            thought_signature: None,
+            cmd,
+            shell: None,
+            host: None,
+            timeout_secs: None,
+            interactive: false,
+        };
+        let s = call.summary();
+        let inner = s
+            .strip_prefix('"')
+            .and_then(|r| r.strip_suffix('"'))
+            .expect("quoted summary");
+        assert!(!inner.is_empty(), "cut keeps at least one char");
+        assert!(
+            prefix_of.starts_with(inner),
+            "summary must be a prefix of the cmd"
+        );
+        assert!(
+            inner.chars().count() <= 20,
+            "cut is by char, never past the cmd"
+        );
+
+        // ASCII keeps its current shape.
+        let ascii = "u".repeat(50);
+        let call = mk_foreground(&ascii);
+        assert_eq!(call.summary(), format!("\"{}\"", "u".repeat(40)));
+    }
+
+    /// A prefix of the CJK query: every char of the summary appears in order
+    /// at the front of the query (a plain `starts_with` on the rebuilt
+    /// String is what this checks directly).
+    fn call_query_prefix_of(inner: &str) -> bool {
+        let query = "日".repeat(20);
+        query.starts_with(inner)
     }
 
     #[test]

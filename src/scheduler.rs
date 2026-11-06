@@ -64,7 +64,8 @@ impl ScheduleKind {
                 interval_secs,
                 next_run,
             } => {
-                *next_run += chrono::Duration::seconds(*interval_secs as i64);
+                *next_run =
+                    checked_next_run(*next_run, *interval_secs).unwrap_or(DateTime::<Utc>::MAX_UTC);
             }
             ScheduleKind::Cron {
                 expression,
@@ -91,7 +92,15 @@ impl ScheduleKind {
             } => {
                 let now = Utc::now();
                 while *next_run <= now {
-                    *next_run += chrono::Duration::seconds(*interval_secs as i64);
+                    match checked_next_run(*next_run, *interval_secs) {
+                        Some(n) => *next_run = n,
+                        // The step overflows: park the job at MAX_UTC so it
+                        // never fires again instead of re-firing every tick.
+                        None => {
+                            *next_run = DateTime::<Utc>::MAX_UTC;
+                            return;
+                        }
+                    }
                 }
             }
             ScheduleKind::Cron {
@@ -432,7 +441,7 @@ impl ScheduleStore {
 /// Parse a minimal ISO 8601 duration string into seconds.
 ///
 /// Supports: `P[nD]T[nH][nM][nS]` — e.g. PT5M, PT1H30M, P1D, PT30S.
-/// Returns `None` if the string cannot be parsed.
+/// Returns `None` if the string cannot be parsed or the seconds overflow `u64`.
 pub fn parse_iso_duration(s: &str) -> Option<u64> {
     if !s.starts_with('P') {
         return None;
@@ -449,18 +458,27 @@ pub fn parse_iso_duration(s: &str) -> Option<u64> {
     // Parse date part: nD
     for (suffix, multiplier) in [('D', 86400u64)] {
         if let Some(val) = extract_component(date_part, suffix) {
-            secs += val * multiplier;
+            secs = secs.checked_add(val.checked_mul(multiplier)?)?;
         }
     }
 
     // Parse time part: nH, nM, nS
     for (suffix, multiplier) in [('H', 3600u64), ('M', 60), ('S', 1)] {
         if let Some(val) = extract_component(time_part, suffix) {
-            secs += val * multiplier;
+            secs = secs.checked_add(val.checked_mul(multiplier)?)?;
         }
     }
 
     if secs == 0 { None } else { Some(secs) }
+}
+
+/// The next run of an `Every` job: `from` plus `secs`, or `None` when the
+/// seconds do not fit a `chrono::TimeDelta` or the sum does not fit a
+/// `DateTime`. The one duration seam for the B14 overflow fix.
+pub fn checked_next_run(from: DateTime<Utc>, secs: u64) -> Option<DateTime<Utc>> {
+    let secs = i64::try_from(secs).ok()?;
+    let delta = chrono::TimeDelta::try_seconds(secs)?;
+    from.checked_add_signed(delta)
 }
 
 fn extract_component(s: &str, unit: char) -> Option<u64> {
@@ -801,6 +819,96 @@ mod tests {
         assert!(
             next > Utc::now(),
             "next_run should be in the future after skip_to_future"
+        );
+    }
+
+    #[test]
+    fn char_boundary_iso_overflow() {
+        // B14: the u64 multiply `val * multiplier` overflows for
+        // PT18446744073709551615M (18446744073709551615 * 60 > u64::MAX);
+        // the old unchecked arithmetic panicked in debug.
+        assert_eq!(parse_iso_duration("PT18446744073709551615M"), None);
+        // P200000000000D = 1.728e16 seconds, past `Duration::seconds`'s
+        // i64/1000 bound; must parse (or refuse) without panicking.
+        let huge = parse_iso_duration("P200000000000D");
+        assert!(
+            huge.is_some(),
+            "P200000000000D parses to seconds without panicking"
+        );
+
+        let now = Utc::now();
+        // Both of these overflow `TimeDelta`/`DateTime` and must return None.
+        assert_eq!(
+            checked_next_run(now, parse_iso_duration("P200000000000D").unwrap()),
+            None,
+            "1.728e16 seconds does not fit a TimeDelta"
+        );
+        assert_eq!(
+            checked_next_run(now, parse_iso_duration("P100000000D").unwrap()),
+            None,
+            "8.64e12 seconds does not fit a DateTime from now"
+        );
+        // 100 years is still accepted.
+        let secs = parse_iso_duration("P36500D").expect("P36500D parses");
+        assert!(
+            checked_next_run(now, secs).is_some(),
+            "P36500D fits a DateTime"
+        );
+    }
+
+    #[test]
+    fn char_boundary_stored_interval_overflow() {
+        // B14: a hand-edited schedules.json entry with a step that would
+        // overflow must not panic advance/skip_to_future, and must park the
+        // job at MAX_UTC so it never fires again instead of re-firing on
+        // every tick.
+        let mut kind = ScheduleKind::Every {
+            interval_secs: u64::MAX,
+            next_run: Utc::now() - chrono::Duration::seconds(60),
+        };
+        kind.advance();
+        match &kind {
+            ScheduleKind::Every { next_run, .. } => {
+                assert_eq!(
+                    *next_run,
+                    DateTime::<Utc>::MAX_UTC,
+                    "advance parks at MAX_UTC"
+                );
+            }
+            _ => panic!("expected Every"),
+        }
+
+        let mut kind = ScheduleKind::Every {
+            interval_secs: u64::MAX,
+            next_run: Utc::now() - chrono::Duration::seconds(60),
+        };
+        kind.skip_to_future();
+        match &kind {
+            ScheduleKind::Every { next_run, .. } => {
+                assert_eq!(
+                    *next_run,
+                    DateTime::<Utc>::MAX_UTC,
+                    "skip_to_future parks at MAX_UTC"
+                );
+            }
+            _ => panic!("expected Every"),
+        }
+
+        // MAX_UTC is not <= now, so take_due never fires it again.
+        let (store, _path) = tmp_store();
+        let job = ScheduledJob::new(
+            "overflow-test".to_string(),
+            ScheduleKind::Every {
+                interval_secs: u64::MAX,
+                next_run: DateTime::<Utc>::MAX_UTC,
+            },
+            ActionOn::Alert,
+            None,
+        );
+        store.add(job).unwrap();
+        assert!(
+            store.take_due().is_empty(),
+            "a parked Every job never re-fires"
         );
     }
 }
