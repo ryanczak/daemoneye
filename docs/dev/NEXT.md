@@ -7,9 +7,9 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 07 — approval-input
-([`phase-07-approval-input.md`](milestones/M36-ux-and-audit/phase-07-approval-input.md)),
-drafted 2026-11-05 (findings S2, S3). Phases 01–06 are `done`;
+**Active phase:** phase 08 — char-boundary-panics
+([`phase-08-char-boundary-panics.md`](milestones/M36-ux-and-audit/phase-08-char-boundary-panics.md)),
+drafted 2026-11-05 (findings B3, B4, B16, B14). Phases 01–07 are `done`;
 twenty-three phases are planned in the README's table (04 split into 04a/04b
 and 21 — OSC 7501 program status, PE decision 9 — added on 2026-11-03; 05
 split into 05a/05b on 2026-11-04).
