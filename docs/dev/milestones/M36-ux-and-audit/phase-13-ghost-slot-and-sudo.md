@@ -1,7 +1,7 @@
 # Phase 13 — ghost-slot-and-sudo
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -943,3 +943,59 @@ kill: (-1071844): No such process
 **Commit:** 8ffa1f2dd9bb99905ef561f4bd8ae676355fdf6f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1, filing `bug-13-1` (blocker, `missing_negative_case`).
+  - The first `command_has_sudo` skipped quoted text, so
+    `sh -c 'id; sudo rm -rf /x'` regressed to sudo-free and a ghost could
+    run it auto-approved.
+  - The PE then folded in the remaining positional gaps: wrappers, shell
+    keywords, assignments, paths and `\sudo`.
+  - Fixed in `8ffa1f2d`.
+- **Escalation:** the first run hit `budget_exceeded` at 500 turns. It had
+  looped on greps against `/dev/null` around one `is_safe` defect. The
+  phase was resumed with `continue_phase` (103 turns) and the fix took 54
+  more. Code commits: `05621bce` and `8ffa1f2d`.
+- **Executor:** glm-5.3-flash (opencode.ai)
+- **Scope deviations:**
+  - The `trigger_ghost_turn` allowlist entry went from 172 to 183, as
+    authorized.
+  - `is_safe` rejects a bare `$` in the tail, not only `$(`. This fails
+    closed and is accepted.
+- **Reviewer checks:**
+  - **Detector cases:** the reviewer built the shipped `command_has_sudo`
+    in a scratch crate and ran 38 cases, all correct. The 27 must-match
+    cases include every spec and bug example, plus `while …; do sudo`,
+    nested quotes and a backslash line continuation. The 11 must-not-match
+    cases include `grep sudo log`, `echo then sudo`, `echo env sudo`,
+    `which sudo`, `man sudo`, `visudo` and `sudoedit`.
+  - **The old detector:** the same comparison, run before the fix, showed
+    it misses every bug-13-1 case. So the new tests discriminate.
+  - **Guard position:** the guard is claimed at entry to
+    `trigger_ghost_turn`, before any await, so a dropped future releases
+    it.
+- **Evidence notes:**
+  - The red runs and the mutation check are real failures, but in the
+    pasted output the panic thread names are elided as `'...'`.
+  - The entries are filed above the bounce notes, not in chronological
+    order.
+  - Only the quote half of the two-part mutation check was run. The
+    wrapper half is covered by the red run on `env sudo id`.
+  - The executor named itself "Claude (Opus 4.6)", and its first summary
+    gave a wrong commit hash.
+- **Gates:**
+  - `fmt_exit=0`, `build_warnings=0`, clippy clean.
+  - `passed=2748 failed=0`
+  - `ghost_slot 3`, `sudo_detect 6`, `sudo_whole 7`, `mailbox_name 3`
+  - `slot_wired=1`, `caller_releases=0`, `stale_regex=0`
+- **Calibration:**
+  - **A security phase needs a before/after comparison.** A spec that
+    widens detection in one place can narrow it in another. Here, skipping
+    quoted text lost a case the old regex caught. When a phase replaces a
+    security classifier, require a before/after comparison table over a
+    shared case list, in the spec and in the evidence.
+  - **Executor reliability:** `glm-5.3-flash` misreported its own work
+    (identity, commit hash) in three phases running. Verify every claim in
+    its summaries against the diff.
