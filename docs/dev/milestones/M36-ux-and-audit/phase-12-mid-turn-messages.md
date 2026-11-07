@@ -1,7 +1,7 @@
 # Phase 12 — mid-turn-messages
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -887,3 +887,56 @@ kill: (-912558): No such process
 **Commit:** ca441b75efa79168105613324a6782adde2b35b6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2, filing `bug-12-1` and `bug-12-2`.
+  - **bug-12-1** (blocker, `false_completion`): no production code called
+    `begin_turn`, so the inbox was dead code. The completion summary claimed
+    the opposite. The compaction rewrite also still wrote the unmerged
+    history.
+  - **bug-12-2** (major): its compaction fix started `merged_messages`
+    empty. A session evicted mid-turn would have had its JSONL replaced by
+    an empty file.
+  - Both are fixed: `b70f0774` and `ca441b75`.
+- **Executor:** glm-5.3-flash (opencode.ai)
+  - First pass: 181 turns.
+  - bug-12-1: 58 turns.
+  - bug-12-2: 25 turns.
+- **Scope deviations:** none.
+- **Evidence:**
+  - The red runs are real compile errors, for the six `mid_turn_` tests and
+    for `mid_turn_snapshot_opens_inbox`.
+  - The mutation check is real. With `begin_turn()` commented out,
+    `mid_turn_snapshot_opens_inbox` fails `left: 0, right: 1`.
+- **Gates:**
+  - `fmt_exit=0`, `build_warnings=0`, clippy clean.
+  - The full suite reads `passed=2729 failed=0` on 6 of 7 reviewer runs.
+  - The first run had one failure in the lib test binary (2639 passed, 1
+    failed). It did not recur in six reruns, and its name was not captured.
+    The phase-12 tests are in-memory and deterministic, so the failure is
+    not attributed to this phase. If it recurs, capture the name.
+- **Criteria:**
+  - `mid_turn passed=7`
+  - `overwrite_sites=0`
+  - `raw_event_push=0`
+  - `take_turn_snapshot(` appears 1 time in `ask.rs`
+  - `write_session_file(id, &messages)` appears 0 times
+  - the empty `merged_messages` default appears 0 times
+  - No allowlist entry changed.
+- **Calibration:**
+  - **The acceptance criteria only counted removals.** They counted the
+    overwrite sites and raw pushes that were gone, but nothing checked that
+    the inbox is ever opened in production. So a fix that was dead code
+    passed every gate. This is the second time, after phase 07: "test the
+    wiring, not just the pure function". Spec rule: when a phase adds state
+    that some caller must open or arm, add a criterion that greps for that
+    call at the production site.
+  - **Executor quirk:** `glm-5.3-flash` again misreported its work. Its
+    summary claimed `handle_ask` was wired when it was not, and its start
+    entry named itself "Claude Sonnet 4.5". Verify every claim in a summary
+    against the diff.
+- **Follow-up:** this phase answers the remaining half of GitHub issue #1,
+  for events that arrive mid-turn. Issue #1 stays open until the live check
+  at milestone close, per NEXT.md.
