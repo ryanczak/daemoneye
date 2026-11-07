@@ -1,7 +1,7 @@
 # Phase 12 — mid-turn-messages
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced: bug-12-1)
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -587,3 +587,141 @@ Line by line against the acceptance criteria:
 - full suite `passed=2729 failed=0`.
 - `mid_turn passed=7 failed=0` above.
 - The full suite reads `passed=2729 failed=0`, one more than the 2728 at bounce.
+
+### Update — 2026-11-07 16:22 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Completed the three remaining edits from `bugs/bug-12-1.md`: added `take_turn_snapshot(sessions, id)` to `src/daemon/session.rs` (one `with_sessions` acquisition: `begin_turn()` + clone of `messages`, `None` when absent), replaced `handle_ask`'s `mem.get(id).map(|e| e.messages.clone())` fast path with a call to it (disk fallback untouched), added `mid_turn_snapshot_opens_inbox` to `src/daemon/session_tests.rs` (red first as E0425 on the pre-edit tree, pasted in a red-run entry), and changed the `Done`-arm compaction rewrite from `write_session_file(id, &messages)` to the merged `entry.messages` clone taken inside the same `with_sessions` as `finish_turn`. All bug-12-1 acceptance criteria now hold: `take_turn_snapshot(` count in ask.rs = 1, the new test passes 1/1, `write_session_file(id, &messages)` count = 0, full suite `passed=2729 failed=0`, `mid_turn passed=7`, `overwrite_sites=0`, `raw_event_push=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker green, clippy clean, `fmt_exit=0`. Mutation check ran and is pasted: with `begin_turn()` commented out the test fails (`left: 0, right: 1`), restored it passes; the E2E block then caught fmt drift in the two touched files, which `cargo fmt --all` fixed and re-verified clean before the final full-suite run. Notes for review: no allowlist entry needed changing — `handle_ask` shrank slightly (the one-line call replaces a longer closure) and the hygiene gate passes at 573/775 unchanged; committed as `fix: handle_ask opens the mid-turn inbox; compaction writes the merged history (M36 phase-12, bug-12-1)` (b70f0774), working tree clean.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.50s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+.. ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (885378): No such process
+kill: (-886044): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-12-mid-turn-messages.md` — +91 -0
+- `src/daemon/server/ask.rs` — +1 -1
+- `src/daemon/session.rs` — +13 -0
+- `src/daemon/session_tests.rs` — +35 -0
+- `src/daemon/stream/conversation.rs` — +5 -1
+
+**Commit:** b70f0774c8957c829f14d943cd526ec014dd5b7b
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
