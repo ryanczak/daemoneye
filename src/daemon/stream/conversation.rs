@@ -321,7 +321,7 @@ where
 
                         // Persist the conversation for the next turn.
                         if let Some(ref id) = session_id {
-                            let mut merged_messages: Vec<Message> = Vec::new();
+                            let mut merged_messages: Vec<Message> = messages.clone();
                             with_sessions(&sessions, |store| {
                                 if let Some(entry) = store.get_mut(id) {
                                     entry.finish_turn(messages.clone());
