@@ -1,7 +1,7 @@
 # Phase 10 — secrets
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced: bug-10-1)
+**Status:** review
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -624,3 +624,143 @@ Read against the acceptance criteria:
 - `secrets_transport_error_keeps_cause` reports 1 passed (run 2 of the
   red-runs entry), `grep -c 'let _url' src/ai/backends/gemini.rs` prints 0,
   and the `GeminiClient::chat` allowlist entry is 263.
+
+### Update — 2026-11-07 04:37 (complete, server-authored)
+
+**Summary:** **Summary:** Both bug-10-1 edits are done and committed as `3b91a460`. `scrub_transport_error` now builds with `anyhow::Error::new(e.without_url())` instead of `msg`, so the scrubbed error keeps its cause chain (`tcp connect error: Connection refused …`) while still dropping the URL; the new `secrets_transport_error_keeps_cause` test pins both the kept cause and the absent key. The dead `let _url = gemini_stream_url(&self.model);` binding is deleted from `GeminiClient::chat`, and the hygiene allowlist entry is lowered to 263, the gate's own measured count.
+
+**Notes for review:**
+- Red run performed against the bounced tree before the fix (failing assertion, pasted verbatim in the red-runs entry); the bounce note's mutation check was done — `new` vs `msg` back-and-forth — with both results pasted.
+- End-to-end verification run once, verbatim: `secrets passed=11 failed=0` (9 original + `multiple_secrets_in_one_string` + the new test), `url_key=0`, `without_url=1`, `raw_args_warn=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker `ok`, clippy clean, `fmt_exit=0`, full suite `passed=2714 failed=0` — exactly the finish condition pinned by the bounce note.
+- The allowlist entry was lowered from the raised 264 to 263, within the spec's pre-authorization.
+- Phase doc Status remains `in-progress`; the server authors the completion tail.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ok
+test functions_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test config_pricing_round_trip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test ipc_session_info_round_trip ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test session_jsonl_round_trip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (669764): No such process
+kill: (-670434): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-10-secrets.md` — +106 -0
+- `src/ai/backends/gemini.rs` — +0 -1
+- `src/ai/mod.rs` — +27 -1
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** 3b91a46068357949e8a60a398fb2cfe105156149
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
