@@ -131,6 +131,7 @@ mod tests {
             has_untracked_cost: false,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
         };
 
         // Feed a constant observed/estimated ratio of 2.0 repeatedly.
@@ -211,6 +212,7 @@ mod tests {
             has_untracked_cost: false,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
         };
 
         let original_scale = entry.token_scale;

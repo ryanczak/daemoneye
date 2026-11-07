@@ -1285,6 +1285,7 @@ mod tests {
             token_scale: 1.5,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
         };
         let store: SessionStore = SessionStore::new();
         with_sessions(&store, |s| {
@@ -1384,6 +1385,7 @@ mod tests {
             token_scale: 1.5,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
         };
         let store: SessionStore = SessionStore::new();
         with_sessions(&store, |s| {

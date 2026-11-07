@@ -111,6 +111,13 @@ pub struct SessionEntry {
     /// Notice queued by a completed background compaction, delivered as a
     /// SystemMsg at the start of the next turn.
     pub pending_compaction_notice: Option<String>,
+    /// Events pushed onto this session while a turn was in flight:
+    /// `Some(vec![])` from `begin_turn` until `finish_turn`, holding the
+    /// messages `push_event` appended in that window. A turn's write-back
+    /// (`finish_turn`) appends them after the turn's own messages instead of
+    /// dropping them, and cannot recover them by position because a
+    /// background compaction may have replaced `messages` mid-turn.
+    pub turn_inbox: Option<Vec<Message>>,
 }
 
 /// Shared registry of live sessions.
@@ -601,7 +608,40 @@ impl SessionEntry {
             token_scale,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
         }
+    }
+
+    /// Mark a turn as in flight: events pushed until `finish_turn` land in
+    /// `turn_inbox` instead of being silently dropped by the turn's write-back.
+    /// Called by `handle_ask` under the same lock acquisition that clones the
+    /// turn's starting history.
+    pub fn begin_turn(&mut self) {
+        self.turn_inbox = Some(Vec::new());
+    }
+
+    /// Append an event to the session. While a turn is in flight the event is
+    /// recorded in the inbox too, so the turn's write-back keeps it; the
+    /// `messages` append keeps every reader (catch-up brief, pane render) up
+    /// to date either way.
+    pub fn push_event(&mut self, msg: Message) {
+        if let Some(inbox) = self.turn_inbox.as_mut() {
+            inbox.push(msg.clone());
+        }
+        self.messages.push(msg);
+    }
+
+    /// Write back a turn's own messages: `turn_messages` followed by every
+    /// event that arrived mid-turn, in arrival order, and close the in-flight
+    /// window. Replaces the bare `entry.messages = turn_messages` overwrite,
+    /// which dropped those events.
+    pub fn finish_turn(&mut self, turn_messages: Vec<Message>) {
+        let mut merged = turn_messages;
+        let events = self.turn_inbox.take();
+        if let Some(events) = events {
+            merged.extend(events);
+        }
+        self.messages = merged;
     }
 }
 

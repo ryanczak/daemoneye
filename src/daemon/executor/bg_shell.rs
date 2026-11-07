@@ -341,7 +341,7 @@ pub(super) async fn await_and_notify(
     // Phase 3 (locked): push the message into the in-memory history.
     with_sessions(&sessions, |store| {
         if let Some(entry) = store.get_mut(&session_id) {
-            entry.messages.push(completion_msg);
+            entry.push_event(completion_msg);
         }
     });
 
@@ -504,6 +504,7 @@ mod tests {
             token_scale: 1.5,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
         };
         with_sessions(&sessions, |store| {
             store.insert(session_id.to_string(), entry);

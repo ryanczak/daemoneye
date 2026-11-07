@@ -182,7 +182,7 @@ where
                     if let Some(ref id) = session_id {
                         with_sessions(&sessions, |store| {
                             if let Some(entry) = store.get_mut(id) {
-                                entry.messages = messages.clone();
+                                entry.finish_turn(messages.clone());
                                 entry.dirty = true;
                             }
                         });
@@ -323,7 +323,7 @@ where
                         if let Some(ref id) = session_id {
                             with_sessions(&sessions, |store| {
                                 if let Some(entry) = store.get_mut(id) {
-                                    entry.messages = messages.clone();
+                                    entry.finish_turn(messages.clone());
                                     entry.last_accessed = Instant::now();
                                     entry.last_prompt_tokens = usage.input_tokens
                                         + usage.cache_read_tokens

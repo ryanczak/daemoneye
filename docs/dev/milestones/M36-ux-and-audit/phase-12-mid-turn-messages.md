@@ -1,7 +1,7 @@
 # Phase 12 — mid-turn-messages
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -178,3 +178,115 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-06 22:19 (started)
+
+Executor: headless run (Claude Sonnet 4.5 via rexyMCP). Status flipped to
+in-progress; beginning with the red tests against the current tree.
+
+### Update — 2026-11-06 22:29 (red runs)
+
+The six `mid_turn_` tests, written against the pre-phase tree (the file
+`src/daemon/session_tests.rs` at commit 5bd2e4df plus the tests; no other
+source change yet), fail to compile because the methods and the field do not
+exist. This is the only red they get, as the spec predicts. Capture:
+
+```
+error[E0425]: cannot find function `inject_into_sessions` in this scope
+    --> src/daemon/session_tests.rs:1016:5
+     |
+1016 |     inject_into_sessions(&sessions, &make_msg("user", "[Webhook Alert] disk 95%"));
+     |     ^^^^^^^^^^^^^^^^^^^^ not found in this scope
+     |
+help: consider importing this function through its public re-export
+     |
+   1 + use crate::webhook::inject_into_sessions;
+
+error[E0599]: no method named `begin_turn` found for struct `daemon::session::SessionEntry` in the current scope
+    --> src/daemon/session_tests.rs:916:11
+    |
+916 |     entry.begin_turn();
+    |           ^^^^^^^^^^ method not found in `daemon::session::SessionEntry`
+    |
+   ::: src/daemon/session.rs:22:1
+    |
+ 22 | pub struct SessionEntry {
+    | ----------------------- method `begin_turn` not found for this struct
+
+error[E0599]: no method named `push_event` found for struct `daemon::session::SessionEntry` in the current scope
+    --> src/daemon/session_tests.rs:917:11
+    |
+917 |     entry.push_event(make_msg("user", "e1"));
+    |           ^^^^^^^^^^ method not found in `daemon::session::SessionEntry`
+
+error[E0599]: no method named `finish_turn` found for struct `daemon::session::SessionEntry` in the current scope
+    --> src/daemon/session_tests.rs:918:11
+    |
+918 |     entry.finish_turn(vec![
+    |     ------^^^^^^^^^^^ method not found in `daemon::session::SessionEntry`
+
+error[E0609]: no field `turn_inbox` on type `daemon::session::SessionEntry`
+    --> src/daemon/session_tests.rs:930:15
+    |
+930 |         entry.turn_inbox.is_none(),
+    |               ^^^^^^^^^^ unknown field
+    |
+    = note: available fields are: `messages`, `last_accessed`, `chat_pane`, `default_target_pane`, `bg_windows` ... and 26 others
+
+error[E0609]: no field `turn_inbox` on type `daemon::session::SessionEntry`
+    --> src/daemon/session_tests.rs:982:15
+    |
+982 |         entry.turn_inbox.is_none(),
+
+error[E0599]: no method named `finish_turn` found for mutable reference `&mut daemon::session::SessionEntry` in the current scope
+    --> src/daemon/session_tests.rs:1020:15
+    |
+1020 |         entry.finish_turn(vec![
+    |     ------^^^^^^^^^^^ method not found in `&mut daemon::session::SessionEntry`
+
+Some errors have detailed explanations: E0425, E0599, E0609.
+For more information about an error, try `rustc --explain E0425`.
+error: could not compile `daemoneye` (lib test) due to 21 previous errors
+```
+
+Every error is E0425/E0599/E0609 — the missing names. No assertion failure
+appears, matching spec task 1's statement that the tests are red only as
+compile errors.
+
+### Findings — 2026-11-06 22:31
+
+- `SessionStore::new()` in `src/daemon/session.rs` exists but the tests build
+  entries directly; no friction.
+- `src/daemon/context/background.rs` pushes two compaction summaries with a raw
+  `entry.messages.push` (out of scope, unchanged — it runs between turns, not
+  during one). Worth a look if another audit pass happens: it swaps `messages`
+  for a trimmed vec exactly the way `spawn_compaction` does, so a turn in
+  flight while *that* runs would already see positions shift.
+### Update — 2026-11-06 22:37 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block once, in full; the
+transcript below is the untouched stdout of that single run:
+
+```
+mid_turn passed=6 failed=0
+overwrite_sites=0
+raw_event_push=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.96s
+fmt_exit=0
+passed=2728 failed=0
+```
+
+Line by line against the acceptance criteria:
+
+- `mid_turn passed=6 failed=0` — the six new tests pass (P = 6 ≥ 6).
+- `overwrite_sites=0` — no `entry.messages = messages.clone()` remains in
+  `conversation.rs` or `endings.rs`.
+- `raw_event_push=0` — `process.rs` and `bg_shell.rs` no longer push onto
+  `entry.messages` directly; both call `push_event`.
+- `build_warnings=0`, clippy clean (`Finished … -D warnings` with no
+  diagnostics), `fmt_exit=0`, `failed=0` for the full suite, and the hygiene,
+  doc_truth and bug_tracker gates all green.

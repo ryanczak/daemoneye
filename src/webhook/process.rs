@@ -202,7 +202,7 @@ pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
     }
     with_sessions(sessions, |store| {
         for entry in store.values_mut() {
-            entry.messages.push(msg.clone());
+            entry.push_event(msg.clone());
         }
     });
 }
@@ -775,6 +775,7 @@ mod tests {
                     token_scale: 1.5,
                     compaction_in_flight: false,
                     pending_compaction_notice: None,
+                    turn_inbox: None,
                 },
             );
         });

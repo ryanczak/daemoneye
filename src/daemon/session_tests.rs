@@ -1,5 +1,6 @@
 use super::*;
 use crate::ai::{Message, ToolResult};
+use crate::webhook::inject_into_sessions;
 
 fn make_msg(role: &str, content: &str) -> Message {
     Message {
@@ -125,6 +126,7 @@ fn auto_name_suggested_starts_false() {
         token_scale: 1.5,
         compaction_in_flight: false,
         pending_compaction_notice: None,
+        turn_inbox: None,
     };
     assert!(!entry.auto_name_suggested);
     assert!(entry.saved_name.is_none());
@@ -164,6 +166,7 @@ fn session_entry_accumulates_cost_across_turns() {
         token_scale: 1.5,
         compaction_in_flight: false,
         pending_compaction_notice: None,
+        turn_inbox: None,
     };
 
     // Simulate three turns of cost accumulation.
@@ -213,6 +216,7 @@ fn session_entry_per_agent_split() {
         token_scale: 1.5,
         compaction_in_flight: false,
         pending_compaction_notice: None,
+        turn_inbox: None,
     };
 
     // Simulate /agent switch mid-flow.
@@ -264,6 +268,7 @@ fn unknown_pricing_sets_has_untracked_cost() {
         token_scale: 1.5,
         compaction_in_flight: false,
         pending_compaction_notice: None,
+        turn_inbox: None,
     };
 
     // Known pricing call.
@@ -549,6 +554,7 @@ fn entry_recreation_seeds_from_meta() {
         token_scale: loaded_meta.token_scale,
         compaction_in_flight: false,
         pending_compaction_notice: None,
+        turn_inbox: None,
     };
 
     assert_eq!(entry.turn_count, 7);
@@ -698,6 +704,7 @@ fn entry_with(last_accessed: Instant) -> SessionEntry {
         token_scale: 1.5,
         compaction_in_flight: false,
         pending_compaction_notice: None,
+        turn_inbox: None,
     }
 }
 
@@ -903,6 +910,141 @@ fn record_chat_detach_stamps_only_when_the_entry_exists() {
         assert_eq!(
             entry.messages_at_detach, 2,
             "messages_at_detach is the message count at close"
+        );
+    });
+}
+
+// ── mid-turn events (M36 phase-12) ───────────────────────────────────────
+
+#[test]
+fn mid_turn_event_survives_write_back() {
+    let mut entry = entry_with(std::time::Instant::now());
+    entry.messages = vec![make_msg("user", "a")];
+    entry.begin_turn();
+    entry.push_event(make_msg("user", "e1"));
+    entry.finish_turn(vec![
+        make_msg("user", "a"),
+        make_msg("user", "q"),
+        make_msg("assistant", "r"),
+    ]);
+    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(
+        contents,
+        vec!["a", "q", "r", "e1"],
+        "the event survives the write-back, after the turn's own messages"
+    );
+    assert!(
+        entry.turn_inbox.is_none(),
+        "finish_turn clears the in-flight marker"
+    );
+}
+
+#[test]
+fn mid_turn_events_keep_arrival_order() {
+    let mut entry = entry_with(std::time::Instant::now());
+    entry.begin_turn();
+    entry.push_event(make_msg("user", "e1"));
+    entry.push_event(make_msg("user", "e2"));
+    entry.finish_turn(vec![make_msg("user", "q"), make_msg("assistant", "r")]);
+    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(
+        contents,
+        vec!["q", "r", "e1", "e2"],
+        "multiple events keep their arrival order after the turn's messages"
+    );
+}
+
+#[test]
+fn mid_turn_event_once_after_compaction_swap() {
+    let mut entry = entry_with(std::time::Instant::now());
+    entry.messages = vec![make_msg("user", "a"), make_msg("assistant", "old")];
+    entry.begin_turn();
+    entry.push_event(make_msg("user", "e1"));
+
+    // A background compaction swap: the entry's vec is replaced with a
+    // shorter one while the turn is still running. The event's position in
+    // the old vec is stale — finish_turn must find it in the inbox, not by
+    // position.
+    entry.messages = vec![make_msg("user", "digest-of-old")];
+
+    entry.finish_turn(vec![make_msg("user", "q"), make_msg("assistant", "r")]);
+    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(
+        contents.iter().filter(|&&c| c == "e1").count(),
+        1,
+        "the event appears exactly once after the swap — recovered from the \
+         inbox, not by position in the swapped vec"
+    );
+    assert!(
+        contents.contains(&"q") && contents.contains(&"r"),
+        "the turn's own messages are written back: {:?}",
+        contents
+    );
+    assert_eq!(
+        contents.last(),
+        Some(&"e1"),
+        "the event lands after the turn's messages, not at its stale position"
+    );
+}
+
+#[test]
+fn mid_turn_no_turn_push_appends() {
+    let mut entry = entry_with(std::time::Instant::now());
+    entry.messages = vec![make_msg("user", "a")];
+    assert!(
+        entry.turn_inbox.is_none(),
+        "precondition: no turn is in flight"
+    );
+    entry.push_event(make_msg("user", "e1"));
+    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(contents, vec!["a", "e1"], "a push with no turn appends");
+    assert!(entry.turn_inbox.is_none(), "the inbox stays None");
+}
+
+#[test]
+fn mid_turn_begin_resets_stale_inbox() {
+    let mut entry = entry_with(std::time::Instant::now());
+    entry.push_event(make_msg("user", "e-orphan"));
+    // Simulate a turn that ended without a write-back: finish_turn never
+    // ran, so the inbox would still hold e-orphan.
+    entry.turn_inbox = Some(vec![make_msg("user", "e-orphan")]);
+    entry.begin_turn();
+    let inbox = entry
+        .turn_inbox
+        .as_ref()
+        .unwrap_or_else(|| panic!("begin_turn"));
+    assert!(
+        inbox.is_empty(),
+        "the next turn's begin_turn empties a stale inbox"
+    );
+}
+
+#[test]
+fn mid_turn_inject_into_sessions_survives() {
+    let sessions = SessionStore::new();
+    with_sessions(&sessions, |store| {
+        let mut entry = entry_with(std::time::Instant::now());
+        entry.messages = vec![make_msg("user", "first")];
+        entry.begin_turn();
+        store.insert("mid-turn".to_string(), entry);
+    });
+
+    inject_into_sessions(&sessions, &make_msg("user", "[Webhook Alert] disk 95%"));
+
+    with_sessions(&sessions, |store| {
+        let entry = store
+            .get_mut("mid-turn")
+            .unwrap_or_else(|| panic!("the entry is resident"));
+        entry.finish_turn(vec![
+            make_msg("user", "first"),
+            make_msg("user", "q"),
+            make_msg("assistant", "r"),
+        ]);
+        let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            contents,
+            vec!["first", "q", "r", "[Webhook Alert] disk 95%"],
+            "the event injected mid-turn survives the turn's write-back"
         );
     });
 }

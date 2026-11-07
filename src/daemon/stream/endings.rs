@@ -122,7 +122,7 @@ where
     if let Some(id) = session_id {
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get_mut(id) {
-                entry.messages = messages.clone();
+                entry.finish_turn(messages.clone());
                 entry.dirty = true;
             }
         });

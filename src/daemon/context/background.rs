@@ -349,6 +349,7 @@ mod tests {
             token_scale: 1.5,
             compaction_in_flight: false,
             pending_compaction_notice: None,
+            turn_inbox: None,
             tmux_session: "test".to_string(),
             last_detach: None,
             detach_time_utc: None,
