@@ -1,5 +1,6 @@
 use crate::daemon::executor::ToolCallOutcome;
 use std::env;
+use std::io::Write as _;
 
 static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -237,6 +238,164 @@ async fn read_file_offset_beyond_eof_returns_empty() {
         panic!()
     };
     assert!(s.contains("no lines matched"));
+}
+
+// ── M36 phase-14: read bounds (S8) and the symlinked-home guard (S7) ─────
+
+#[tokio::test]
+async fn read_bounds_refuses_device() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || {});
+    let result = super::run_read_file("/dev/null", None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(s.contains("not a regular file"), "got: {s}");
+    assert!(!s.contains("no lines matched"), "got: {s}");
+}
+
+#[tokio::test]
+async fn read_bounds_refuses_directory() {
+    let (tmp, _path) = simulate_read_file(&["line1"]);
+    with_home(&tmp, || {});
+    let result = super::run_read_file(tmp.0.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(s.contains("not a regular file"), "got: {s}");
+}
+
+#[tokio::test]
+async fn read_bounds_large_file_total_is_open() {
+    let tmp = TmpHome::new();
+    let path = tmp.0.join("large.log");
+    {
+        let f = std::fs::File::create(&path).unwrap();
+        let mut w = std::io::BufWriter::with_capacity(1 << 20, f);
+        let mut written = 0usize;
+        let mut n = 0u64;
+        while written < 10 * 1024 * 1024 {
+            let line = format!("line{n:08}");
+            w.write_all(line.as_bytes()).unwrap();
+            w.write_all(b"\n").unwrap();
+            written += line.len() + 1;
+            n += 1;
+        }
+        w.flush().unwrap();
+    }
+    with_home(&tmp, || {});
+    let result = super::run_read_file(path.to_str().unwrap(), None, Some(10), None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    let header = s.lines().next().unwrap();
+    assert!(header.contains("(lines 1-10 of "), "{header}");
+    let total = header.split(" of ").nth(1).unwrap().trim_end_matches("):");
+    assert_eq!(
+        total.chars().last().unwrap(),
+        '+',
+        "the total must be open-ended (N+): {header}"
+    );
+    assert!(
+        total.trim_end_matches('+').parse::<usize>().is_ok(),
+        "the open total is a line count: {header}"
+    );
+}
+
+#[tokio::test]
+async fn read_bounds_byte_cap_single_line() {
+    let tmp = TmpHome::new();
+    let path = tmp.0.join("oneline.log");
+    {
+        let f = std::fs::File::create(&path).unwrap();
+        let mut w = std::io::BufWriter::with_capacity(1 << 20, f);
+        let chunk = [b'x'; 65536];
+        for _ in 0..(20 * 1024 * 1024 / chunk.len()) {
+            w.write_all(&chunk).unwrap();
+        }
+        w.flush().unwrap();
+    }
+    with_home(&tmp, || {});
+    let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(s.contains("[read stopped at the 8 MiB cap]"), "got: {s}");
+    assert!(
+        s.len() < 1024 * 1024,
+        "the result must not carry the whole 20 MiB line ({} bytes)",
+        s.len()
+    );
+}
+
+#[tokio::test]
+async fn read_bounds_symlinked_home_blocks_config() {
+    let _guard = crate::test_home_guard();
+    let tmp = TmpHome::new();
+    let real = tmp.0.join("de-real");
+    std::fs::create_dir_all(real.join("etc")).unwrap();
+    std::os::unix::fs::symlink(&real, tmp.0.join(".daemoneye")).unwrap();
+    let cfg = real.join("etc").join("config.toml");
+    std::fs::write(&cfg, "api_key = \"sk-secret\"\n").unwrap();
+    unsafe { env::set_var("HOME", &tmp.0) };
+    let result = super::run_read_file(cfg.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(s.contains("credential files"), "got: {s}");
+    assert!(
+        !s.contains("api_key"),
+        "the key file must not come back: {s}"
+    );
+}
+
+#[test]
+fn read_bounds_guard_follows_symlink() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || {
+        let real = tmp.0.join("de-real");
+        std::fs::create_dir_all(real.join("etc")).unwrap();
+        std::os::unix::fs::symlink(&real, tmp.0.join(".daemoneye")).unwrap();
+        let probe = real.join("etc").join("x");
+        assert!(
+            super::super::in_daemoneye_dir(probe.to_str().unwrap()),
+            "{probe:?} (behind a symlinked ~/.daemoneye) must resolve into the guard root"
+        );
+    });
+}
+
+#[tokio::test]
+async fn read_fifo_refused() {
+    let tmp = TmpHome::new();
+    let fifo = tmp.0.join("pipe");
+    let status = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("mkfifo runs");
+    assert!(status.success(), "mkfifo failed: {status}");
+    with_home(&tmp, || {});
+    let started = std::time::Instant::now();
+    let result = super::run_read_file(fifo.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(s.contains("not a regular file"), "got: {s}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "a FIFO must be refused at once, not opened"
+    );
 }
 
 // ── Defect A: sentinel collision ──

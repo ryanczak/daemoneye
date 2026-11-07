@@ -77,9 +77,7 @@ where
         ));
     }
     {
-        let de_dir = crate::config::config_dir();
-        let candidate = super::resolve_path_for_guard(path);
-        if candidate.starts_with(&de_dir) {
+        if super::in_daemoneye_dir(path) {
             return Ok(ToolCallOutcome::Result(
                 "Error: edit_file cannot access the daemoneye configuration \
                  directory. Use the dedicated tools (write_script, write_runbook, \

@@ -107,6 +107,35 @@ fn resolve_path_for_guard(path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(path)
 }
 
+/// The `~/.daemoneye` guard's reference root: the **canonical** config dir, so
+/// a symlinked `~/.daemoneye` (or a symlinked `$HOME`) compares against the
+/// same real path a resolved candidate resolves to. Before M36 phase-14 the
+/// guards compared against the raw, uncanonicalized `config_dir()` and missed
+/// every candidate behind such a symlink (M36 finding S7). When the directory
+/// does not exist yet the fallback is the raw path — comparisons then behave
+/// exactly as before the fix, which is the right answer for a path whose guard
+/// target is absent.
+fn guard_root() -> std::path::PathBuf {
+    let raw = crate::config::config_dir();
+    std::fs::canonicalize(&raw).unwrap_or(raw)
+}
+
+/// The two prefixes a guard compares against: the canonical root first, then
+/// the raw `~/.daemoneye`, which differ when the home or the directory is a
+/// symlink (M36 finding S7). The guards take both from here, so none of them
+/// reads `config_dir()` on its own.
+fn guard_roots() -> [std::path::PathBuf; 2] {
+    [guard_root(), crate::config::config_dir()]
+}
+
+/// True when `path` — resolved for guard purposes — sits in the daemon's
+/// config directory, under either the canonical root or the raw one (a
+/// not-yet-created `~/.daemoneye` has no canonical form).
+fn in_daemoneye_dir(path: &str) -> bool {
+    let candidate = resolve_path_for_guard(path);
+    guard_roots().iter().any(|root| candidate.starts_with(root))
+}
+
 /// Run `cmd` in a shell on `host` and return the shell's **real** captured
 /// output — the PTY-substrate transport for a file op, with no tmux pane and
 /// no polling.

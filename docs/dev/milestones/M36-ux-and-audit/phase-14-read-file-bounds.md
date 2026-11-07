@@ -1,7 +1,7 @@
 # Phase 14 — read-file-bounds
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -175,19 +175,19 @@ for them: they do not exist yet.**
 
 ## Acceptance criteria
 
-- [ ] `read_bounds passed=6 failed=0` and `read_fifo passed=1`. Today
+- [x] `read_bounds passed=6 failed=0` and `read_fifo passed=1`. Today
       these tests do not exist.
-- [ ] `whole_reads=0`: `read.rs` no longer calls `read_to_string`. Today it
+- [x] `whole_reads=0`: `read.rs` no longer calls `read_to_string`. Today it
       is 1.
-- [ ] `blocking_off_runtime=1` or more: `read.rs` calls `spawn_blocking`.
+- [x] `blocking_off_runtime=1` or more: `read.rs` calls `spawn_blocking`.
       Today it is 0.
-- [ ] `raw_guard_sites=0`: `read.rs`, `write.rs` and `ops_copy.rs` call
+- [x] `raw_guard_sites=0`: `read.rs`, `write.rs` and `ops_copy.rs` call
       `config::config_dir()` 0 times. Today it is 3.
-- [ ] `copy_guards=2` or more: `ops_copy.rs` calls `in_daemoneye_dir(` for
+- [x] `copy_guards=2` or more: `ops_copy.rs` calls `in_daemoneye_dir(` for
       both the source and the destination. Today it is 0.
-- [ ] The existing `read_file_` tests still pass, unmodified. Their headers
+- [x] The existing `read_file_` tests still pass, unmodified. Their headers
       are unchanged, because their files are under 8 MiB.
-- [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
+- [x] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
 
 ## End-to-end verification
@@ -229,3 +229,140 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-07 19:45 (started)
+
+Executor: Claude (headless run). Phase status flipped `todo → in-progress` and
+the M36 README phase-table row updated to match. Beginning Task 1: red tests
+first.
+
+### Update — 2026-11-07 13:40 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the spec held. Session `6aef7f1f` finished the red runs and the
+whole implementation in 244 turns. That session and the resume `6aef9724` were
+both killed by the kernel OOM killer (12:40, 13:26) at their first green
+`cargo test read_bounds_`. One defect in `read_window` is left to fix, so the
+written work is worth keeping.
+
+### Notes for executor — 2026-11-07
+
+The implementation is on disk and builds. Four of the six `read_bounds_` tests
+pass. Both failures are in `read_window` (`read.rs`), and nothing outside it
+needs to change:
+
+1. **Unbounded memory (`read_bounds_large_file_total_is_open`).** After the
+   window is full, every later line is still pushed onto `window.lines`, and the
+   `continue` skips the cap check. At the cap, `read_line_into` is called with
+   `max = 0` and returns `Some(0)` for ever, so empty strings are pushed until
+   the machine runs out of memory (25 GB, twice). The fix: push only while
+   `window.lines.len() < limit`; never `continue` past the cap check; and treat a
+   zero-byte read at the cap as the end (`capped = true`, break).
+2. **Partial line kept (`read_bounds_byte_cap_single_line`).** A line that the
+   cap cut off has no trailing `\n`; it is pushed and counted, so the result is
+   8 MiB. Behaviour item 4 says to drop it. A line without `\n` is a real last
+   line only when the reader hit EOF (`read` returned 0) before the cap.
+
+**Run no test before both fixes build.** Then run the six tests under a memory
+limit, so a mistake fails the test instead of the machine:
+
+```sh
+cargo test --no-run 2>&1 | tail -1
+prlimit --as=8000000000 cargo test read_bounds_ 2>&1 | grep -E '^test |^test result|panicked|allocation'
+```
+
+Ending: `test result: ok. 6 passed`. A `memory allocation of … failed` line
+means the loop is still unbounded. Then continue from Spec step 3 (the FIFO
+test). The red runs are in `.rexymcp/sessions/session-phase-14-6aef7f1f.jsonl` (the `tool_result` events of turns 183, 198 and 199): paste
+those for Spec step 5; do not re-run red.
+
+### Update — 2026-11-07 13:45 (escalation, second)
+
+**Chosen lever:** session takeover
+**Rationale:** the resume (`session-phase-14-6aef994d`) ran the OOM test three
+times without touching `read_window`, against the notes above; each run was
+killed by the architect's memory watchdog at 6 GB. The stop sentinel and the
+client cancel were both ignored, so the `rexymcp serve` process was killed
+(reload the plugin before the next dispatch). Same wall after one resume →
+takeover. Status flipped `in-progress → in-progress (architect takeover)`.
+
+### Update — 2026-11-07 (red runs)
+
+From the first executor session (`session-phase-14-6aef7f1f.jsonl`), turns
+183, 198 and 199, before the fix. The two symlink tests ran with the
+`in_daemoneye_dir` probe stubbed to `false`; the four read tests ran against
+the old `read_to_string` branch.
+
+```
+---- read_bounds_guard_follows_symlink stdout ----
+panicked at src/daemon/executor/file_ops/read_tests.rs:367:9
+---- read_bounds_symlinked_home_blocks_config stdout ----
+panicked at src/daemon/executor/file_ops/read_tests.rs
+test read_bounds_refuses_device ... FAILED
+test read_bounds_refuses_directory ... FAILED
+test read_bounds_large_file_total_is_open ... FAILED
+test read_bounds_byte_cap_single_line ... FAILED
+thread 'read_bounds_refuses_device' panicked at read_tests.rs:255:5:
+got: /dev/null: no lines matched (total 0 lines in file)
+```
+
+### Update — 2026-11-07 (mutation check)
+
+The `is_file` check in `read_local` removed, then
+`cargo test read_bounds_refuses_directory` (the FIFO test was not run):
+
+```
+test read_bounds_refuses_directory ... FAILED
+panicked at src/daemon/executor/file_ops/read_tests.rs:269:5:
+got: /tmp/de_fops_test_1110174_0: no lines matched (total 0 lines in file)
+test result: FAILED. 0 passed; 1 failed
+```
+
+Restored (`cmp` against the backup): `test result: ok. 1 passed`.
+
+### Findings — 2026-11-07
+
+- The executor's `read_window` had an unbounded loop: after the window
+  filled, every later line was still pushed and the `continue` skipped the
+  cap check; at the cap, `read_line_into(max = 0)` returned `Some(0)` for
+  ever. `cargo test` grew to 25 GB and the kernel OOM killer took the
+  executor, the architect session and the tmux scope down, twice. The loop
+  now pushes only while the window is short, stops at a zero budget, and
+  drops a line the cap cut. `read_line_into` uses `take(max).read_until`
+  instead of one byte per `read`. Peak RSS for the six tests: 90 MB.
+- `run_read_file` allowlist entry raised 165 → 198, as authorized: the
+  local branch gained the `spawn_blocking` join, the `LocalRead` match and
+  the `N+` / cap-note assembly.
+- `guard_roots()` (mod.rs) gives both prefixes; `read.rs` builds its
+  blocked set from it, so no guard file calls `config_dir()` itself.
+
+### Update — 2026-11-07 (end-to-end verification)
+
+```
+read_bounds passed=6 failed=0
+read_fifo passed=1 failed=0
+whole_reads=0
+blocking_off_runtime=1
+raw_guard_sites=0
+copy_guards=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.50s
+fmt_exit=0
+passed=2755 failed=0
+```
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** escalated
+- **Bounces:** none (the phase never reached review from the executor)
+- **Executor:** Claude (direct), after glm-5.3-flash wrote the first
+  implementation and the tests in `6aef7f1f` (244 turns, OOM-killed at its
+  first green run) and the resume `6aef994d` failed on the same wall
+- **Scope deviations:** `run_read_file` allowlist 165 → 198 (authorized);
+  `guard_roots()` added beside the two named helpers
+- **Calibration:** a spec whose test can exhaust memory should name the
+  memory limit the test runs under, as the executor notes here did, from
+  the first dispatch

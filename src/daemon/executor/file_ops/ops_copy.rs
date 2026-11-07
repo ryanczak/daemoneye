@@ -163,14 +163,14 @@ where
         }
     };
 
-    // Block copying from the daemoneye config dir.
-    {
-        let de_dir = crate::config::config_dir();
-        if src_std.starts_with(&de_dir) {
-            return Ok(ToolCallOutcome::Result(
-                "Error: edit_file cannot access the daemoneye configuration directory.".to_string(),
-            ));
-        }
+    // Block copying out of, or into, the daemoneye config dir (M36 S7: the
+    // destination was unchecked, and the source compared against the raw path).
+    let src_guarded = super::super::in_daemoneye_dir(src_path);
+    let dest_guarded = super::super::in_daemoneye_dir(dest);
+    if src_guarded || dest_guarded {
+        return Ok(ToolCallOutcome::Result(
+            "Error: edit_file cannot access the daemoneye configuration directory.".to_string(),
+        ));
     }
 
     let dest_std = std::path::Path::new(dest);
