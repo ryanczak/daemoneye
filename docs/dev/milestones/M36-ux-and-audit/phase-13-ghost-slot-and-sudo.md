@@ -1,7 +1,7 @@
 # Phase 13 — ghost-slot-and-sudo
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -437,3 +437,142 @@ two old-regex comments in `src/daemon/executor/file_ops/write.rs` and
 `docs/design-reference.md`. Logged the red runs, the `GhostSlot::held()`
 mutation check, Findings, and the E2E block above. Hygiene allowlist entry
 raised 172 → 183 for `trigger_ghost_turn`.
+
+### Update — 2026-11-07 18:56 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Resumed Phase 13 and completed the four remaining items from the resume note. Fixed the single `is_safe` defect in `src/daemon/policy.rs` (`word` now stops at whitespace as well as separators, restoring the absolute-path basename match — `sudo /opt/s/ok.sh` and `is_safe_sudo_on_whitelist` pass); added `validate_job_id` (`pub fn` in `src/agents/mailbox.rs`, with the shared `validate_component` helper carrying the grammar) plus both name checks at the top of `await_agent_result` with the exact `Error: invalid agent_name:` / `Error: invalid job_id:` texts, and the three `mailbox_name_` tests (red first — the grammar test was a real compile error `cannot find function validate_job_id`, the two traversal tests failed as assertions before the checks landed); rewrote both stale-regex comments in `src/daemon/executor/file_ops/write.rs` and `docs/design-reference.md`. Findings: the hygiene gate caught `trigger_ghost_turn` growing 172 → 183 lines with the slot guard, so I raised that one allowlist entry as the Authorizations section permits; every other gate is clean. Deviations from spec: none in behavior; `validate_component` is a private helper shared by nothing else today (kept because `validate_agent_name` in `src/agents/mod.rs` has a stricter slug grammar than the component rule, so the spec's `agent_name` check routes to it directly). E2E verification output is pasted verbatim in the phase doc's end-to-end entry: `ghost_slot passed=3`, `sudo_detect passed=4`, `sudo_whole passed=5`, `mailbox_name passed=3`, `slot_wired=1`, `caller_releases=0`, `stale_regex=0`, hygiene/doc_truth/bug_tracker all ok, `build_warnings=0`, clippy clean, `fmt_exit=0`, full suite `passed=2744 failed=0`. Committed as `3b8f7b46`, working tree clean; phase doc status left `in-progress` with no `(complete)` entry, per the split.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+. ok
+test functions_fit_the_cap ... ok
+test exempt_files_exist ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test ghost_config_parsing ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_entry_format ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (1041745): No such process
+kill: (-1042416): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/design-reference.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-13-ghost-slot-and-sudo.md` — +77 -0
+- `src/agents/mailbox.rs` — +57 -0
+- `src/daemon/executor/file_ops/write.rs` — +5 -4
+- `src/daemon/executor/knowledge/agents.rs` — +61 -0
+- `src/daemon/policy.rs` — +5 -2
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** 05621bce8e4c7432183f8dba0e37e85a87015493
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
