@@ -1,7 +1,7 @@
 # Phase 10 — secrets
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -764,3 +764,20 @@ kill: (-670434): No such process
 **Commit:** 3b91a46068357949e8a60a398fb2cfe105156149
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-06
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-10-1: `scrub_transport_error` used `anyhow::Error::msg`,
+  which dropped the error's cause chain; a dead `_url` binding grew
+  `GeminiClient::chat` to 264)
+- **Executor:** first run nvidia/GLM-5.3-Flash-FP4-Local (local, 210 turns);
+  bounce fix glm-5.3-flash on opencode.ai (53 turns), the first opencode run
+- **Scope deviations:** none
+- **Calibration:** reviewer re-run: fmt clean, `build_warnings=0`, clippy
+  clean, `passed=2714 failed=0`, `secrets passed=11 failed=0`, `url_key=0`,
+  `raw_args_warn=0`, `dead_url=0`, allowlist back at 263. The red run and
+  the `new`/`msg` mutation pair are pasted and match the diff. Lesson:
+  when a spec says an error "still names what went wrong", name the text
+  the test must assert (here, `tcp connect error`). A non-empty check let
+  the first pass through.
