@@ -193,6 +193,17 @@ pub fn invalid_args_event(
     })
 }
 
+/// The whole invalid-arguments warning line, with the arguments masked. The
+/// three backends' "model sent invalid arguments for tool" warnings log this
+/// instead of the raw arguments (M36 phase-10, S10) — raw model arguments
+/// often carry the secrets the masker exists to keep out of the logs.
+pub fn invalid_args_log_line(tool_name: &str, args: &Value) -> String {
+    format!(
+        "model sent invalid arguments for tool '{tool_name}': {}",
+        crate::ai::filter::mask_sensitive(&args.to_string())
+    )
+}
+
 fn json_type_name(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",

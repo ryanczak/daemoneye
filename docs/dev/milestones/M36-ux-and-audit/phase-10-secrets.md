@@ -1,7 +1,7 @@
 # Phase 10 — secrets
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -173,3 +173,163 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-07 03:00 (progress)
+
+Started phase-10 (secrets). Executor: headless executor run 1. Plan: write the
+nine `secrets_` red tests against the current tree and capture their failing
+output first, then implement in the spec's order — masking patterns,
+`invalid_args_log_line` at the three warning sites, `scrub_transport_error` at
+both `mod.rs` sites, and the two Gemini functions used from `chat`. The current
+tree has the Gemini key in the URL at `gemini.rs:221`, the two unscrubbed error
+sites in `mod.rs`, and three unmasked invalid-args warnings in the backends.
+
+### Update — 2026-11-07 03:40 (red runs)
+
+**Tree held:** the pre-phase code plus the nine `secrets_` tests and nothing
+else — no masking patterns, no `scrub_transport_error`, no Gemini helper
+functions, no `invalid_args_log_line`.
+
+**Run 1 — the five `secrets_mask_*` tests, after step 1's first edit.** The
+masking tests compile against the unmodified filter, so their red run is a
+failing assertion, not a compile error. `cargo test --lib secrets_`:
+
+```
+running 7 tests
+test ai::filter::tests::secrets_mask_bare_sk_key ... FAILED
+test ai::filter::tests::secrets_mask_json_quoted ... FAILED
+test ai::filter::tests::secrets_mask_bearer ... FAILED
+test ai::filter::tests::secrets_mask_query_key ... FAILED
+test ai::filter::tests::multiple_secrets_in_one_string ... ok
+test ai::filter::tests::secrets_mask_aws_secret_env ... FAILED
+test ai::filter::tests::secrets_mask_negatives ... ok
+
+failures:
+
+---- ai::filter::tests::secrets_mask_bare_sk_key stdout ----
+
+thread 'ai::filter::tests::secrets_mask_bare_sk_key' (585776) panicked at src/ai/filter.rs:587:9:
+a bare sk- key must be masked: "the key is sk-proj-ABCDEF1234567890abcdef"
+
+---- ai::filter::tests::secrets_mask_json_quoted stdout ----
+
+thread 'ai::filter::tests::secrets_mask_json_quoted' (585778) panicked at src/ai/filter.rs:560:9:
+a JSON-quoted password value must be masked: "{\"password\": \"hunter2\"}"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- ai::filter::tests::secrets_mask_bearer stdout ----
+
+thread 'ai::filter::tests::secrets_mask_bearer' (585777) panicked at src/ai/filter.rs:577:9:
+a Bearer token must be masked: "Authorization: Bearer sk-ant-api03-abcdefghijklmnop"
+
+---- ai::filter::tests::secrets_mask_query_key stdout ----
+
+thread 'ai::filter::tests::secrets_mask_query_key' (585780) panicked at src/ai/filter.rs:599:9:
+a ?key= query parameter must be masked: "https://generativelanguage.googleapis.com/v1beta/models/m:streamGenerateContent?alt=sse&key=AIzaSyEXAMPLE123"
+
+---- ai::filter::tests::secrets_mask_aws_secret_env stdout ----
+
+thread 'ai::filter::tests::secrets_mask_aws_secret_env' (585775) panicked at src/ai/filter.rs:546:13:
+the AWS secret key must be masked out of "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+ (x2)
+failures:
+    ai::filter::tests::secrets_mask_aws_secret_env
+    ai::filter::tests::secrets_mask_bare_sk_key
+    ai::filter::tests::secrets_mask_bearer
+    ai::filter::tests::secrets_mask_json_quoted
+    ai::filter::tests::secrets_mask_query_key
+
+test result: FAILED. 2 passed; 5 failed; 0 ignored; 0 measured; 2624 filtered out; finished in 0.14s
+```
+
+`secrets_mask_negatives` passed at this point because it guards strings the
+pre-phase tree must not touch; it is not a red run for its own sake.
+
+**Run 2 — the two S4 tests, compile errors.** Both carry their red run as a
+compile error only: `secrets_gemini_key_in_header` names `gemini_stream_request`
+and `secrets_transport_error_drops_url` names `scrub_transport_error`, neither
+of which existed. `cargo test --lib secrets_`:
+
+```
+error[E0425]: cannot find function `gemini_stream_request` in this scope
+   --> src/ai/backends/gemini.rs:668:23
+    |
+668 |         let request = gemini_stream_request(
+    |                       ^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `scrub_transport_error` in this scope
+   --> src/ai/mod.rs:574:24
+    |
+574 |         let scrubbed = scrub_transport_error(err);
+    |                        ^^^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `daemoneye` (lib test) due to 2 previous errors
+```
+
+**Run 3 — `secrets_invalid_args_log_masked`, compile error.** Same class: the
+function under test did not exist.
+
+```
+error[E0425]: cannot find function `invalid_args_log_line` in this scope
+   --> src/ai/backends/anthropic.rs:73:34
+```
+
+(the same E0425 fired in openai.rs and gemini.rs as they were edited into their
+final form; the three are one finding — the function the backends call did not
+exist yet.)
+
+No assertion was hand-tuned to force a failure: every red run above is either a
+failing assertion against the unmodified behaviour (run 1) or the compile error
+of a named-but-unimplemented function (runs 2 and 3).
+
+### Findings — 2026-11-07
+
+1. `mask_sensitive`'s generic secret pattern uses replacement
+   `<AWS_KEY>`/`<GCP_KEY>`-style tokens for other forms; the new patterns use
+   the generic `<REDACTED>` the spec pins. `get_redaction_counts` keys off the
+   pattern set, not the replacement, so nothing needed to change there —
+   confirmed by the existing tests passing unedited.
+2. `gemini_stream_request`'s `Value` body borrows through `&Value` while
+   `chat`'s retry loop rebuilds it per attempt; the closure captures `&body`
+   which outlives each send, so no clone was needed — the existing
+   `send_with_retry` seam took the closure unchanged.
+3. `GeminiClient::chat` grew by one line (the closure around the new
+   `gemini_stream_request` call) and passed its allowlisted 263, so its
+   `tests/hygiene_allowlist.txt` entry was lowered — raised — to 264, the
+   value the hygiene gate reported. This is the allowlist change the spec's
+   Authorizations section pre-authorises.
+
+### Update — 2026-11-07 04:05 (end-to-end verification)
+
+The block in § End-to-end verification, run verbatim (third full run — the
+first caught a `cargo fmt --check` drift the formatter fixed; the second
+caught `GeminiClient::chat` one line over its allowlist entry, fixed by the
+ authorised count change; this third run is the clean capture). Pasted from
+`/tmp/e2e-10.txt`:
+
+```
+secrets passed=10 failed=0
+url_key=0
+without_url=1
+raw_args_warn=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.87s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2713 failed=0
+```
+
+Read against the acceptance criteria:
+
+- `secrets passed=10 failed=0` — the nine new `secrets_` tests plus the
+  pre-existing `multiple_secrets_in_one_string`, P = 10 ≥ 10.
+- `url_key=0` — `gemini.rs` holds no `key={}` URL format (was 1).
+- `without_url=1` — `scrub_transport_error` is the one `without_url` use.
+- `raw_args_warn=0` — no backend formats raw `{args}` into an invalid-args
+  warning (was 3; the literals now live only in `invalid_args_log_line`).
+- `build_warnings=0`, clippy clean (`Finished` with no diagnostics),
+  `fmt_exit=0`, hygiene / doc_truth / bug_tracker all `ok`, full suite
+  `passed=2713 failed=0`.

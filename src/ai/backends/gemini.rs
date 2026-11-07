@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition, invalid_args_event};
+use crate::ai::tools::{
+    dispatch_tool_event, get_gemini_tool_definition, invalid_args_event, invalid_args_log_line,
+};
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, next_tool_id, send_with_retry};
 
@@ -137,6 +139,29 @@ fn parse_malformed_gemini_call(msg: &str) -> Option<(String, bool)> {
     Some((cmd, bg))
 }
 
+/// The stream endpoint URL for `model`, with no credential in it — the key
+/// travels in the `x-goog-api-key` header so a transport error's URL can never
+/// carry the key into a log (M36 phase-10, S4).
+fn gemini_stream_url(model: &str) -> String {
+    format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
+    )
+}
+
+/// The POST that opens a Gemini stream: the key in the `x-goog-api-key`
+/// header, the request body as JSON.
+fn gemini_stream_request(
+    client: &reqwest::Client,
+    model: &str,
+    api_key: &str,
+    body: &Value,
+) -> reqwest::RequestBuilder {
+    client
+        .post(gemini_stream_url(model))
+        .header("x-goog-api-key", api_key)
+        .json(body)
+}
+
 /// Google Gemini API backend.
 pub struct GeminiClient {
     api_key: String,
@@ -217,10 +242,7 @@ impl AiClient for GeminiClient {
         use_tools: bool,
         loaded_tools: Vec<String>,
     ) -> Result<()> {
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}",
-            self.model, self.api_key
-        );
+        let _url = gemini_stream_url(&self.model);
         let converted = self.convert_messages(messages);
         let mut body = json!({
             "system_instruction": {"parts": [{"text": system}]},
@@ -245,7 +267,10 @@ impl AiClient for GeminiClient {
         let mut transport_retries: u32 = 0;
 
         'attempt: loop {
-            let response = send_with_retry(|| http().post(&url).json(&body)).await?;
+            let response = send_with_retry(|| {
+                gemini_stream_request(http(), &self.model, &self.api_key, &body)
+            })
+            .await?;
 
             let mut stream = response.bytes_stream();
             let mut sse = crate::ai::SseBuffer::new();
@@ -395,7 +420,8 @@ impl AiClient for GeminiClient {
                                                         thought_sig,
                                                     ) {
                                                         log::warn!(
-                                                            "model sent invalid arguments for tool '{fn_name}': {args}"
+                                                            "{}",
+                                                            invalid_args_log_line(fn_name, &args)
                                                         );
                                                         let _ = tx.send(ev);
                                                     } else {
@@ -658,5 +684,38 @@ mod tests {
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.cache_read_tokens, 0);
         assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    // ── M36 phase-10 (S4) — the key travels in the header, not the URL ───────
+
+    #[test]
+    fn secrets_gemini_key_in_header() {
+        let api_key = "AIzaSyEXAMPLEKEY0123456789";
+        let request = gemini_stream_request(
+            &reqwest::Client::new(),
+            "gemini-2.5-flash",
+            api_key,
+            &json!({"contents": []}),
+        )
+        .build()
+        .expect("a well-formed request always builds");
+        let url = request.url().to_string();
+        assert!(
+            !url.contains("key="),
+            "the URL must hold no key parameter: {url}"
+        );
+        assert!(
+            !url.contains(api_key),
+            "the URL must hold no part of the key: {url}"
+        );
+        let header = request
+            .headers()
+            .get("x-goog-api-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(
+            header, api_key,
+            "the key must travel in the x-goog-api-key header"
+        );
     }
 }

@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{dispatch_tool_event, get_openai_tool_definition, invalid_args_event};
+use crate::ai::tools::{
+    dispatch_tool_event, get_openai_tool_definition, invalid_args_event, invalid_args_log_line,
+};
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, send_with_retry};
 
@@ -345,10 +347,7 @@ impl AiClient for OpenAiClient {
                                 } else if let Some(ev) =
                                     invalid_args_event(&id, &acc.name, &args, None)
                                 {
-                                    log::warn!(
-                                        "model sent invalid arguments for tool '{}': {args}",
-                                        acc.name
-                                    );
+                                    log::warn!("{}", invalid_args_log_line(&acc.name, &args));
                                     let _ = tx.send(ev);
                                 } else {
                                     log::warn!(

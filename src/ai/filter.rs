@@ -102,6 +102,35 @@ fn builtin_defs() -> &'static [(&'static str, &'static str)] {
             r"(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\s+AAAA[A-Za-z0-9+/=]+",
             "<SSH_PUBKEY>",
         ),
+        // M36 phase-10 (S5): the secret forms the direct-assignment pattern
+        // above misses. Order matters — the specific forms run first so their
+        // type-aware replacements win; the bare-key sweep is last.
+        // AWS secret access keys, env form and .aws/credentials ini form.
+        (
+            r"(?i)aws_secret_access_key\s*[=:]\s*[A-Za-z0-9/+=]{40}",
+            "<REDACTED>",
+        ),
+        // JSON-quoted secret values: "password": "…" / "api_key":"…".
+        (
+            r#"(?i)"(password|passwd|secret|api[_\-]?key|apikey|secret[_\-]?key|access[_\-]?key|client[_\-]?secret|auth[_\-]?token|refresh[_\-]?token|session[_\-]?token|private[_\-]?key)"\s*:\s*"[^"]*""#,
+            r#""$1": "<REDACTED>""#,
+        ),
+        // Authorization / Proxy-Authorization headers with a credential scheme.
+        (
+            r"(?i)(authorization|proxy-authorization)\s*:\s*(bearer|basic|digest|token|negotiate|ntlm)\s+[^\s,;]+",
+            "<REDACTED>",
+        ),
+        // Model-provider API keys standing alone: OpenAI (sk-…, sk-proj-…),
+        // Anthropic (sk-ant-…), Google (AIza…). Namespaces that are not
+        // secrets — the hyphenated tool names below — do not start with these.
+        (r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_\-]{20,}\b", "<REDACTED>"),
+        (r"\bAIza[A-Za-z0-9_\-]{35}\b", "<REDACTED>"),
+        // URL query-parameter secrets: ?key=…, &api_key=…, ?token=… — the
+        // Gemini stream URL's form, which survives in a pasted URL.
+        (
+            r"[?&](?:key|api_key|apikey|token|access_token|password|secret)\s*=\s*[A-Za-z0-9_\-\.]+",
+            "<REDACTED>",
+        ),
         // SSH config file directives that reveal server topology.
         // Matches: HostName <value> and IdentityFile <value> (case-insensitive),
         // only as a directive at the start of a line, with a value whose first
@@ -531,5 +560,92 @@ mod tests {
         assert!(v.get("notes").is_some_and(|v| v.is_null()));
         // String value masked
         assert_eq!(v.get("label").and_then(|v| v.as_str()), Some("<AWS_KEY>"));
+    }
+
+    // ── M36 phase-10 (S5) — the secret forms the direct-assignment pattern
+    // missed ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn secrets_mask_aws_secret_env() {
+        for text in [
+            "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+        ] {
+            let out = mask(text);
+            assert!(
+                !out.contains("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+                "the AWS secret key must be masked out of {out:?}"
+            );
+            assert!(
+                out.contains("<REDACTED>"),
+                "the AWS secret forms use the generic replacement: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn secrets_mask_json_quoted() {
+        let out = mask(r#"{"password": "hunter2"}"#);
+        assert!(
+            !out.contains("hunter2"),
+            "a JSON-quoted password value must be masked: {out:?}"
+        );
+        assert!(out.contains("<REDACTED>"), "got {out:?}");
+
+        let out = mask(r#"{"api_key":"sk-abcdefghijklmnopqrstuv"}"#);
+        assert!(
+            !out.contains("sk-abcdefghijklmnopqrstuv"),
+            "a JSON-quoted api_key value must be masked: {out:?}"
+        );
+        assert!(out.contains("<REDACTED>"), "got {out:?}");
+    }
+
+    #[test]
+    fn secrets_mask_bearer() {
+        let out = mask("Authorization: Bearer sk-ant-api03-abcdefghijklmnop");
+        assert!(
+            !out.contains("sk-ant-api03-abcdefghijklmnop"),
+            "a Bearer token must be masked: {out:?}"
+        );
+        assert!(out.contains("<REDACTED>"), "got {out:?}");
+    }
+
+    #[test]
+    fn secrets_mask_bare_sk_key() {
+        let out = mask("the key is sk-proj-ABCDEF1234567890abcdef");
+        assert!(
+            !out.contains("sk-proj-ABCDEF1234567890abcdef"),
+            "a bare sk- key must be masked: {out:?}"
+        );
+        assert!(out.contains("<REDACTED>"), "got {out:?}");
+    }
+
+    #[test]
+    fn secrets_mask_query_key() {
+        let out = mask(
+            "https://generativelanguage.googleapis.com/v1beta/models/m:streamGenerateContent?alt=sse&key=AIzaSyEXAMPLE123",
+        );
+        assert!(
+            !out.contains("AIzaSyEXAMPLE123"),
+            "a ?key= query parameter must be masked: {out:?}"
+        );
+        assert!(out.contains("<REDACTED>"), "got {out:?}");
+    }
+
+    #[test]
+    fn secrets_mask_negatives() {
+        for text in [
+            "disk-usage-report-generator-tool",
+            "task-scheduler-component-name",
+            "the token expired",
+            "AWS_REGION=us-east-1",
+            "https://example.com/?keyword=rust",
+        ] {
+            assert_eq!(
+                mask(text),
+                text,
+                "a non-secret string must be byte-identical: {text:?}"
+            );
+        }
     }
 }

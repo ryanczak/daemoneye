@@ -173,7 +173,7 @@ pub(crate) async fn stream_next_with_timeout<B>(
     use futures_util::StreamExt;
     match tokio::time::timeout(timeout, stream.next()).await {
         Ok(Some(Ok(bytes))) => Some(Ok(bytes)),
-        Ok(Some(Err(e))) => Some(Err(e.into())),
+        Ok(Some(Err(e))) => Some(Err(scrub_transport_error(e))),
         Ok(None) => None,
         Err(_elapsed) => Some(Err(if first_token_seen {
             anyhow::anyhow!(
@@ -328,13 +328,21 @@ async fn send_with_retry_inner(
             }
             Err(e) => {
                 if retries >= 2 {
-                    anyhow::bail!("Request failed: {}", e);
+                    anyhow::bail!("Request failed: {}", scrub_transport_error(e));
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(2 << retries)).await;
                 retries += 1;
             }
         }
     }
+}
+
+/// Rebuild a `reqwest::Error` without its request URL. reqwest's `Error`
+/// Display appends the full URL, and the Gemini URL once held the API key, so
+/// any transport error that reached a log carried the key with it (M36
+/// phase-10, S4). The message still names what went wrong.
+fn scrub_transport_error(e: reqwest::Error) -> anyhow::Error {
+    anyhow::Error::msg(e.without_url())
 }
 
 /// Send an HTTP request with automatic retry and circuit-breaker protection.
@@ -548,6 +556,43 @@ mod tests {
         assert_eq!(t.first_token, Duration::from_secs(600));
         assert_eq!(t.stream_idle, Duration::from_secs(240));
         assert_eq!(t.connect, Duration::from_secs(30));
+    }
+
+    // ── M36 phase-10 (S4) — a reqwest error never carries its URL ────────────
+
+    #[test]
+    fn secrets_transport_error_drops_url() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = rt.block_on(async {
+            client
+                .get("http://127.0.0.1:1/?key=SECRETKEY123")
+                .send()
+                .await
+                .unwrap_err()
+        });
+        assert!(
+            err.url().is_some(),
+            "the raw reqwest error must carry the URL before scrubbing: {:?}",
+            err.url()
+        );
+        let scrubbed = scrub_transport_error(err);
+        let text = format!("{scrubbed:#}");
+        assert!(
+            !text.contains("SECRETKEY123"),
+            "the scrubbed error must not carry the key: {text}"
+        );
+        assert!(
+            !text.contains("127.0.0.1:1/"),
+            "the scrubbed error must not carry the URL path: {text}"
+        );
+        assert!(
+            !text.is_empty(),
+            "the scrubbed error must still name what went wrong: {text:?}"
+        );
     }
 }
 

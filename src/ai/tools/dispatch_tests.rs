@@ -1227,6 +1227,28 @@ fn string_booleans_parse_where_glm_sends_them() {
     assert_eq!(paste, Some(true), "paste:'TRUE' parses case-insensitively");
 }
 
+// ── M36 phase-10 (S10) — the invalid-args warning logs masked args ───────────
+
+#[test]
+fn secrets_invalid_args_log_masked() {
+    let args = json!({
+        "command": "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    });
+    let line = invalid_args_log_line("run_terminal_command", &args);
+    assert!(
+        line.starts_with("model sent invalid arguments for tool 'run_terminal_command':"),
+        "the warning names the tool: {line}"
+    );
+    assert!(
+        !line.contains("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+        "the warning must not carry the raw secret: {line}"
+    );
+    assert!(
+        line.contains("<REDACTED>"),
+        "the secret is replaced by the generic token: {line}"
+    );
+}
+
 /// A value that is not a string boolean at all — rehearsal 1 saw chat
 /// prose leak into `background` twice — stays invalid, and the error now
 /// names the field. The backend flow is tried-then-fallback: dispatch
