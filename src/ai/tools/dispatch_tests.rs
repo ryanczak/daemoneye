@@ -1315,3 +1315,99 @@ fn a_type_mismatch_says_whether_the_parameter_is_required() {
         "an optional parameter is not labelled required: {error}"
     );
 }
+
+// ── M36 phase-11 (B15) — malformed argument JSON becomes a tool result ───────
+
+#[test]
+fn tool_args_json_known_tool_event() {
+    let ev = malformed_args_event(
+        "tc_1",
+        "run_terminal_command",
+        r#"{"command": "ls"#,
+        "EOF while parsing an object",
+        None,
+    )
+    .expect("a known tool yields an event");
+    let AiEvent::InvalidToolArgs {
+        id,
+        name,
+        arguments,
+        error,
+        thought_signature,
+    } = ev
+    else {
+        panic!("expected InvalidToolArgs, got {ev:?}");
+    };
+    assert_eq!(id, "tc_1");
+    assert_eq!(name, "run_terminal_command");
+    assert_eq!(arguments, r#"{"command": "ls"#, "the raw text is kept");
+    assert_eq!(thought_signature, None);
+    assert!(
+        error.contains("JSON") && error.contains("EOF while parsing"),
+        "the error names JSON and quotes serde's error: {error}"
+    );
+    assert!(
+        error.contains("command (string, required)"),
+        "the tool's expected parameters are listed: {error}"
+    );
+}
+
+#[test]
+fn tool_args_json_unknown_tool_none() {
+    assert!(
+        malformed_args_event("tc_1", "no_such_tool", "{\"broken\":", "boom", None).is_none(),
+        "an unknown tool keeps the unknown-tool path"
+    );
+}
+
+#[test]
+fn tool_args_json_raw_truncated() {
+    let raw: String = "\u{00e9}\u{1F642}".repeat(1500);
+    let ev = malformed_args_event("tc_1", "list_shells", &raw, "no", None)
+        .expect("a known tool yields an event");
+    let AiEvent::InvalidToolArgs { arguments, .. } = ev else {
+        panic!("expected InvalidToolArgs");
+    };
+    assert!(
+        arguments.len() <= 2000 + 4,
+        "cut to at most 2000 bytes at a char boundary: {}",
+        arguments.len()
+    );
+    assert!(
+        std::str::from_utf8(arguments.as_bytes()).is_ok(),
+        "the cut arguments are valid UTF-8"
+    );
+    assert!(arguments.starts_with('\u{00e9}'), "cut from the start");
+}
+
+#[test]
+fn tool_args_json_raw_under_limit_is_untouched() {
+    let ev = malformed_args_event("tc_1", "list_shells", "{\"short\":", "no", None)
+        .expect("a known tool yields an event");
+    let AiEvent::InvalidToolArgs { arguments, .. } = ev else {
+        panic!("expected InvalidToolArgs");
+    };
+    assert_eq!(arguments, "{\"short\":", "a short raw text is not trimmed");
+}
+
+#[test]
+fn tool_args_json_cut_respects_char_boundary() {
+    // "é" is 2 bytes: 1500 chars = 3000 bytes, which must cut at 2000 —
+    // the largest char boundary at or below 2000 (an even byte index).
+    let raw: String = "é".repeat(1500);
+    let ev = malformed_args_event("tc_1", "list_shells", &raw, "no", None)
+        .expect("a known tool yields an event");
+    let AiEvent::InvalidToolArgs { arguments, .. } = ev else {
+        panic!("expected InvalidToolArgs");
+    };
+    assert_eq!(
+        arguments.len(),
+        2000,
+        "cut at the boundary at or below 2000"
+    );
+    assert_eq!(arguments.chars().count(), 1000, "a whole number of chars");
+    assert!(
+        std::str::from_utf8(arguments.as_bytes()).is_ok(),
+        "the cut arguments are valid UTF-8"
+    );
+}

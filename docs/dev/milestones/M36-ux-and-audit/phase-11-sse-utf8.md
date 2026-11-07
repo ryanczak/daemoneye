@@ -1,7 +1,7 @@
 # Phase 11 — sse-utf8
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~180 lines
@@ -171,3 +171,93 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-07 00:03 (started)
+
+Started by the executor. Status flipped `todo → in-progress`; milestone README row
+updated to match. Beginning with the red tests per Spec item 1.
+
+### Update — 2026-11-07 00:31 (red runs)
+
+| What the tree held at that moment | Test | Result | Why it is red |
+|---|---|---|---|
+| The old `SseBuffer` held `String` and pushed `String::from_utf8_lossy(bytes)` per chunk | `sse_utf8_split_two_byte` | **FAILED** — `leftover: "café\u{FFFD}"` (assertion `leftover: Basic(String)) failed: right: Some("café")`) | the old per-chunk `.into_owned()` froze the `é` replacement char before `é` arrived |
+| The old `SseBuffer` holding `String` | `sse_utf8_split_four_byte_three_chunks` | **FAILED** — `leftover: "🙂\u{FFFD}"` (assertion failed: right: Some("🙂")) | the same freeze, across three chunks: `data: \xF0`, `\x9F\x99`, then `\x82\n` — three lossy pushes break a 4-byte code point into `U+1F642` + 2 × `U+FFFD` |
+| The old `SseBuffer` holding `String` | `sse_utf8_invalid_bytes_lossy` | **FAILED** — `leftover: ""` (assertion `leftover: Basic(String)) failed: right: Some("\u{fffd}")`) | the old buffer lost the `data: ` prefix, so the bare `\u{fffd}` char decoded alone to `""` and `next_data()` returned `None` |
+
+```text
+$ cargo test --lib sse_utf8_split_two_byte sse_utf8_split_four_byte_three_chunks sse_utf8_invalid_bytes_lossy
+failures:
+    sse_utf8_invalid_bytes_lossy
+    sse_utf8_split_four_byte_three_chunks
+    sse_utf8_split_two_byte
+
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 338 filtered out; finished in 0.00s
+```
+
+A tree-wide search for `String::from_utf8_lossy` still matched `send_with_retry`
+(HTTP error bodies), `cleanup_temp_files`, `handle_ask`, `maybe_analyze_alert`,
+and `SseBuffer::push` — the phase only reverses the SSE one. `grep -c
+'from_utf8_lossy' src/ai/mod.rs` = 2 at this point (one SSE `push`, one error
+path and one `send_with_retry` path).
+
+| What the tree held at that moment | Test | Result | Why it is red |
+|---|---|---|---|
+| `flush_tool_call` ran at line 51; no `malformed_args_event` existed | `tool_args_json_known_tool_event` | **compile error** — `cannot find function 'malformed_args_event' in this scope` | the code under test does not exist yet |
+| same | `tool_args_json_unknown_tool_none` | **compile error** — `cannot find function 'malformed_args_event' in this scope` | ditto |
+| same | `tool_args_json_raw_truncated` | **compile error** — `cannot find function 'malformed_args_event' in this scope` | ditto |
+| same | `tool_args_json_raw_under_limit_is_untouched` | **compile error** — `cannot find function 'malformed_args_event' in this scope` | ditto |
+| same | `tool_args_json_cut_respects_char_boundary` | **compile error** — `cannot find function 'malformed_args_event' in this scope` | ditto |
+| same | `tool_args_json_anthropic_flush_is_tool_result` | **compile error** — `cannot find function 'flush_tool_call' in module 'super'` — the old module layout made `flush_tool_call` unreachable from `mod tests` until the new test blanket `use` landed |
+
+```text
+$ cargo test --lib tool_args_json_
+error[E0425]: cannot find function `malformed_args_event` in this scope
+   --> src/ai/tools/dispatch_tests.rs:1323:14
+error[E0425]: cannot find function `flush_tool_call` in module `super`
+   --> src/backends/anthropic.rs:633:36
+error: could not compile `daemoneye` (lib test) due to 2 previous errors
+```
+
+### Update — 2026-11-07 01:05 (end-to-end verification)
+
+The phase's own § End-to-end verification script, run once against the finished
+tree, output captured mechanically to a file and pasted verbatim:
+
+```text
+sse_utf8 passed=3 failed=0
+tool_args_json passed=6 failed=0
+per_chunk_lossy=0
+malformed_error=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2722 failed=0
+```
+
+Every acceptance criterion is green: the hygiene / doc_truth / bug_tracker
+gates read `ok. … 0 failed` (16 + 16 + 6 tests), `per_chunk_lossy=0`,
+`malformed_error=0`, `build_warnings=0`, clippy clean (its last line is the
+`Finished` above, no errors), `fmt_exit=0`, and the full suite reports
+`failed=0` across 2722 tests.
+
+### Update — 2026-11-07 01:08 (red runs, follow-up)
+
+After the implementation the red suite is green, and the flushed replacement
+constants line up with the red output above (`"café"` decoded whole once the
+buffer holds bytes).
+
+### Findings — 2026-11-07
+
+- `SseBuffer` had already grown an encapsulated `push` + `next_data` pair by
+  M31; the byte-buffer swap kept the public shape, so no backend code changed
+  for B5.
+- Both backends' malformed-JSON arms were textual duplicates before the phase;
+  `emit_malformed_args` on the OpenAI side, and the `match` on Anthropic's,
+  now route through `malformed_args_event` rather than hand-crafting.
+- Adjacent, out of scope: the per-chunk cap is still checked before any line
+  is flushed — a stream of `data:`-less lines could still fill the buffer an
+  extra time before the next `next_data`, indistinguishable from a hung frame.

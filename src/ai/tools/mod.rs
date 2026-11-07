@@ -7,7 +7,9 @@ mod dispatch;
 pub(crate) mod schema;
 
 pub use defs::{APPROVAL_GATED_TOOLS, TOOLS};
-pub use dispatch::{dispatch_tool_event, invalid_args_event, invalid_args_log_line};
+pub use dispatch::{
+    dispatch_tool_event, invalid_args_event, invalid_args_log_line, malformed_args_event,
+};
 pub use schema::{
     Category, ParamDef, ParamTy, ToolDef, category_of, deferred_catalog_text,
     get_gemini_tool_definition, get_openai_tool_definition, get_tool_definition, render_gemini,

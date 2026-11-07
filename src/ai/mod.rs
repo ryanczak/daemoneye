@@ -212,21 +212,19 @@ pub(crate) fn stream_retry_backoff(attempt: u32) -> Duration {
 /// `data:` payloads (with or without a space after the colon, both spec-legal)
 /// and skips `event:` lines, comments, and blanks.
 pub(crate) struct SseBuffer {
-    leftover: String,
+    buf: Vec<u8>,
 }
 
 impl SseBuffer {
     pub fn new() -> Self {
-        SseBuffer {
-            leftover: String::new(),
-        }
+        SseBuffer { buf: Vec::new() }
     }
 
     /// Append one network chunk.  Errors if the buffer exceeds
     /// [`MAX_SSE_BUFFER_BYTES`] without a newline.
     pub fn push(&mut self, bytes: &[u8]) -> Result<()> {
-        self.leftover.push_str(&String::from_utf8_lossy(bytes));
-        if self.leftover.len() > MAX_SSE_BUFFER_BYTES {
+        self.buf.extend_from_slice(bytes);
+        if self.buf.len() > MAX_SSE_BUFFER_BYTES {
             anyhow::bail!(
                 "SSE stream buffer exceeded {} bytes without a newline; \
                  aborting to prevent memory exhaustion",
@@ -237,15 +235,19 @@ impl SseBuffer {
     }
 
     /// Next complete `data:` payload, or `None` until more bytes arrive.
+    ///
+    /// Decoding happens here, on a whole line, so a multibyte character
+    /// split across two network chunks never becomes two U+FFFDs (B5).
     pub fn next_data(&mut self) -> Option<String> {
-        while let Some(pos) = self.leftover.find('\n') {
-            let line: String = self.leftover.drain(..=pos).collect();
+        loop {
+            let pos = self.buf.iter().position(|b| *b == b'\n')?;
+            let line_bytes: Vec<u8> = self.buf.drain(..=pos).collect();
+            let line = String::from_utf8_lossy(&line_bytes);
             let line = line.trim();
             if let Some(rest) = line.strip_prefix("data:") {
                 return Some(rest.trim_start().to_string());
             }
         }
-        None
     }
 }
 
@@ -690,6 +692,37 @@ mod sse_buffer_tests {
         sse.push(&chunk).unwrap();
         let err = sse.push(&chunk).unwrap_err().to_string();
         assert!(err.contains("exceeded"), "got: {err}");
+    }
+
+    // ── M36 phase-11 (B5) — a multibyte character split across chunks ─────
+
+    #[test]
+    fn sse_utf8_split_two_byte() {
+        let mut sse = SseBuffer::new();
+        sse.push(b"data: caf\xC3").unwrap();
+        assert!(sse.next_data().is_none(), "incomplete line must buffer");
+        sse.push(b"\xA9\n").unwrap();
+        assert_eq!(sse.next_data().as_deref(), Some("café"));
+    }
+
+    #[test]
+    fn sse_utf8_split_four_byte_three_chunks() {
+        let mut sse = SseBuffer::new();
+        sse.push(b"data: \xF0").unwrap();
+        sse.push(b"\x9F\x99").unwrap();
+        sse.push(b"\x82\n").unwrap();
+        assert_eq!(sse.next_data().as_deref(), Some("\u{1F642}"));
+    }
+
+    #[test]
+    fn sse_utf8_invalid_bytes_lossy() {
+        let mut sse = SseBuffer::new();
+        sse.push(b"data: bad \xFF byte\n").unwrap();
+        let line = sse.next_data().expect("a complete line");
+        assert!(
+            line.contains('\u{FFFD}'),
+            "an invalid byte decodes to U+FFFD: {line:?}"
+        );
     }
 }
 

@@ -6,6 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ai::tools::{
     dispatch_tool_event, get_tool_definition, invalid_args_event, invalid_args_log_line,
+    malformed_args_event,
 };
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, send_with_retry};
@@ -81,9 +82,17 @@ fn flush_tool_call(
         }
         Err(e) => {
             log::warn!("model emitted malformed JSON arguments for tool '{tool_name}': {e}");
-            let _ = tx.send(AiEvent::Error(format!(
-                "model emitted malformed arguments for tool '{tool_name}': {e}"
-            )));
+            match malformed_args_event(tool_id, tool_name, tool_args, &e.to_string(), thought_sig) {
+                Some(ev) => {
+                    let _ = tx.send(ev);
+                }
+                None => {
+                    log::warn!("model called unknown tool '{tool_name}' — malformed call dropped");
+                    let _ = tx.send(AiEvent::Notice(format!(
+                        "the model called unknown tool '{tool_name}' — the call was dropped"
+                    )));
+                }
+            }
         }
     }
 }
@@ -537,18 +546,6 @@ mod tests {
     // ── flush_tool_call ──────────────────────────────────────────────────
 
     #[test]
-    fn flush_malformed_args_sends_visible_error() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        super::flush_tool_call(&tx, "tc_1", "list_shells", "{\"broken\":", None);
-        match rx.try_recv().expect("an event must be sent") {
-            crate::ai::AiEvent::Error(msg) => {
-                assert!(msg.contains("list_shells"), "got: {msg}");
-            }
-            other => panic!("expected Error event, got {other:?}"),
-        }
-    }
-
-    #[test]
     fn first_token_flips_on_content_block_not_ping() {
         assert!(super::is_content_event("content_block_delta"));
         assert!(super::is_content_event("content_block_start"));
@@ -631,3 +628,39 @@ mod tests {
 // ---------------------------------------------------------------------------
 // OpenAI-compatible
 // ---------------------------------------------------------------------------
+
+// ── M36 phase-11 (B15) — malformed arguments are a tool result ───────
+
+#[test]
+fn tool_args_json_anthropic_flush_is_tool_result() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    crate::ai::backends::anthropic::flush_tool_call(
+        &tx,
+        "tc_1",
+        "list_shells",
+        "{\"broken\":",
+        None,
+    );
+    let ev = rx.try_recv().expect("an event must be sent");
+    let crate::ai::AiEvent::InvalidToolArgs {
+        id,
+        name,
+        arguments,
+        error,
+        ..
+    } = ev
+    else {
+        panic!("expected InvalidToolArgs, got {ev:?}");
+    };
+    assert_eq!(id, "tc_1");
+    assert_eq!(name, "list_shells");
+    assert_eq!(arguments, "{\"broken\":", "the raw text is kept");
+    assert!(
+        error.contains("JSON") && error.contains("scope") || error.contains("expected"),
+        "the error names the expected parameters: {error}"
+    );
+    assert!(
+        rx.try_recv().is_err(),
+        "flush_tool_call sends exactly one event — never an Error"
+    );
+}

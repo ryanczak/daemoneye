@@ -5,6 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ai::tools::{
     dispatch_tool_event, get_openai_tool_definition, invalid_args_event, invalid_args_log_line,
+    malformed_args_event,
 };
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
 use crate::ai::{AiClient, http, send_with_retry};
@@ -40,6 +41,30 @@ pub(crate) struct ToolCallAcc {
     pub id: String,
     pub name: String,
     pub args: String,
+}
+
+/// Send the malformed-arguments event for a tool call (B15): a known tool
+/// becomes an `InvalidToolArgs` tool result so the turn still records usage
+/// and the model can correct the arguments; an unknown tool keeps the
+/// `Notice` path.  Never `AiEvent::Error`.
+fn emit_malformed_args(
+    tx: &UnboundedSender<AiEvent>,
+    id: &str,
+    name: &str,
+    raw: &str,
+    parse_error: &str,
+) {
+    match malformed_args_event(id, name, raw, parse_error, None) {
+        Some(ev) => {
+            let _ = tx.send(ev);
+        }
+        None => {
+            log::warn!("model called unknown tool '{name}' — malformed call dropped");
+            let _ = tx.send(AiEvent::Notice(format!(
+                "the model called unknown tool '{name}' — the call was dropped"
+            )));
+        }
+    }
 }
 
 /// Whether a delta carries a real token (non-empty content, reasoning, or tool calls).
@@ -365,10 +390,7 @@ impl AiClient for OpenAiClient {
                                     "model emitted malformed JSON arguments for tool '{}': {e}",
                                     acc.name
                                 );
-                                let _ = tx.send(AiEvent::Error(format!(
-                                    "model emitted malformed arguments for tool '{}': {e}",
-                                    acc.name
-                                )));
+                                emit_malformed_args(&tx, &id, &acc.name, args_str, &e.to_string());
                             }
                         }
                     }

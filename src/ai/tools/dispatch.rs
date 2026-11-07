@@ -193,6 +193,37 @@ pub fn invalid_args_event(
     })
 }
 
+/// A tool call whose argument JSON did not parse at all (B15): the
+/// deserialiser failed before any schema check could run, so `invalid_args_event`
+/// has nothing to inspect.  Build the same [`AiEvent::InvalidToolArgs`]
+/// result directly — the conversation loop already turns that variant into
+/// a tool result, so the model sees its mistake and the turn still runs to
+/// `Done(usage)`, keeping the ledger in balance.
+///
+/// `None` for a name that is not in `TOOLS` — those keep the unknown-tool
+/// path.  The raw, unparsed text is cut to at most 2000 bytes at a character
+/// boundary (rationale in [`crate::util::truncate_chars`]).
+pub fn malformed_args_event(
+    id: &str,
+    name: &str,
+    raw: &str,
+    parse_error: &str,
+    ts: Option<String>,
+) -> Option<AiEvent> {
+    let def = TOOLS.iter().find(|t| t.name == name)?;
+    let error = format!(
+        "the arguments were not valid JSON ({parse_error}); expected: {}",
+        expected_params(def)
+    );
+    Some(AiEvent::InvalidToolArgs {
+        id: id.to_string(),
+        name: def.name,
+        arguments: crate::util::truncate_chars(raw, 2000).to_string(),
+        error,
+        thought_signature: ts,
+    })
+}
+
 /// The whole invalid-arguments warning line, with the arguments masked. The
 /// three backends' "model sent invalid arguments for tool" warnings log this
 /// instead of the raw arguments (M36 phase-10, S10) — raw model arguments
