@@ -220,7 +220,12 @@ for them: they do not exist yet.**
 - [ ] **bug-13-1:** `cargo test sudo_whole_quoted_sudo_refused` reports 1
       passed: `is_safe` refuses `sh -c 'id; sudo rm -rf /x'`. Today it
       reports 0.
-- [ ] **bug-13-1:** the full suite reads `passed=2746 failed=0` (2744 + 2).
+- [ ] **bug-13-1:** `cargo test sudo_detect_wrappers_keywords_paths` reports
+      1 passed: sudo behind a wrapper, a keyword, an assignment, a path or
+      `\` counts. Today it reports 0.
+- [ ] **bug-13-1:** `cargo test sudo_whole_wrapped_sudo_refused` reports 1
+      passed. Today it reports 0.
+- [ ] **bug-13-1:** the full suite reads `passed=2748 failed=0` (2744 + 4).
 - [ ] `slot_wired=1` or more: `trigger_ghost_turn` claims the guard. Today
       it is 0.
 - [ ] `caller_releases=0`: nothing outside `stats.rs` calls
@@ -228,7 +233,7 @@ for them: they do not exist yet.**
 - [ ] `stale_regex=0`: the old regex text is gone from `src` and
       `docs/design-reference.md`. Today it is 3.
 - [ ] Each test group passes in full: `ghost_slot passed=3`,
-      `sudo_detect passed=5`, `sudo_whole passed=6`,
+      `sudo_detect passed=6`, `sudo_whole passed=7`,
       `mailbox_name passed=3`. Today none of these tests exists.
 - [ ] The red-runs entry shows the compile errors and the assertion
       failures named in Spec 1.
@@ -630,5 +635,54 @@ exactly 2744 + 2; any other count is wrong. Re-run § End-to-end
 verification. It should now show `sudo_detect passed=5` and
 `sudo_whole passed=6`. Commit as
 `fix: command_has_sudo scans quoted text (M36 phase-13, bug-13-1)`.
+
+Do not grep `/dev/null`. Run the test instead of searching.
+
+### Notes for executor — 2026-11-07 (bounce widened, bug-13-1, PE decision)
+
+**This block replaces the step list and the finish condition of the block
+above. Its quote fix still stands.** The PE folded the remaining sudo gaps
+into this bounce. Read `bugs/bug-13-1.md` § "Also folded in": it lists every
+must-match and must-not-match case. Everything that block lists as approved
+is still approved.
+
+**`command_has_sudo` has four more rules to add.** All of them fail closed:
+
+1. **Wrappers.** Once a wrapper word (`env`, `nohup`, `time`, `exec`,
+   `command`, `nice`, `ionice`, `timeout`, `stdbuf`, `setsid`, `watch`,
+   `xargs`) is in command position, every later word of that simple
+   command is a command position, until the next separator. Fold the
+   existing `xargs_pending` into this rule.
+2. **Keywords.** `if`, `then`, `else`, `elif`, `do`, `while`, `until`, `{`
+   and `!` in command position keep the next word in command position. In
+   argument position they are ordinary words, so `echo then sudo` does not
+   match.
+3. **Assignments.** A `NAME=value` word in command position keeps the
+   position.
+4. **Paths and escapes.** In command position, strip one leading `\` and
+   compare the basename after the last `/` with `sudo`.
+
+**Steps:**
+
+1. Write these four tests first, run them, and paste the real red output
+   (assertion failures):
+   - `sudo_detect_inside_quotes`
+   - `sudo_detect_wrappers_keywords_paths`
+   - `sudo_whole_quoted_sudo_refused`
+   - `sudo_whole_wrapped_sudo_refused`
+
+   Also extend `sudo_detect_argument_is_not_sudo` with `echo then sudo`,
+   `which sudo` and `man sudo`. It must stay green.
+2. Fix the detector: the quote rule from the block above, plus the four
+   rules here. Paste green.
+3. **Mutation check:** restore the skip-to-closing-quote arm, and confirm
+   that `sudo_detect_inside_quotes` fails. Then remove the wrapper list, and
+   confirm that `sudo_detect_wrappers_keywords_paths` fails. Restore both,
+   and paste all the real results.
+
+**Finish condition:** `cargo test` reads `passed=2748 failed=0`. That is
+exactly 2744 + 4. The E2E output must show `sudo_detect passed=6` and
+`sudo_whole passed=7`. Commit as
+`fix: command_has_sudo scans quoted text and sees sudo behind wrappers, keywords, assignments and paths (M36 phase-13, bug-13-1)`.
 
 Do not grep `/dev/null`. Run the test instead of searching.
