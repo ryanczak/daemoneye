@@ -1,7 +1,7 @@
 # Phase 12 — mid-turn-messages
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-12-1)
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -130,8 +130,18 @@ about to overwrite.
 
 ## Acceptance criteria
 
-- [ ] The E2E block shows `mid_turn passed=P failed=0` with P ≥ 6. Today it
-      reads `passed=0`.
+- [ ] **bug-12-1:** `grep -c 'take_turn_snapshot(' src/daemon/server/ask.rs`
+      prints 1 or more: the turn's starting history is taken through the
+      function that opens the inbox. Today it prints 0.
+- [ ] **bug-12-1:** `cargo test mid_turn_snapshot_opens_inbox` reports 1
+      passed. Today it reports 0.
+- [ ] **bug-12-1:** `grep -c 'write_session_file(id, &messages)' src/daemon/stream/conversation.rs`
+      prints 0: the compaction rewrite writes the merged history. Today it
+      prints 1.
+- [ ] **bug-12-1:** the full suite reads `passed=2729 failed=0`, one more
+      than the 2728 at bounce.
+- [ ] The E2E block shows `mid_turn passed=P failed=0` with P ≥ 7. Today it
+      reads `passed=6`.
 - [ ] The E2E block shows `overwrite_sites=0`: no
       `entry.messages = messages.clone()` remains in `conversation.rs` or
       `endings.rs`. Today it is 3.
@@ -181,7 +191,7 @@ E2E
 
 ### Update — 2026-11-06 22:19 (started)
 
-Executor: headless run (Claude Sonnet 4.5 via rexyMCP). Status flipped to
+Executor: headless run (glm-5.3-flash via rexyMCP). Status flipped to
 in-progress; beginning with the red tests against the current tree.
 
 ### Update — 2026-11-06 22:29 (red runs)
@@ -437,3 +447,52 @@ kill: (-784964): No such process
 **Commit:** 0f99d8a66611d4abd955c516036904d8c0decbe3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-07 (bounce, bug-12-1)
+
+**The gates are green and the tree is clean. That is expected here and is
+NOT evidence that the phase is done.** The fix is currently dead code: no
+production code calls `begin_turn`, so every `turn_inbox` stays `None` and
+`finish_turn` merges nothing. The following are approved; do not redo
+them:
+
+- the field and the three methods on `SessionEntry`;
+- `push_event` at the two injection sites;
+- `finish_turn` at the three write-back sites;
+- the literal fixes;
+- the six `mid_turn_` tests.
+
+There are exactly three edits left. See `bugs/bug-12-1.md`.
+
+1. **Add `take_turn_snapshot(sessions: &SessionStore, id: &str) -> Option<Vec<Message>>`**
+   to `src/daemon/session.rs`. In one `with_sessions` call it looks up the
+   entry mutably, calls `begin_turn()` on it, and returns a clone of its
+   `messages`. It returns `None` when the entry is absent. In
+   `src/daemon/server/ask.rs`, `handle_ask` replaces its in-memory
+   fast-path clone (the `mem.get(id).map(|e| e.messages.clone())` closure)
+   with a call to it. Keep the disk fallback that follows unchanged.
+2. **Add the test `mid_turn_snapshot_opens_inbox`** to
+   `src/daemon/session_tests.rs`. It puts an entry in a `SessionStore` and
+   calls `take_turn_snapshot`. Then it pushes an event with `push_event`
+   through the store, calls `finish_turn` with the snapshot, and asserts
+   that the event is in `messages` exactly once. Write it first and run it
+   so it fails, as a compile error, on today's code. Paste that real cargo
+   output in a red-run entry.
+3. **The compaction rewrite writes the merged history.** In the `Done` arm
+   of `src/daemon/stream/conversation.rs`, inside the `with_sessions` call
+   that runs `finish_turn`, keep a clone of `entry.messages`. Pass that
+   clone to `write_session_file` in place of `&messages`.
+
+**Allowlist:** these edits may grow `run_conversation_loop` or
+`handle_ask`. If the hygiene gate reports either one over its entry, raise
+that entry to the reported value, and say why in Findings ("wires the
+mid-turn inbox, bug-12-1"). That is authorized; do not split functions to
+avoid it.
+
+**Finish condition:** `cargo test` reads `passed=2729 failed=0`. That is
+2728 plus the one new test; any other count is wrong. Before reporting,
+mutation-check the fix: comment out the `begin_turn()` call in
+`take_turn_snapshot`, confirm that `mid_turn_snapshot_opens_inbox` fails,
+restore it, and paste both real results. Then re-run § End-to-end
+verification and paste its output. Commit as
+`fix: handle_ask opens the mid-turn inbox; compaction writes the merged history (M36 phase-12, bug-12-1)`.
