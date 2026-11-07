@@ -1,7 +1,7 @@
 # Phase 11 — sse-utf8
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~180 lines
@@ -261,3 +261,147 @@ buffer holds bytes).
 - Adjacent, out of scope: the per-chunk cap is still checked before any line
   is flushed — a stream of `data:`-less lines could still fill the buffer an
   extra time before the next `next_data`, indistinguishable from a hung frame.
+
+### Update — 2026-11-07 05:30 (complete, server-authored)
+
+**Summary:** **Summary:** Both M36 phase-11 bugs are fixed. For B5, `SseBuffer` (`src/ai/mod.rs`) now holds raw `Vec<u8>` and decodes only complete lines, so a multibyte character split across chunks (including `café` inside `é` and a 4-byte `🙂` across three chunks) survives intact while invalid bytes still decode lossily to U+FFFD and the 1 MB buffer cap is unchanged. For B15, `malformed_args_event` in `src/ai/tools/dispatch.rs` (re-exported beside `invalid_args_event`) turns malformed argument JSON for a known tool into `AiEvent::InvalidToolArgs` — quoting serde's error, listing `expected_params`, and cutting the raw text to ≤2000 bytes at a char boundary via `truncate_chars` — and both `AnthropicClient::flush_tool_call` and the `OpenAiClient::chat` arm call it, so the turn runs to `Done(usage)` and usage is recorded; unknown tools keep the `Notice` path and neither backend sends `AiEvent::Error` for malformed arguments.
+
+**Notes for review:**
+- The spec-fixed names (`malformed_args_event(id, name, raw, parse_error, ts)`), its location beside `invalid_args_event`, and the re-export are exactly as pinned. `flush_malformed_args_sends_visible_error` was replaced by `tool_args_json_anthropic_flush_is_tool_result` (one commit, both removed and added).
+- One adaptation worth noting: OpenAI's `chat` grew past its hygiene allowlist cap (238 → 252) with the inline match, so the arm delegates to a small `emit_malformed_args` free function in the same file, keeping `OpenAiClient::chat` within its cap (hygiene gate green, allowlist untouched).
+- One of my red-stage tests (`tool_args_json_cut_respects_char_boundary`) initially asserted a wrong expected cut length for a 3-byte-char string (I miscounted; 668 × 3 = 2004 never crosses a 2000-byte cut since `floor_char_boundary` clamps to the string length); it now pins a 3000-byte `é`-string cut exactly at 2000 bytes / 1000 chars. This was my own bad assertion, not a code bug, so it is not pasted as a red run.
+- E2E result: `sse_utf8 passed=3 failed=0`, `tool_args_json passed=6 failed=0`, `per_chunk_lossy=0`, `malformed_error=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all `ok … 0 failed`, clippy clean, `fmt_exit=0`, full suite `passed=2722 failed=0`. Committed as `30d0de2`; working tree clean. Adjacent (out of scope, noted in Findings): the buffer cap still counts bytes between line flushes, so a stream of non-`data:` lines can hold the cap an extra cycle before the next `next_data` call.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ok
+test functions_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test session_jsonl_round_trip ... ok
+test session_index_persistence ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (730640): No such process
+kill: (-731332): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-11-sse-utf8.md` — +91 -1
+- `src/ai/backends/anthropic.rs` — +48 -15
+- `src/ai/backends/openai.rs` — +26 -4
+- `src/ai/mod.rs` — +42 -9
+- `src/ai/tools/dispatch.rs` — +31 -0
+- `src/ai/tools/dispatch_tests.rs` — +96 -0
+- `src/ai/tools/mod.rs` — +3 -1
+
+**Commit:** 30d0de2c1f60e867bf4d0f87261d05952477746e
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
