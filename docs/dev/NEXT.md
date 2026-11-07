@@ -7,9 +7,9 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 09 — terminal-restore
-([`phase-09-terminal-restore.md`](milestones/M36-ux-and-audit/phase-09-terminal-restore.md)),
-drafted 2026-11-06 (findings B6, S9). Phases 01–08 are `done`;
+**Active phase:** phase 10 — secrets
+([`phase-10-secrets.md`](milestones/M36-ux-and-audit/phase-10-secrets.md)),
+drafted 2026-11-06 (findings S4, S5, S10). Phases 01–09 are `done`;
 twenty-three phases are planned in the README's table (04 split into 04a/04b
 and 21 — OSC 7501 program status, PE decision 9 — added on 2026-11-03; 05
 split into 05a/05b on 2026-11-04).
