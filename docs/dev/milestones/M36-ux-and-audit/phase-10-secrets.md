@@ -1,7 +1,7 @@
 # Phase 10 — secrets
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-10-1)
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -126,8 +126,15 @@ it should not.
 
 ## Acceptance criteria
 
+- [ ] **bug-10-1:** `cargo test secrets_transport_error_keeps_cause`
+      reports 1 passed. Today it reports 0.
+- [ ] **bug-10-1:** `grep -c 'let _url' src/ai/backends/gemini.rs` prints 0,
+      and the `GeminiClient::chat` entry in `tests/hygiene_allowlist.txt` is
+      263 or lower. Today they are 1 and 264.
+- [ ] **bug-10-1:** the full suite reads `passed=2714 failed=0`, one more
+      than the 2713 at bounce.
 - [ ] The E2E block's first line reads `secrets passed=P failed=0` with
-      P ≥ 10: the nine new tests plus the existing
+      P ≥ 11: the ten new tests plus the existing
       `multiple_secrets_in_one_string`, which the filter also matches. Today
       it reads `passed=1`.
 - [ ] The E2E block shows `url_key=0`: `gemini.rs` holds no `key={}` URL
@@ -480,3 +487,34 @@ kill: (-630136): No such process
 **Commit:** 0bdac100ca21f810269b910ae46501499308cb7f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-06 (bounce, bug-10-1)
+
+**The gates are green and the tree is clean. That is expected here and is
+NOT evidence that the phase is done.** The masking patterns,
+`invalid_args_log_line` at the three sites, the two Gemini functions, and
+the nine `secrets_` tests are approved. Do not redo them.
+
+There are exactly two edits left. See `bugs/bug-10-1.md`.
+
+1. **`scrub_transport_error` keeps the cause.** In `src/ai/mod.rs`, build
+   the result with `anyhow::Error::new(e.without_url())`, not
+   `anyhow::Error::msg(...)`. (The reviewer ran both forms in a scratch
+   crate, and only `new` keeps `tcp connect error: Connection refused`.)
+   Then add the test `secrets_transport_error_keeps_cause` next to
+   `secrets_transport_error_drops_url`, with the same hermetic setup. It
+   asserts two things about the scrubbed error's `{:#}` text: it contains
+   `tcp connect error`, and it does not contain `SECRETKEY123`. Write the
+   test first and run it, so it fails on today's code. Paste that failing
+   `test result:` line in a red-run entry.
+2. **Delete the dead `let _url = gemini_stream_url(&self.model);`** in
+   `GeminiClient::chat`. Run `cargo test --test hygiene`, then set the
+   `GeminiClient::chat` line in `tests/hygiene_allowlist.txt` to the value
+   the gate reports. It must be 263 or lower.
+
+**Finish condition:** `cargo test` reads `passed=2714 failed=0`. That is
+2713 plus the one new test; any other count is wrong. Before reporting,
+mutation-check the fix: change `new` back to `msg`, confirm that
+`secrets_transport_error_keeps_cause` fails, revert, and paste both results.
+Then re-run § End-to-end verification and paste its output. Commit as
+`fix: scrubbed transport errors keep their cause; drop dead Gemini url binding (M36 phase-10, bug-10-1)`.
