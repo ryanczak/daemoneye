@@ -518,3 +518,109 @@ mutation-check the fix: change `new` back to `msg`, confirm that
 `secrets_transport_error_keeps_cause` fails, revert, and paste both results.
 Then re-run § End-to-end verification and paste its output. Commit as
 `fix: scrubbed transport errors keep their cause; drop dead Gemini url binding (M36 phase-10, bug-10-1)`.
+
+### Update — 2026-11-07 04:40 (red runs, bug-10-1)
+
+**Tree held:** the bounced code exactly as reviewed — `scrub_transport_error`
+built with `anyhow::Error::msg`, no `secrets_transport_error_keeps_cause`
+test, and the dead `let _url = gemini_stream_url(&self.model);` in
+`GeminiClient::chat`. Edit 2 (the dead binding) has no red test of its own:
+its gate is the hygiene count, and the bounce note demands no red run for it.
+
+**Run 1 — `secrets_transport_error_keeps_cause` against the unmodified
+scrubber.** A failing assertion: the test exists, the fix does not.
+`cargo test --lib secrets_transport`:
+
+```
+running 2 tests
+test ai::tests::secrets_transport_error_drops_url ... ok
+test ai::tests::secrets_transport_error_keeps_cause ... FAILED
+
+failures:
+
+---- ai::tests::secrets_transport_error_keeps_cause stdout ----
+
+thread 'ai::tests::secrets_transport_error_keeps_cause' (645235) panicked at src/ai/mod.rs:614:9:
+the scrubbed error must keep its cause (the connection failure): error sending request
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    ai::tests::secrets_transport_error_keeps_cause
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 2633 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--lib` (as expected)
+```
+
+The panic message shows the bug: the `{:#}` text is bare `error sending
+request`, not `error sending request: client error (Connect): tcp connect
+error: Connection refused (os error 111)`.
+
+**Run 2 — mutation check, fix in place.** `anyhow::Error::new` builds the
+scrubbed error, and the test passes:
+
+```
+test ai::tests::secrets_transport_error_drops_url ... ok
+test ai::tests::secrets_transport_error_keeps_cause ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2633 filtered out; finished in 0.02s
+```
+
+**Run 3 — mutation check, `new` mutated back to `msg`.** The test fails
+again, pinning the distinction the bounce note describes:
+
+```
+test ai::tests::secrets_transport_error_keeps_cause ... FAILED
+thread 'ai::tests::secrets_transport_error_keeps_cause' panicked at src/ai/mod.rs:614:9:
+the scrubbed error must keep its cause (the connection failure): error sending request
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 2633 filtered out; finished in 0.02s
+```
+
+Reverted to `new` after run 3; the tree now holds the fix, not the mutation.
+
+No assertion was hand-tuned to force a failure: run 1 is the real behaviour on
+the bounced tree, and runs 2–3 are the mutation pair the finish condition
+demands.
+
+### Findings — 2026-11-07 (bug-10-1)
+
+1. `anyhow::Error::new(e.without_url())` keeps the full `{:#}` chain; the
+   bounce note's scratch-crate output reproduces exactly here
+   (reqwest 0.13.x, `Connection refused` on a hermetic port-1 send).
+2. The dead `let _url` binding was the only thing holding `chat` at 264;
+   deleting it brings the measured count back to 263 and the allowlist entry
+   now matches the gate's own number again.
+
+### Update — 2026-11-07 04:55 (end-to-end verification, bug-10-1)
+
+The block in § End-to-end verification, run verbatim as one capture. Pasted
+from `/tmp/e2e-10-bug.md`:
+
+```
+secrets passed=11 failed=0
+url_key=0
+without_url=1
+raw_args_warn=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.65s
+fmt_exit=0
+passed=2714 failed=0
+```
+
+Read against the acceptance criteria:
+
+- `secrets passed=11 failed=0` — the nine phase-10 `secrets_` tests plus
+  `multiple_secrets_in_one_string` plus the new
+  `secrets_transport_error_keeps_cause`, P = 11 ≥ 11.
+- `url_key=0`, `without_url=1`, `raw_args_warn=0` — unchanged from the
+  previous capture; the fix touches neither the URL construction nor the
+  warning sites.
+- `build_warnings=0`, hygiene / doc_truth / bug_tracker all `ok`, clippy
+  clean (`Finished` with no diagnostics), `fmt_exit=0`, and full suite
+  `passed=2714 failed=0` — 2713 plus the one new test, the finish condition
+  the bounce note pins.
+- `secrets_transport_error_keeps_cause` reports 1 passed (run 2 of the
+  red-runs entry), `grep -c 'let _url' src/ai/backends/gemini.rs` prints 0,
+  and the `GeminiClient::chat` allowlist entry is 263.

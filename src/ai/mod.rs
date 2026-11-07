@@ -342,7 +342,7 @@ async fn send_with_retry_inner(
 /// any transport error that reached a log carried the key with it (M36
 /// phase-10, S4). The message still names what went wrong.
 fn scrub_transport_error(e: reqwest::Error) -> anyhow::Error {
-    anyhow::Error::msg(e.without_url())
+    anyhow::Error::new(e.without_url())
 }
 
 /// Send an HTTP request with automatic retry and circuit-breaker protection.
@@ -592,6 +592,32 @@ mod tests {
         assert!(
             !text.is_empty(),
             "the scrubbed error must still name what went wrong: {text:?}"
+        );
+    }
+
+    #[test]
+    fn secrets_transport_error_keeps_cause() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = rt.block_on(async {
+            client
+                .get("http://127.0.0.1:1/?key=SECRETKEY123")
+                .send()
+                .await
+                .unwrap_err()
+        });
+        let scrubbed = scrub_transport_error(err);
+        let text = format!("{scrubbed:#}");
+        assert!(
+            text.contains("tcp connect error"),
+            "the scrubbed error must keep its cause (the connection failure): {text}"
+        );
+        assert!(
+            !text.contains("SECRETKEY123"),
+            "the scrubbed error must not carry the key: {text}"
         );
     }
 }

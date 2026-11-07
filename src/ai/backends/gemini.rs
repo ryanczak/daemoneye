@@ -242,7 +242,6 @@ impl AiClient for GeminiClient {
         use_tools: bool,
         loaded_tools: Vec<String>,
     ) -> Result<()> {
-        let _url = gemini_stream_url(&self.model);
         let converted = self.convert_messages(messages);
         let mut body = json!({
             "system_instruction": {"parts": [{"text": system}]},
