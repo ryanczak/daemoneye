@@ -482,9 +482,8 @@ impl<B: Backend> RatatuiRenderer<B> {
     /// Restore the terminal to its original state (exit raw mode, show
     /// cursor, clear inline viewport rows).
     pub fn restore(&mut self) {
-        use crossterm::event::{DisableBracketedPaste, DisableFocusChange};
-        use crossterm::execute;
-        let _ = execute!(std::io::stdout(), DisableFocusChange, DisableBracketedPaste);
-        let _ = ratatui::try_restore();
+        if let Some(g) = self.guard.as_mut() {
+            g.restore();
+        }
     }
 }

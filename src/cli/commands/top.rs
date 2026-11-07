@@ -605,7 +605,11 @@ pub async fn run_top(once: bool, filter: Option<String>, run: Option<String>) ->
         if once {
             println!(
                 "{}",
-                run_detail_text(&row, detail.record.as_ref(), &detail.log)
+                crate::cli::render::escape_controls(&run_detail_text(
+                    &row,
+                    detail.record.as_ref(),
+                    &detail.log
+                ))
             );
             return Ok(());
         }
@@ -629,7 +633,10 @@ pub async fn run_top(once: bool, filter: Option<String>, run: Option<String>) ->
             .map(|c| c.budget.max_cost_per_day)
             .unwrap_or(0.0);
         let snapshot = take_snapshot(cap).await;
-        println!("{}", render_once(&snapshot, &needle));
+        println!(
+            "{}",
+            crate::cli::render::escape_controls(&render_once(&snapshot, &needle))
+        );
         return Ok(());
     }
     if !std::io::stdout().is_terminal() {

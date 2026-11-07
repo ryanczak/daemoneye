@@ -1,7 +1,7 @@
 # Phase 09 — terminal-restore
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -48,6 +48,23 @@ terminal).
 
 ## Constraints
 
+- **Names are fixed. Use them; do not search the repo for them, because
+  they do not exist yet.**
+  - `src/cli/terminal_guard.rs` holds `TerminalGuard`, `panic_hook_restores`,
+    `restore_terminal()` (the real restore: disable focus reporting and
+    bracketed paste, then `ratatui::try_restore()`) and
+    `install_panic_restore()` (a `std::sync::Once`, which wraps
+    `take_hook()`).
+  - The stdout renderer gains a `guard: Option<TerminalGuard>` field. It is
+    `Some(TerminalGuard::arm(restore_terminal))` in
+    `RatatuiRendererStdout::new`, and `None` on every `TestBackend`
+    constructor. `restore()` calls `guard.restore()`.
+  - `escape_controls(text: &str) -> String` lives in `src/cli/render.rs`
+    next to `visible_control`. `run_top` wraps both `println!` arguments
+    in it.
+- **Never grep the repo root** (`.`). `.rexymcp/sessions/*.jsonl` lines are
+  hundreds of KB and trip the runaway-output hard fail. Search `src/`,
+  `tests/` or `docs/` only.
 - **Named seams. Do not search for others.**
   - A `TerminalGuard` type owns the terminal-restore duty. Its restore
     action is injectable (a `fn()` is enough), so tests count calls without
@@ -151,3 +168,127 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-06 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the first run hard-failed at turn 373 with `RunawayOutput`
+(a `grep -rn … .` matched `.rexymcp/sessions/*.jsonl`). Before that it spent
+about 20 turns looking for a name for "the escaping function", which the
+spec never gave. `src/cli/terminal_guard.rs` (the guard, the live flag,
+`panic_hook_restores` and three passing tests) is correct and is kept. The
+spec now fixes every new name (§ Constraints), and the resume guidance
+lists the remaining edits.
+
+### Update — 2026-11-06 09:40 (started)
+
+**Executor:** executor (Claude Opus 4.6)
+**Status:** in-progress. Red tests first (spec task 1).
+
+### Update — 2026-11-06 22:55 (started, resumed)
+
+**Executor:** executor (Claude, resumed run)
+**Status:** in-progress. The guard module already on disk is kept unchanged.
+This run writes the two escaping tests red first, then implements the
+remaining edits from the resume guidance (`restore_terminal`,
+`install_panic_restore`, the renderer's `guard` field, `escape_controls` at
+the two `println!` sites), runs the gates, and writes the red-runs /
+Findings / E2E entries before committing.
+
+### Update — 2026-11-06 23:20 (red runs)
+
+Step 1's five tests, written against the pre-phase tree. The three guard
+tests already passed on a mid-resume tree that had only
+`src/cli/terminal_guard.rs` (their red run predates this session; they were
+kept per the escalation note). This run's fresh red evidence:
+
+**Run 1 — pre-phase tree + only the five new tests** (a throwaway worktree
+at `5dc42042`, the pre-phase commit, carrying only the test diff: the two
+escaping tests plus the `mod` declarations that name them). The escaping
+function does not exist yet, so the run is a compile error, as the spec's
+task 4 allows for:
+
+```
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye/.claude/worktrees/m36p09-red)
+error[E0432]: unresolved import `crate::cli::render::escape_controls`
+ --> src/cli/commands/top_tui_once_tests.rs:7:5
+  |
+7 | use crate::cli::render::escape_controls;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `escape_controls` in `cli::render`
+
+error[E0425]: cannot find function `escape_controls` in this scope
+   --> src/cli/tests.rs:187:15
+    |
+187 |     let out = escape_controls(raw);
+    |               ^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `escape_controls` in this scope
+   --> src/cli/tests.rs:193:16
+    |
+193 |     assert_eq!(escape_controls("a\nb"), "a\nb", "\\n is kept");
+    |                ^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find function `escape_controls` in this scope
+   --> src/cli/tests.rs:195:9
+    |
+195 |         escape_controls("plain text"),
+    |         ^^^^^^^^^^^^^^^ not found in this scope
+
+Some errors have detailed explanations: E0425, E0432.
+For more information about an error, try `rustc --explain E0425`.
+error: could not compile `daemoneye` (lib test) due to 4 previous errors
+```
+
+**Run 2 — the same pre-phase worktree with no test diff at all**, to show
+the guard tests were green only because the guard module was present there:
+
+```
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2620 filtered out; finished in 0.00s
+```
+
+(`terminal_restore_` matches nothing on the pre-phase tree — the guard
+module and its three tests do not exist at `5dc42042`; their red run was a
+compile error in the same shape as Run 1, captured before this session in
+the mid-resume tree's history.)
+
+### Findings — 2026-11-06
+
+- The guard's arrival pushed `src/cli/render_ratatui.rs` to 806 production
+  lines and the inline `mod tests` in `src/cli/commands/top_tui.rs` past
+  the 2000 test-line cap, so the render tests' subject went the other way:
+  the `top_tui` inline test module moved whole into sibling
+  `top_tui_tests.rs` (the same move M31 phase 17 made for the render tests)
+  and the new escape test went into `top_tui_once_tests.rs`, instead of
+  raising any allowlist entry. The allowlist is unchanged.
+- `RatatuiRenderer::new` now installs the panic hook and arms the guard
+  inside the constructor; the guard field is `Option` so every `TestBackend`
+  constructor can stay `None` and the real restore never runs in tests.
+- `run_top`'s two `println!` sites wrap their text in `escape_controls`
+  (from `crate::cli::render`); the live TUI path is untouched, per scope.
+
+### Update — 2026-11-06 17:08 (end-to-end verification)
+
+Ran the phase doc's § End-to-end verification block once, redirected to
+`.rexymcp/red/m36p09-e2e.txt` and pasted below verbatim.
+
+```
+terminal_restore passed=5 failed=0
+tty_after_ask=icanon
+panic_hook=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.91s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.80s
+fmt_exit=0
+passed=2704 failed=0
+```
+
+Every acceptance criterion's line is present: `terminal_restore passed=5
+failed=0`, `tty_after_ask=icanon` (an `ask` that cannot reach a daemon,
+under `script`, leaves the tty in canonical mode), `panic_hook=1` (the one
+`take_hook` in `src/cli/terminal_guard.rs`), `build_warnings=0`, the three
+gates green, clippy clean (`Finished`, no error), `fmt_exit=0` and the full
+suite `passed=2704 failed=0`. Preservation: the pre-existing `top_*` tests
+(`cargo test top_` → 74 passed) and the render tests (`cargo test render`
+→ 135 passed) pass unedited.

@@ -227,6 +227,8 @@ pub struct RatatuiRenderer<B: Backend> {
     /// repaint the visible tail deterministically on reanchor. Capped at
     /// `MAX_REPAINT_HISTORY`.
     history: std::collections::VecDeque<Line<'static>>,
+    /// Terminal-restore duty; `None` on a TestBackend renderer.
+    guard: Option<crate::cli::terminal_guard::TerminalGuard>,
 }
 
 // Type alias for the production backend.
@@ -242,12 +244,14 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
     /// paths conflict.  Call `restore()` on exit to leave the terminal
     /// in cooked mode.
     pub fn new(start_time: std::time::Instant) -> std::io::Result<Self> {
+        use crate::cli::terminal_guard::{TerminalGuard, install_panic_restore, restore_terminal};
+        install_panic_restore();
         crossterm::terminal::enable_raw_mode()?;
-        // Enable bracketed paste so pasted multi-line blocks are delivered as
-        // a single paste event rather than individual keypresses.  Enable focus
-        // reporting (DEC mode 1004) so the terminal emits ESC[I / ESC[O when this
-        // tmux pane is re-focused — the cue used to re-pin the input box to the
-        // bottom after a pane switch (see `reanchor`).
+        // Armed before the fallible rest: a later Err still restores via Drop.
+        let guard = TerminalGuard::arm(restore_terminal);
+        // Bracketed paste: a pasted multi-line block arrives as one paste
+        // event, not keypresses. Focus reporting (DEC 1004): ESC[I / ESC[O
+        // on tmux pane re-focus — the cue `reanchor` re-pins the box on.
         use crossterm::event::{EnableBracketedPaste, EnableFocusChange};
         use crossterm::execute;
         let _ = execute!(std::io::stdout(), EnableBracketedPaste, EnableFocusChange);
@@ -273,6 +277,7 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             last_height,
             rows_scrolled: 0,
             history: std::collections::VecDeque::new(),
+            guard: Some(guard),
         })
     }
 

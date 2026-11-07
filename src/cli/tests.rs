@@ -179,6 +179,25 @@ fn wrap_display_empty_input_is_one_empty_row() {
     assert_eq!(wrap_display("", 20), vec![String::new()]);
 }
 
+// ── terminal-restore (M36 phase-09, S9): the escaping function ───────────────
+
+#[test]
+fn terminal_restore_once_escapes_controls() {
+    let raw = "ls \x1b]52;c;aGk=\x07";
+    let out = escape_controls(raw);
+    assert!(out.contains("ls "), "the command head survives: {out:?}");
+    assert!(
+        !out.bytes().any(|b| b == 0x1b || b == 0x07),
+        "no raw ESC or BEL byte survives: {out:?}"
+    );
+    assert_eq!(escape_controls("a\nb"), "a\nb", "\\n is kept");
+    assert_eq!(
+        escape_controls("plain text"),
+        "plain text",
+        "plain text is unchanged"
+    );
+}
+
 // ── display_wrap: M36 phase-05b (B8, P6, L6) ────────────────────────────────
 
 /// The display width of a styled row: the sum over its spans of each span's

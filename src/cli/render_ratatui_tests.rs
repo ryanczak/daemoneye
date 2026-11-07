@@ -95,6 +95,7 @@ pub(super) fn test_renderer(
         history: std::collections::VecDeque::new(),
         last_width: 0,
         last_height: 0,
+        guard: None,
     }
 }
 

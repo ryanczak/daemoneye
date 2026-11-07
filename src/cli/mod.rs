@@ -12,6 +12,7 @@ pub mod render;
 pub mod render_ratatui;
 pub mod status;
 pub mod tail;
+pub(crate) mod terminal_guard;
 pub mod transcript;
 pub mod viewer;
 

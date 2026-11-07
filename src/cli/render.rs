@@ -84,6 +84,22 @@ pub fn visual_len(s: &str) -> usize {
     count
 }
 
+/// Map every control or invisible-format character except `\n` through
+/// [`visible_control`], so text printed with `println!` (`top --once`) can
+/// never carry a raw escape byte to the terminal. Plain text, spaces and
+/// `\n` are unchanged. Pure.
+pub fn escape_controls(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch == '\n' {
+                ch.to_string()
+            } else {
+                visible_control(ch).unwrap_or_else(|| ch.to_string())
+            }
+        })
+        .collect()
+}
+
 /// Query the visible column width of the terminal on stdout.
 /// Uses `ioctl(TIOCGWINSZ)` so the value is always live — pane resizes are
 /// reflected automatically.  Falls back to `$COLUMNS`, then to 79.
