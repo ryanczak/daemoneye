@@ -1,7 +1,7 @@
 # Phase 13 — ghost-slot-and-sudo
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-13-1)
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -214,6 +214,13 @@ for them: they do not exist yet.**
 
 ## Acceptance criteria
 
+- [ ] **bug-13-1:** `cargo test sudo_detect_inside_quotes` reports 1 passed:
+      `sh -c 'id; sudo rm -rf /x'` and `bash -c "sudo rm -rf /x"` both count
+      as sudo. Today it reports 0.
+- [ ] **bug-13-1:** `cargo test sudo_whole_quoted_sudo_refused` reports 1
+      passed: `is_safe` refuses `sh -c 'id; sudo rm -rf /x'`. Today it
+      reports 0.
+- [ ] **bug-13-1:** the full suite reads `passed=2746 failed=0` (2744 + 2).
 - [ ] `slot_wired=1` or more: `trigger_ghost_turn` claims the guard. Today
       it is 0.
 - [ ] `caller_releases=0`: nothing outside `stats.rs` calls
@@ -221,7 +228,7 @@ for them: they do not exist yet.**
 - [ ] `stale_regex=0`: the old regex text is gone from `src` and
       `docs/design-reference.md`. Today it is 3.
 - [ ] Each test group passes in full: `ghost_slot passed=3`,
-      `sudo_detect passed=4`, `sudo_whole passed=5`,
+      `sudo_detect passed=5`, `sudo_whole passed=6`,
       `mailbox_name passed=3`. Today none of these tests exists.
 - [ ] The red-runs entry shows the compile errors and the assertion
       failures named in Spec 1.
@@ -576,3 +583,52 @@ kill: (-1042416): No such process
 **Commit:** 05621bce8e4c7432183f8dba0e37e85a87015493
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-07 (bounce, bug-13-1)
+
+**The gates are green and the tree is clean. That is expected here and is
+NOT evidence that the phase is done.** All of the following are approved;
+do not redo them:
+
+- `GhostSlot`, claimed on entry to `trigger_ghost_turn`;
+- the removed caller releases;
+- the `is_safe` whole-command rule;
+- the mailbox checks;
+- the comments;
+- the existing tests.
+
+There is exactly one defect left. See `bugs/bug-13-1.md`.
+`command_has_sudo` (`src/daemon/utils/sudo.rs`) skips a quoted region
+whole, so `sh -c 'id; sudo rm -rf /x'` counts as sudo-free and a ghost may
+run it. Before this phase it was refused.
+
+**The fix: scan quoted text instead of skipping it.**
+
+- The quote character opens a command position, as `(` does. Inside the
+  quote, `;`, `&`, `|`, a newline, `$(`, a backtick and `(` behave as they
+  do outside.
+- The closing quote ends the word, like `)`.
+- Delete the arm that skips ahead to the closing quote.
+
+Detecting more is fine when it fails closed, for example
+`grep 'sudo' log`. But `sudo_detect_argument_is_not_sudo` must keep
+passing, so an **unquoted** argument `sudo` (`grep sudo /var/log/auth.log`)
+must still not match.
+
+**Steps:**
+
+1. Write `sudo_detect_inside_quotes` (in `sudo.rs` tests) and
+   `sudo_whole_quoted_sudo_refused` (in `policy_tests.rs`) first. Run them
+   and paste the real red output: assertion failures.
+2. Fix the detector. Paste green.
+3. **Mutation check:** restore the skip-to-closing-quote arm, confirm that
+   `sudo_detect_inside_quotes` fails, then remove the arm again. Paste both
+   real results.
+
+**Finish condition:** `cargo test` reads `passed=2746 failed=0`. That is
+exactly 2744 + 2; any other count is wrong. Re-run § End-to-end
+verification. It should now show `sudo_detect passed=5` and
+`sudo_whole passed=6`. Commit as
+`fix: command_has_sudo scans quoted text (M36 phase-13, bug-13-1)`.
+
+Do not grep `/dev/null`. Run the test instead of searching.
