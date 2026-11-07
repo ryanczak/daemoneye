@@ -1,7 +1,7 @@
 # Phase 12 — mid-turn-messages
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-12-2)
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -130,6 +130,10 @@ about to overwrite.
 
 ## Acceptance criteria
 
+- [ ] **bug-12-2:** `grep -c 'merged_messages: Vec<Message> = Vec::new()' src/daemon/stream/conversation.rs`
+      prints 0: when the entry was evicted mid-turn, the compaction rewrite
+      writes the turn's own messages, never an empty history. Today it
+      prints 1.
 - [ ] **bug-12-1:** `grep -c 'take_turn_snapshot(' src/daemon/server/ask.rs`
       prints 1 or more: the turn's starting history is taken through the
       function that opens the inbox. Today it prints 0.
@@ -138,8 +142,8 @@ about to overwrite.
 - [ ] **bug-12-1:** `grep -c 'write_session_file(id, &messages)' src/daemon/stream/conversation.rs`
       prints 0: the compaction rewrite writes the merged history. Today it
       prints 1.
-- [ ] **bug-12-1:** the full suite reads `passed=2729 failed=0`, one more
-      than the 2728 at bounce.
+- [ ] **bug-12-1 / bug-12-2:** the full suite reads `passed=2729 failed=0`
+      (bug-12-2 adds no test).
 - [ ] The E2E block shows `mid_turn passed=P failed=0` with P ≥ 7. Today it
       reads `passed=6`.
 - [ ] The E2E block shows `overwrite_sites=0`: no
@@ -725,3 +729,28 @@ kill: (-886044): No such process
 **Commit:** b70f0774c8957c829f14d943cd526ec014dd5b7b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-07 (bounce, bug-12-2)
+
+**The gates are green and the tree is clean. That is expected here and is
+NOT evidence that the phase is done.** All of bug-12-1 is approved:
+`take_turn_snapshot`, its call in `handle_ask`, the test, and the
+mutation check. Do not redo it.
+
+There is exactly one edit left. See `bugs/bug-12-2.md`. In the `Done` arm of
+`src/daemon/stream/conversation.rs`, `merged_messages` must start as the
+turn's own messages, not as an empty `Vec`:
+
+```rust
+let mut merged_messages: Vec<Message> = messages.clone();
+```
+
+The `if let Some(entry)` branch still overwrites it with the merged history
+after `finish_turn`. If the entry was evicted mid-turn, the compaction
+rewrite then writes the turn's messages, as before this phase, instead of
+an empty file.
+
+**Finish condition:** `cargo test` reads `passed=2729 failed=0`, and
+**not 2730**. This fix adds no test, so a rising count means scope creep.
+Re-run § End-to-end verification and paste its output. Commit as
+`fix: compaction rewrite falls back to the turn's messages when the entry was evicted (M36 phase-12, bug-12-2)`.
