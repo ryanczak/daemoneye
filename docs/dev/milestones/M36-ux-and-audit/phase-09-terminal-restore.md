@@ -1,7 +1,7 @@
 # Phase 09 — terminal-restore
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -292,3 +292,147 @@ gates green, clippy clean (`Finished`, no error), `fmt_exit=0` and the full
 suite `passed=2704 failed=0`. Preservation: the pre-existing `top_*` tests
 (`cargo test top_` → 74 passed) and the render tests (`cargo test render`
 → 135 passed) pass unedited.
+
+### Update — 2026-11-07 01:21 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Resumed and finished M36 phase-09 (B6 + S9), building on the kept `src/cli/terminal_guard.rs`. I added `restore_terminal()` (DisableFocusChange/DisableBracketedPaste then `ratatui::try_restore()`) and `install_panic_restore()` (a `std::sync::Once` wrapping `take_hook()`, restoring only while `TERMINAL_RENDERER_LIVE` is set, then chaining the previous hook); `RatatuiRendererStdout::new` now installs the hook and arms `Some(TerminalGuard::arm(restore_terminal))` immediately after `enable_raw_mode` so a later `Err` still restores via `Drop`, every `TestBackend` constructor passes `guard: None`, and `restore()` delegates to the guard. S9 is fixed by `pub fn escape_controls` in `src/cli/render.rs` (each char through `visible_control` except `\n`) wrapped around both `println!` arguments in `run_top`; the five `terminal_restore_*` tests pass and the E2E block ran verbatim once: `terminal_restore passed=5 failed=0`, `tty_after_ask=icanon`, `panic_hook=1`, `build_warnings=0`, hygiene/doc_truth/bug_tracker ok, clippy clean, `fmt_exit=0`, full suite `passed=2704 failed=0`. Deviations to note: the guard's arrival pushed `render_ratatui.rs` past the 800-line cap and `top_tui.rs`'s inline tests past the 2000-line test cap, so instead of raising allowlist entries I moved the `top_tui` inline test module whole into sibling `top_tui_tests.rs` and put the new escape test in `top_tui_once_tests.rs` (allowlist unchanged; red runs were compile errors, captured verbatim in the red-runs entry with the tree state labeled). Committed as `221596639b` with the tree clean and the phase doc left at `in-progress` — no hand-written `(complete)` entry, per the contract.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ok
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test config_pricing_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (564636): No such process
+kill: (-565311): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `.claude/worktrees/m36p09-red/src/cli/mod.rs` — +0 -24
+- `docs/dev/milestones/M36-ux-and-audit/phase-09-terminal-restore.md` — +108 -0
+- `src/cli/commands/top.rs` — +9 -2
+- `src/cli/commands/top_tui.rs` — +6 -1998
+- `src/cli/commands/top_tui_once_tests.rs` — +28 -0
+- `src/cli/commands/top_tui_tests.rs` — +1987 -0
+- `src/cli/render.rs` — +16 -0
+- `src/cli/render_ratatui.rs` — +10 -5
+- `src/cli/render_ratatui_draw.rs` — +3 -4
+- `src/cli/render_ratatui_tests.rs` — +1 -0
+- `src/cli/terminal_guard.rs` — +28 -5
+- `src/cli/tests.rs` — +19 -0
+
+**Commit:** 221596639b8595333b679d76cb024ea8d7009ba1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
