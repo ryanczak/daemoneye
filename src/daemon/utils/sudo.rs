@@ -26,88 +26,134 @@ pub fn is_fingerprint_prompt(output: &str) -> bool {
         || output.contains("Failed to match fingerprint")
 }
 
+/// Wrapper commands whose remaining words still name the command being
+/// run, so a `sudo` after any of them is a command word. The set is
+/// deliberately fail-closed (every word of the simple command counts) and
+/// folds in `xargs`, formerly handled by its own pending flag.
+const WRAPPER_COMMANDS: [&str; 12] = [
+    "env", "nohup", "time", "exec", "command", "nice", "ionice", "timeout", "stdbuf", "setsid",
+    "watch", "xargs",
+];
+
+/// Shell keywords that, in command position, keep the *next* word there
+/// too. In argument position they are ordinary words, so `echo then sudo`
+/// does not match.
+const COMMAND_KEYWORDS: [&str; 9] = [
+    "if", "then", "else", "elif", "do", "while", "until", "{", "!",
+];
+
+/// Is `word` the command `sudo`? In command position a leading `\` escape
+/// is stripped first (so `\sudo id` counts), and only the basename after
+/// the last `/` is compared (so `/usr/bin/sudo id` counts).
+fn sudo_command_word(word: &str) -> bool {
+    let bare = word.strip_prefix('\\').unwrap_or(word);
+    let basename = std::path::Path::new(bare)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(bare);
+    basename == "sudo"
+}
+
+/// A leading `NAME=value` assignment in command position keeps the next
+/// word there too: `FOO=1 sudo id`.
+fn is_assignment(word: &str) -> bool {
+    let name = word.split('=').next().unwrap_or("");
+    !word.split_once('=').is_none()
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
 /// True when `sudo` appears as a *command word* anywhere in `cmd`: at the
-/// start, after `;`/`&`/`|` or a newline, inside `$(`, a backtick or `(`,
-/// or as the command `xargs` runs.
+/// start, after `;`/`&`/`|` or a newline, inside `$(`, a backtick, `(` or a
+/// quoted region (the string handed to `sh -c` is itself a command, so
+/// quoted text is scanned, not skipped), after a wrapper command, after a
+/// shell keyword, after a leading assignment, or behind an absolute path or
+/// a backslash escape.
 ///
 /// `sudo` as an argument or substring — `cat /etc/sudoers`, `echo pseudo`,
-/// `visudo -c`, `grep sudo /var/log/auth.log` — is not a command word, and
-/// must not match.
+/// `visudo -c`, `grep sudo /var/log/auth.log`, `which sudo`, `man sudo`,
+/// `echo then sudo` — is not a command word, and must not match. A quoted
+/// region may count more than an unquoted argument does (`grep 'sudo' log`
+/// matches); that fails closed and is accepted.
 pub fn command_has_sudo(cmd: &str) -> bool {
     let chars: Vec<char> = cmd.chars().collect();
     let mut i = 0;
     // The start of the string is a command position; every separator makes
     // the next word one again, and every plain word closes it off.
     let mut at_command = true;
-    // The previous word was `xargs`: the next non-flag word is the command
-    // xargs runs, so it counts as a command position.
-    let mut xargs_pending = false;
+    // A wrapper command is active: every later word of this simple command
+    // is a command position, until the next separator.
+    let mut wrapper = false;
 
     while i < chars.len() {
         match chars[i] {
             ';' | '&' | '|' | '\n' | '\r' => {
                 at_command = true;
-                xargs_pending = false;
+                wrapper = false;
                 i += 1;
             }
             ' ' | '\t' => i += 1,
-            '\'' | '"' => {
-                // A quoted region is argument text: sudo inside one is never
-                // a command. Skip to the closing quote.
-                let close = chars[i];
-                i += 1;
-                while i < chars.len() && chars[i] != close {
-                    i += 1;
-                }
-                i += 1;
-                at_command = false;
-                xargs_pending = false;
-            }
+            // A quote opens a command position exactly as `(` does: what is
+            // inside is scanned, not skipped, because the string handed to
+            // `sh -c` is itself a command (bug-13-1). The closing quote
+            // ends the word, like `)`.
             '$' if chars.get(i + 1) == Some(&'(') => {
                 // Command substitution: what follows is a command.
                 at_command = true;
-                xargs_pending = false;
+                wrapper = false;
                 i += 2;
             }
-            '`' | '(' => {
-                // Backtick substitution or subshell: what follows is a command.
+            '`' | '(' | '\'' | '"' => {
                 at_command = true;
-                xargs_pending = false;
+                wrapper = false;
                 i += 1;
             }
             ')' | '<' | '>' => {
                 at_command = false;
-                xargs_pending = false;
+                wrapper = false;
                 i += 1;
-            }
-            '\\' => {
-                // An escaped character is data, not command syntax.
-                at_command = false;
-                xargs_pending = false;
-                i += 2;
             }
             _ => {
                 let start = i;
                 while i < chars.len()
                     && !matches!(
                         chars[i],
-                        ' ' | '\t' | ';' | '&' | '|' | '\n' | '\r' | '(' | ')' | '<' | '>' | '`'
+                        ' ' | '\t'
+                            | ';'
+                            | '&'
+                            | '|'
+                            | '\n'
+                            | '\r'
+                            | '('
+                            | ')'
+                            | '<'
+                            | '>'
+                            | '`'
+                            | '\''
+                            | '"'
                     )
                 {
                     i += 1;
                 }
                 let word: String = chars[start..i].iter().collect();
-                if (at_command || xargs_pending) && word == "sudo" {
+                if (at_command || wrapper) && sudo_command_word(&word) {
                     return true;
                 }
-                if word == "xargs" {
-                    xargs_pending = true;
-                    at_command = false;
-                } else if xargs_pending && word.starts_with('-') {
-                    // An xargs flag: the command xargs runs is still ahead.
-                } else {
-                    at_command = false;
-                    xargs_pending = false;
+                if wrapper {
+                    // Every later word of the simple command is a command
+                    // position; nothing a word can do ends the wrapper
+                    // here, only a separator can.
+                    continue;
+                }
+                if at_command {
+                    if WRAPPER_COMMANDS.contains(&word.as_str()) {
+                        wrapper = true;
+                    } else if !COMMAND_KEYWORDS.contains(&word.as_str()) && !is_assignment(&word) {
+                        at_command = false;
+                    }
                 }
             }
         }
@@ -317,6 +363,11 @@ mod tests {
 
     /// Preservation: the argument positions on the must-not-match list stay
     /// false, exactly as before this phase. Green before the phase.
+    ///
+    /// Extended with the keyword/assignment negatives the PE folded into
+    /// bug-13-1: a keyword in **argument** position is an ordinary word, so
+    /// `echo then sudo` stays sudo-free, and `sudo` as another command's
+    /// argument (`which sudo`, `man sudo`) never becomes a command word.
     #[test]
     fn sudo_detect_argument_is_not_sudo() {
         for cmd in [
@@ -325,10 +376,62 @@ mod tests {
             "echo pseudo",
             "visudo -c",
             "grep sudo /var/log/auth.log",
+            "echo then sudo",
+            "which sudo",
+            "man sudo",
         ] {
             assert!(
                 !command_has_sudo(cmd),
                 "preservation: sudo as an argument or substring must not match: {cmd:?}"
+            );
+        }
+    }
+
+    /// bug-13-1: a `sh -c` / `bash -c` string is itself a command, so quoted
+    /// text must be **scanned**, not skipped. Test written red: the current
+    /// detector skips the quoted region whole and misses both.
+    #[test]
+    fn sudo_detect_inside_quotes() {
+        assert!(
+            command_has_sudo("sh -c 'id; sudo rm -rf /x'"),
+            "the string handed to sh -c is a command; sudo in it is a regression today"
+        );
+        assert!(
+            command_has_sudo("bash -c \"sudo rm -rf /x\""),
+            "the string handed to bash -c is a command; the old regex missed it, the \
+             new detector must not"
+        );
+    }
+
+    /// bug-13-1 (folded in): sudo behind a wrapper, a shell keyword, a
+    /// leading assignment, an absolute path or a backslash escape — every
+    /// position a shell puts `sudo` in command position. Test written red.
+    #[test]
+    fn sudo_detect_wrappers_keywords_paths() {
+        for cmd in [
+            "env sudo id",
+            "env -i FOO=1 sudo id",
+            "nohup sudo id",
+            "time sudo id",
+            "exec sudo id",
+            "command sudo id",
+            "nice -n 5 sudo id",
+            "ionice -c 3 sudo id",
+            "timeout 10 sudo id",
+            "stdbuf -o0 sudo id",
+            "setsid sudo id",
+            "watch sudo id",
+            "if true; then sudo id; fi",
+            "{ sudo id; }",
+            "! sudo id",
+            "FOO=1 sudo id",
+            "/usr/bin/sudo id",
+            "\\sudo id",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "sudo in command position behind a wrapper, keyword, assignment, path \
+                 or escape must be detected: {cmd:?}"
             );
         }
     }

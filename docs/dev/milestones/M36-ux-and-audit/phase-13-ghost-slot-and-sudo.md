@@ -450,6 +450,121 @@ two old-regex comments in `src/daemon/executor/file_ops/write.rs` and
 mutation check, Findings, and the E2E block above. Hygiene allowlist entry
 raised 172 → 183 for `trigger_ghost_turn`.
 
+### Update — 2026-11-07 19:10 (started, resume 2)
+
+Executor: Claude (Opus 4.6). Resuming on bug-13-1 (widened): the detector's
+quoted-region skip hid a chained `sudo` inside a `sh -c` string, and four
+command positions (wrappers, keywords, assignments, paths/escapes) were
+still invisible. Wrote the four red tests, fixed the detector, ran the
+mutation check, and re-ran the E2E block.
+
+### Update — 2026-11-07 19:40 (red runs, bug-13-1)
+
+Four tests written against the pre-fix tree (the phase's earlier sudo work
+was already landed; these are the bug-13-1 additions):
+
+```
+$ cargo test sudo_detect 2>&1 | tail -20
+running 6 tests
+test daemon::utils::sudo::tests::sudo_detect_argument_is_not_sudo ... ok
+test daemon::utils::sudo::tests::sudo_detect_newline ... ok
+test daemon::utils::sudo::tests::sudo_detect_substitutions ... ok
+test daemon::utils::sudo::tests::sudo_detect_inside_quotes ... FAILED
+test daemon::utils::sudo::tests::sudo_detect_xargs ... ok
+test daemon::utils::sudo::tests::sudo_detect_wrappers_keywords_paths ... FAILED
+
+---- daemon::utils::sudo::tests::sudo_detect_inside_quotes stdout ----
+thread '...' panicked at src/daemon/utils/sudo.rs:349:9:
+the string handed to sh -c is a command; sudo in it is a regression today
+
+---- daemon::utils::sudo::tests::sudo_detect_wrappers_keywords_paths stdout ----
+thread '...' panicked at src/daemon/utils/sudo.rs:385:13:
+sudo in command position behind a wrapper, keyword, assignment, path or escape
+must be detected: "env sudo id"
+ (x2)
+failures:
+    daemon::utils::sudo::tests::sudo_detect_inside_quotes
+    daemon::utils::sudo::tests::sudo_detect_wrappers_keywords_paths
+test result: FAILED. 4 passed; 2 failed; 0 ignored; 0 measured; 2663 filtered out
+```
+
+`sudo_detect_argument_is_not_sudo` was extended with `echo then sudo`,
+`which sudo` and `man sudo` and stayed green through both runs.
+
+```
+$ cargo test sudo_whole 2>&1 | tail -30
+running 7 tests
+test daemon::policy::tests::sudo_whole_approved_then_chained_refused ... ok
+test daemon::policy::tests::sudo_whole_newline_refused ... ok
+test daemon::policy::tests::sudo_whole_chained_sudo_refused ... ok
+test daemon::policy::tests::sudo_whole_substitution_refused ... ok
+test daemon::policy::tests::sudo_whole_plain_script_passes ... ok
+test daemon::policy::tests::sudo_whole_quoted_sudo_refused ... FAILED
+test daemon::policy::tests::sudo_whole_wrapped_sudo_refused ... FAILED
+
+---- ... ----
+thread '...' panicked at src/daemon/policy_tests.rs:171:5:
+sudo chained inside a `sh -c` string is a second command; refusing it is what
+the policy did before this phase
+
+---- ... ----
+thread '...' panicked at src/daemon/policy_tests.rs:185:5:
+`sudo` behind the env wrapper must not be auto-approved
+ (x2)
+failures:
+    daemon::policy::tests::sudo_whole_quoted_sudo_refused
+    daemon::policy::tests::sudo_whole_wrapped_sudo_refused
+test result: FAILED. 5 passed; 2 failed; 0 ignored; 0 measured; 2662 filtered out
+```
+
+### Update — 2026-11-07 19:52 (mutation check, bug-13-1)
+
+Restored the pre-bug-13-1 quoted-region skip into the new detector and ran
+`cargo test sudo_detect_inside_quotes`:
+
+```
+test daemon::utils::sudo::tests::sudo_detect_inside_quotes ... FAILED
+thread '...' panicked at src/daemon/utils/sudo.rs:394:9:
+the string handed to sh -c is a command; sudo in it is a regression today
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2668 filtered out
+```
+
+Removed the restored arm again, so the shipped detector scans quotes.
+
+### Findings — 2026-11-07 (bug-13-1 fix)
+
+- The fix rewrites the `command_has_sudo` scan loop: quoted regions are
+  scanned (a quote opens a command position like `(` does), and a wrapper
+  word in command position keeps every later word of the simple command in
+  command position — `xargs`'s old pending flag is folded into
+  `WRAPPER_COMMANDS`. Keywords, leading assignments and path/escape
+  basenames round out the four folded-in rules, all fail-closed.
+- `grep -rlF '(?:^|[;&|])\s*sudo\b' src docs` still hits 5 files, but none
+  in the E2E criterion's `src docs/design-reference.md` list: three older
+  milestone docs (M19/M21 history records), `bugs/bug-13-1.md` (quoting the
+  regex as the bug), and this phase doc. `stale_regex=0` holds.
+- `tests/hygiene_allowlist.txt` untouched: `command_has_sudo` grew but is
+  not an allowlisted entry, and the hygiene gate passes unchanged.
+
+### Update — 2026-11-07 19:58 (end-to-end verification, bug-13-1)
+
+```
+ghost_slot_ passed=3 failed=0
+sudo_detect_ passed=6 failed=0
+sudo_whole_ passed=7 failed=0
+mailbox_name_ passed=3 failed=0
+slot_wired=1
+caller_releases=0
+stale_regex=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2748 failed=0
+```
+
 ### Update — 2026-11-07 18:56 (complete, server-authored)
 
 **Summary:** **Summary + Notes for review**

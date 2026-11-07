@@ -161,6 +161,37 @@ fn sudo_whole_newline_refused() {
     );
 }
 
+/// bug-13-1: quoted text is scanned, not skipped, so a sudo chained inside
+/// the string handed to `sh -c` is seen and the command is refused. Test
+/// written red: the current detector calls the command sudo-free, and
+/// `is_safe` auto-approves it.
+#[test]
+fn sudo_whole_quoted_sudo_refused() {
+    let p = policy(&["fix.sh"]);
+    assert!(
+        !p.is_safe("sh -c 'id; sudo rm -rf /x'"),
+        "sudo chained inside a `sh -c` string is a second command; refusing it \
+         is what the policy did before this phase"
+    );
+}
+
+/// bug-13-1 (folded in): `is_safe` does not see the sudo behind a wrapper
+/// (env) or behind an absolute path (`/usr/bin/sudo`), so the auto-approve
+/// path cannot vouch for it. The structural tail rule refuses it. Test
+/// written red: the detector today calls these commands sudo-free.
+#[test]
+fn sudo_whole_wrapped_sudo_refused() {
+    let p = policy(&["fix.sh"]);
+    assert!(
+        !p.is_safe("env sudo rm -rf /x"),
+        "`sudo` behind the env wrapper must not be auto-approved"
+    );
+    assert!(
+        !p.is_safe("/usr/bin/sudo rm -rf /x"),
+        "`/usr/bin/sudo` must not be auto-approved as a bare path"
+    );
+}
+
 #[test]
 fn resolve_command_bare_name() {
     let p = policy(&["fix.sh"]);
