@@ -496,3 +496,94 @@ mutation-check the fix: comment out the `begin_turn()` call in
 restore it, and paste both real results. Then re-run § End-to-end
 verification and paste its output. Commit as
 `fix: handle_ask opens the mid-turn inbox; compaction writes the merged history (M36 phase-12, bug-12-1)`.
+### Update — 2026-11-07 08:14 (started, resume for bug-12-1)
+
+Executor: headless run (glm-5.3-flash via rexyMCP), resuming the bounced
+phase. Status stays in-progress. Three edits remain per
+`bugs/bug-12-1.md`: `take_turn_snapshot` wired into `handle_ask`, the
+`mid_turn_snapshot_opens_inbox` test, and the compaction rewrite reading
+the merged history.
+
+### Update — 2026-11-07 08:16 (red run, bug-12-1)
+
+The new test `mid_turn_snapshot_opens_inbox`, written against the
+pre-edit tree (the function `take_turn_snapshot` does not exist yet, so
+`handle_ask` still clones via `mem.get(id).map(|e| e.messages.clone())`),
+
+```
+error[E0425]: cannot find function `take_turn_snapshot` in this scope
+    --> src/daemon/session_tests.rs:1031:20
+     |
+1031 |     let snapshot = take_turn_snapshot(&sessions, "snap")
+     |                    ^^^^^^^^^^^^^^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `daemoneye` (lib test) due to 1 previous error
+```
+
+red as a compile error only; there is no assertion failure at this point.
+
+### Findings — 2026-11-07 08:16
+
+- `with_sessions` returns the closure's value, so `take_turn_snapshot`
+  fits the one-lock-acquisition shape directly; no new lock pattern.
+`handle_ask`'s disk fallback then unchanged. Allowlist `handle_ask`
+grew by one line (`take_turn_snapshot(sessions, id)` replaces a longer
+closure), so the count drops rather than rises; the hygiene gate reports
+the value this run sees.
+### Update — 2026-11-07 08:22 (mutation check)
+
+`begin_turn()` in `take_turn_snapshot` commented out (real output):
+
+```
+assertion `left == right` failed: take_turn_snapshot opened the inbox, so the event pushed mid-turn survives its write-back
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::session::tests::mid_turn_snapshot_opens_inbox
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2649 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+Restored; the same command then reads `test result: ok. 1 passed; 0 failed`.
+
+### Update — 2026-11-07 08:24 (end-to-end verification, bug-12-1)
+
+Ran the phase doc's § End-to-end verification block once; the transcript
+below is the untouched stdout of that single run:
+
+```
+mid_turn passed=7 failed=0
+overwrite_sites=0
+raw_event_push=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.41s
+fmt_exit=1
+passed=2729 failed=0
+```
+
+The run caught `cargo fmt` drift in the two files this resume touched
+(function signature and one `.iter().map(...)` chain); `cargo fmt --all`
+applied, `cargo fmt --all --check` re-ran clean with `fmt_exit=0`. After
+the format there is one more `mid_turn` re-check (`passed=7 failed=0`),
+one final clippy (`-D warnings` clean), and one full `cargo test`
+(`passed=2729 failed=0`), all green.
+
+Line by line against the acceptance criteria:
+
+- `grep -c 'take_turn_snapshot(' src/daemon/server/ask.rs` = 1.
+- `cargo test mid_turn_snapshot_opens_inbox` = 1 passed.
+- `grep -c 'write_session_file(id, &messages)' conversation.rs` = 0.
+- Snippets 2–3 unchanged: `overwrite_sites=0`, `raw_event_push=0`.
+- `build_warnings=0`, hygiene `16 passed`, doc_truth `16 passed`,
+  bug_tracker `6 passed` (all failed=0), clippy clean, `fmt_exit=0`,
+- full suite `passed=2729 failed=0`.
+- `mid_turn passed=7 failed=0` above.
+- The full suite reads `passed=2729 failed=0`, one more than the 2728 at bounce.

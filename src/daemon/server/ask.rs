@@ -71,7 +71,7 @@ where
     // Slow path: file on disk (survives daemon restarts).
     let mut messages: Vec<Message> = session_id
         .as_ref()
-        .and_then(|id| with_sessions(sessions, |mem| mem.get(id).map(|e| e.messages.clone())))
+        .and_then(|id| take_turn_snapshot(sessions, id))
         .or_else(|| {
             session_id
                 .as_ref()

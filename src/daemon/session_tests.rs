@@ -1020,6 +1020,41 @@ fn mid_turn_begin_resets_stale_inbox() {
 }
 
 #[test]
+fn mid_turn_snapshot_opens_inbox() {
+    let sessions = SessionStore::new();
+    with_sessions(&sessions, |store| {
+        let mut entry = entry_with(std::time::Instant::now());
+        entry.messages = vec![make_msg("user", "a")];
+        store.insert("snap".to_string(), entry);
+    });
+
+    let snapshot = take_turn_snapshot(&sessions, "snap")
+        .unwrap_or_else(|| panic!("the resident entry yields a snapshot"));
+    assert_eq!(
+        snapshot
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["a"],
+        "the snapshot is the turn's starting history"
+    );
+
+    with_sessions(&sessions, |store| {
+        let entry = store
+            .get_mut("snap")
+            .unwrap_or_else(|| panic!("the entry is resident"));
+        entry.push_event(make_msg("user", "e1"));
+        entry.finish_turn(snapshot);
+        let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(
+            contents.iter().filter(|&&c| c == "e1").count(),
+            1,
+            "take_turn_snapshot opened the inbox, so the event pushed mid-turn survives its write-back"
+        );
+    });
+}
+
+#[test]
 fn mid_turn_inject_into_sessions_survives() {
     let sessions = SessionStore::new();
     with_sessions(&sessions, |store| {

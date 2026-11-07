@@ -321,9 +321,11 @@ where
 
                         // Persist the conversation for the next turn.
                         if let Some(ref id) = session_id {
+                            let mut merged_messages: Vec<Message> = Vec::new();
                             with_sessions(&sessions, |store| {
                                 if let Some(entry) = store.get_mut(id) {
                                     entry.finish_turn(messages.clone());
+                                    merged_messages = entry.messages.clone();
                                     entry.last_accessed = Instant::now();
                                     entry.last_prompt_tokens = usage.input_tokens
                                         + usage.cache_read_tokens
@@ -341,7 +343,9 @@ where
                                 // Archive invariant: every message in the pre-compaction vec
                                 // was appended to the archive when first persisted, so the
                                 // rewrite below cannot lose history (see docs/design/context-management.md §3.1).
-                                write_session_file(id, &messages);
+                                // The merged vec carries the events that arrived mid-turn,
+                                // so the rewrite keeps them too.
+                                write_session_file(id, &merged_messages);
                             } else {
                                 for msg in &messages[post_trim_len..] {
                                     append_session_message(id, msg);

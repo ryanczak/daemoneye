@@ -645,6 +645,19 @@ impl SessionEntry {
     }
 }
 
+/// Open a session's turn inbox and hand back the history a turn starts from,
+/// in one lock acquisition. The inbox stays open until the turn's
+/// `finish_turn` write-back, so every event `push_event` records in it
+/// survives that write-back even while the turn runs. Returns `None` when the
+/// entry is not resident.
+pub fn take_turn_snapshot(sessions: &SessionStore, id: &str) -> Option<Vec<Message>> {
+    with_sessions(sessions, |store| {
+        let entry = store.get_mut(id)?;
+        entry.begin_turn();
+        Some(entry.messages.clone())
+    })
+}
+
 thread_local! {
     /// Depth of the current thread's `with_sessions` nesting. Only ever 0 or 1
     /// in correct code.
