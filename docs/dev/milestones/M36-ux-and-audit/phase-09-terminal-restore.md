@@ -1,7 +1,7 @@
 # Phase 09 — terminal-restore
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-06
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -182,12 +182,12 @@ lists the remaining edits.
 
 ### Update — 2026-11-06 09:40 (started)
 
-**Executor:** executor (Claude Opus 4.6)
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
 **Status:** in-progress. Red tests first (spec task 1).
 
 ### Update — 2026-11-06 22:55 (started, resumed)
 
-**Executor:** executor (Claude, resumed run)
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local (resumed run)
 **Status:** in-progress. The guard module already on disk is kept unchanged.
 This run writes the two escaping tests red first, then implements the
 remaining edits from the resume guidance (`restore_terminal`,
@@ -436,3 +436,23 @@ kill: (-565311): No such process
 **Commit:** 221596639b8595333b679d76cb024ea8d7009ba1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-06
+
+- **Verdict:** approved_after_1
+- **Bounces:** none filed; one escalation (first run hard-failed at turn 373
+  with `RunawayOutput` after hunting for the unnamed escaping function; the
+  spec was refined to fix every new name and forbid root greps, then resumed)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Scope deviations:** the `top_tui` inline test module moved whole into
+  `top_tui_tests.rs` (verbatim apart from rustfmt reflow, checked against
+  `5dc42042`) and the S9 activity-row test sits in `top_tui_once_tests.rs`,
+  to keep both files inside the M31 caps without an allowlist entry. Accepted.
+- **Calibration:** reviewer re-run: fmt clean, `build_warnings=0`, clippy
+  clean, `passed=2704 failed=0`, `terminal_restore passed=5 failed=0`,
+  `tty_after_ask=icanon`, `panic_hook=1`. The guard tests' red run is not
+  pasted (only asserted); it is a compile error by construction, since
+  `terminal_guard.rs` does not exist at `5dc42042`, so it was accepted as in
+  phase 08. Second phase in a row (08, 09) where an unnamed seam or symbol sent
+  the executor exploring; on a third occurrence, propose folding "name every
+  new symbol, never grep the repo root" into WORKFLOW at milestone close.
