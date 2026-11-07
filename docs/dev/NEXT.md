@@ -7,9 +7,9 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 11 — sse-utf8
-([`phase-11-sse-utf8.md`](milestones/M36-ux-and-audit/phase-11-sse-utf8.md)),
-drafted 2026-11-07 (findings B5, B15). Phases 01–10 are `done`;
+**Active phase:** phase 12 — mid-turn-messages
+([`phase-12-mid-turn-messages.md`](milestones/M36-ux-and-audit/phase-12-mid-turn-messages.md)),
+drafted 2026-11-07 (finding B1). Phases 01–11 are `done`;
 twenty-three phases are planned in the README's table (04 split into 04a/04b
 and 21 — OSC 7501 program status, PE decision 9 — added on 2026-11-03; 05
 split into 05a/05b on 2026-11-04).
