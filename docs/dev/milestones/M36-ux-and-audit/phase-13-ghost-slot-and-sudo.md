@@ -1,7 +1,7 @@
 # Phase 13 — ghost-slot-and-sudo
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -277,3 +277,163 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-07 08:53 (started)
+
+Executor: Claude (Opus 4.6). Starting Phase 13 — ghost-slot-and-sudo: ghost
+slot drop guard in `trigger_ghost_turn`, whole-command sudo rule in `is_safe`
+with position-independent `command_has_sudo`, and `validate_job_id` +
+`agent_name` checks in `await_agent_result`.
+
+### Update — 2026-11-07 (escalation)
+
+**Chosen lever:** resume (`continue_phase`).
+
+**Rationale:** the run ended `budget_exceeded` at 500 turns, but most of the
+phase is done and correct. Its last ~40 turns looped through greps (many of
+them against `/dev/null`) around a single defect in `is_safe`. The spec was
+not the problem, so the resume should pick up the existing work and fix the
+one defect. A fresh re-dispatch would redo work that is already finished.
+
+### Notes for executor — 2026-11-07 (resume)
+
+**Done and correct. Do not redo any of it:**
+
+- `GhostSlot` and `GhostEnd`, wired into `trigger_ghost_turn`, with all
+  caller releases removed (`slot_wired=1`, `caller_releases=0`).
+- The three `ghost_slot_` tests and the four `sudo_detect_` tests, which
+  pass.
+- The new `command_has_sudo`.
+- Four of the five `sudo_whole_` tests.
+
+**Exactly four things are left:**
+
+1. **The one defect, in `is_safe` (`src/daemon/policy.rs`).**
+   - `word` splits only on separators. For
+     `sudo /home/user/.daemoneye/scripts/fix.sh --flag` it is therefore
+     `fix.sh --flag`, whose basename never equals `fix.sh`. This makes two
+     tests fail: `is_safe_sudo_on_whitelist` and
+     `sudo_whole_plain_script_passes`.
+   - The fix: `word` must stop at whitespace too.
+
+     ```rust
+     let word = body
+         .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')'))
+         .next()
+         .unwrap_or("");
+     ```
+
+     `word` stays a prefix of `body`, so `body[word.len()..]` still holds.
+   - Leave `plain_tail` as it is. Rejecting a bare `$` refuses more than the
+     spec asks (`$(`), and that is accepted because it fails closed.
+2. **The mailbox work, which has not been started.**
+   - Add `validate_job_id` in `src/agents/mailbox.rs`.
+   - Add the two checks at the top of `await_agent_result`
+     (`src/daemon/executor/knowledge/agents.rs`). Use the exact error texts
+     from § Behaviour.
+   - Add the three `mailbox_name_` tests. Write them first and paste their
+     real red output: one compile error, and two assertion failures after
+     the timeout.
+3. **The two stale regex comments,** in
+   `src/daemon/executor/file_ops/write.rs` and `docs/design-reference.md`.
+   Rewrite each to describe the new rule (`stale_regex=0`).
+4. **The required log entries:**
+   - A red-runs entry. It covers only the `mailbox_name_` tests; the other
+     groups are already written, and the reviewer will check them against
+     the pre-phase commit.
+   - The `GhostSlot::held()` mutation check (Spec 3), with real output.
+   - A Findings entry.
+   - The E2E block.
+   - The commit.
+
+**Finish condition:** `cargo test` reads `failed=0`. The E2E output must
+show all of the following:
+
+- `ghost_slot passed=3`
+- `sudo_detect passed=4`
+- `sudo_whole passed=5`
+- `mailbox_name passed=3`
+- `slot_wired=1`
+- `caller_releases=0`
+- `stale_regex=0`
+
+**Do not grep `/dev/null`, and do not search the repo for names this doc
+fixes.** If you are unsure about something, run the test or build that
+answers it.
+
+### Update — 2026-11-07 (red runs)
+
+Only the `mailbox_name_` tests were still to write at this resume; the other
+groups were already written against the pre-phase commit. Their real red
+output, before the implementation:
+
+1. `mailbox_name_job_id_grammar` — red as a compile error:
+
+```
+error[E0425]: cannot find function `validate_job_id` in this scope (x4)
+error: could not compile `daemoneye` (lib test) due to 4 previous errors
+```
+
+2. `mailbox_name_traversal_agent_refused` and
+   `mailbox_name_traversal_job_refused` — written against the tree without
+   the `await_agent_result` checks; they were red as assertion failures
+   after the 1-second timeout (each polled to `Error: await_agent_result
+   timed out after 1 seconds ...` instead of returning at once).
+
+### Update — 2026-11-07 (mutation check)
+
+Deleted the `GhostSlot::held()` call from `trigger_ghost_turn` and removed
+its `_slot.finish(end)` counterpart, then rebuilt:
+
+```
+error[E0425]: cannot find value `_slot` in this scope
+```
+
+An unfinished guard is a compile error here, not a silent leak: the `finish`
+call names `_slot`, so removing the claim cannot build. Restored the call;
+`cargo build` is clean again. `slot_wired=1` below guards the wiring.
+
+### Findings — 2026-11-07
+
+- `tests/hygiene.rs functions_fit_the_cap` failed: `trigger_ghost_turn` grew
+  to 183 lines against its allowlisted 172, because of the slot guard and
+  its `finish`. Raised the allowlist entry 172 → 183 (the Authorizations
+  section allows this for `trigger_ghost_turn`). Every other gate is clean.
+- The resume note's "exactly four things" list was complete; nothing beyond
+  it was needed. Two verifier-detected delimiter mistakes in
+  `agents.rs` while editing the test tail were fixed before any commit.
+- `stale_regex` greps are now 0 in `src` and `docs/design-reference.md`;
+  older milestone docs (M19/M21) still quote the old regex in prose but are
+  history records, out of this phase's scope per the `stale_regex`
+  criterion's file list.
+
+### Update — 2026-11-07 (end-to-end verification)
+
+```
+ghost_slot_ passed=3 failed=0
+sudo_detect_ passed=4 failed=0
+sudo_whole_ passed=5 failed=0
+mailbox_name_ passed=3 failed=0
+slot_wired=1
+caller_releases=0
+stale_regex=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.89s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.25s
+fmt_exit=0
+passed=2744 failed=0
+```
+
+### Update — 2026-11-07 (summary)
+
+Resume run of Phase 13. Built on the prior run's work: fixed the one
+`is_safe` defect (the `word` split now stops at whitespace, restoring the
+absolute-path basename match), added `validate_job_id` in
+`src/agents/mailbox.rs` and both name checks at the top of
+`await_agent_result`, added the three `mailbox_name_` tests, and rewrote the
+two old-regex comments in `src/daemon/executor/file_ops/write.rs` and
+`docs/design-reference.md`. Logged the red runs, the `GhostSlot::held()`
+mutation check, Findings, and the E2E block above. Hygiene allowlist entry
+raised 172 → 183 for `trigger_ghost_turn`.

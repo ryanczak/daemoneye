@@ -92,6 +92,35 @@ pub fn read_mailbox(agent_name: &str, job_id: &str) -> Result<Option<MailboxResu
     Ok(Some(entry))
 }
 
+/// Whether `name` is exactly one safe path component — the rule
+/// `validate_agent_name` already applies. Checks are shared so the two
+/// validators cannot drift.
+fn validate_component(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("empty name");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("a dot name is not a safe path component");
+    }
+    if name.starts_with('.') {
+        anyhow::bail!("a leading dot is not allowed");
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        anyhow::bail!("a path separator or NUL is not allowed");
+    }
+    if name.len() > 255 {
+        anyhow::bail!("name is longer than 255 bytes");
+    }
+    Ok(())
+}
+
+/// `job_id` reaches the filesystem through `mailbox_path`, so it must be
+/// exactly one safe path component. Refuses an empty string, `.` or `..`,
+/// a leading dot, a `/`, `\` or NUL anywhere, and more than 255 bytes.
+pub fn validate_job_id(job_id: &str) -> Result<()> {
+    validate_component(job_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +230,34 @@ mod tests {
             assert_eq!(read.result, Some("done".to_string()));
         });
     }
+    #[test]
+    fn mailbox_name_job_id_grammar() {
+        // `job_id` must be one safe path component: a real ghost session id
+        // (`ghost-<alert>-<uuid>`, where `<alert>` may contain spaces) is
+        // accepted; traversal, separators and control bytes are refused
+        // (M36 phase-13 L1).
+        assert!(
+            validate_job_id("ghost-disk full-3f2b9c1a").is_ok(),
+            "a real ghost session id with a space in its alert slug is accepted"
+        );
+        assert!(
+            validate_job_id("ghost-a-1").is_ok(),
+            "a simple id is accepted"
+        );
+        for bad in [
+            "", ".", "..", ".hidden", "a/../b", "..\\x", "a/b", "a\u{0}b",
+        ] {
+            assert!(
+                validate_job_id(bad).is_err(),
+                "job_id {bad:?} must be refused: it is not one safe path component"
+            );
+        }
+        assert!(
+            validate_job_id(&"x".repeat(256)).is_err(),
+            "a job_id over 255 bytes must be refused"
+        );
+    }
+
     #[test]
     fn masking_applied() {
         let tmp = TmpHome::new();

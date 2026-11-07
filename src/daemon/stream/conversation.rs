@@ -684,7 +684,6 @@ where
                                                 ghost_sid2,
                                                 e
                                             );
-                                            crate::daemon::stats::inc_ghosts_failed();
                                             crate::webhook::inject_ghost_event(
                                                 &ghost_sessions,
                                                 &format!(

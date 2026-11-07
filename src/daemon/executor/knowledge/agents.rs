@@ -260,6 +260,19 @@ pub async fn await_agent_result(
     let deadline = tokio::time::Duration::from_secs(capped_secs);
     let poll_interval = tokio::time::Duration::from_secs(2);
 
+    if let Err(e) = crate::agents::validate_agent_name(agent_name) {
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: invalid agent_name: {}",
+            e
+        )));
+    }
+    if let Err(e) = crate::agents::mailbox::validate_job_id(job_id) {
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: invalid job_id: {}",
+            e
+        )));
+    }
+
     let result = tokio::time::timeout(deadline, async {
         loop {
             match crate::agents::mailbox::read_mailbox(agent_name, job_id) {
@@ -380,5 +393,53 @@ mod tests {
                 panic!("unexpected SpawnGhostSession outcome")
             }
         }
+    }
+
+    #[test]
+    fn mailbox_name_traversal_agent_refused() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt.block_on(async {
+                await_agent_result("job-1", "../evil-agent", 1, &[])
+                    .await
+                    .unwrap()
+            });
+            match out {
+                ToolCallOutcome::Result(s) => assert!(
+                    s.starts_with("Error: invalid agent_name:"),
+                    "a model-supplied agent_name that escapes the mailbox root \
+                     must be refused without polling: got: {s}"
+                ),
+                ToolCallOutcome::UserMessage(_) => panic!("unexpected UserMessage outcome"),
+                ToolCallOutcome::SpawnGhostSession { .. } => {
+                    panic!("unexpected SpawnGhostSession outcome")
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn mailbox_name_traversal_job_refused() {
+        let tmp = TmpHome::new();
+        with_home(&tmp, || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt.block_on(async {
+                await_agent_result("../evil-job", "test-agent", 1, &[])
+                    .await
+                    .unwrap()
+            });
+            match out {
+                ToolCallOutcome::Result(s) => assert!(
+                    s.starts_with("Error: invalid job_id:"),
+                    "a model-supplied job_id that escapes the mailbox root must be \
+                     refused without polling: got: {s}"
+                ),
+                ToolCallOutcome::UserMessage(_) => panic!("unexpected UserMessage outcome"),
+                ToolCallOutcome::SpawnGhostSession { .. } => {
+                    panic!("unexpected SpawnGhostSession outcome")
+                }
+            }
+        });
     }
 }

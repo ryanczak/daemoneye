@@ -484,6 +484,12 @@ pub async fn trigger_ghost_turn(
     cache: &Arc<SessionCache>,
     schedule_store: &Arc<ScheduleStore>,
 ) -> Result<()> {
+    // The concurrency slot `start_session_with_config` claimed is held from
+    // here on. Whatever way this run ends — `Ok`, `Err`, or this future being
+    // dropped — the guard releases it (as `Completed` on success, `Failed`
+    // otherwise), so a cancelled or errored run can never strand the cap
+    // until restart (M36 phase-13 B2).
+    let _slot = crate::daemon::stats::GhostSlot::held();
     let kind = with_sessions(sessions, |store| {
         let entry = store.get(session_id)?;
         let gc = entry.ghost_config.clone().unwrap_or_default();
@@ -526,6 +532,11 @@ pub async fn trigger_ghost_turn(
         run_log.metrics_mut(),
     )
     .await;
+    let end = match &result {
+        Ok(()) => crate::daemon::stats::GhostEnd::Completed,
+        Err(_) => crate::daemon::stats::GhostEnd::Failed,
+    };
+    _slot.finish(end);
     let state = ghost_terminal_state(
         &result,
         &outcome,

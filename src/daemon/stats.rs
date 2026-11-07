@@ -393,6 +393,67 @@ pub fn get_ghosts_failed() -> usize {
     GHOSTS_FAILED.load(Ordering::Relaxed)
 }
 
+/// How a ghost run ended, as `GhostSlot::finish` records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GhostEnd {
+    Completed,
+    Failed,
+}
+
+type GhostRelease = fn(GhostEnd);
+
+/// One ghost run's concurrency slot, claimed by `inc_ghosts_launched` in
+/// `start_session_with_config` and released exactly once, however the run
+/// ends — `Ok`, `Err`, or the run's future being dropped.
+///
+/// `trigger_ghost_turn` holds the guard for the whole run: `finish(end)`
+/// releases with the run's outcome, and a guard dropped without `finish`
+/// releases as [`GhostEnd::Failed`]. Nothing else may call
+/// `inc_ghosts_completed` / `inc_ghosts_failed` — a second release would
+/// free a slot another live ghost still holds, and three leaks used to make
+/// `check_ghost_capacity` refuse every ghost until the daemon restart.
+pub struct GhostSlot {
+    release: Option<fn(GhostEnd)>,
+}
+
+impl GhostSlot {
+    /// Claim the slot a live ghost holds. Releases through the daemon's
+    /// global counters, as `Completed` or `Failed`.
+    pub fn held() -> Self {
+        Self::with_release(|end| match end {
+            GhostEnd::Completed => inc_ghosts_completed(),
+            GhostEnd::Failed => inc_ghosts_failed(),
+        })
+    }
+
+    /// The test seam: a slot that routes its one release through `release`
+    /// instead of the global counters, so a test observes only what it
+    /// caused.
+    pub fn with_release(release: GhostRelease) -> Self {
+        Self {
+            release: Some(release),
+        }
+    }
+
+    /// Release the slot, recording the run's outcome. Exactly once — a
+    /// second call, or a later `Drop`, releases nothing.
+    pub fn finish(mut self, end: GhostEnd) {
+        if let Some(release) = self.release.take() {
+            release(end);
+        }
+    }
+}
+
+impl Drop for GhostSlot {
+    fn drop(&mut self) {
+        // An unfinished slot releases as Failed: a run whose future was
+        // dropped did not complete, and dropping must not be free.
+        if let Some(release) = self.release.take() {
+            release(GhostEnd::Failed);
+        }
+    }
+}
+
 pub fn record_compaction(pre: usize, post: usize) {
     COMPACTIONS.fetch_add(1, Ordering::Relaxed);
     COMPACTION_MSGS_IN.fetch_add(pre, Ordering::Relaxed);
@@ -687,5 +748,62 @@ mod tests {
         assert!((result.total_cost_usd - 0.0).abs() < 1e-10);
         assert!(result.cost_by_provider.is_empty());
         assert!(result.cost_by_agent.is_empty());
+    }
+
+    // ── GhostSlot (M36 phase-13 B2) ───────────────────────────────────────
+    //
+    // These tests must not read `GHOSTS_ACTIVE` or the global counters —
+    // other tests run in parallel and both counters are process-global. The
+    // `with_release` seam routes every release into a thread-local recorder
+    // instead, so each assertion observes only releases this test caused.
+
+    thread_local! {
+        static RELEASES: std::cell::RefCell<Vec<GhostEnd>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn record(end: GhostEnd) {
+        RELEASES.with(|r| r.borrow_mut().push(end));
+    }
+
+    fn releases() -> Vec<GhostEnd> {
+        RELEASES.with(|r| r.borrow().clone())
+    }
+
+    #[test]
+    fn ghost_slot_finish_completed_releases_once() {
+        let slot = GhostSlot::with_release(record);
+        slot.finish(GhostEnd::Completed);
+        assert_eq!(
+            releases(),
+            vec![GhostEnd::Completed],
+            "a finished slot releases exactly once, as Completed, and its Drop \
+             must not release a second time"
+        );
+    }
+
+    #[test]
+    fn ghost_slot_finish_failed_releases_once() {
+        let slot = GhostSlot::with_release(record);
+        slot.finish(GhostEnd::Failed);
+        assert_eq!(
+            releases(),
+            vec![GhostEnd::Failed],
+            "a slot finished as Failed releases exactly once, as Failed"
+        );
+    }
+
+    #[test]
+    fn ghost_slot_drop_unfinished_releases_as_failed() {
+        {
+            let _slot = GhostSlot::with_release(record);
+            // Drop fires here, with no `finish` call.
+        }
+        assert_eq!(
+            releases(),
+            vec![GhostEnd::Failed],
+            "a slot dropped without finishing releases exactly once, as Failed: \
+             a leak of nothing — the run's exit must not be assumed Completed"
+        );
     }
 }

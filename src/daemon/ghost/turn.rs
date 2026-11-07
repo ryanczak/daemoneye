@@ -766,7 +766,6 @@ pub(super) async fn do_ghost_turn(
             "parent_job_id": parent_job_id,
         }),
     );
-    crate::daemon::stats::inc_ghosts_completed();
 
     // Briefing generation: best-effort summary for the next invocation.
     if let Some(ref gc) = ghost_config

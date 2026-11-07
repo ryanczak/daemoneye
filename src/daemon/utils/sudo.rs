@@ -26,16 +26,93 @@ pub fn is_fingerprint_prompt(output: &str) -> bool {
         || output.contains("Failed to match fingerprint")
 }
 
-/// True if the command string contains `sudo` as a standalone word.
+/// True when `sudo` appears as a *command word* anywhere in `cmd`: at the
+/// start, after `;`/`&`/`|` or a newline, inside `$(`, a backtick or `(`,
+/// or as the command `xargs` runs.
+///
+/// `sudo` as an argument or substring — `cat /etc/sudoers`, `echo pseudo`,
+/// `visudo -c`, `grep sudo /var/log/auth.log` — is not a command word, and
+/// must not match.
 pub fn command_has_sudo(cmd: &str) -> bool {
-    use regex::Regex;
-    use std::sync::OnceLock;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        // INVARIANT: literal is a valid regex
-        Regex::new(r"(?:^|[;&|])\s*sudo\b").unwrap()
-    });
-    re.is_match(cmd)
+    let chars: Vec<char> = cmd.chars().collect();
+    let mut i = 0;
+    // The start of the string is a command position; every separator makes
+    // the next word one again, and every plain word closes it off.
+    let mut at_command = true;
+    // The previous word was `xargs`: the next non-flag word is the command
+    // xargs runs, so it counts as a command position.
+    let mut xargs_pending = false;
+
+    while i < chars.len() {
+        match chars[i] {
+            ';' | '&' | '|' | '\n' | '\r' => {
+                at_command = true;
+                xargs_pending = false;
+                i += 1;
+            }
+            ' ' | '\t' => i += 1,
+            '\'' | '"' => {
+                // A quoted region is argument text: sudo inside one is never
+                // a command. Skip to the closing quote.
+                let close = chars[i];
+                i += 1;
+                while i < chars.len() && chars[i] != close {
+                    i += 1;
+                }
+                i += 1;
+                at_command = false;
+                xargs_pending = false;
+            }
+            '$' if chars.get(i + 1) == Some(&'(') => {
+                // Command substitution: what follows is a command.
+                at_command = true;
+                xargs_pending = false;
+                i += 2;
+            }
+            '`' | '(' => {
+                // Backtick substitution or subshell: what follows is a command.
+                at_command = true;
+                xargs_pending = false;
+                i += 1;
+            }
+            ')' | '<' | '>' => {
+                at_command = false;
+                xargs_pending = false;
+                i += 1;
+            }
+            '\\' => {
+                // An escaped character is data, not command syntax.
+                at_command = false;
+                xargs_pending = false;
+                i += 2;
+            }
+            _ => {
+                let start = i;
+                while i < chars.len()
+                    && !matches!(
+                        chars[i],
+                        ' ' | '\t' | ';' | '&' | '|' | '\n' | '\r' | '(' | ')' | '<' | '>' | '`'
+                    )
+                {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                if (at_command || xargs_pending) && word == "sudo" {
+                    return true;
+                }
+                if word == "xargs" {
+                    xargs_pending = true;
+                    at_command = false;
+                } else if xargs_pending && word.starts_with('-') {
+                    // An xargs flag: the command xargs runs is still ahead.
+                } else {
+                    at_command = false;
+                    xargs_pending = false;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// The credential-prompt text sent to the client for a sudo password
@@ -193,6 +270,67 @@ mod tests {
     #[test]
     fn command_has_sudo_after_semicolon() {
         assert!(command_has_sudo("cd /tmp; sudo rm -rf foo"));
+    }
+
+    // ── sudo_detect_ (M36 phase-13 S6) — sudo as a command word in every
+    // position the whole-command rule must cover. ──────────────────────────
+
+    #[test]
+    fn sudo_detect_newline() {
+        // A new line itself starts a new command: `sudo` there is a command
+        // word, so it must be detected today.
+        assert!(
+            command_has_sudo("true\nsudo rm -rf /x"),
+            "sudo on a continuation line is a command word and must be detected"
+        );
+    }
+
+    #[test]
+    fn sudo_detect_substitutions() {
+        // `sudo` inside `$( )`, backticks or `( )` runs as a command — the
+        // shell evaluates it before the outer command consumes the output.
+        for (cmd, where_) in [
+            ("echo $(sudo cat /etc/shadow)", "$("),
+            ("echo `sudo id`", "backtick"),
+            ("(sudo id)", "( )"),
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "sudo inside a command substitution ({where_}) is a command word: {cmd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn sudo_detect_xargs() {
+        // `xargs` runs its remainder as a command — `sudo` there is the
+        // command xargs will run, with or without `-0`.
+        assert!(
+            command_has_sudo("ls | xargs sudo rm"),
+            "after xargs, sudo names the command xargs runs"
+        );
+        assert!(
+            command_has_sudo("find . | xargs -0 sudo rm"),
+            "after xargs -0, sudo names the command xargs runs"
+        );
+    }
+
+    /// Preservation: the argument positions on the must-not-match list stay
+    /// false, exactly as before this phase. Green before the phase.
+    #[test]
+    fn sudo_detect_argument_is_not_sudo() {
+        for cmd in [
+            "cat /etc/sudoers",
+            "ls -la /home",
+            "echo pseudo",
+            "visudo -c",
+            "grep sudo /var/log/auth.log",
+        ] {
+            assert!(
+                !command_has_sudo(cmd),
+                "preservation: sudo as an argument or substring must not match: {cmd:?}"
+            );
+        }
     }
 
     #[test]

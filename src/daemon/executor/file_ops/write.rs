@@ -271,10 +271,11 @@ pub(super) fn remote_edit_payload_hex(
     (py_hex, pl_hex)
 }
 
-/// The sudo edit's line. `command_has_sudo`'s regex is `(?:^|[;&|])\s*sudo\b`,
-/// so the word must sit **after** a `;` — inside the `if`'s branches it is
-/// never seen and the run would never prompt. The interpreter is chosen with
-/// `set --`, then run under the privilege tool once.
+/// The sudo edit's line. `command_has_sudo` sees `sudo` as a command word in
+/// any separator-delimited position — at the start, after `;`/`&`/`|` or a
+/// newline, inside `$(`, a backtick or `(`, or as the command `xargs` runs —
+/// so the `; sudo "$@"` here is always detected. The interpreter is chosen
+/// with `set --`, then run under the privilege tool once.
 pub(super) fn build_remote_sudo_edit_cmd(path: &str, old_string: &str, new_string: &str) -> String {
     let (py_hex, pl_hex) = remote_edit_payload_hex(path, old_string, new_string);
     format!(

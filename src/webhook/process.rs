@@ -527,7 +527,6 @@ async fn maybe_analyze_alert(
                             }
                             Err(e) => {
                                 log::error!("Ghost Turn: failed for {}: {}", sid, e);
-                                crate::daemon::stats::inc_ghosts_failed();
                                 inject_ghost_event(
                                     &sessions,
                                     &format!(

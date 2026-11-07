@@ -100,6 +100,67 @@ fn is_safe_run_with_sudo_still_allows_non_sudo() {
     assert!(p.is_safe("ps aux"));
 }
 
+// ── sudo_whole_ (M36 phase-13 S6) — the whole-command rule ────────────────
+//
+// A command containing sudo is safe only when the entire command is
+// `[sudo] <approved script> [args]`: any second command position (a chain,
+// a substitution, a newline) must refuse. `sudo_whole_plain_script_passes`
+// is a preservation test — it passes before and after this phase.
+
+#[test]
+fn sudo_whole_plain_script_passes() {
+    let p = policy(&["ok.sh"]);
+    assert!(
+        p.is_safe("sudo ok.sh --flag x"),
+        "preservation: `[sudo] <approved script> [args]` stays safe, with args"
+    );
+    assert!(
+        p.is_safe("sudo /opt/s/ok.sh"),
+        "preservation: an absolute path to an approved script stays safe (basename match)"
+    );
+    assert!(
+        p.is_safe("ok.sh"),
+        "a bare approved script with no sudo stays safe"
+    );
+}
+
+#[test]
+fn sudo_whole_chained_sudo_refused() {
+    let p = policy(&["ok.sh"]);
+    assert!(
+        !p.is_safe("sudo ok.sh && sudo bash -c 'id'"),
+        "a `&&` chain carrying a second sudo must be refused even when its \
+         first command is approved"
+    );
+}
+
+#[test]
+fn sudo_whole_approved_then_chained_refused() {
+    let p = policy(&["ok.sh"]);
+    assert!(
+        !p.is_safe("ok.sh; sudo rm -rf /x"),
+        "an approved script followed by `; <anything>` must be refused"
+    );
+}
+
+#[test]
+fn sudo_whole_substitution_refused() {
+    let p = policy(&["ok.sh"]);
+    assert!(
+        !p.is_safe("sudo ok.sh $(sudo id)"),
+        "a command substitution in the args must be refused"
+    );
+}
+
+#[test]
+fn sudo_whole_newline_refused() {
+    let p = policy(&["ok.sh"]);
+    assert!(
+        !p.is_safe("ok.sh\nsudo rm"),
+        "a second command on a new line must be refused"
+    );
+}
+
 #[test]
 fn resolve_command_bare_name() {
     let p = policy(&["fix.sh"]);

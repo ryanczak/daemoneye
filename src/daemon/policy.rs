@@ -95,11 +95,16 @@ impl GhostPolicy {
     ///
     /// - **Non-sudo commands** are always allowed; the OS user-permission model is the
     ///   boundary — the ghost runs as the same user as the daemon.
-    /// - **Sudo commands** must have their script basename listed in
-    ///   `auto_approve_scripts`, regardless of `run_with_sudo`.  The leading `sudo`
-    ///   token and any absolute path prefix are stripped before the basename comparison
-    ///   so that both `restart-nginx.sh` and
-    ///   `sudo /home/user/.daemoneye/scripts/restart-nginx.sh` match the same entry.
+    /// - **Sudo commands** are safe only when the *whole* command is
+    ///   `[sudo] <approved script> [args]`: one optional leading `sudo`, then
+    ///   an approved script (matched by basename), then plain arguments — no
+    ///   second command position (a `;`/`&`/`|` chain, a newline, a `$(…)`,
+    ///   backtick or `(` substitution, or a `<`/`>` redirection) anywhere in
+    ///   the rest. `command_has_sudo` already refuses to call a command
+    ///   sudo-less when `sudo` hides in a chained position, so reaching this
+    ///   branch means sudo is the first command word here; the structural
+    ///   check rejects anything that could carry a *second* command the
+    ///   whitelist never saw (M36 phase-13 S6).
     /// - **`run_with_sudo`** only controls whether `resolve_command()` auto-prepends
     ///   `sudo` when executing an approved script.  It does NOT grant permission to
     ///   run arbitrary sudo commands.
@@ -107,20 +112,30 @@ impl GhostPolicy {
         if !crate::daemon::utils::command_has_sudo(command) {
             return true;
         }
-        // Sudo command — check script whitelist.
-        // run_with_sudo does not affect is_safe; it only controls auto-sudo in resolve_command.
-        let mut tokens = command.split_whitespace();
-        let first_token = tokens.next().unwrap_or("");
-        let effective_token = if first_token == "sudo" {
-            tokens.next().unwrap_or("")
-        } else {
-            first_token
-        };
-        let basename = std::path::Path::new(effective_token)
+        // Sudo command — the whole command must be one approved script call.
+        let body = command
+            .strip_prefix("sudo ")
+            .map(str::trim_start)
+            .unwrap_or(command);
+        let word = body
+            .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')'))
+            .next()
+            .unwrap_or("");
+        let basename = std::path::Path::new(word)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(effective_token);
-        self.auto_approve_scripts.iter().any(|s| s == basename)
+            .unwrap_or(word);
+        let approved = self.auto_approve_scripts.iter().any(|s| s == basename);
+        // Everything after the script word — args, a separator glued to the
+        // word itself, chains, substitutions, redirections — must be plain:
+        // none of them may carry a second command the whitelist never saw.
+        let plain_tail = !body[word.len()..].contains(|c: char| {
+            matches!(
+                c,
+                ';' | '&' | '|' | '\n' | '\r' | '$' | '`' | '(' | ')' | '<' | '>'
+            )
+        });
+        approved && plain_tail
     }
 
     /// Whether this ghost may reach `host`.

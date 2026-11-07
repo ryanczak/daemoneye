@@ -639,7 +639,6 @@ where
                     trigger_ghost_turn(&sid, &sessions, &config, &cache, &schedule_store).await
                 {
                     log::error!("resumed ghost turn failed for {sid}: {e}");
-                    crate::daemon::stats::inc_ghosts_failed();
                 }
             });
             return Ok(());
