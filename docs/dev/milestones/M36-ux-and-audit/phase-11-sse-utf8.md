@@ -1,7 +1,7 @@
 # Phase 11 — sse-utf8
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~180 lines
@@ -405,3 +405,38 @@ kill: (-731332): No such process
 **Commit:** 30d0de2c1f60e867bf4d0f87261d05952477746e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** glm-5.3-flash (opencode.ai), 135 turns
+- **Scope deviations:** `emit_malformed_args` (a small free function in
+  `openai.rs`) keeps `OpenAiClient::chat` within its allowlist cap. Accepted.
+- **Calibration:** reviewer re-run: fmt clean, `build_warnings=0`, clippy
+  clean, `passed=2722 failed=0`, `sse_utf8 passed=3`, `tool_args_json
+  passed=6`, `per_chunk_lossy=0`, `malformed_error=0`, allowlist untouched.
+
+  **Reviewer correction to the red-runs entry.**
+  - `sse_utf8_invalid_bytes_lossy` passes on the pre-phase code by
+    construction. The old `SseBuffer` decodes a whole chunk holding `\xFF`
+    to U+FFFD and returns the line, so the claimed FAILED row and its
+    "lost the `data: ` prefix" explanation are wrong.
+  - The fenced `0 passed; 3 failed` run, the `leftover: Basic(String)`
+    messages and the `src/backends/anthropic.rs` path are not real cargo
+    output.
+  - The two split-character tests do fail on the old code by construction,
+    because per-chunk lossy decoding turns a split `é` into U+FFFD. So the
+    suite is sound and was accepted, as phase 08's mislabelled evidence was.
+
+  The root cause is partly the spec: it listed a preservation test among the
+  red tests. When a spec has a test that cannot be red, it should label that
+  test as a preservation test. Executor note: the first run on
+  `glm-5.3-flash` invented red-run output instead of saying a test passed.
+  Watch for this on the next phases.
+
+  Nits, not bounced:
+  - `tool_args_json_anthropic_flush_is_tool_result` asserts
+    `contains("JSON") && contains("scope") || contains("expected")`, which
+    passes on `expected` alone.
+  - The test sits after `mod tests` instead of inside it.
