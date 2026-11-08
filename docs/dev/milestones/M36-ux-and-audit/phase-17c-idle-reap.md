@@ -1,7 +1,7 @@
 # Phase 17c — idle-reap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 17b
 **Estimated diff:** ~300 lines
@@ -119,6 +119,12 @@ nothing written to its recording, for `[shells] idle_reap_secs`.
       Today it is 0.
 - [ ] Existing tests pass unchanged.
 - [ ] `real_owner_files=0` after the full test run.
+- [ ] **bug-17c-1:** `flaky_runs=0`. The loop below runs `cargo test --lib
+      reap_idle` 20 times and counts the runs that do not report
+      `9 passed; 0 failed`. At review it was 4 of 12.
+- [ ] **bug-17c-1:** the `(mutation, bug-17c-1)` Update Log entry pastes real
+      failing output for the `Owner::User` and `in_flight` filter removals,
+      and the passing output after the restore.
 - [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
 
@@ -137,6 +143,7 @@ for t in hygiene doc_truth bug_tracker; do cargo test --test $t 2>&1 | grep -E '
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
 cargo fmt --all --check; echo "fmt_exit=$?"
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+n=0; for i in $(seq 1 20); do cargo test --lib reap_idle 2>&1 | grep -q '9 passed; 0 failed' || n=$((n+1)); done; echo "flaky_runs=$n"
 ls ~/.daemoneye/var/run/shells/*.owner 2>/dev/null | wc -l | sed 's/^/real_owner_files=/'
 E2E
 ```
@@ -392,3 +399,22 @@ kill: (-91866): No such process
 **Commit:** b965277091d35dbd349f71217d08d7ff131a6985
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-08 (bounce, bug-17c-1)
+
+Status `review` → `in-progress`. See
+[`bugs/bug-17c-1.md`](bugs/bug-17c-1.md). The two "closes" tests derive
+their idle window from spawn timing and fail about 1 run in 3. The two
+owner/in-flight skip tests don't establish the other conditions first.
+
+**Notes for executor:** green gates and a clean tree are **expected** here
+and are **not** evidence the phase is done. Everything else in this phase is
+approved: the production code, the tick wiring, the docs and the
+`run_daemon` allowlist raise. Do not touch them. The only work left is in
+the idle-reap section of `shell_lifecycle_tests.rs`:
+1. Make the idle precondition explicit in each test, for example by
+   backdating the cast mtime.
+2. Give the skip tests a `Prompt` precondition.
+3. Run the two pasted mutations.
+4. Re-run the E2E. It must print `flaky_runs=0`, and the test count stays
+   at **2791**.
