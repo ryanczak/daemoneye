@@ -7,9 +7,9 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 17b — owner-sidecar
-([`phase-17b-owner-sidecar.md`](milestones/M36-ux-and-audit/phase-17b-owner-sidecar.md)),
-drafted 2026-11-07 (B11 second half). Phases 01–17a are `done`.
+**Active phase:** phase 17c — idle-reap
+([`phase-17c-idle-reap.md`](milestones/M36-ux-and-audit/phase-17c-idle-reap.md)),
+drafted 2026-11-08 (B11, last part). Phases 01–17b are `done`.
 Twenty-five phases are planned in the README's table: 04 was split into
 04a/04b and 21 added on 2026-11-03, 05 was split into 05a/05b on
 2026-11-04, and 17 was split into 17a/17b/17c on 2026-11-07.
