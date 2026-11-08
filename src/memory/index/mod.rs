@@ -2,21 +2,89 @@
 
 use anyhow::{Context, Result};
 use std::io::BufRead;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Mutex, OnceLock};
 
 /// Bump when the FTS5 schema changes. A database at any other version is
 /// dropped and recreated — the index is derived, so rebuilding is always safe.
 pub const SCHEMA_VERSION: i64 = 2;
 
-/// Open (creating if absent) the FTS5 memory index, applying the schema.
-pub fn open_index() -> Result<rusqlite::Connection> {
+/// The process's one open index connection. `rusqlite::Connection` is not
+/// `Sync`, so the connection is reached only through the mutex, and every
+/// holder keeps it for one whole synchronous index operation. One slot,
+/// keyed by the path it was opened for: a changed `memory_index_path()`
+/// (each test points `HOME` at its own tempdir) opens the next call's
+/// database fresh and replaces the slot.
+static INDEX_CONN: OnceLock<Mutex<Option<(std::path::PathBuf, rusqlite::Connection)>>> =
+    OnceLock::new();
+
+fn index_slot() -> &'static Mutex<Option<(std::path::PathBuf, rusqlite::Connection)>> {
+    INDEX_CONN.get_or_init(|| Mutex::new(None))
+}
+
+/// An open index connection checked out of the slot. Dropping it puts the
+/// connection back for the next caller, unless another caller re-filled the
+/// slot meanwhile (that re-opener's connection is already there).
+pub struct IndexConn {
+    conn: Option<rusqlite::Connection>,
+    /// The path the connection was opened for; the slot is keyed by it.
+    path: std::path::PathBuf,
+}
+
+impl Deref for IndexConn {
+    type Target = rusqlite::Connection;
+
+    fn deref(&self) -> &rusqlite::Connection {
+        self.conn.as_ref().expect("connection retained until drop")
+    }
+}
+
+impl DerefMut for IndexConn {
+    fn deref_mut(&mut self) -> &mut rusqlite::Connection {
+        self.conn.as_mut().expect("connection retained until drop")
+    }
+}
+
+impl Drop for IndexConn {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            let mut guard = index_slot()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if guard.is_none() {
+                *guard = Some((self.path.clone(), conn));
+            }
+        }
+    }
+}
+
+/// Open (creating if absent) the FTS5 memory index: the process's one
+/// connection for the current `memory_index_path()`, schema-checked once per
+/// path rather than on every open. The connection is checked out for one
+/// whole synchronous index operation — take it, use it, drop it; holding it
+/// across an `.await` would block every other index caller's thread.
+pub fn open_index() -> Result<IndexConn> {
+    let path = crate::config::memory_index_path();
     let dir = crate::config::var_index_dir();
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("creating index directory {}", dir.display()))?;
-    let path = crate::config::memory_index_path();
-    let conn = rusqlite::Connection::open(&path)
-        .with_context(|| format!("opening index database {}", path.display()))?;
-    ensure_schema(&conn)?;
-    Ok(conn)
+    let mut guard = index_slot()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match guard.as_ref() {
+        Some((cached_path, _)) if cached_path == &path => {}
+        _ => {
+            let conn = rusqlite::Connection::open(&path)
+                .with_context(|| format!("opening index database {}", path.display()))?;
+            ensure_schema(&conn)?;
+            *guard = Some((path.clone(), conn));
+        }
+    }
+    let conn = guard.take().expect("slot just filled or was cached").1;
+    Ok(IndexConn {
+        conn: Some(conn),
+        path: path.clone(),
+    })
 }
 
 /// Apply the schema to an already-open connection, dropping and recreating
@@ -190,7 +258,7 @@ pub fn read_line_at_offset(path: &std::path::Path, offset: u64) -> String {
 /// Open the index connection and reconcile the given corpus table if it is
 /// empty. Returns the connection on success, or logs and returns `None` on
 /// failure. The caller should use the returned connection for its query.
-fn open_and_reconcile_if_empty(table: &str) -> Option<rusqlite::Connection> {
+fn open_and_reconcile_if_empty(table: &str) -> Option<IndexConn> {
     let conn = match open_index() {
         Ok(c) => c,
         Err(e) => {

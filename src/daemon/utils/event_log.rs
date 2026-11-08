@@ -8,7 +8,6 @@
 ///
 /// Errors are silently discarded — logging must never crash the daemon.
 pub fn log_event(event: &str, mut fields: serde_json::Value) {
-    use std::io::Write;
     #[cfg(test)]
     assert!(
         crate::HOLDS_HOME_GUARD.with(|c| c.get()),
@@ -58,20 +57,33 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
                 .to_string()
         };
 
-        // Capture offset before the append.
-        let offset = std::fs::metadata(&path).ok().map(|m| m.len()).unwrap_or(0);
-
+        // The offset must come from the file handle the line was appended
+        // with: position after the write, minus the line's length. Reading
+        // `metadata().len()` before the append lets two concurrent writers
+        // record the same offset, sending one `events_map` row to the wrong
+        // line (B17).
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-            && f.write_all(line.as_bytes()).is_ok()
         {
-            // Best-effort index the event.
-            let body = crate::search::json_to_readable(line.trim_end());
-            if let Err(e) = crate::memory::index::index_event(&segment_label, offset, event, &body)
-            {
-                log::warn!("event index update failed: {e:#}");
+            use std::io::{Seek, Write};
+            let mut wrote = true;
+            if f.write_all(line.as_bytes()).is_err() {
+                wrote = false;
+            }
+            let after = f.stream_position().ok().unwrap_or(0);
+            if wrote && after >= line.len() as u64 {
+                // Best-effort index the event.
+                let body = crate::search::json_to_readable(line.trim_end());
+                if let Err(e) = crate::memory::index::index_event(
+                    &segment_label,
+                    after - line.len() as u64,
+                    event,
+                    &body,
+                ) {
+                    log::warn!("event index update failed: {e:#}");
+                }
             }
         }
     }
