@@ -153,7 +153,7 @@ the same code, so they ship together.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 24 (phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04; 17 split into 17a/17b on 2026-11-07).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 25 (phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04; 17 split into 17a/17b/17c on 2026-11-07).
 Phases 01–04 are the PE's four items; 05–07 the approval-prompt findings
 that share their code; 08–16 the remaining `major` rows, most severe
 first; 17 the shell-lifecycle fix; 18 the performance tail; 19–20 the
@@ -181,7 +181,8 @@ config so the shell-state surfaces it extends have settled.
 | 15 | shell-client-scan ([phase-15-shell-client-scan.md](phase-15-shell-client-scan.md)) — `read_to_marker` scans only new bytes (marker-length overlap), offers chunks without re-decoding, and a `Lagged` subscriber becomes an explicit error frame; `MetaIndex` saves atomically and fails on a corrupt index | P1, B13 | done |
 | 16 | background-index ([phase-16-background-index.md](phase-16-background-index.md)) — `wait: false` and timed-out commands get their `.meta.json` record when the outcome arrives; a timeout sends the shell `^C` and names the shell in the reply | B9, B10 | done        |
 | 17a | detach-close ([phase-17a-detach-close.md](phase-17a-detach-close.md)) — a chat session's non-dedicated shells close `[shells] detach_close_secs` (default 300) after its last presence detach unless it re-attaches; shell-host children are waited on, so exited hosts are not zombies (split from 17 on 2026-11-07) | B11 (first half), B12 | done        |
-| 17b | owner-sidecar — a sidecar persists each shell's owner and host so a restart re-adopts it under its owner (and an ssh shell keeps its host); adopted shells past an idle limit are reaped | B11 (second half) | todo |
+| 17b | owner-sidecar ([phase-17b-owner-sidecar.md](phase-17b-owner-sidecar.md)) — `<id>.owner` records each shell's owner key and host at spawn; `adopt_at_startup` restores them (absent or invalid → `Adopted`/local as today); `sweep_stale` removes it (split 17b/17c on 2026-11-07) | B11 (second half) | todo |
+| 17c | idle-reap — the maintenance tick closes shells (never `/shell` ones, never one with a command in flight, never a chat shell whose session is present) whose recording has been silent for `[shells] idle_reap_secs` | B11 (second half) | todo |
 | 18 | perf-tail — `read_shell_log` walks records with a cursor off the runtime; one index connection and schema check per daemon, the offset from the append; prompt assembly stops rebuilding an empty corpus each turn; `ip_limits` pruned; the `build_match_expr` sentence in CLAUDE.md | P2, P3, B17, P4, P8, L2 | todo |
 | 19 | config-reload — the daemon holds its `Config` behind one shared, swappable handle that every per-request reader goes through; `Request::Reload` / `daemoneye reload` re-read and validate `config.toml`, swap the runtime-safe sections, re-init masking and stream timeouts, and reply with the keys that changed and the keys that wait for a restart; an invalid file is refused and the running config stays | decision 8 | todo |
 | 20 | self-config — `read_file` and `edit_file` admit `etc/config.toml` (masked read, always-asked edit with a masked diff, `Config` validation before the write, a reload after it); the `config-reference` knowledge memory, seeded and in `--overwrite-memory`, gated by `doc_truth` against the `Config` structs; the `read_file` / `edit_file` rows in CLAUDE.md and README follow | decision 8 | todo |
