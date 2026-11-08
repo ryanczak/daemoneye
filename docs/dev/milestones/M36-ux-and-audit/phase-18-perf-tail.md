@@ -1,7 +1,7 @@
 # Phase 18 — perf-tail
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 17c
 **Estimated diff:** ~400 lines
@@ -186,3 +186,42 @@ turn's prompt); `log_event` reads `metadata(&path)` before the append;
 
 Now writing the six named tests red-first (the P2 preservation test already
 passes; the other five name new seams and are red as compile errors).
+
+### Update — 2026-11-08 15:40 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** The spec held. Behaviours 1–5 are committed and the full
+suite is green at 2796, so the run hit the 512-turn cap with a bounded list
+left. A fresh context seeded with the diff finishes it more cheaply than a
+re-dispatch would re-derive it.
+
+### Notes for executor — 2026-11-08
+
+Green gates are **expected** here and are **not** evidence the phase is
+done. Already done, do not redo: P2 (`ede006bb`), P3/P4/B17/P8/L2
+(`e9d1d27b`), the three index tests in `perf_tests.rs`, the per-path
+reconcile guard, and its mutation. The red and green output is saved in
+`/tmp/mutation_red.txt` and `/tmp/mutation_green.txt`. What is left:
+
+1. **Write `log_event_offsets_point_at_their_own_lines_under_concurrent_writers`.**
+   It is missing from every commit. Several threads each log events; every
+   `events_map` row's offset reads back the line of its own event
+   (`read_line_at_offset`). Each spawned thread sets `HOLDS_HOME_GUARD`
+   under the parent's `crate::test_home()`.
+2. **Show it is real:** put the pre-append `metadata(&path).len()` offset
+   back, run the test up to five times, paste the first failing run or say
+   all five passed, then restore and paste the passing run.
+3. **Lock sites:** every production `.lock()` added this phase uses
+   `.unwrap_or_else(std::sync::PoisonError::into_inner)`. CLAUDE.md
+   requires `.unwrap_or_log()` (`crate::util::UnpoisonExt`) at every lock
+   site, because it logs the poison. Change them all.
+4. **No `.expect()` in production:** `IndexConn`'s `Deref`/`DerefMut` and
+   `open_index`'s `guard.take().expect(…)` panic on a broken invariant.
+   Restructure them so they cannot panic (STANDARDS §2).
+5. `cargo fmt --all`.
+6. **Update Log:** a `(red runs)` entry (compile-error red for the seam
+   tests is enough, plus the item-2 red), a `(mutation)` entry pasting the
+   two `/tmp/mutation_*.txt` files, `### Findings`, and the
+   `(end-to-end verification)` entry from § End-to-end verification.
+7. **Commit** the rest as one `perf:` commit. The test count after it is
+   **2797**: 2796 today plus the one new test.
