@@ -45,10 +45,11 @@ pub use pty::{
 #[cfg(test)]
 pub(crate) use pty::{test_begin_marker, test_end_marker};
 pub use registry::{
-    InFlight, InFlightGuard, Owner, ShellId, ShellRecord, ShellRegistry, adopt_at_startup,
-    allocate_index, check_owner_cap, clear_in_flight, host_is_alive, is_user_shell, now_unix,
-    parse_cast_name, reap_exited, scan_shell_ids, set_in_flight, spawn_for, spawn_for_in_sandbox,
-    spawn_for_on_host, sweep_stale, with_shells,
+    InFlight, InFlightGuard, Owner, OwnerSidecar, ShellId, ShellRecord, ShellRegistry,
+    adopt_at_startup, allocate_index, check_owner_cap, clear_in_flight, host_is_alive,
+    is_user_shell, now_unix, owner_sidecar_path, parse_cast_name, read_owner_sidecar, reap_exited,
+    scan_shell_ids, set_in_flight, spawn_for, spawn_for_in_sandbox, spawn_for_on_host, sweep_stale,
+    with_shells, write_owner_sidecar,
 };
 pub use sbx_backend::{SbxBackend, SbxRunner, VmRun, real_runner};
 pub use screen::ShellScreen;

@@ -47,17 +47,18 @@ impl fmt::Display for ShellId {
 }
 
 /// Who owns a shell, and the unit per-owner caps are enforced over.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Owner {
     Chat(String),
     Ghost(String),
     /// A scheduled job's shells (`ActionOn::Script`), keyed by the job id.
     Scheduler(String),
     /// A shell adopted at daemon startup from a live host left behind by a
-    /// previous daemon. Per the measured facts in phase-06b, nothing on disk
-    /// records the original owner, and the owning session is gone by
-    /// definition — so an adopted shell is owned by nobody until a later phase
-    /// re-claims it.
+    /// previous daemon. When the shell was spawned by this release or a
+    /// later one, its owner and host were recorded in the `<id>.owner`
+    /// sidecar and adoption restores both; a shell spawned before the
+    /// sidecar existed keeps this value and the implicit local host, so a
+    /// shell adopted with neither record is owned by nobody.
     Adopted,
     /// A shell the user opened with `/shell` (M23), from any chat session.
     User,
@@ -83,6 +84,29 @@ impl Owner {
     pub fn may_drive(&self, shell_owner: &str) -> bool {
         shell_owner == self.key()
             || (shell_owner == Owner::User.key() && matches!(self, Owner::Chat(_)))
+    }
+
+    /// The inverse of [`key`](Self::key) for the four kinds a spawn can
+    /// have: `chat:<id>`, `ghost:<id>`, `scheduler:<id>` and `user`.
+    /// Anything else is `None` — an unknown kind, an id that is empty, no
+    /// colon on a kind that carries an id, or `adopted`, which a spawn never
+    /// writes (adoption derives it when the sidecar is absent, never from a
+    /// key).
+    pub fn from_key(key: &str) -> Option<Owner> {
+        if key == Owner::User.key() {
+            return Some(Owner::User);
+        }
+        // `user` above has no colon by shape; every other key must carry one.
+        let (kind, id) = key.split_once(':')?;
+        if id.is_empty() {
+            return None;
+        }
+        match kind {
+            "chat" => Some(Owner::Chat(id.to_string())),
+            "ghost" => Some(Owner::Ghost(id.to_string())),
+            "scheduler" => Some(Owner::Scheduler(id.to_string())),
+            _ => None,
+        }
     }
 }
 
@@ -368,7 +392,7 @@ where
             ShellRecord {
                 id: id.clone(),
                 owner: owner.clone(),
-                host,
+                host: host.clone(),
                 sandbox,
                 started_unix,
                 dedicated,
@@ -385,6 +409,16 @@ where
             store.remove(id.as_str());
         });
         return Err(e);
+    }
+    // Best-effort: the shell is live; a write failure loses only its
+    // recovery after a daemon restart, so it must not fail the spawn.
+    if let Err(e) = write_owner_sidecar(&crate::config::shells_dir(), id.as_str(), &owner, &host) {
+        log::warn!(
+            "shell {}: owner sidecar write failed ({}), the shell will be \
+             adopted without its owner after a restart",
+            id.as_str(),
+            e
+        );
     }
     Ok(id)
 }
@@ -486,11 +520,15 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
         .into_iter()
         .filter(|id| host_is_alive(&dir.join(format!("{}.lock", id.as_str()))))
         .collect();
-    // File I/O stays outside `with_shells`: collect `(id, sidecar)` pairs
-    // first, then insert under the lock.
+    // File I/O stays outside `with_shells`: collect `(id, sidecar)` and
+    // `(id, owner sidecar)` pairs first, then insert under the lock.
     let sidecars: Vec<(ShellId, SandboxSidecar)> = adopted
         .iter()
         .map(|id| (id.clone(), read_sandbox_sidecar(dir, id.as_str())))
+        .collect();
+    let owners: Vec<(ShellId, OwnerSidecar)> = adopted
+        .iter()
+        .map(|id| (id.clone(), read_owner_sidecar(dir, id.as_str())))
         .collect();
     for (id, sidecar) in &sidecars {
         if matches!(sidecar, SandboxSidecar::Invalid) {
@@ -500,8 +538,16 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
             );
         }
     }
+    for (id, own) in &owners {
+        if matches!(own, OwnerSidecar::Invalid) {
+            log::warn!(
+                "shell {id}: owner sidecar was unreadable or invalid, adopting as \
+                 `Adopted` on the local host",
+            );
+        }
+    }
     with_shells(reg, |store| {
-        for (id, sidecar) in &sidecars {
+        for ((id, sidecar), (_, own)) in sidecars.iter().zip(owners.iter()) {
             let started_unix = started.get(id.as_str()).copied().unwrap_or(0);
             let (sandbox, dedicated) = match sidecar {
                 // No sidecar: a shell on the host itself.
@@ -512,12 +558,21 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                 // handed to another command.
                 SandboxSidecar::Invalid => (None, true),
             };
+            // No sidecar means the shell predates the owner record: today's
+            // adoption, `Adopted` on the implicit local host. A bad one fails
+            // closed the same way, with one warn naming the id.
+            let (owner, host) = match own {
+                OwnerSidecar::Record((owner, host)) => (owner.clone(), host.clone()),
+                OwnerSidecar::Absent | OwnerSidecar::Invalid => {
+                    (Owner::Adopted, crate::host::HostId::Local)
+                }
+            };
             store.insert(
                 id.as_str().to_string(),
                 ShellRecord {
                     id: id.clone(),
-                    owner: Owner::Adopted,
-                    host: crate::host::HostId::Local,
+                    owner,
+                    host,
                     sandbox,
                     started_unix,
                     // An adopted shell's `dedicated` carries its sidecar's
@@ -581,6 +636,62 @@ pub fn read_sandbox_sidecar(dir: &Path, id: &str) -> SandboxSidecar {
     }
 }
 
+/// What `<dir>/<id>.owner` says about a shell.
+#[derive(Debug, Clone)]
+pub enum OwnerSidecar {
+    /// No sidecar: a shell spawned before the sidecar existed.
+    Absent,
+    /// The owner and host the sidecar records.
+    Record((Owner, crate::host::HostId)),
+    /// A sidecar exists but is unreadable, malformed, or names an owner kind
+    /// a spawn can never have (`Owner::from_key` refuses it) or a host
+    /// `HostId::parse` rejects.
+    Invalid,
+}
+
+/// The sidecar path recording which owner and host `<id>`'s shell belongs to.
+pub fn owner_sidecar_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.owner"))
+}
+
+/// Write the owner sidecar for `id`: the owner key on the first line and the
+/// host's name on the second, each followed by a newline. Does not create
+/// `dir`; the caller does.
+pub fn write_owner_sidecar(
+    dir: &Path,
+    id: &str,
+    owner: &Owner,
+    host: &crate::host::HostId,
+) -> std::io::Result<()> {
+    std::fs::write(
+        owner_sidecar_path(dir, id),
+        format!("{}\n{}\n", owner.key(), host.as_str()).into_bytes(),
+    )
+}
+
+/// Read the owner sidecar for `id`. `NotFound` means no sidecar was ever
+/// written (a shell spawned before the sidecar existed) and reads as
+/// `Absent`; any other read error, a shape that is not two lines, an owner
+/// kind `Owner::from_key` refuses, or a host `HostId::parse` rejects fails
+/// closed as `Invalid`.
+pub fn read_owner_sidecar(dir: &Path, id: &str) -> OwnerSidecar {
+    match std::fs::read_to_string(owner_sidecar_path(dir, id)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => OwnerSidecar::Absent,
+        Err(_) => OwnerSidecar::Invalid,
+        Ok(content) => {
+            let mut lines = content.lines();
+            let owner = lines.next().and_then(Owner::from_key);
+            let host = lines
+                .next()
+                .and_then(|name| crate::host::HostId::parse(name).ok());
+            match (owner, host) {
+                (Some(owner), Some(host)) => OwnerSidecar::Record((owner, host)),
+                _ => OwnerSidecar::Invalid,
+            }
+        }
+    }
+}
+
 /// Remove the socket and lock of every DEAD host in `dir`; return the ids
 /// swept. A live host's files are never removed — the same probe that
 /// authorizes adoption *denies* the deletion here.
@@ -595,6 +706,7 @@ pub fn sweep_stale(dir: &Path) -> Vec<ShellId> {
         let _ = std::fs::remove_file(&lock);
         // Most shells have no sidecar; ignore the error there.
         let _ = std::fs::remove_file(sandbox_sidecar_path(dir, id.as_str()));
+        let _ = std::fs::remove_file(owner_sidecar_path(dir, id.as_str()));
         swept.push(id);
     }
     swept

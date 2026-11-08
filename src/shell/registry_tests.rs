@@ -646,6 +646,7 @@ fn registry_reap_reports_removed_ids_in_id_order() {
 
 #[tokio::test]
 async fn registry_spawn_for_does_not_hold_the_lock_across_the_spawn() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
@@ -691,6 +692,7 @@ async fn registry_spawn_for_does_not_hold_the_lock_across_the_spawn() {
 /// block) can tell a remote shell from a local one.
 #[tokio::test]
 async fn spawn_for_on_host_records_the_named_host() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = spawn_for_on_host(
         &reg,
@@ -716,6 +718,7 @@ async fn spawn_for_on_host_records_the_named_host() {
 /// runs in, while the shell process itself stays on the local host.
 #[tokio::test]
 async fn spawn_for_in_sandbox_records_the_sandbox() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = spawn_for_in_sandbox(
         &reg,
@@ -746,6 +749,7 @@ async fn spawn_for_in_sandbox_records_the_sandbox() {
 /// arrives only from the sandbox spawn.
 #[tokio::test]
 async fn spawn_for_on_host_records_no_sandbox() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = spawn_for_on_host(
         &reg,
@@ -767,6 +771,7 @@ async fn spawn_for_on_host_records_no_sandbox() {
 /// through, so it must keep stamping `Local` exactly as before.
 #[tokio::test]
 async fn spawn_for_still_records_the_local_host() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = spawn_for(&reg, Owner::Chat("a".into()), 5, false, |_id| async {
         Ok(())
@@ -785,6 +790,7 @@ async fn spawn_for_still_records_the_local_host() {
 
 #[tokio::test]
 async fn registry_spawn_for_releases_the_slot_when_the_spawn_fails() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let result = spawn_for(&reg, Owner::Chat("a".into()), 5, false, |_id| async {
         Err(anyhow::anyhow!("boom"))
@@ -807,6 +813,7 @@ async fn registry_spawn_for_releases_the_slot_when_the_spawn_fails() {
 
 #[tokio::test]
 async fn registry_spawn_for_sets_dedicated_from_its_argument() {
+    let (_home, _dir) = crate::test_home();
     let foreground = ShellRegistry::default();
     assert!(
         spawn_for(
@@ -849,6 +856,7 @@ async fn registry_spawn_for_sets_dedicated_from_its_argument() {
 
 #[tokio::test]
 async fn a_spawned_shell_records_the_local_host() {
+    let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
     let id = spawn_for(&reg, Owner::Chat("a".into()), 5, false, |_id| async {
         Ok(())
@@ -862,5 +870,203 @@ async fn a_spawned_shell_records_the_local_host() {
         host,
         Some(crate::host::HostId::Local),
         "the record the normal path creates must carry the implicit local host"
+    );
+}
+
+// ── Phase 17b: the owner sidecar ────────────────────────────────────────
+
+#[test]
+fn owner_sidecar_round_trips_every_owner_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let owners = [
+        Owner::Chat("sess-1".into()),
+        Owner::Ghost("job-2".into()),
+        Owner::Scheduler("job-3".into()),
+        Owner::User,
+    ];
+    for (i, owner) in owners.iter().enumerate() {
+        let id = ShellId::from_index(i as u32);
+        for host in [
+            crate::host::HostId::Local,
+            crate::host::HostId::Named("zoidberg".to_string()),
+        ] {
+            write_owner_sidecar(dir.path(), id.as_str(), owner, &host)
+                .unwrap_or_else(|e| panic!("sidecar for {} on {host}: {e}", id.as_str()));
+            match read_owner_sidecar(dir.path(), id.as_str()) {
+                OwnerSidecar::Record((parsed_owner, parsed_host)) => {
+                    assert_eq!(
+                        parsed_owner.key(),
+                        owner.key(),
+                        "{} on {host}: owner key must round-trip",
+                        id.as_str()
+                    );
+                    assert_eq!(parsed_host, host, "{}: host must round-trip", id.as_str());
+                }
+                other => panic!(
+                    "{} on {host}: expected a parsed record, got {other:?}",
+                    id.as_str()
+                ),
+            }
+        }
+    }
+}
+
+#[test]
+fn owner_from_key_rejects_malformed_keys() {
+    for key in ["robot:x", "chat:", "chat", "adopted"] {
+        assert!(
+            Owner::from_key(key).is_none(),
+            "{key:?} is not a kind a spawn can have and must be rejected"
+        );
+    }
+}
+
+#[test]
+fn adopt_at_startup_restores_owner_and_host_from_the_sidecar() {
+    let (dir, logs) = fixture_dirs();
+    write(dir.path(), "s0.sock");
+    std::fs::write(dir.path().join("s0.owner"), "chat:s-abc\nzoidberg\n").unwrap();
+    let _held =
+        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+    let reg = ShellRegistry::default();
+    adopt_at_startup(&reg, dir.path(), logs.path());
+
+    let record = with_shells(&reg, |store| {
+        store
+            .get("s0")
+            .map(|r| (r.owner.clone(), r.host.clone()))
+            .expect("s0 must be adopted")
+    });
+    assert_eq!(
+        record.0.key(),
+        Owner::Chat("s-abc".into()).key(),
+        "the sidecar's owner key must be restored"
+    );
+    assert_eq!(
+        record.1,
+        crate::host::HostId::Named("zoidberg".to_string()),
+        "the sidecar's host must be restored"
+    );
+}
+
+#[test]
+fn adopt_at_startup_without_an_owner_sidecar_stays_adopted_and_local() {
+    let (dir, logs) = fixture_dirs();
+    write(dir.path(), "s0.sock");
+    let _held =
+        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+    let reg = ShellRegistry::default();
+    adopt_at_startup(&reg, dir.path(), logs.path());
+
+    let record = with_shells(&reg, |store| {
+        store
+            .get("s0")
+            .map(|r| (r.owner.clone(), r.host.clone()))
+            .expect("s0 must be adopted")
+    });
+    assert_eq!(
+        record.0,
+        Owner::Adopted,
+        "a shell spawned before this phase has no sidecar and stays adopted"
+    );
+    assert_eq!(
+        record.1,
+        crate::host::HostId::Local,
+        "today's behaviour: the host stamp is local"
+    );
+}
+
+#[test]
+fn adopt_at_startup_treats_an_invalid_owner_sidecar_as_adopted() {
+    let (dir, logs) = fixture_dirs();
+    write(dir.path(), "s0.sock");
+    std::fs::write(dir.path().join("s0.owner"), "robot:x\nlocal\n").unwrap();
+    let _held =
+        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+    let reg = ShellRegistry::default();
+    adopt_at_startup(&reg, dir.path(), logs.path());
+
+    let record = with_shells(&reg, |store| {
+        store
+            .get("s0")
+            .map(|r| (r.owner.clone(), r.host.clone()))
+            .expect("s0 must be adopted")
+    });
+    assert_eq!(
+        record.0,
+        Owner::Adopted,
+        "an owner kind a spawn can never have must not be adopted as that owner"
+    );
+}
+
+#[tokio::test]
+async fn spawn_writes_the_owner_sidecar() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let id = spawn_for_on_host(
+        &reg,
+        Owner::Chat("a".into()),
+        5,
+        crate::host::HostId::Local,
+        false,
+        |_id| async { Ok(()) },
+    )
+    .await
+    .expect("the stub spawn must succeed");
+
+    let content = std::fs::read_to_string(owner_sidecar_path(
+        &crate::config::shells_dir(),
+        id.as_str(),
+    ))
+    .expect("the spawn must write the owner sidecar beside the socket");
+    let mut lines = content.lines();
+    assert_eq!(
+        lines.next(),
+        Some("chat:a"),
+        "the first line must be the owner key"
+    );
+    assert_eq!(
+        lines.next(),
+        Some("local"),
+        "the second line must be the host's name"
+    );
+}
+
+#[test]
+fn sweep_stale_removes_a_dead_hosts_owner_sidecar() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "s0.sock");
+    write(dir.path(), "s1.sock");
+    write_owner_sidecar(
+        dir.path(),
+        "s0",
+        &Owner::Chat("a".into()),
+        &crate::host::HostId::Local,
+    )
+    .unwrap();
+    write_owner_sidecar(
+        dir.path(),
+        "s1",
+        &Owner::User,
+        &crate::host::HostId::Named("zoidberg".to_string()),
+    )
+    .unwrap();
+    let _held_live =
+        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+    let swept = sweep_stale(dir.path());
+    assert_eq!(swept.len(), 1);
+    assert_eq!(swept[0].as_str(), "s1");
+
+    assert!(
+        !dir.path().join("s1.owner").exists(),
+        "the dead host's owner sidecar must be removed"
+    );
+    assert!(
+        dir.path().join("s0.owner").exists(),
+        "the live host's owner sidecar must survive"
     );
 }
