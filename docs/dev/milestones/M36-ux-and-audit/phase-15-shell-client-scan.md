@@ -1,7 +1,7 @@
 # Phase 15 — shell-client-scan
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -330,3 +330,145 @@ test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 fmt_exit=0
 passed=2762 failed=0
 ```
+
+### Update — 2026-11-08 00:46 (complete, server-authored)
+
+**Summary:** **Summary:** Completed M36 phase-15 (shell-client-scan) by finishing the remaining work from the architect's seven-item resume list: fixed the bounded-tail test's borrow error (test now passes and asserts `longest <= OFFER_WINDOW`), raised `StreamBackend`'s broadcast capacity to 4096 with the 256/2048-chunk rounds (linear test passes in ~3 s), deleted the scratch comments/probe code, implemented behaviour item 4 (`read_to_marker` appends `\r\n[daemoneye: {skipped} output chunks dropped here: …]\r\n` on a `Lagged` frame), and wrote the two missing tests (`read_to_marker_reports_a_lag_gap` via a raw UnixListener host hand-encoding frames; `marker_scan_finds_a_marker_split_at_every_offset` on the stream host). End-to-end verification ran the phase's full script in one pass: all eight named tests `failed=0`, `silent_lag=0`, `meta_rename=1`, `offer_window=2`, `build_warnings=0`, hygiene/doc_truth/bug_tracker green, clippy clean, `fmt_exit=0`, full suite `passed=2762 failed=0`. Committed as `a72c023c` with a clean tree.
+
+**Notes for review:**
+- **Mutation check caveat (important):** red runs were waived per the resume notes, and of the three prescribed mutation checks only the third (`Lagged` arm removed → `read_to_marker_reports_a_lag_gap` fails) actually turned red. The scan-overlap-zero and offer-slicing-removed mutations did not move their tests, so linear-scan and bounded-offer behaviour are only proven by the passing tests, not by mutation. Details and real output are in the phase doc's mutation-check Update Log entry.
+- `read_to_marker` grew to 198 lines and the hygiene cap entry for it was raised from 163 to 198 (reason recorded in the phase Findings entry, as the phase Authorizations allow).
+- `read_to_marker_reports_a_lag_gap` recovers the nonce from the wrapped command text directly (the host's `Lagged` is injected by hand since a real oyuncu only lags under load; architect's prescribed design).
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+
+test production_files_fit_the_cap ... ok
+test test_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (1267754): No such process
+kill: (-1268441): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-15-shell-client-scan.md` — +332 -0
+- `src/shell/client.rs` — +13 -0
+- `src/shell/client_tests.rs` — +179 -44
+- `src/shell/host.rs` — +88 -2
+- `src/shell/log.rs` — +44 -14
+- `src/shell/log_tests.rs` — +105 -0
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** a72c023cb9403ce85858b98b6dd8fade7cfe67e6
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
