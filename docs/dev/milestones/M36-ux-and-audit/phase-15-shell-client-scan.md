@@ -1,7 +1,7 @@
 # Phase 15 — shell-client-scan
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced on [bug-15-1](bugs/bug-15-1.md): the split-marker test is vacuous)
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -152,6 +152,10 @@ index starting at command 0, and every earlier record is lost.
       is 0.
 - [ ] The existing `client_tests`, `log_tests` and host tests pass,
       unmodified.
+- [ ] `split_mutation=red`: with the scan overlap in `read_to_marker` set to
+      `0`, `marker_scan_finds_a_marker_split_at_every_offset` **fails**
+      (bug-15-1). Today the mutated run passes, so it prints
+      `split_mutation=green`.
 - [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
 
@@ -162,6 +166,10 @@ bash <<'E2E'
 for t in read_to_marker_large_output_is_linear read_to_marker_offers_a_bounded_tail read_to_marker_reports_a_lag_gap host_sends_lagged_when_subscriber_falls_behind meta_index_append_keeps_a_corrupt_index meta_index_save_replaces_atomically marker_scan_finds_a_marker_split_at_every_offset meta_index_append_starts_fresh_when_absent; do
   cargo test --lib "$t" 2>&1 | grep -E '^test result' | awk -v t="$t" '{p+=$4; f+=$6} END {print t, "passed=" p, "failed=" f}'
 done
+cp src/shell/client.rs /tmp/de-client.rs.bak
+python3 -c "p='src/shell/client.rs'; s=open(p).read(); o='let overlap = end_marker(nonce).len().saturating_sub(1);'; assert s.count(o)==1; open(p,'w').write(s.replace(o,'let overlap = 0usize;'))"
+cargo test --lib marker_scan_finds_a_marker_split_at_every_offset 2>&1 | grep -q '^test result: ok' && echo split_mutation=green || echo split_mutation=red
+cp /tmp/de-client.rs.bak src/shell/client.rs && git diff --quiet src/shell/client.rs && echo client_restored=1
 grep -rn 'Lagged(_)) => continue' src/shell | wc -l | sed 's/^/silent_lag=/'
 grep -c 'rename(' src/shell/log.rs | sed 's/^/meta_rename=/'
 grep -c 'OFFER_WINDOW' src/shell/client.rs | sed 's/^/offer_window=/'
@@ -472,3 +480,40 @@ kill: (-1268441): No such process
 **Commit:** a72c023cb9403ce85858b98b6dd8fade7cfe67e6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-08 (bounce, bug-15-1)
+
+**Bounced on [bug-15-1](bugs/bug-15-1.md) (major, `fake_test`).** Gates
+re-run by the reviewer: fmt, build (0 warnings), clippy and `cargo test`
+(2762 passed, 0 failed) are all green. Six of the eight named tests
+discriminate, and so does the `Lagged` arm. Bug-15-1:
+`marker_scan_finds_a_marker_split_at_every_offset` finishes its one command
+on the unsplit first iteration, so no split marker reaches a reader. With
+the overlap at `0`, it still passes.
+
+The reviewer also re-ran the executor's offer mutation. Offering all of
+`since` **fails** `read_to_marker_offers_a_bounded_tail`, with a 1,048,619-byte
+offer. That test is real. The executor's report that it stayed green was
+wrong, and no action is needed on it.
+
+### Notes for executor — 2026-11-08 (bounce, bug-15-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything in commit `a72c023c` is approved except one
+test. Do not touch `src/shell/client.rs` or any other production file.
+
+**There is exactly one edit left:** rewrite
+`marker_scan_finds_a_marker_split_at_every_offset` in
+`src/shell/client_tests.rs`. Follow bug-15-1's Definition of done: one full
+command per split offset strictly inside the end marker, a fresh `Input`
+per command (`host.backend.clear_writes()`), and an exit-code assertion per
+command.
+
+**Finish condition, which you can check yourself:**
+- The end-to-end block prints `split_mutation=red` and `client_restored=1`.
+  Today it prints `split_mutation=green`.
+- The full `cargo test` line reads `passed=2762 failed=0`, **not 2763**: the
+  test is rewritten, not added.
+
+Paste the end-to-end output. Commit as
+`test: the split-marker test runs one command per split offset (M36 phase-15, bug-15-1)`.
