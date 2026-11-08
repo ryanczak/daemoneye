@@ -269,6 +269,38 @@ pub(super) async fn start_background(
     .await
 }
 
+/// The completion message of a run that passed its timeout and then exited
+/// on the Ctrl-C the timeout typed: it has a real exit code, so nothing is
+/// still running and the output is shown, as for a finished run.
+fn interrupted_message(
+    cmd: &str,
+    run_id: &RunId,
+    shell_id: &ShellId,
+    outcome: &CommandOutcome,
+) -> String {
+    format!(
+        "Background command `{cmd}` (run {run_id}, shell {shell_id}) passed its \
+         {BACKGROUND_CMD_TIMEOUT:?} timeout and was interrupted with Ctrl-C; it \
+         exited with code {}. read_shell(shell: \"{shell_id}\") reads its \
+         recorded output.\n{}",
+        outcome.exit_code,
+        output_block(outcome)
+    )
+}
+
+/// A finished command's output as the model sees it. Same annotate → mask →
+/// normalize order `format_for_model` applies (F3): the annotation strips
+/// control bytes before masking, or an escape embedded mid-token could split
+/// a secret past its regex.
+fn output_block(o: &CommandOutcome) -> String {
+    let text = shell_exec::format_for_model(&String::from_utf8_lossy(&o.output));
+    if text.is_empty() {
+        "(no output)".to_string()
+    } else {
+        format!("<output>\n{text}\n</output>")
+    }
+}
+
 /// The `[Background Task Completed]` body for a finished background run.
 /// Pure: no locks, no IO, no clock.
 ///
@@ -290,17 +322,7 @@ pub(super) fn completion_message(
         ),
     };
     let body = match outcome {
-        // Same annotate → mask → normalize order `format_for_model` applies
-        // (F3): the annotation strips control bytes before masking, or an
-        // escape embedded mid-token could split a secret past its regex.
-        Ok(o) => {
-            let text = shell_exec::format_for_model(&String::from_utf8_lossy(&o.output));
-            if text.is_empty() {
-                "(no output)".to_string()
-            } else {
-                format!("<output>\n{text}\n</output>")
-            }
-        }
+        Ok(o) => output_block(o),
         Err(_) => format!(
             "The command may still be running in shell {shell_id} — do not assume it \
              failed outright; retrying could double-apply its effect. Its output so \
@@ -335,33 +357,26 @@ pub(super) async fn await_and_notify(
         reg,
         before,
     } = start;
+    // An interrupted run — past its timeout, then exited on the Ctrl-C — has
+    // a real outcome. It is indexed and gets its own completion message, but
+    // it did not finish on its own, so it still reports as a failure.
+    let mut interrupted: Option<CommandOutcome> = None;
     let outcome: Result<CommandOutcome, String> = match handle.outcome.await {
         Ok(Ok(inner)) => {
             shell_exec::index_command_output(&reg, &cmd, &shell_id, &inner, before).await;
             Ok(inner)
         }
-        Ok(Err(e)) => {
-            let indexed = match e.downcast_ref::<crate::shell::CommandTimedOut>() {
-                Some(timed_out) => match &timed_out.interrupted {
-                    Some(inner) => {
-                        shell_exec::index_command_output(&reg, &cmd, &shell_id, inner, before)
-                            .await;
-                        Some(format!(
-                            "{cmd} in shell {shell_id} timed out and was interrupted with \
-                             Ctrl-C; it then exited with code {}. read_shell(shell: \
-                             \"{shell_id}\") reads it.",
-                            inner.exit_code
-                        ))
-                    }
-                    None => None,
-                },
-                None => None,
-            };
-            match indexed {
-                Some(message) => Err(message),
-                None => Err(format!("{e:#}")),
+        Ok(Err(e)) => match e.downcast::<crate::shell::CommandTimedOut>() {
+            Ok(timed_out) => {
+                let text = timed_out.to_string();
+                if let Some(inner) = timed_out.interrupted {
+                    shell_exec::index_command_output(&reg, &cmd, &shell_id, &inner, before).await;
+                    interrupted = Some(inner);
+                }
+                Err(text)
             }
-        }
+            Err(e) => Err(format!("{e:#}")),
+        },
         Err(_) => Err("the command's reader task ended without delivering an outcome".to_string()),
     };
     let state = report_state(&outcome);
@@ -384,7 +399,10 @@ pub(super) async fn await_and_notify(
         role: "user".to_string(),
         content: format!(
             "[Background Task Completed]\n{}",
-            completion_message(&cmd, &run_id, &shell_id, &outcome)
+            match &interrupted {
+                Some(o) => interrupted_message(&cmd, &run_id, &shell_id, o),
+                None => completion_message(&cmd, &run_id, &shell_id, &outcome),
+            }
         ),
         tool_calls: None,
         tool_results: None,
@@ -849,6 +867,74 @@ mod tests {
             content.contains("DONE"),
             "the command's own output must reach the session: {content:?}"
         );
+    }
+
+    /// bug-16-1: a background run that passed its timeout and answered the
+    /// Ctrl-C by exiting has a real exit code, so its completion message
+    /// names that code and `read_shell`, and never carries the "may still be
+    /// running" caveat a run with no outcome gets.
+    #[tokio::test]
+    async fn bg_interrupted_completion_names_the_exit_not_still_running() {
+        let (_home, _dir) = crate::test_home();
+        let session_id = "bg-interrupted-session".to_string();
+        let sessions = store_with_entry(&session_id);
+        let shell_id = ShellId::from_index(7);
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tx.send(Err(crate::shell::CommandTimedOut {
+            timeout: Duration::from_secs(1),
+            cmd: "trap 'exit 130' INT; sleep 30".to_string(),
+            interrupted: Some(CommandOutcome {
+                output: b"TRAPPED".to_vec(),
+                exit_code: 130,
+                nonce: crate::shell::Nonce::new(),
+            }),
+        }
+        .into()))
+            .expect("the receiver is alive");
+        let start = BackgroundStart {
+            run_id: RunId::new(),
+            shell_id: shell_id.clone(),
+            reg: ShellRegistry::default(),
+            before: None,
+        };
+        let handle = CommandHandle {
+            outcome: rx,
+            nonce: crate::shell::Nonce::new(),
+        };
+
+        await_and_notify(
+            sessions.clone(),
+            session_id.clone(),
+            "trap 'exit 130' INT; sleep 30".to_string(),
+            start,
+            handle,
+        )
+        .await;
+
+        let content = with_sessions(&sessions, |store| {
+            let entry = store.get(&session_id).expect("the session entry is back");
+            entry
+                .messages
+                .last()
+                .expect("a completion was pushed")
+                .content
+                .clone()
+        });
+        assert!(
+            content.starts_with("[Background Task Completed]"),
+            "the prefixed literal leads: {content:?}"
+        );
+        assert!(content.contains("130"), "the real exit code: {content:?}");
+        assert!(content.contains("Ctrl-C"), "the interrupt: {content:?}");
+        assert!(
+            content.contains(&format!("read_shell(shell: \"{shell_id}\")")),
+            "where the output is read: {content:?}"
+        );
+        assert!(
+            !content.contains("may still be running"),
+            "an exited command is not still running: {content:?}"
+        );
+        assert!(!content.contains(".."), "no doubled full stop: {content:?}");
     }
 
     #[tokio::test]
