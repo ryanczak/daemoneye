@@ -29,6 +29,10 @@ pub(super) use shell::{
 // above for the same reason `format_err_chain` is.
 pub(crate) use shell::SCREEN_TIMEOUT;
 pub(crate) use shell::read_shell_screen_in;
+// Only the tests reach the injected-registry read directly; the daemon-side
+// `bg_shell` tests drive it through the plain read path.
+#[cfg(test)]
+pub(crate) use shell::read_shell_in;
 // The launch's change-wait prefix (`wait_screen_change`) and its baseline
 // read (`screen_text`) are the same caller's, for the same reason.
 pub(crate) use shell::{screen_text, wait_screen_change};

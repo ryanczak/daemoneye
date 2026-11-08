@@ -65,6 +65,45 @@ impl std::fmt::Display for ShellExited {
 
 impl std::error::Error for ShellExited {}
 
+/// How long `read_to_marker` keeps reading for the end marker after it typed
+/// Ctrl-C into the shell: a command that handles SIGINT and exits on its own
+/// still prints its end marker, and that real outcome must be captured
+/// instead of reported as a bare timeout. In the usual bash case nothing
+/// answers the Ctrl-C — the wrapped list is aborted whole — so this grace is
+/// simply waited out before the typed [`CommandTimedOut`] is returned.
+const INTERRUPT_GRACE: Duration = Duration::from_secs(5);
+
+/// A command's own timeout passed while reading its output. Ctrl-C was typed
+/// into the shell (as input bytes, never a signal frame) to free it.
+///
+/// `interrupted` carries the real outcome when the end marker arrived within
+/// [`INTERRUPT_GRACE`] of the interrupt — the command handled SIGINT and
+/// exited on its own. `None` is the usual case under bash: Ctrl-C aborts the
+/// whole wrapped list, so no end marker ever prints; the shell is at its
+/// prompt again and free for the next command.
+#[derive(Debug)]
+pub struct CommandTimedOut {
+    /// The caller's original timeout — not the extended post-interrupt
+    /// deadline.
+    pub timeout: Duration,
+    /// The command that was sent into the shell, as it was sent.
+    pub cmd: String,
+    /// The outcome, when the command answered the Ctrl-C by exiting.
+    pub interrupted: Option<CommandOutcome>,
+}
+
+impl std::fmt::Display for CommandTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "timed out after {:?} waiting for command output: {:?}",
+            self.timeout, self.cmd
+        )
+    }
+}
+
+impl std::error::Error for CommandTimedOut {}
+
 /// Send `sig` to the shell hosted at `sock`. Returns when the host has
 /// acknowledged, which is not the same as the job having reacted.
 pub async fn send_signal(sock: &Path, sig: ShellSignal, timeout: Duration) -> anyhow::Result<()> {
@@ -466,6 +505,11 @@ where
     // end marker that may already be in flight; past that, the shell has
     // exited and this command will never complete.
     let mut drain_until: Option<tokio::time::Instant> = None;
+    // Set when the command's deadline passed and Ctrl-C was typed into the
+    // shell: the loop keeps reading for [`INTERRUPT_GRACE`] longer, and an
+    // end marker that arrives within it becomes the command's real outcome
+    // instead of a bare timeout.
+    let mut interrupted_until: Option<tokio::time::Instant> = None;
     loop {
         let slice_end = match drain_until {
             Some(end) => end,
@@ -510,14 +554,34 @@ where
                     }
                 }
                 if tokio::time::Instant::now() >= deadline {
-                    anyhow::bail!(
-                        "timed out after {timeout:?} waiting for command output: {cmd:?}"
-                    );
+                    match interrupted_until {
+                        None => {
+                            // Free the shell the way the prompt give-up path
+                            // does: the Ctrl-C is typed as input into the
+                            // PTY, so it reaches whatever holds the terminal
+                            // — local or remote. `send_signal` would signal
+                            // the PTY's foreground process group, which on a
+                            // remote shell is the local ssh itself.
+                            write_answer(writer, GIVE_UP_BYTES).await?;
+                            let grace = tokio::time::Instant::now() + INTERRUPT_GRACE;
+                            interrupted_until = Some(grace);
+                            deadline = grace;
+                            continue;
+                        }
+                        Some(_) => {
+                            return Err(CommandTimedOut {
+                                timeout,
+                                cmd: cmd.to_string(),
+                                interrupted: None,
+                            }
+                            .into());
+                        }
+                    }
                 }
                 continue;
             }
         };
-        if n == 0 {
+        if n == 0 && interrupted_until.is_none() {
             return Err(ShellExited {
                 cmd: cmd.to_string(),
             })
@@ -527,6 +591,14 @@ where
                     sock.display()
                 )
             });
+        }
+        if n == 0 {
+            return Err(CommandTimedOut {
+                timeout,
+                cmd: cmd.to_string(),
+                interrupted: None,
+            }
+            .into());
         }
         let frame = match serde_json::from_slice::<ShellResponse>(&line) {
             Ok(frame) => frame,
@@ -540,9 +612,6 @@ where
         line.clear();
         match frame {
             ShellResponse::Chunk { bytes } => {
-                // Chunks split arbitrarily (a PTY read can land mid-sequence),
-                // so never decode a chunk on its own — accumulate bytes and
-                // hand the whole buffer to `parse_outcome`.
                 buf.extend_from_slice(&bytes);
                 if end_seen || {
                     let overlap = end_marker(nonce).len().saturating_sub(1);
@@ -554,6 +623,14 @@ where
                 } {
                     end_seen = true;
                     if let Some(outcome) = parse_outcome(&buf, nonce) {
+                        if interrupted_until.is_some() {
+                            return Err(CommandTimedOut {
+                                timeout,
+                                cmd: cmd.to_string(),
+                                interrupted: Some(outcome),
+                            }
+                            .into());
+                        }
                         return Ok(outcome);
                     }
                 }

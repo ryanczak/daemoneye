@@ -356,6 +356,31 @@ fn shell_run_error_text(shell_id: &str, e: &anyhow::Error) -> String {
              exited, so the command is not running there. Omit `shell` (or pass \
              \"new\") to run it in a live shell."
         )
+    } else if let Some(timed_out) = e
+        .chain()
+        .find_map(|c| c.downcast_ref::<crate::shell::CommandTimedOut>())
+    {
+        match &timed_out.interrupted {
+            Some(outcome) => {
+                let code = outcome.exit_code;
+                format!(
+                    "Error running command in shell {shell_id}: {chain}. The command \
+                     timed out and was interrupted with Ctrl-C; it then exited with \
+                     code {code}. Its output can be read with read_shell(shell: \
+                     \"{shell_id}\")."
+                )
+            }
+            None => {
+                format!(
+                    "Error running command in shell {shell_id}: {chain}. The command \
+                     timed out and Ctrl-C was sent to that shell. A command that stops \
+                     on Ctrl-C leaves no exit code and returns the shell to its prompt; \
+                     one that ignored it may still be running, and retrying could \
+                     double-apply its effect. read_shell_screen(shell: \"{shell_id}\") \
+                     shows which."
+                )
+            }
+        }
     } else {
         format!(
             "Error running command in shell {shell_id}: {chain}. \
@@ -1453,6 +1478,68 @@ mod tests {
         assert!(
             !text.contains("has exited"),
             "a real timeout is not an exit: {text}"
+        );
+    }
+
+    /// The timeout branch of `shell_run_error_text` names the shell and what
+    /// happened: the interrupted form carries the real exit code and points
+    /// at `read_shell`; the still-running form keeps the caveat and points at
+    /// `read_shell_screen`.
+    #[test]
+    fn timeout_text_names_the_shell_and_the_interrupt() {
+        let shell_id = "s12";
+        let inner = crate::shell::CommandTimedOut {
+            timeout: Duration::from_secs(45),
+            cmd: "\"sleep 60\"".to_string(),
+            interrupted: Some(crate::shell::CommandOutcome {
+                output: Vec::new(),
+                exit_code: 3,
+                nonce: crate::shell::Nonce::new(),
+            }),
+        };
+        let e = anyhow::Error::new(inner).context("ran in shell s12");
+        let text = shell_run_error_text(shell_id, &e);
+        assert!(text.contains(shell_id), "the text names the shell: {text}");
+        assert!(
+            text.contains("Ctrl-C"),
+            "the text names the interrupt: {text}"
+        );
+        assert!(
+            text.contains('3'),
+            "the text carries the real exit code: {text}"
+        );
+        assert!(
+            text.contains("read_shell(shell: \"s12\")"),
+            "the text points at read_shell: {text}"
+        );
+        assert!(
+            !text.contains("may still be running"),
+            "an interrupted command has an outcome, so nothing may be running: {text}"
+        );
+        assert!(
+            !text.contains("read_shell_screen"),
+            "there is nothing to disambiguate: {text}"
+        );
+
+        let inner = crate::shell::CommandTimedOut {
+            timeout: Duration::from_secs(45),
+            cmd: "\"sleep 60\"".to_string(),
+            interrupted: None,
+        };
+        let e = anyhow::Error::new(inner).context("ran in shell s12");
+        let text = shell_run_error_text(shell_id, &e);
+        assert!(text.contains(shell_id), "the text names the shell: {text}");
+        assert!(
+            text.contains("Ctrl-C"),
+            "the text names the interrupt: {text}"
+        );
+        assert!(
+            text.contains("may still be running"),
+            "a command that ignored Ctrl-C may still be running: {text}"
+        );
+        assert!(
+            text.contains("read_shell_screen(shell: \"s12\")"),
+            "the screen read is how the model disambiguates: {text}"
         );
     }
 

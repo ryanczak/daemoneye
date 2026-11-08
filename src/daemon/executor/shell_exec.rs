@@ -79,6 +79,37 @@ pub(super) fn format_for_model(raw: &str) -> String {
     mask_sensitive(&normalize_output(&crate::process::annotate_output(raw)))
 }
 
+/// The plain (no-sudo) foreground run: run to completion, index a run the
+/// Ctrl-C interrupt drove to a real outcome, then map the error. Split out of
+/// `run_in_shell_core` whole.
+async fn run_plain(
+    reg: &ShellRegistry,
+    cmd: &str,
+    id: &ShellId,
+    socket: &std::path::Path,
+    marker: &str,
+    applied_timeout: Duration,
+    before: Option<u64>,
+) -> anyhow::Result<(ShellId, ShellRunResult)> {
+    let result = run_command(socket, cmd, marker, applied_timeout).await;
+    match result {
+        Ok(outcome) => return finish_run(reg, cmd, id, &outcome, before).await,
+        Err(e) => {
+            // A timeout that interrupted the command into a real outcome is
+            // indexed like any other completed run — the cast carries both
+            // markers and the real exit code. Nothing is invented for the
+            // `None` case: without the end marker the indexer has no range
+            // to point at.
+            if let Some(timed_out) = e.downcast_ref::<crate::shell::CommandTimedOut>()
+                && let Some(outcome) = &timed_out.interrupted
+            {
+                index_command_output(reg, cmd, id, outcome, before).await;
+            }
+            Err(map_run_command_error(e, applied_timeout, id.as_str()))
+        }
+    }
+}
+
 /// The context a command's failure carries when it reaches `map_err`: a
 /// `ShellExited` in the chain says the shell died, everything else reads as
 /// the command overrunning `applied_timeout`. Named so the mapping is
@@ -90,6 +121,20 @@ pub(super) fn map_run_command_error(
 ) -> anyhow::Error {
     if e.chain().any(|c| c.is::<crate::shell::ShellExited>()) {
         e.context(format!("shell {shell} exited before the command finished"))
+    } else if let Some(timed_out) = e.downcast_ref::<crate::shell::CommandTimedOut>() {
+        match &timed_out.interrupted {
+            Some(outcome) => {
+                let code = outcome.exit_code;
+                e.context(format!(
+                    "the command in shell {shell} passed its {applied_timeout:#?} limit, \
+                     was interrupted with Ctrl-C, and exited with code {code}"
+                ))
+            }
+            None => e.context(format!(
+                "the command in shell {shell} passed its {applied_timeout:#?} limit; \
+                 Ctrl-C was typed into the shell"
+            )),
+        }
     } else {
         e.context(format!(
             "command exceeded the {applied_timeout:#?} limit in shell {shell}"
@@ -482,10 +527,7 @@ where
 
     // A command without sudo takes the plain path.
     let Some(prompts) = prompts else {
-        let outcome = run_command(&socket, cmd, &marker, applied_timeout)
-            .await
-            .map_err(|e| map_run_command_error(e, applied_timeout, id.as_str()))?;
-        return finish_run(reg, cmd, &id, &outcome, before).await;
+        return run_plain(reg, cmd, &id, &socket, &marker, applied_timeout, before).await;
     };
 
     let wrapped = prompts.wrapped.clone();
@@ -665,7 +707,7 @@ use super::USER_PROMPT_TIMEOUT;
 /// Everything here is best-effort: the index is derived data, exactly like the
 /// memory FTS index, and a failure must never change what the command returns
 /// to the model.
-async fn index_command_output(
+pub(super) async fn index_command_output(
     reg: &ShellRegistry,
     cmd: &str,
     id: &ShellId,
@@ -695,30 +737,7 @@ async fn index_command_output(
         );
         return;
     };
-    // The host broadcasts a chunk before it writes that chunk to the cast
-    // (backend.rs pump thread), so `run_command` can return before the
-    // command's bytes are on disk. Wait for the END marker rather than
-    // assuming the file has caught up.
-    let deadline = tokio::time::Instant::now() + CAST_SETTLE_TIMEOUT;
-    let range = loop {
-        let after = match std::fs::metadata(&cast) {
-            Ok(m) => m.len(),
-            Err(e) => {
-                log::warn!("meta index: cast {} vanished mid-read: {e}", cast.display());
-                return;
-            }
-        };
-        if after > before
-            && let Ok(slice) = read_cast_slice(&cast, before, after)
-            && let Some((first, end)) = marked_inner_range(&slice, &outcome.nonce)
-        {
-            break Some((before + first, before + end));
-        }
-        if tokio::time::Instant::now() >= deadline {
-            break None;
-        }
-        tokio::time::sleep(CAST_SETTLE_POLL).await;
-    };
+    let range = settle_markers(&cast, before, &outcome.nonce).await;
     let Some((first_byte, end_byte)) = range else {
         log::warn!(
             "meta index: markers for shell {} command `{cmd}` never landed in {} \
@@ -751,6 +770,37 @@ async fn index_command_output(
             "meta index: appending to {} failed, command output is unaffected: {e}",
             meta_path.display()
         );
+    }
+}
+
+/// The host broadcasts a chunk before it writes that chunk to the cast, so a
+/// completed command can be in hand before its bytes are on disk. Wait for
+/// the END marker rather than assuming the file caught up; `None` on
+/// expiration keeps the record unwritten.
+async fn settle_markers(
+    cast: &Path,
+    before: u64,
+    nonce: &crate::shell::Nonce,
+) -> Option<(u64, u64)> {
+    let deadline = tokio::time::Instant::now() + CAST_SETTLE_TIMEOUT;
+    loop {
+        let after = match std::fs::metadata(cast) {
+            Ok(m) => m.len(),
+            Err(e) => {
+                log::warn!("meta index: cast {} vanished mid-read: {e}", cast.display());
+                return None;
+            }
+        };
+        if after > before
+            && let Ok(slice) = read_cast_slice(cast, before, after)
+            && let Some((first, end)) = marked_inner_range(&slice, nonce)
+        {
+            return Some((before + first, before + end));
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(CAST_SETTLE_POLL).await;
     }
 }
 

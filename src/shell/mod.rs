@@ -22,8 +22,9 @@ pub mod status;
 pub use crate::daemon::utils::PromptKind;
 pub use backend::PtyBackend;
 pub use client::{
-    CommandHandle, PromptGivenUp, PromptReply, ShellExited, close_or_term, run_command,
-    run_command_with_prompts, screen, send_input, send_resize, send_signal, spawn_command, status,
+    CommandHandle, CommandTimedOut, PromptGivenUp, PromptReply, ShellExited, close_or_term,
+    run_command, run_command_with_prompts, screen, send_input, send_resize, send_signal,
+    spawn_command, status,
 };
 pub use foreground::{Foreground, classify, classify_record, classify_transport};
 pub use host::{ShellBackend, bind, serve, serve_until_exit};

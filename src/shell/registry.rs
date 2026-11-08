@@ -96,6 +96,7 @@ pub fn is_user_shell(reg: &ShellRegistry, id: &str) -> bool {
 }
 
 /// One entry in the registry, keyed in the underlying map by the id string.
+#[derive(Debug)]
 pub struct ShellRecord {
     pub id: ShellId,
     pub owner: Owner,
@@ -146,7 +147,7 @@ pub struct InFlight {
 /// A newtype rather than an alias so the inner mutex cannot be locked from
 /// outside this module: `with_shells` is the only way in, which is what keeps
 /// blocking work out of the critical section.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ShellRegistry(Arc<Mutex<HashMap<String, ShellRecord>>>);
 
 impl ShellRegistry {

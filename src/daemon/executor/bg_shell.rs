@@ -33,11 +33,15 @@ use crate::shell::{
 /// may-still-be-running warning.
 pub(super) const BACKGROUND_CMD_TIMEOUT: Duration = Duration::from_secs(3600);
 
-/// The ids a started background run hands back to the model.
+/// The ids a started background run hands back to the model, plus what
+/// `await_and_notify` needs to index the outcome: the run's dedicated
+/// shell's registry and the cast length the snapshot was taken at.
 #[derive(Debug, Clone)]
 pub(super) struct BackgroundStart {
     pub run_id: RunId,
     pub shell_id: ShellId,
+    pub reg: ShellRegistry,
+    pub before: Option<u64>,
 }
 
 /// Start `cmd` on a **dedicated** shell for `owner` and return without
@@ -224,8 +228,29 @@ async fn finish_start(
             .map(crate::shell::shell_marker_name)
     })
     .unwrap_or_else(login_shell);
+    // The cast length before the command runs — the producer window's left
+    // edge, the same snapshot the foreground path takes. Read before
+    // `spawn_command`: once the completed command is in hand the pump has
+    // usually flushed the whole command into the cast.
+    let started_unix = with_shells(reg, |store| {
+        store
+            .get(shell_id.as_str())
+            .map(|record| record.started_unix)
+            .unwrap_or(0)
+    });
+    let before = std::fs::metadata(crate::shell::resolve_cast(shell_id.as_str(), started_unix))
+        .map(|m| m.len())
+        .ok();
     let handle = spawn_command(&socket, cmd, &marker_name, BACKGROUND_CMD_TIMEOUT).await?;
-    Ok((BackgroundStart { run_id, shell_id }, handle))
+    Ok((
+        BackgroundStart {
+            run_id,
+            shell_id,
+            reg: reg.clone(),
+            before,
+        },
+        handle,
+    ))
 }
 
 /// The production form: [`start_background_with`] with the real spawn. The
@@ -304,10 +329,39 @@ pub(super) async fn await_and_notify(
     start: BackgroundStart,
     handle: CommandHandle,
 ) {
-    let BackgroundStart { run_id, shell_id } = start;
+    let BackgroundStart {
+        run_id,
+        shell_id,
+        reg,
+        before,
+    } = start;
     let outcome: Result<CommandOutcome, String> = match handle.outcome.await {
-        Ok(Ok(inner)) => Ok(inner),
-        Ok(Err(e)) => Err(format!("{e:#}")),
+        Ok(Ok(inner)) => {
+            shell_exec::index_command_output(&reg, &cmd, &shell_id, &inner, before).await;
+            Ok(inner)
+        }
+        Ok(Err(e)) => {
+            let indexed = match e.downcast_ref::<crate::shell::CommandTimedOut>() {
+                Some(timed_out) => match &timed_out.interrupted {
+                    Some(inner) => {
+                        shell_exec::index_command_output(&reg, &cmd, &shell_id, inner, before)
+                            .await;
+                        Some(format!(
+                            "{cmd} in shell {shell_id} timed out and was interrupted with \
+                             Ctrl-C; it then exited with code {}. read_shell(shell: \
+                             \"{shell_id}\") reads it.",
+                            inner.exit_code
+                        ))
+                    }
+                    None => None,
+                },
+                None => None,
+            };
+            match indexed {
+                Some(message) => Err(message),
+                None => Err(format!("{e:#}")),
+            }
+        }
         Err(_) => Err("the command's reader task ended without delivering an outcome".to_string()),
     };
     let state = report_state(&outcome);
@@ -437,6 +491,32 @@ mod tests {
             .expect("today's event segment exists — the record was never written");
         let last = content.lines().last().expect("at least one line");
         serde_json::from_str(last).expect("the last line is valid JSON")
+    }
+
+    /// A spawn substitute whose cast the producer can resolve through the
+    /// ordinary path — `cast_path` under the test `HOME`'s `shell_logs_dir`,
+    /// the shape `resolve_cast` + `meta_path_for` operate on in production,
+    /// as `spawn_in_logs_dir` in `shell_exec_tests.rs` does.
+    async fn spawn_in_logs_dir(id: ShellId) -> anyhow::Result<()> {
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cast = crate::shell::cast_path(id.as_str(), started);
+        std::fs::create_dir_all(cast.parent().context("cast has a parent")?)
+            .context("creating the logs dir")?;
+        let backend = PtyBackend::spawn("bash", &[], ROWS, COLS, 100, &cast, started)
+            .context("spawning bash into the logs dir")?;
+        let lock = crate::daemon::instance::InstanceLock::acquire(&lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+        let socket = socket_path(id.as_str());
+        let listener = bind(&socket)
+            .await
+            .context("binding the in-process host's socket")?;
+        tokio::spawn(serve(listener, Arc::clone(&backend)));
+        std::mem::forget(lock);
+        std::mem::forget(cast);
+        Ok(())
     }
 
     /// The production spawn substitute: a real in-process PTY host serving
@@ -815,6 +895,72 @@ mod tests {
         let _ = crate::shell::close_or_term(&socket, std::time::Duration::from_secs(5)).await;
     }
 
+    /// A finished background run is indexed on its dedicated shell: the
+    /// `.meta.json` gains one record with the run's real exit code, and
+    /// `read_shell` returns what the command printed. This is the finding
+    /// B9 fix -- before it, a `wait: false` run saved no index and its
+    /// dedicated shell reported a missing command index on `read_shell`.
+    #[tokio::test]
+    async fn background_outcome_is_indexed() {
+        let (_home, _dir) = crate::test_home();
+        let reg = ShellRegistry::default();
+        let session_id = "bg-indexed-session".to_string();
+        let sessions = store_with_entry(&session_id);
+        let (start, handle) = start_background_with(
+            &reg,
+            Owner::Chat(session_id.clone()),
+            "echo hi",
+            5,
+            spawn_in_logs_dir,
+        )
+        .await
+        .expect("the command starts");
+
+        await_and_notify(
+            sessions.clone(),
+            session_id.clone(),
+            "echo hi".to_string(),
+            start.clone(),
+            handle,
+        )
+        .await;
+
+        let started = crate::shell::with_shells(&reg, |store| {
+            store
+                .get(start.shell_id.as_str())
+                .map(|r| r.started_unix)
+                .unwrap_or(0)
+        });
+        let cast = crate::shell::resolve_cast(start.shell_id.as_str(), started);
+        let meta = crate::shell::MetaIndex::load(&crate::shell::meta_path_for(&cast))
+            .expect("the background run was indexed");
+        assert_eq!(
+            meta.commands.len(),
+            1,
+            "one indexed record for the one background command: {:?}",
+            meta.commands
+        );
+        assert_eq!(
+            meta.commands[0].exit_code, 0,
+            "the record carries the run's real exit code: {:?}",
+            meta.commands[0]
+        );
+        let out = crate::daemon::executor::knowledge::read_shell_in(
+            &reg,
+            start.shell_id.as_str(),
+            None,
+            None,
+            None,
+        );
+        assert!(
+            out.contains("hi"),
+            "read_shell returns the command's output: {out}"
+        );
+    }
+
+    /// Hang the run's shell up before its outcome is awaited: the reader task
+    /// then ends without an end marker and the handle resolves to `Err`, the
+    /// shape of a completion that failed.
     #[tokio::test]
     async fn bg_completion_on_a_failed_outcome_records_status_failed() {
         let (_home, _dir) = crate::test_home();

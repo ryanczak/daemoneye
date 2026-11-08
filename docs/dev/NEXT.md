@@ -7,9 +7,9 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 15 — shell-client-scan
-([`phase-15-shell-client-scan.md`](milestones/M36-ux-and-audit/phase-15-shell-client-scan.md)),
-drafted 2026-11-07 (findings P1, B13). Phases 01–14 are `done`;
+**Active phase:** phase 16 — background-index
+([`phase-16-background-index.md`](milestones/M36-ux-and-audit/phase-16-background-index.md)),
+drafted 2026-11-07 (findings B9, B10). Phases 01–15 are `done`;
 twenty-three phases are planned in the README's table (04 split into 04a/04b
 and 21 — OSC 7501 program status, PE decision 9 — added on 2026-11-03; 05
 split into 05a/05b on 2026-11-04).

@@ -314,6 +314,9 @@ async fn spawn_in_logs_dir(id: ShellId) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `map_run_command_error`'s shell-exit branch keeps today's generic
+/// wording. A non-timed-out error must not be routed into the new
+/// `CommandTimedOut` branch of `shell_run_error_text`.
 #[test]
 fn resolve_shell_target_accepts_none_new_and_an_id() {
     assert!(matches!(resolve_shell_target(None), Ok(ShellTarget::Reuse)));
@@ -491,6 +494,100 @@ async fn run_terminal_command_custom_timeout_names_the_applied_value() {
 /// call returns the guard has cleared it — the run path's Drop, not any
 /// epilogue, is what leaves the shell free. The mid-run observation
 /// comes from a side task polling the registry while the command runs.
+/// A command that handles SIGINT and exits on its own: the Ctrl-C reaches
+/// it, its `trap "exit 3" INT` fires, the end marker prints with the real
+/// exit code, and the run is indexed like any other completed command.
+#[tokio::test]
+async fn timed_out_command_that_handles_ctrl_c_is_indexed() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let owner = Owner::Chat("timeout-trap".into());
+    let err = run_in_shell_for_test(
+        &reg,
+        owner,
+        "bash -c 'trap \"exit 3\" INT; sleep 30'",
+        5,
+        None,
+        Some(1),
+        spawn_in_logs_dir,
+    )
+    .await
+    .expect_err("a command that outlives its timeout is an error");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains('3'),
+        "the real exit code reaches the model: {msg}"
+    );
+    let id = with_shells(&reg, |store| {
+        store
+            .keys()
+            .next()
+            .cloned()
+            .expect("the run left a shell behind")
+    });
+    let started = with_shells(&reg, |store| {
+        store.get(id.as_str()).map(|r| r.started_unix).unwrap_or(0)
+    });
+    let cast = crate::shell::resolve_cast(id.as_str(), started);
+    let meta_path = crate::shell::meta_path_for(&cast);
+    let meta = crate::shell::MetaIndex::load(&meta_path)
+        .unwrap_or_else(|e| panic!("the interrupted command was indexed at {meta_path:?}: {e}"));
+    assert!(
+        meta.commands.iter().any(|c| c.exit_code == 3),
+        "the .meta.json holds the record with exit 3: {:?}",
+        meta.commands
+    );
+}
+
+#[tokio::test]
+async fn timed_out_command_frees_its_shell() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let owner = Owner::Chat("timeout-frees".into());
+    let err = run_in_shell_for_test(
+        &reg,
+        owner.clone(),
+        "sleep 30",
+        5,
+        None,
+        Some(1),
+        spawn_in_process_host,
+    )
+    .await
+    .expect_err("a command outliving its timeout must be an error");
+    let msg = crate::daemon::executor::shell_run_error_text("s999", &err);
+    assert!(
+        msg.contains("Ctrl-C"),
+        "the reply names the interrupt: {msg}"
+    );
+    assert!(msg.contains("s999"), "the reply names the shell: {msg}");
+    // The same shell still takes the next command and resolves cleanly.
+    let (id, result) = run_in_shell_for_test(
+        &reg,
+        owner,
+        "printf 'AFTER\\n'",
+        5,
+        None,
+        None,
+        spawn_in_process_host,
+    )
+    .await
+    .expect("the shell was freed for the next command");
+    assert_eq!(
+        result.exit_code, 0,
+        "the follow-up command exits cleanly: {result:?}"
+    );
+    assert!(
+        result.text.contains("AFTER"),
+        "the follow-up's output came back: {:?}",
+        result.text
+    );
+    assert!(
+        id.as_str().starts_with('s'),
+        "the shell id is a real one: {id:?}"
+    );
+}
+
 #[tokio::test]
 async fn in_flight_is_set_while_a_command_runs_and_cleared_after() {
     let (_home, _dir) = crate::test_home();

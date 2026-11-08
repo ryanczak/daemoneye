@@ -167,7 +167,7 @@ fn compile_depth(requested: Option<u64>) -> usize {
 /// a parameter rather than a module read: `list_shells`'s `list_shells_in` seam,
 /// so the lookup can be driven from a hand-built registry without touching the
 /// process-global one.
-pub(super) fn read_shell_in(
+pub(crate) fn read_shell_in(
     reg: &ShellRegistry,
     id: &str,
     lines: Option<u64>,

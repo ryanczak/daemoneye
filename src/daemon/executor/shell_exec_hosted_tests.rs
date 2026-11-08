@@ -1092,9 +1092,12 @@ async fn a_hang_after_an_answer_still_times_out() {
         ),
         Err(e) => e,
     };
+    // The Ctrl-C interrupt extends the read by INTERRUPT_GRACE (5 s) past
+    // the command's 2 s budget; the whole thing must still land far inside
+    // the 45 s default.
     assert!(
-        elapsed < Duration::from_secs(5),
-        "the timeout must fire on the command's own budget: {elapsed:?}"
+        elapsed < Duration::from_secs(10),
+        "the timeout must fire on the command's own budget, extended only by the grace: {elapsed:?}"
     );
     let msg = format!("{err:#}");
     assert!(

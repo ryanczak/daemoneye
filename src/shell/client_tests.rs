@@ -610,6 +610,8 @@ mod scripted {
     struct ScriptedBackend {
         /// Every write the client made, byte-exact, in order.
         writes: Mutex<Vec<Vec<u8>>>,
+        /// Every signal the client asked the host to raise, in order.
+        signals: Mutex<Vec<ShellSignal>>,
         /// The broadcast every connection's subscriber reads from.
         tx: tokio::sync::broadcast::Sender<Vec<u8>>,
     }
@@ -619,6 +621,7 @@ mod scripted {
             let (tx, _) = tokio::sync::broadcast::channel(64);
             let backend = Arc::new(Self {
                 writes: Mutex::new(Vec::new()),
+                signals: Mutex::new(Vec::new()),
                 tx: tx.clone(),
             });
             (backend, tx)
@@ -626,6 +629,10 @@ mod scripted {
 
         fn writes(&self) -> Vec<Vec<u8>> {
             self.writes.lock().unwrap().clone()
+        }
+
+        fn signals(&self) -> Vec<ShellSignal> {
+            self.signals.lock().unwrap().clone()
         }
     }
 
@@ -638,7 +645,8 @@ mod scripted {
         async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
             Ok(())
         }
-        async fn signal(&self, _sig: ShellSignal) -> anyhow::Result<()> {
+        async fn signal(&self, sig: ShellSignal) -> anyhow::Result<()> {
+            self.signals.lock().unwrap().push(sig);
             Ok(())
         }
         async fn status(&self) -> ShellResponse {
@@ -989,6 +997,120 @@ mod scripted {
         assert_eq!(
             out, "plain output",
             "the output is the command's own bytes, identical to run_command's shape"
+        );
+    }
+
+    /// A command whose output never arrives past its deadline: the timeout
+    /// types Ctrl-C into the shell (an `Input` write, never a signal frame)
+    /// and, when the shell still answers with its end marker — because the
+    /// command handled SIGINT and exited (here, the script emits the markers
+    /// after seeing the 0x03) — the error carries that real outcome.
+    #[tokio::test]
+    async fn timeout_types_ctrl_c_and_returns_the_interrupted_outcome() {
+        let host = spawn_scripted().await;
+        let tx = host.backend.tx.clone();
+        let path = host.path.clone();
+        let client =
+            tokio::spawn(
+                async move { run_command(&path, "cat", "bash", Duration::from_secs(1)).await },
+            );
+        let wrapped = await_input(&host).await;
+        let nonce = nonce_of(&wrapped);
+        let begin = test_begin_marker(&nonce);
+        let end = test_end_marker(&nonce, 130);
+        let publisher = tokio::spawn(async move {
+            // Wait past the deadline so the Ctrl-C lands first, then answer
+            // it the way a SIGINT-handling command does: with both markers.
+            tokio::time::sleep(Duration::from_millis(1400)).await;
+            let _ = tx.send(begin);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = tx.send(end);
+        });
+        let err = client
+            .await
+            .expect("the client task joins")
+            .expect_err("a command past its deadline must be an error");
+        publisher.await.expect("the script task finishes");
+
+        let timed_out = err
+            .downcast_ref::<CommandTimedOut>()
+            .expect("the timeout is a typed CommandTimedOut");
+        assert_eq!(
+            timed_out.timeout,
+            Duration::from_secs(1),
+            "the error carries the caller's original timeout: {timed_out:?}"
+        );
+        let outcome = timed_out
+            .interrupted
+            .as_ref()
+            .expect("the Ctrl-C was answered with a real outcome");
+        assert_eq!(
+            outcome.exit_code, 130,
+            "the interrupted outcome carries the real exit code: {outcome:?}"
+        );
+
+        let writes = host.backend.writes();
+        assert!(
+            writes.iter().skip(1).any(|w| w == &vec![0x03]),
+            "the timeout typed \\x03 into the shell as input: {writes:?}"
+        );
+    }
+
+    /// A command that ignores Ctrl-C: the markers never print, so within the
+    /// interrupt grace the read gives up and reports the command as still
+    /// running — with no invented outcome.
+    #[tokio::test]
+    async fn timeout_reports_still_running_when_ctrl_c_is_ignored() {
+        let host = spawn_scripted().await;
+        let path = host.path.clone();
+        let started = tokio::time::Instant::now();
+        let result = run_command(&path, "sleep 30", "bash", Duration::from_secs(1)).await;
+        let elapsed = started.elapsed();
+        let err = result.expect_err("a command past its deadline must be an error");
+        // The 1 s deadline plus the 5 s interrupt grace, with slack.
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "the read returns within the timeout plus the grace: {elapsed:?}"
+        );
+        let timed_out = err
+            .downcast_ref::<CommandTimedOut>()
+            .expect("the timeout is a typed CommandTimedOut");
+        assert!(
+            timed_out.interrupted.is_none(),
+            "no outcome is invented when Ctrl-C was ignored: {timed_out:?}"
+        );
+    }
+
+    /// The interrupt is input bytes, never a process-group signal: on a
+    /// remote shell the signal would end the ssh connection instead.
+    #[tokio::test]
+    async fn timeout_never_signals_the_process_group() {
+        let host = spawn_scripted().await;
+        let tx = host.backend.tx.clone();
+        let path = host.path.clone();
+        let client =
+            tokio::spawn(
+                async move { run_command(&path, "cat", "bash", Duration::from_secs(1)).await },
+            );
+        let wrapped = await_input(&host).await;
+        let nonce = nonce_of(&wrapped);
+        let begin = test_begin_marker(&nonce);
+        let end = test_end_marker(&nonce, 130);
+        let publisher = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1400)).await;
+            let _ = tx.send(begin);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let _ = tx.send(end);
+        });
+        let _ = client
+            .await
+            .expect("the client task joins")
+            .expect_err("a command past its deadline must be an error");
+        publisher.await.expect("the script task finishes");
+        assert!(
+            host.backend.signals().is_empty(),
+            "the timeout must never raise a shell signal: {:?}",
+            host.backend.signals()
         );
     }
 }
@@ -1409,8 +1531,8 @@ async fn client_run_command_still_times_out_when_not_paused() {
     let elapsed = started.elapsed();
     let err = result.expect_err("an unpaused command past its deadline must Err");
     assert!(
-        elapsed < Duration::from_secs(3),
-        "the extension must apply only while paused: elapsed={elapsed:?}"
+        elapsed < Duration::from_secs(8),
+        "the extension must apply only while paused; the Ctrl-C grace bounds the return: elapsed={elapsed:?}"
     );
     let msg = format!("{err:#}");
     assert!(
