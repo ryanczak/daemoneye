@@ -1,7 +1,7 @@
 # Phase 17b — owner-sidecar
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** phase 17a
 **Estimated diff:** ~250 lines
@@ -423,3 +423,31 @@ kill: (-51012): No such process
 **Commit:** 5c146375518bf85aace82a8392621e220ff8f620
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-08
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** glm-5.3-flash
+- **Scope deviations:** none. The eight existing spawn tests in
+  `registry_tests.rs` each gained only a `crate::test_home()` guard, as the
+  Constraints allow.
+- **Calibration:**
+  - The output of the Spec step 3 mutation check was not pasted (only the
+    completion summary claims it). Accepted by inspection:
+    `adopt_at_startup_restores_owner_and_host_from_the_sidecar` asserts the
+    restored key is `chat:s-abc`, which an adoption that ignores the sidecar
+    (`adopted`) cannot satisfy.
+  - The executor's first guard cut used `test_home_guard()` (lock only)
+    instead of the `crate::test_home()` the Spec named, and a stray `s0.owner`
+    landed in the real shells dir. It was caught by the `real_owner_files`
+    probe and removed. The pinned probe earned its place.
+  - Entries 16:25 and 16:30 of the Update Log are superseded scaffolding (a
+    one-line red run, then an "Oops" correction). The 16:36 red run is the
+    real one.
+  - For 17c: a shell closed normally leaves its `<id>.owner` until
+    `sweep_stale` sees the id. A respawn on the id overwrites it, so this is
+    harmless, but the idle reaper's close path is a natural place to remove it.
+
+Reviewer re-run: `fmt_exit=0`, build clean, clippy clean, `cargo test`
+`passed=2782 failed=0`, `real_owner_files=0`.
