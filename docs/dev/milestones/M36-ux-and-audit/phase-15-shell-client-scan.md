@@ -1,7 +1,7 @@
 # Phase 15 — shell-client-scan
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced on [bug-15-1](bugs/bug-15-1.md): the split-marker test is vacuous)
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -541,3 +541,163 @@ client_restored=1
 ```
 
 Restored run: `test result: ok. 1 passed; 0 failed; ... finished in 0.54s`.
+
+### Update — 2026-11-08 01:05 (complete, server-authored)
+
+**Summary:** **Summary:** Fixed bug-15-1 by rewriting `marker_scan_finds_a_marker_split_at_every_offset` in `src/shell/client_tests.rs` (the only file changed besides the phase doc's Update Log): it now runs one complete `run_command_with_prompts` per split offset strictly inside the end-marker frame (`1..end.len()` — no unsplit round), recovers each command's nonce fresh after `host.backend.clear_writes()`, and asserts the real exit code 7 on every command. Production code is untouched — `git diff src/shell/client.rs` is empty and the test count stays at 2762.
+
+**Notes for review:**
+- The bug-15-1 mutation check now discriminates: with `read_to_marker`'s overlap replaced by `0usize`, the test **fails** (`test result: FAILED. 0 passed; 1 failed; … finished in 25.01s` — the timed-out split rounds hit the reader's timeout); restored, it passes in 0.54 s and `client_restored=1`. Real output is in the Update Log.
+- End-to-end ran once, redirected to a file and pasted below. First pass printed `fmt_exit=1` on the unformatted assertion; `cargo fmt --all` was run, then re-verified `fmt_exit=0` with the touched test still green before commit (7a1c4c97, tree clean).
+- End-to-end transcript (`split_mutation=red` is the fix this bounce required; everything else matches the prior approved run):
+```
+read_to_marker_large_output_is_linear passed=1 failed=0
+read_to_marker_offers_a_bounded_tail passed=1 failed=0
+read_to_marker_reports_a_lag_gap passed=1 failed=0
+host_sends_lagged_when_subscriber_falls_behind passed=1 failed=0
+meta_index_append_keeps_a_corrupt_index passed=1 failed=0
+meta_index_save_replaces_atomically passed=1 failed=0
+marker_scan_finds_a_marker_split_at_every_offset passed=1 failed=0
+meta_index_append_starts_fresh_when_absent passed=1 failed=0
+split_mutation=red
+client_restored=1
+silent_lag=0
+meta_rename=1
+offer_window=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.94s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.50s
+fmt_exit=0
+passed=2762 failed=0
+```
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Checking daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.14s
+
+
+TEST
+. ok
+test exempt_files_exist ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.19s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (1299210): No such process
+kill: (-1299915): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-15-shell-client-scan.md` — +24 -0
+- `src/shell/client_tests.rs` — +35 -33
+
+**Commit:** 7a1c4c97db331710ce36608dec8b2487c703272c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
