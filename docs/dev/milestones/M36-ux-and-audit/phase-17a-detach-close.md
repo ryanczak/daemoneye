@@ -1,7 +1,7 @@
 # Phase 17a — detach-close
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bugs/bug-17a-1.md)
 **Drafted:** 2026-11-07
 **Depends on:** phase 16
 **Estimated diff:** ~300 lines
@@ -127,6 +127,13 @@ re-adopts the shell under its owner, and reaps idle adopted shells.
 - [ ] Existing tests pass, unmodified.
 - [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
+- [ ] **bug-17a-1:** the reaping test no longer goes through
+      `spawn_detached` (`via_spawn_detached=0`; today it is 1). `an_exited_detached_child_is_reaped` fails when
+      the waiting code drops the child unwaited. The real mutation output
+      is pasted in the Update Log. The test reports `finished in` under
+      3 s; today it is 10.03 s. `arch_garble=0`: `docs/architecture.md` no
+      longer says "tests are independent lifecycles"; today it is 1. `cargo test`
+      reports `passed=2775 failed=0`: the count must not change.
 
 ## End-to-end verification
 
@@ -138,6 +145,8 @@ done
 grep -c 'drop(child)' src/shell/launch.rs | sed 's/^/unwaited_drop=/'
 grep -c 'detach_close_secs' src/config/shells.rs | sed 's/^/detach_key=/'
 grep -c 'detach_close_secs' README.md | sed 's/^/readme_key=/'
+grep -c 'spawn_detached("s1", "sh"' src/shell/launch.rs | sed 's/^/via_spawn_detached=/'
+grep -c 'tests are independent lifecycles' docs/architecture.md | sed 's/^/arch_garble=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
@@ -171,6 +180,30 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-07 (bounce 1, bug-17a-1)
+
+**All gates are green and the tree is clean. Neither is evidence that the
+phase is done.** The following is approved and must not be redone:
+`close_after_detach`, the attach-handler wiring, `detach_close_secs`, the
+three detach tests, the config test, the reaper thread's behaviour, and
+the README and config docs.
+
+There are exactly two items left, both in `bugs/bug-17a-1.md`:
+
+1. Make `an_exited_detached_child_is_reaped` a real test. Move the waiting
+   code out of `spawn_detached` into a small function that takes a
+   `std::process::Child`, with `spawn_detached` calling it. In the test,
+   spawn `sh -c 'exit 0'` with `std::process::Command`, keep its pid, hand
+   the child to that function, and poll `/proc/<pid>/stat` for up to 2 s.
+   The test must not call `spawn_detached`, which re-runs the test binary.
+2. Fix the garbled architecture sentence ("The tests are independent
+   lifecycles").
+
+Finish condition: `cargo test` reports **2775**, not 2776; this fix adds
+no test. Paste the mutation check: make that function drop the child
+without waiting, confirm the test fails, restore it, and confirm it
+passes.
 
 ### Update — 2026-11-07 21:22 (progress)
 
