@@ -1,7 +1,7 @@
 # Phase 17c — idle-reap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-08
 **Depends on:** phase 17b
 **Estimated diff:** ~300 lines
@@ -660,3 +660,44 @@ kill: (-215884): No such process
 **Commit:** 96788eb5ffe1e4d8fc399a5e53c03aa9f4a11104
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-08
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-17c-1](bugs/bug-17c-1.md), major, `test_quality`).
+  The two "closes" tests derived their idle window from spawn timing, and
+  the owner and in-flight skip tests did not establish the other
+  conditions first.
+  - Fixed in `96788eb5`. Every close and skip test backdates its cast
+    and asserts a `Prompt` probe first. The recent-write test keeps a
+    fresh cast and the not-at-prompt test a typed program, as their
+    contracts need. The idle-reap host is now `sh -c 'sleep 1000'`, the
+    detach-close section's shape, so the host-gone poll is bounded
+    whichever close signal arrives.
+  - Reviewer re-run: 20 consecutive `cargo test --lib reap_idle` runs,
+    `flaky_runs=0`. The pasted mutations are consistent with the lib
+    test count (1 run + 2711 filtered).
+  - Gates: fmt, 0 build warnings, clippy, hygiene, `doc_truth` and
+    `bug_tracker` ok, `passed=2791 failed=0`, unchanged as required. The
+    pasted end-to-end block is byte-identical to `/tmp/e2e-17c-final.txt`.
+  - Production code unchanged since `b9652770`: the diff touches only
+    `shell_lifecycle_tests.rs`.
+- **Executor:** glm-5.3-flash (opencode.ai). The first bounce run (session
+  `6af0d194`) ended at turn 221 when its bash cleanup, a
+  `for p in $(pgrep -x bash); do kill -9 $p; done` loop, killed the
+  user's login shell. It was re-dispatched after the rexyMCP classifier
+  fix (`6c2eaee`, `fd4d237`) and completed in 303 turns. The executor's
+  entries call themselves "Claude (Opus 4.6)". The server-authored entries
+  and the session log name the served model.
+- **Scope deviations:** none. The bounce-fix end-to-end transcript sits in
+  the `(bounce fix complete, bug-17c-1)` entry rather than a separately
+  titled `(end-to-end verification)` one. The original entry of that name
+  stands for the first pass.
+- **Calibration:**
+  - The closes-adopted test's comment says the backdated mtime is "the
+    only condition that can hold the shell open". With `now_unix =
+    u64::MAX` the mtime cannot hold it open, so the backdate there is
+    redundant. Harmless, left as is.
+  - A test-cleanup step that kills processes by name reaches the user's
+    own session. Phase specs should say test hosts are ended by the pid
+    the test recorded, never by `pgrep`.

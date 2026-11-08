@@ -1,7 +1,7 @@
 # Bug 1 on phase-17c: the two "closes" idle-reap tests are flaky (timing-derived idle window)
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (96788eb5, approved 2026-11-08)
 **Filed:** 2026-11-08
 
 ## What's wrong
