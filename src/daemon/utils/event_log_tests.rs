@@ -691,3 +691,121 @@ fn log_shell_command_truncates_the_excerpt_at_200_chars() {
         assert_eq!(record["out"].as_str().unwrap().chars().count(), 200);
     });
 }
+
+/// B17: two writers appending the same segment must not record the same
+/// offset — one `events_map` row would then point at the other's line. Each
+/// spawned thread sets `HOLDS_HOME_GUARD` (thread-local) under the parent's
+/// `crate::test_home_guard()`, so child `log_event` calls assert cleanly.
+#[test]
+fn log_event_offsets_point_at_their_own_lines_under_concurrent_writers() {
+    let _lock = crate::test_home_guard();
+    let dir = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("HOME", dir.path()) };
+    crate::config::Config::ensure_dirs().ok();
+
+    let seg = crate::config::current_event_segment_path();
+    if let Some(parent) = seg.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+
+    let writers = 4usize;
+    let per_writer = 12usize;
+    let marker = "concurrent offsets canary";
+
+    let handles: Vec<_> = (0..writers)
+        .map(|w| {
+            let seg_name = w.to_string();
+            std::thread::spawn(move || {
+                crate::HOLDS_HOME_GUARD.with(|c| c.set(true));
+                for i in 0..per_writer {
+                    log_event(
+                        "offset_canary",
+                        serde_json::json!({
+                            "writer": seg_name,
+                            "seq": i,
+                            "marker": marker,
+                            "pad": "x".repeat(40 + (w * 7) + i),
+                        }),
+                    );
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    // Wait until the index has caught up with every written line, then check
+    // each `events_map` row reads back its own event's line.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let content = loop {
+        let body = std::fs::read_to_string(&seg).unwrap();
+        let lines = body.lines().count();
+        let conn = crate::memory::index::open_index().unwrap();
+        let indexed: i64 = conn
+            .query_row("SELECT count(*) FROM events_map", [], |r| r.get(0))
+            .unwrap();
+        drop(conn);
+        if indexed as usize == lines {
+            break body;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "index never caught up: {indexed} rows for {lines} lines"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+
+    let conn = crate::memory::index::open_index().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT segment, offset FROM events_map ORDER BY rowid")
+        .unwrap();
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .filter_map(|r| r.ok())
+        .collect();
+    drop(stmt);
+    drop(conn);
+
+    assert!(!rows.is_empty(), "events_map must hold the canary rows");
+    // Every line's byte start, in file order. A correct offset lies exactly
+    // on one of these; a stale pre-append length lands elsewhere or collides
+    // with another row's.
+    let bytes = content.as_bytes();
+    let line_starts: Vec<u64> = std::iter::once(0u64)
+        .chain(
+            bytes
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| **b == b'\n')
+                .map(|(i, _)| (i + 1) as u64),
+        )
+        .take(content.lines().count())
+        .collect();
+    let mut row_offsets: Vec<u64> = rows.iter().map(|(_, o)| *o as u64).collect();
+    row_offsets.sort_unstable();
+    row_offsets.dedup();
+    let starts = line_starts.clone();
+    assert_eq!(
+        row_offsets.len(),
+        starts.len(),
+        "every row's offset must be a distinct line start: rows {row_offsets:?} vs starts {:?}",
+        starts
+    );
+    for (segment, offset) in rows {
+        assert_eq!(
+            segment,
+            seg.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .trim_end_matches(".jsonl"),
+            "the row names its own segment"
+        );
+        let line = crate::memory::index::read_line_at_offset(&seg, offset as u64);
+        assert!(
+            line.contains(marker),
+            "offset {offset} read back a foreign line: {line}"
+        );
+    }
+}

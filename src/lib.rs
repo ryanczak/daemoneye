@@ -57,9 +57,7 @@ thread_local! {
 pub fn test_home_guard() -> TestHomeGuard {
     #[cfg(test)]
     HOLDS_HOME_GUARD.with(|c| c.set(true));
-    let lock = TEST_HOME_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let lock = crate::util::UnpoisonExt::unwrap_or_log(TEST_HOME_LOCK.lock());
     TestHomeGuard {
         home: std::env::var("HOME").ok(),
         _lock: lock,

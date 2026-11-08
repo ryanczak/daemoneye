@@ -267,6 +267,8 @@ fn rebuild_events(tx: &rusqlite::Connection) -> anyhow::Result<()> {
 
 /// Reconcile a single corpus from disk, rebuilding only its own tables.
 pub fn reconcile_corpus(corpus: Corpus) -> anyhow::Result<usize> {
+    #[cfg(test)]
+    super::corpus_slot().fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut conn = open_index()?;
     let tx = conn
         .transaction()

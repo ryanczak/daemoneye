@@ -264,6 +264,8 @@ fn opened_shell_sentence(id: &ShellId, host: &crate::host::HostId, size: (u16, u
 pub(crate) mod open_shell_test_seam {
     use std::sync::Mutex;
 
+    use crate::util::UnpoisonExt;
+
     static REPLACE: Mutex<Option<crate::shell::ShellRegistry>> = Mutex::new(None);
 
     /// Install `fresh` as the registry `open_shell` resolves, for as long as
@@ -271,19 +273,13 @@ pub(crate) mod open_shell_test_seam {
     /// held before the swap, so nested swaps unwind in order and an outer
     /// test's registry survives an inner test's.
     pub(crate) fn swap_in(fresh: &crate::shell::ShellRegistry) -> SwapGuard {
-        let previous = REPLACE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .replace(fresh.clone());
+        let previous = REPLACE.lock().unwrap_or_log().replace(fresh.clone());
         SwapGuard { previous }
     }
 
     /// The swapped-in registry, if any test currently holds one.
     pub(crate) fn swapped() -> Option<crate::shell::ShellRegistry> {
-        REPLACE
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+        REPLACE.lock().unwrap_or_log().clone()
     }
 
     /// Restores the pre-swap contents of `REPLACE` when dropped. Holds the
@@ -294,9 +290,7 @@ pub(crate) mod open_shell_test_seam {
 
     impl Drop for SwapGuard {
         fn drop(&mut self) {
-            *REPLACE
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = self.previous.take();
+            *REPLACE.lock().unwrap_or_log() = self.previous.take();
         }
     }
 }

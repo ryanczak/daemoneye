@@ -254,7 +254,7 @@ fn shell_log_read_matches_each_command_to_its_own_start_across_many_commands() {
     let cast = dir.path().join("s9-7.cast");
     let mut w = CastWriter::create(&cast, 100, 30, 1).unwrap();
     let mut records: Vec<CommandRecord> = Vec::new();
-    let mut at = 0.0f64;
+    let at = 0.0f64;
     w.write_output(Duration::from_secs_f64(at), b"$ ").unwrap(); // event 0
     for i in 0..300usize {
         let typed = i % 3 != 2;
