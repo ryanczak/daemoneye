@@ -449,17 +449,25 @@ pub(super) async fn handle_shell_log_read<W>(tx: &mut W, id: &str) -> Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let response = match read_shell_log(&crate::config::shell_logs_dir(), id, LOG_READ_CAP) {
-        Ok(log) => Response::ShellLog {
-            id: id.to_string(),
-            rows: log.rows,
-            cols: log.cols,
-            events: log.events,
-            commands: log.commands,
-            truncated: log.truncated,
-        },
-        Err(e) => Response::Error(e),
-    };
+    // The read and the walk can be seconds of blocking IO on a long-lived
+    // shell; a dedicated blocking thread keeps the async workers serving.
+    let dir = crate::config::shell_logs_dir();
+    let owned_id = id.to_string();
+    let response =
+        match tokio::task::spawn_blocking(move || read_shell_log(&dir, &owned_id, LOG_READ_CAP))
+            .await
+        {
+            Ok(Ok(log)) => Response::ShellLog {
+                id: id.to_string(),
+                rows: log.rows,
+                cols: log.cols,
+                events: log.events,
+                commands: log.commands,
+                truncated: log.truncated,
+            },
+            Ok(Err(e)) => Response::Error(e),
+            Err(e) => Response::Error(format!("reading shell log {id:?} failed: {e}")),
+        };
     send_response_split(tx, response).await?;
     Ok(())
 }
@@ -509,7 +517,10 @@ fn read_shell_log(dir: &std::path::Path, id: &str, cap: usize) -> Result<ShellLo
     // One walk over the cast lines: a command opens as the running byte
     // offset passes into its record's window (the records are ordered by
     // `first_byte`, so the open record is always the next unopened one),
-    // and the last `"i"` line before that is where its start counts.
+    // and the last `"i"` line **inside that window** is where its start
+    // counts. The window begins at the previous record's `end_byte`, so an
+    // `"i"` line from an earlier command does not bleed into a later
+    // untyped command's start.
     let mut events: Vec<LogEvent> = Vec::new();
     let mut offset = text.find('\n').map_or(text.len(), |n| n + 1) as u64;
     let walked = lines.map(move |line| {
@@ -518,17 +529,26 @@ fn read_shell_log(dir: &std::path::Path, id: &str, cap: usize) -> Result<ShellLo
         (line_start, line)
     });
     let mut starts: Vec<Option<usize>> = Vec::new();
-    let mut typed_at: Option<usize> = None;
+    // The last `"i"` line seen: (output count at it, its line start). A
+    // start counts an `"i"` only when the line is inside the record's own
+    // window (line start >= the previous record's `end_byte`), so an earlier
+    // command's typed line does not bleed into a later untyped command.
+    let mut typed_at: Option<(usize, u64)> = None;
     let mut output_events = 0usize;
     for (line_start, line) in walked {
         let Ok((t, code, data)) = serde_json::from_str::<(f64, String, String)>(line) else {
             continue;
         };
         while starts.len() < records.len() && line_start >= records[starts.len()].first_byte {
-            starts.push(Some(typed_at.unwrap_or(output_events)));
+            let k = starts.len();
+            let window_start = if k == 0 { 0 } else { records[k - 1].end_byte };
+            let inner_typed = typed_at
+                .filter(|(_, at)| *at >= window_start)
+                .map(|(event, _)| event);
+            starts.push(Some(inner_typed.unwrap_or(output_events)));
         }
         if code == "i" {
-            typed_at = Some(output_events);
+            typed_at = Some((output_events, line_start));
         }
         if code == "o" {
             events.push(LogEvent { t, data });

@@ -243,6 +243,95 @@ fn shell_log_read_drops_the_oldest_events_past_the_cap() {
     );
 }
 
+/// P2's preservation test, at the scale the old O(lines × commands) walk
+/// was written for: a few hundred commands, some typed and some output-only
+/// markers, every one mapped to its own start and to no other command's.
+#[test]
+fn shell_log_read_matches_each_command_to_its_own_start_across_many_commands() {
+    use crate::shell::{CastWriter, CommandRecord, MetaIndex};
+    use std::time::Duration;
+    let (_guard, dir) = crate::test_home();
+    let cast = dir.path().join("s9-7.cast");
+    let mut w = CastWriter::create(&cast, 100, 30, 1).unwrap();
+    let mut records: Vec<CommandRecord> = Vec::new();
+    let mut at = 0.0f64;
+    w.write_output(Duration::from_secs_f64(at), b"$ ").unwrap(); // event 0
+    for i in 0..300usize {
+        let typed = i % 3 != 2;
+        if typed {
+            let line = format!("cmd-{i}\n");
+            w.write_input(Duration::from_secs_f64(at), line.as_bytes())
+                .unwrap();
+            w.write_output(
+                Duration::from_secs_f64(at),
+                format!("cmd-{i}\r\n").as_bytes(),
+            )
+            .unwrap();
+        } else {
+            w.write_output(
+                Duration::from_secs_f64(at),
+                format!("out-{i}\r\n").as_bytes(),
+            )
+            .unwrap();
+        }
+        let first = w.byte_len();
+        w.write_output(
+            Duration::from_secs_f64(at),
+            format!("body-{i}\r\n").as_bytes(),
+        )
+        .unwrap();
+        let end = w.byte_len();
+        records.push(CommandRecord {
+            index: i as u32,
+            command: format!("cmd or out {i}"),
+            started: at,
+            ended: at,
+            exit_code: 0,
+            first_byte: first,
+            end_byte: end,
+        });
+    }
+    drop(w);
+    let meta = MetaIndex {
+        shell_id: "s9".into(),
+        cast: "s9-7.cast".into(),
+        started_unix: 1,
+        commands: records,
+        owner: None,
+        host: None,
+    };
+    let meta_path = cast.with_extension("meta.json");
+    meta.save(&meta_path).unwrap();
+    // `read_shell_log` loads the index from the same directory by name.
+    let dir = dir.path().to_path_buf();
+
+    let log = read_shell_log(&dir, "s9-7", LOG_READ_CAP).unwrap();
+    assert_eq!(log.commands.len(), 300, "every record read");
+    for (k, c) in log.commands.iter().take(6).enumerate() {
+        println!(
+            "DBG k={k} event={} data={:?}",
+            c.event, log.events[c.event].data
+        );
+    }
+    // Each record's window is the events its own body covers — from the
+    // line its `first_byte` opens to the line its `end_byte` closes — so a
+    // mark must land inside it or not at all.
+    for (k, c) in log.commands.iter().enumerate() {
+        let cand = log.events[c.event].data.clone();
+        let own_body = format!("body-{k}\r\n");
+        let own_open = if k % 3 == 2 {
+            format!("out-{k}\r\n")
+        } else {
+            format!("cmd-{k}\r\n")
+        };
+        assert!(
+            cand == own_open || cand == own_body,
+            "mark {k} must name command {k}'s opening or body line, got {cand:?}"
+        );
+    }
+    assert!(!log.truncated);
+}
+
 #[tokio::test]
 async fn shell_log_list_is_newest_first_and_filters() {
     let (_guard, _dir) = crate::test_home();
