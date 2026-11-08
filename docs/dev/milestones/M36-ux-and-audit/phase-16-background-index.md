@@ -1,7 +1,7 @@
 # Phase 16 — background-index
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced: bugs/bug-16-1.md)
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** phase 15 (the `read_to_marker` it changes)
 **Estimated diff:** ~350 lines
@@ -328,6 +328,58 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** escalated
+- **Bounces:** 1 ([bug-16-1](bugs/bug-16-1.md), major, `spec_bug`). The
+  completion message for an interrupted background run said the command
+  exited with a code and also that it "may still be running". The
+  architect's § Pinned design C had frozen `completion_message`, which
+  caused this. Fixed by architect takeover in `0789a2d8`:
+  `await_and_notify` keeps the interrupted outcome, and
+  `interrupted_message` names its exit code, Ctrl-C and `read_shell` and
+  shows the output. `output_block` is now shared with `completion_message`.
+  - Red: the new test failed on `may still be running`.
+  - Mutation: routing the interrupted case back through
+    `completion_message` failed the test, and restoring it passed.
+  - Gates: fmt, 0 build warnings, clippy, hygiene, `doc_truth` and
+    `bug_tracker` ok, `passed=2770 failed=0`.
+- **Escalation:** four executor runs.
+  - Run 1 hit `budget_exceeded` at 500 turns with no source edit, from
+    read paralysis on two spec gaps (`cmd` on `CommandTimedOut`, no
+    registry in `await_and_notify`). Fixed by refined re-dispatch.
+  - Run 2 did slices B and C, then hit `budget_exceeded` at 500 turns.
+    It had truncated `client_tests.rs` to 0 bytes while debugging the
+    spec's end-marker-only test (`parse_outcome` needs the begin marker
+    first).
+  - The resume took 81 turns and returned `complete` (`ac3d99f7`).
+  - The bounce run hit `budget_exceeded` at 512 turns with no edit. It
+    understood the fix by turn 16, then read FINDINGS.md, `scorecard.rs`
+    and `bug_tracker.rs`. That is the same failure class as run 1, after
+    a refinement, so the architect took the bounce over.
+- **Executor:** glm-5.3-flash (opencode.ai); bug-16-1 by Claude (direct)
+- **Scope deviations:**
+  - Two existing timing bounds were widened for `INTERRUPT_GRACE`:
+    `client_run_command_still_times_out_when_not_paused` (3 s → 8 s) and
+    `a_hang_after_an_answer_still_times_out` (5 s → 10 s). This was
+    accepted. The new behaviour makes it unavoidable, though the criteria
+    said "unmodified".
+  - `run_plain` and `settle_markers` were extracted in `shell_exec.rs`
+    without authorization, to fit the caps.
+  - A comment in `read_to_marker` ("Chunks split arbitrarily …") was
+    deleted.
+  - The Findings credit `settle_markers` to phase 15. This phase
+    extracted it.
+  - New allowlist entries: `file src/daemon/executor/shell_exec.rs 826`
+    and `read_to_marker` raised from 198 to 236.
+- **Calibration:**
+  - A spec's worked test fixture must name every marker its parser needs.
+    "Sends the end marker" cost run 2 its client tests.
+  - Pinning a function as "unchanged" while changing what it receives
+    produced bug-16-1.
+  - glm-5.3-flash fell into read paralysis twice on this phase. Once was
+    on a one-item bounce that carried the full green-bounce treatment.
 
 ### Notes for executor — 2026-11-07 (bounce 1, bug-16-1)
 
