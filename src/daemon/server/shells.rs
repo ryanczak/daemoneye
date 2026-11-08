@@ -506,31 +506,36 @@ fn read_shell_log(dir: &std::path::Path, id: &str, cap: usize) -> Result<ShellLo
         .map(|m| m.commands)
         .unwrap_or_default();
 
+    // One walk over the cast lines: a command opens as the running byte
+    // offset passes into its record's window (the records are ordered by
+    // `first_byte`, so the open record is always the next unopened one),
+    // and the last `"i"` line before that is where its start counts.
     let mut events: Vec<LogEvent> = Vec::new();
-    // For each record, the output-event count at the last "i" line in its
-    // window, if one was typed there.
-    let mut typed_at: Vec<Option<usize>> = vec![None; records.len()];
-    let mut starts: Vec<Option<usize>> = vec![None; records.len()];
     let mut offset = text.find('\n').map_or(text.len(), |n| n + 1) as u64;
-    for line in lines {
+    let walked = lines.map(move |line| {
         let line_start = offset;
         offset += line.len() as u64;
+        (line_start, line)
+    });
+    let mut starts: Vec<Option<usize>> = Vec::new();
+    let mut typed_at: Option<usize> = None;
+    let mut output_events = 0usize;
+    for (line_start, line) in walked {
         let Ok((t, code, data)) = serde_json::from_str::<(f64, String, String)>(line) else {
             continue;
         };
-        for (k, record) in records.iter().enumerate() {
-            let window_start = if k == 0 { 0 } else { records[k - 1].end_byte };
-            if starts[k].is_none() && line_start >= record.first_byte {
-                starts[k] = Some(typed_at[k].unwrap_or(events.len()));
-            }
-            if code == "i" && line_start >= window_start && line_start < record.first_byte {
-                typed_at[k] = Some(events.len());
-            }
+        while starts.len() < records.len() && line_start >= records[starts.len()].first_byte {
+            starts.push(Some(typed_at.unwrap_or(output_events)));
+        }
+        if code == "i" {
+            typed_at = Some(output_events);
         }
         if code == "o" {
             events.push(LogEvent { t, data });
+            output_events += 1;
         }
     }
+    starts.resize_with(records.len(), || None);
 
     let mut commands: Vec<LogCommand> = records
         .iter()
