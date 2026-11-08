@@ -517,3 +517,27 @@ command.
 
 Paste the end-to-end output. Commit as
 `test: the split-marker test runs one command per split offset (M36 phase-15, bug-15-1)`.
+
+### Update — 2026-11-09 00:00 (progress)
+
+Resumed on the bounce per bug-15-1: production code untouched
+(`git diff src/shell/client.rs` is empty); only
+`marker_scan_finds_a_marker_split_at_every_offset` in
+`src/shell/client_tests.rs` was rewritten. It now runs one complete command
+per split offset strictly inside the end marker (`1..end.len()`, so no
+unsplit round), calls `host.backend.clear_writes()` before each command's
+`Input` is recovered, and asserts the real exit code 7 per command.
+Mutation output below.
+
+### Update — 2026-11-09 00:05 (mutation check, split overlap 0)
+
+With `read_to_marker`'s scan overlap replaced by `0usize`, the rewritten
+test fails; restored, it passes:
+
+```
+test shell::client::tests::streaming::marker_scan_finds_a_marker_split_at_every_offset ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2682 filtered out; finished in 25.01s
+client_restored=1
+```
+
+Restored run: `test result: ok. 1 passed; 0 failed; ... finished in 0.54s`.

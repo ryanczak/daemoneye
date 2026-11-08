@@ -1174,44 +1174,46 @@ mod streaming {
         );
     }
     /// Behaviour item 1, scanned: the end marker, split between two chunks at
-    /// every byte offset, is still found with its real exit code — the
-    /// chunk-length overlap seals each split.
+    /// every byte offset strictly inside it, is still found with its real
+    /// exit code — the chunk-length overlap seals each split. One complete
+    /// command per offset, so every split actually reaches a live reader;
+    /// the unsplit first-iteration case of a one-command loop never does.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn marker_scan_finds_a_marker_split_at_every_offset() {
         let (host, tx) = spawn_stream().await;
-        let path = host.path.clone();
-        let client = tokio::spawn(async move {
-            tokio::time::timeout(Duration::from_secs(30), async {
-                run_command_with_prompts(
-                    &path,
-                    "echo split",
-                    "bash",
-                    Duration::from_secs(25),
-                    |_: &str| std::future::ready(PromptReply::Wait),
-                )
+        for split in 1..test_end_marker(&Nonce::new(), 7).len() {
+            host.backend.clear_writes();
+            let path = host.path.clone();
+            let client = tokio::spawn(async move {
+                tokio::time::timeout(Duration::from_secs(30), async {
+                    run_command_with_prompts(
+                        &path,
+                        "echo split",
+                        "bash",
+                        Duration::from_secs(25),
+                        |_: &str| std::future::ready(PromptReply::Wait),
+                    )
+                    .await
+                })
                 .await
-            })
-            .await
-            .expect("the 30 s bound ends the read instead of hanging")
-            .expect("the split marker resolves inside the bound")
-        });
-        let sent = await_input_with(|| host.backend.writes()).await;
-        let (begin, end) = markers_for_sent_command(sent.as_slice());
-        // The whole end marker frame is one chunk in the real protocol; split
-        // it at every byte offset, so the pair never lands as one read.
-        let total = end.len();
-        for split in 0..=total {
-            if split == 0 || split == total {
-                tx.send(begin.clone()).ok();
-                tx.send(end.clone()).ok();
-            } else {
-                tx.send(begin.clone()).ok();
-                tx.send(end[..split].to_vec()).ok();
-                tx.send(end[split..].to_vec()).ok();
-            }
+                .expect("the 30 s bound ends the read instead of hanging")
+                .expect("the split marker resolves inside the bound")
+            });
+            let sent = await_input_with(|| host.backend.writes()).await;
+            let nonce = nonce_of(sent.as_slice());
+            let begin = test_begin_marker(&nonce);
+            let end = test_end_marker(&nonce, 7);
+            tx.send(begin).ok();
+            tx.send(end[..split].to_vec()).ok();
+            tx.send(end[split..].to_vec()).ok();
+            let outcome = client.await.expect("the client task joins");
+            assert_eq!(
+                outcome.exit_code,
+                7,
+                "the end marker split at byte {split} of {} is found with its real exit code",
+                end.len()
+            );
         }
-        let outcome = client.await.expect("the client task joins");
-        assert_eq!(outcome.exit_code, 0, "the split end marker is found whole");
     }
     /// Behaviour item 4: a `Lagged` frame becomes a visible gap line in the
     /// command's output, exactly where it fell, and the read continues to the
