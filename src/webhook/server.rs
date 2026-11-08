@@ -51,13 +51,13 @@ fn now_secs() -> u64 {
 
 /// Check the per-IP fixed window; returns `true` when the request should be
 /// admitted (and bumps the counter), `false` when the window is exhausted.
+/// Entries from windows other than the one being admitted are dropped, so
+/// the map holds at most one window's worth of source IPs.
 fn admit_request(state: &WebhookState, ip: IpAddr) -> bool {
     let mut limits = state.ip_limits.lock().unwrap_or_log();
     let window = now_secs() / IP_WINDOW_SECS;
+    limits.retain(|_, (entry_window, _)| *entry_window == window);
     let entry = limits.entry(ip).or_insert((window, 0));
-    if entry.0 != window {
-        *entry = (window, 0);
-    }
     if entry.1 >= IP_WINDOW_MAX {
         return false;
     }
@@ -344,10 +344,39 @@ mod tests {
             admit_request(&state, ip);
         }
         assert!(!admit_request(&state, ip));
-        // Jump the internal clock a full window ahead by pretending the
-        // window index moved:
-        let window = now_secs() / IP_WINDOW_SECS + 100;
-        *state.ip_limits.lock().unwrap().get_mut(&ip).unwrap() = (window, 0);
+        // Age the entry into a past window: the next admit drops it and
+        // starts a fresh one.
+        let window = now_secs() / IP_WINDOW_SECS - 1;
+        state.ip_limits.lock().unwrap().insert(ip, (window, 0));
         assert!(admit_request(&state, ip));
+    }
+
+    /// P8: an entry the limiter moves into a past window is the only kind
+    /// that accumulates, so admission is unchanged while the map stops
+    /// holding one entry per source IP for ever.
+    #[test]
+    fn admit_request_drops_entries_from_past_windows() {
+        let state = test_state();
+        let ip: IpAddr = "10.0.0.3".parse().unwrap();
+        for _ in 0..IP_WINDOW_MAX {
+            assert!(admit_request(&state, ip), "the early window admits");
+        }
+        assert!(!admit_request(&state, ip), "the window is exhausted");
+
+        let window = now_secs() / IP_WINDOW_SECS - 1;
+        state.ip_limits.lock().unwrap().insert(ip, (window, 3));
+
+        assert!(admit_request(&state, ip), "a new window admits again");
+        assert_eq!(
+            state.ip_limits.lock().unwrap().len(),
+            1,
+            "the stale-window entry was dropped, not kept beside the new one"
+        );
+        let fresh = state.ip_limits.lock().unwrap().get(&ip).copied().unwrap();
+        assert_eq!(
+            fresh,
+            (now_secs() / IP_WINDOW_SECS, 1),
+            "the kept entry is this window's, with its first bump"
+        );
     }
 }

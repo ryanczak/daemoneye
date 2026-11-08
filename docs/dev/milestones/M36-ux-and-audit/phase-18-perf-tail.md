@@ -169,3 +169,20 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-08 14:11 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor: Claude
+(Sonnet 4.5, headless). Starting with the red tests per the Spec.
+### Update — 2026-11-08 14:11 (progress)
+
+Read the tree: `shells.rs` + tests, `memory/index/{mod,search,reconcile}.rs`,
+`event_log.rs` + tests, `webhook/server.rs`, the CLAUDE.md `index.rs` row and
+`src/lib.rs`'s HOME-guard plumbing. `read_shell_log`'s walk is
+lines × commands today; `open_index()` opens a fresh `rusqlite::Connection`
+and runs `ensure_schema` at every call site (every event, every search, every
+turn's prompt); `log_event` reads `metadata(&path)` before the append;
+`admit_request` never prunes; CLAUDE.md line 114 says "quotes each user term".
+
+Now writing the six named tests red-first (the P2 preservation test already
+passes; the other five name new seams and are red as compile errors).
