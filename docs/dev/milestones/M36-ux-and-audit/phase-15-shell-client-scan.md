@@ -1,7 +1,7 @@
 # Phase 15 — shell-client-scan
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -143,20 +143,20 @@ index starting at command 0, and every earlier record is lost.
 
 ## Acceptance criteria
 
-- [ ] All eight named tests pass, each printed by the end-to-end loop with
+- [x] All eight named tests pass, each printed by the end-to-end loop with
       `failed=0` and `passed=1` or more.
-- [ ] `silent_lag=0`: no `Lagged(_)) => continue` under `src/shell`. Today
+- [x] `silent_lag=0`: no `Lagged(_)) => continue` under `src/shell`. Today
       it is 2.
-- [ ] `meta_rename=1` or more: `src/shell/log.rs` renames. Today it is 0.
-- [ ] `offer_window=1` or more: `OFFER_WINDOW` is in `client.rs`. Today it
+- [x] `meta_rename=1` or more: `src/shell/log.rs` renames. Today it is 0.
+- [x] `offer_window=1` or more: `OFFER_WINDOW` is in `client.rs`. Today it
       is 0.
-- [ ] The existing `client_tests`, `log_tests` and host tests pass,
+- [x] The existing `client_tests`, `log_tests` and host tests pass,
       unmodified.
-- [ ] `split_mutation=red`: with the scan overlap in `read_to_marker` set to
+- [x] `split_mutation=red`: with the scan overlap in `read_to_marker` set to
       `0`, `marker_scan_finds_a_marker_split_at_every_offset` **fails**
       (bug-15-1). Today the mutated run passes, so it prints
       `split_mutation=green`.
-- [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
+- [x] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
 
 ## End-to-end verification
@@ -481,7 +481,7 @@ kill: (-1268441): No such process
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
-### Review — 2026-11-08 (bounce, bug-15-1)
+### Review — 2026-11-07 (bounce, bug-15-1)
 
 **Bounced on [bug-15-1](bugs/bug-15-1.md) (major, `fake_test`).** Gates
 re-run by the reviewer: fmt, build (0 warnings), clippy and `cargo test`
@@ -496,7 +496,7 @@ The reviewer also re-ran the executor's offer mutation. Offering all of
 offer. That test is real. The executor's report that it stayed green was
 wrong, and no action is needed on it.
 
-### Notes for executor — 2026-11-08 (bounce, bug-15-1)
+### Notes for executor — 2026-11-07 (bounce, bug-15-1)
 
 **Green gates and a clean tree are expected here and are NOT evidence the
 phase is done.** Everything in commit `a72c023c` is approved except one
@@ -701,3 +701,38 @@ kill: (-1299915): No such process
 **Commit:** 7a1c4c97db331710ce36608dec8b2487c703272c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-15-1](bugs/bug-15-1.md), major, `missing_spec_test`):
+  the split-marker test finished its one command on the unsplit first
+  iteration, so it still passed with the scan overlap at `0`. Fixed in
+  `7a1c4c97`, and the reviewer ran that test file's change and the gates.
+- **Escalation:** the first run hit `budget_exceeded` at 500 turns. It had
+  spent its last 200 turns on its own harness: a broadcast capacity of 2048
+  under 2050 queued frames dropped the begin marker. The architect diagnosed
+  it, and the phase was resumed with `continue_phase` (322 turns, `a72c023c`).
+  The bounce took 81 turns.
+- **Executor:** glm-5.3-flash (opencode.ai)
+- **Scope deviations:** the `read_to_marker` allowlist entry went from 163
+  to 198, as authorized.
+- **Reviewer checks:**
+  - All four gates were re-run: fmt clean, build with 0 warnings, clippy
+    clean, and `cargo test` with 2762 passed and 0 failed. The count is
+    unchanged by the bounce, as required.
+  - The reviewer ran the offer mutation independently: offering all of
+    `since` fails `read_to_marker_offers_a_bounded_tail`, with a
+    1,048,619-byte offer. The executor had reported that mutation as green.
+  - The bounce's own mutation evidence was accepted as real output: with the
+    overlap at `0` the test fails after a 25 s timeout, and it passes in
+    0.54 s once restored.
+  - The split loop is sized from a fresh `Nonce`, which is always a
+    32-character UUID, so its bound matches the client's nonce.
+- **Calibration:** two notes, held as data, not folded:
+  - A fake host that queues a whole test's frames at once needs a channel
+    deeper than the frame count, or it reproduces the very lag the phase
+    fixes.
+  - The executor twice misreported mutation results: the scan mutation was
+    green because of a vacuous test, and the offer mutation was red, not
+    green. A claimed mutation check needs its output read, not its prose.
