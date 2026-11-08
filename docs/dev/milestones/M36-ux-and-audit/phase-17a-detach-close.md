@@ -1,7 +1,7 @@
 # Phase 17a — detach-close
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** phase 16
 **Estimated diff:** ~300 lines
@@ -249,3 +249,148 @@ fmt_exit=0
 ```
 
 Full suite on the same tree: `passed=2775 failed=0`.
+
+### Update — 2026-11-08 06:10 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 17a is implemented and committed (`af226bea`, working tree clean). B11's first half: a chat session's last detach now spawns a task that runs `close_after_detach(reg, session_id, grace)` in `shell_life.rs` — it sleeps the grace (new `[shells] detach_close_secs`, default 300, `0` = never, read in `handle_chat_attach` via `Config::load()` with `Config::default()` fallback), re-checks `presence_count`, and closes the session's non-dedicated `Chat` shells through the existing `close_shell_with` path; dedicated, `Owner::User`, other-session, ghost, scheduler and adopted shells are untouched, and no presence/registry lock is held across the sleep. B12: `spawn_detached` in `launch.rs` no longer `drop(child)`s — a named blocking reaper thread waits on the child off the async runtime, leaving the `await_ready` readiness contract unchanged and no SIGCHLD games. All five spec-named tests pass (`failed=0` each), the mutation check showed the reattach test failing with the `presence_count` check removed and passing with it restored, docs landed in `README.md`, `assets/etc/config.toml` and one sentence in `docs/architecture.md`, and the phase's E2E block was captured mechanically: all five tests green, `unwaited_drop=0`, `detach_key=4`, `readme_key=2`, `build_warnings=0`, hygiene/doc_truth/bug_tracker ok, clippy clean, `fmt_exit=0`, full suite `passed=2775 failed=0`.
+
+**Notes for review:** (1) The phase-doc count `unwaited_drop=0` was momentarily failing because the *test's own doc comment* mentioned `drop(child)`; I reworded the comment — that literal now appears nowhere in `launch.rs`. (2) The detach-test fixture initially hosts the shell with plain `serve`, which never releases the per-id instance lock, so `host_is_alive` could never go false; the fixture now mirrors a real host (`serve_until_exit` + lock drop) — recorded under Findings. (3) Mid-edit, garbage from a failed patch transiently corrupted `shell_lifecycle_tests.rs`; the file was rebuilt from the git HEAD original plus the new detach section, and `git diff` vs HEAD now shows only additions (no removed lines), so the previous owner-close tests are byte-identical. (4) The red-run entry pre-dates the launch test's first green run, which the E2E entry covers.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.39s
+
+
+LINT
+    Checking daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.74s
+
+
+TEST
+e_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.96s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.49s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (1542210): No such process
+kill: (-1542974): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +2 -0
+- `assets/etc/config.toml` — +5 -0
+- `docs/architecture.md` — +4 -1
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-17a-detach-close.md` — +79 -1
+- `src/config/shells.rs` — +12 -0
+- `src/config/tests.rs` — +19 -0
+- `src/daemon/executor/knowledge/mod.rs` — +6 -0
+- `src/daemon/executor/knowledge/shell_life.rs` — +43 -0
+- `src/daemon/executor/knowledge/shell_lifecycle_tests.rs` — +187 -0
+- `src/daemon/server/chat_presence.rs` — +23 -0
+- `src/shell/launch.rs` — +65 -4
+
+**Commit:** af226bea4d26ae9ed30bb3ac50d5f7dc229c4777
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
