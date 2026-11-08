@@ -179,7 +179,50 @@ E2E
 
 ## Update Log
 
-<!-- entries appended below this line -->
+### Findings — 2026-11-08 (bounce-1 fix)
+
+- The first rewrite of the reaping test exited its poll loop on the first
+  non-zombie read, which proves nothing: the child's `/proc` lifecycle is
+  alive → `Z` → gone, so a read before the kernel reaps it is indistinguishable
+  from "already reaped". The loop now only exits when the `/proc` entry
+  disappears, and fails at the 2 s deadline if a zombie was observed but never
+  reaped. This is why the earlier mutation showed the test passing with
+  `drop(child)` in place.
+- The mutation check against the launch test was run twice: with the reaper
+  body reduced to `drop(child)`, `an_exited_detached_child_is_reaped` still
+  passed (the first-cut bug above — the loop broke on a non-zombie read made
+  0.03 s in); after the fix, the same mutation leaves
+  `/proc/<pid>/stat` as `Z` for the full 2 s poll and the test fails. The
+  reaper body was restored immediately after.
+
+### Update — 2026-11-08 06:47 (end-to-end verification, bounce-1 fix)
+
+The phase doc's E2E block ran against the real tree after `cargo fmt --all`;
+output captured mechanically from the single run:
+
+```
+last_detach_closes_the_sessions_shells_after_the_grace passed=1 failed=0
+a_reattach_within_the_grace_keeps_the_shells passed=1 failed=0
+detach_close_leaves_other_owners_and_dedicated_shells passed=1 failed=0
+detach_close_secs_defaults_to_300_and_zero_is_allowed passed=1 failed=0
+an_exited_detached_child_is_reaped passed=1 failed=0
+unwaited_drop=0
+detach_key=4
+readme_key=2
+via_spawn_detached=0
+arch_garble=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.01s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.50s
+fmt_exit=0
+passed=2775 failed=0
+```
+
+(`an_exited_detached_child_is_reaped` after the test rewrite is
+`finished in 0.03s` in its own run — well under the 3 s bound; the suite-wide
+`passed=2775 failed=0` count is unchanged as the finish condition requires.)
 
 ### Notes for executor — 2026-11-07 (bounce 1, bug-17a-1)
 

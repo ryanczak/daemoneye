@@ -217,9 +217,20 @@ pub async fn spawn_detached(
         .stderr(Stdio::null())
         .process_group(0);
     let child = cmd.spawn()?;
+    reap_detached_child(id, child)?;
+    await_ready(&socket_path(id), Instant::now() + Duration::from_secs(10)).await
+}
+
+/// Wait on `child` from a blocking thread, keeping it out of the async
+/// runtime, so an exited host's process entry is released while the daemon
+/// lives rather than at daemon exit. Reaps every shell-host child
+/// `spawn_detached` spawns; tests hand it children of their own choosing.
+fn reap_detached_child(
+    id: &str,
+    child: std::process::Child,
+) -> Result<std::thread::JoinHandle<()>> {
     let pid = child.id();
-    // Off the async runtime: `wait()` blocks until the child exits, which can
-    // be hours for a healthy host.
+    let id = id.to_string();
     std::thread::Builder::new()
         .name(format!("shell-host-reap-{pid}"))
         .spawn(move || {
@@ -227,14 +238,13 @@ pub async fn spawn_detached(
             match child.wait() {
                 Ok(status) => {
                     if !status.success() {
-                        log::warn!("shell host {id2}: exited with {status}", id2 = pid);
+                        log::warn!("shell host {id}: exited with {status}");
                     }
                 }
-                Err(e) => log::warn!("shell host {pid}: waiting on the child failed: {e}"),
+                Err(e) => log::warn!("shell host {id}: waiting on the child failed: {e}"),
             }
         })
-        .context("spawning the shell-host reaper thread")?;
-    await_ready(&socket_path(id), Instant::now() + Duration::from_secs(10)).await
+        .context("spawning the shell-host reaper thread")
 }
 
 #[cfg(test)]
@@ -516,46 +526,49 @@ mod tests {
         assert!(argv.contains(&"--".to_string()));
     }
 
-    /// The waiting seam, exercised end to end: spawn a real `sh -c 'exit 0'`
-    /// child through `spawn_detached`, then within 2 s confirm that
-    /// `/proc/<pid>/stat` either no longer exists or does not show state
-    /// `Z`: an unwaited child reads as zombie until whatever parent exits —
-    /// with the reaper thread it is reaped instead.
-    #[tokio::test]
-    async fn an_exited_detached_child_is_reaped() {
-        let _guard = crate::test_home_guard();
-        Config::ensure_dirs().ok();
-        let _ = std::fs::remove_file(lock_path("s1"));
-        let _ = std::fs::remove_file(socket_path("s1"));
-        // `sh -c 'exit 0'` is the exited-host shape: the child ends at once,
-        // never answering `Status`, so the readiness probe times out. The
-        // reaping, not the readiness, is the behaviour under test.
-        let _ = spawn_detached("s1", "sh", &["exit 0".to_string()], 24, 80).await;
+    /// The waiting seam `spawn_detached` uses, exercised directly: spawn a
+    /// real `sh -c 'exit 0'` child with `std::process::Command`, keep its
+    /// pid, and hand the child to `reap_detached_child`. The child's
+    /// lifecycle in `/proc` is alive (state not `Z`) → zombie (`Z`) →
+    /// gone (reaped), so a non-zombie read proves nothing — the loop only
+    /// exits on the entry disappearing, never on a non-zombie read, and
+    /// fails at the deadline if a zombie was observed but never reaped.
+    #[test]
+    fn an_exited_detached_child_is_reaped() {
+        let child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .spawn()
+            .expect("spawning sh -c 'exit 0' works");
+        let pid = child.id();
+        let reap_thread = reap_detached_child("s1", child).expect("the reaper thread spawns");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut zombie = None;
-        while std::time::Instant::now() < deadline {
-            let out = std::process::Command::new("sh")
-                .arg("-c")
-                .arg("ps -o pid=,stat=,args= -e")
-                .output()
-                .expect("ps runs");
-            let text = String::from_utf8_lossy(&out.stdout);
-            zombie = text.lines().find_map(|row| {
-                let mut parts = row.split_whitespace();
-                let _pid = parts.next();
-                let stat = parts.next().unwrap_or("");
-                let args = parts.next().unwrap_or("");
-                (args == "exit" && stat.starts_with('Z')).then(|| row.to_string())
-            });
-            if zombie.is_none() {
-                break;
+        let mut zombie_seen = false;
+        let reaped = loop {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"));
+            match stat {
+                Err(_) => break true,
+                Ok(text) => {
+                    let state = text
+                        .rsplit_once(')')
+                        .and_then(|(_, after)| after.split_whitespace().next())
+                        .unwrap_or_default();
+                    if state == "Z" {
+                        zombie_seen = true;
+                    }
+                }
             }
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        }
+            if std::time::Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        };
         assert!(
-            zombie.is_none(),
-            "the exited child must be reaped within 2 s, not left as a zombie: {:?}",
-            zombie
+            reaped,
+            "the exited child must be reaped within 2 s: /proc/{pid}/stat \
+             never disappeared (zombie_seen={zombie_seen}) — a zombie left \
+             behind means the child was dropped unwaited"
         );
+        reap_thread.join().expect("the reaper thread joins cleanly");
     }
 }

@@ -508,7 +508,7 @@ of tmux panes:
   still registered. A chat session's own non-dedicated shells are also closed
   `[shells] detach_close_secs` after its last presence detach, unless the
   session re-attaches within that window (0 = never close on detach). The
-  tests are independent lifecycles on different clocks.
+  two are independent lifecycles on different clocks.
 
 Still **not** delivered by the shell engine (flagged for later milestones):
 client key bindings / an attach UI. (Background execution, ghost sessions and
