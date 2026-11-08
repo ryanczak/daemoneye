@@ -1,7 +1,7 @@
 # Phase 16 — background-index
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced: bugs/bug-16-1.md)
 **Drafted:** 2026-11-07
 **Depends on:** phase 15 (the `read_to_marker` it changes)
 **Estimated diff:** ~350 lines
@@ -281,6 +281,12 @@ commit `6cb4fa34`.
       branch.
 - [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
+- [ ] **bug-16-1:**
+      `cargo test --lib bg_interrupted_completion_names_the_exit_not_still_running`
+      prints 1 passed. Today the test does not exist, so this prints 0
+      passed. An interrupted background run's completion message names its
+      exit code, Ctrl-C and `read_shell`, and does not say "may still be
+      running". `cargo test` reports `passed=2770 failed=0`.
 
 ## End-to-end verification
 
@@ -322,6 +328,25 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-07 (bounce 1, bug-16-1)
+
+**All gates are green and the tree is clean. Neither is evidence that the
+phase is done.** Everything is approved except one path: the client
+interrupt, the foreground indexing and reply text, the background indexing,
+all seven named tests, and the allowlist entries. Do not touch any of that.
+
+There is exactly one item left: `bugs/bug-16-1.md`. The completion message
+for an interrupted background run must not carry the generic "may still be
+running" caveat. Add the test that bug names first, and confirm that it
+fails on that assertion. Then change `await_and_notify` /
+`completion_message` (`bg_shell.rs`) so that the interrupted case is its own
+case, not a string reduced to look like a failure. You choose the shape.
+`report_state` may keep treating it as a failure.
+
+Finish condition: `cargo test` must report **2770** passed, not 2769. Before
+you report, mutation-check: put the caveat back on the interrupted branch,
+confirm the new test fails, revert, and paste both results.
 
 ### Update — 2026-11-07 (escalation 2)
 
