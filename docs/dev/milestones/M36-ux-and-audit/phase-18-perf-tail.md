@@ -225,3 +225,96 @@ reconcile guard, and its mutation. The red and green output is saved in
    `(end-to-end verification)` entry from § End-to-end verification.
 7. **Commit** the rest as one `perf:` commit. The test count after it is
    **2797**: 2796 today plus the one new test.
+
+### Update — 2026-11-08 15:49 (red runs)
+
+Continuing the resumed run. Item 1–2 of the escalation notes:
+
+```
+$ for i in 1 2 3 4 5; do cargo test --lib log_event_offsets_point_at_their_own_lines_under_concurrent_writers | grep 'test result'; done
+run1: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2717 filtered out; finished in 0.07s
+run2: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2717 filtered out; finished in 0.09s
+run3: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2717 filtered out; finished in 0.07s
+run4: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2717 filtered out; finished in 0.07s
+run5: test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2717 filtered out; finished in 0.09s
+```
+First failing run, over the mutated offset (pre-append `metadata(&path).len()`):
+
+```
+thread 'daemon::utils::event_log::tests::log_event_offsets_point_at_their_own_lines_under_concurrent_writers'
+(305271) panicked at src/daemon/utils/event_log_tests.rs:790:5:
+assertion `left == right` failed: every row's offset must be a distinct line start:
+rows [0, 196, 385, 798, 995, 1185, 1389, 1600, 1791, 1996, 2194, 2598, ...] vs
+starts [0, 196, 385, 588, 798, 995, 1185, 1389, 1600, ...]
+  left: 46
+ right: 48
+```
+Two lines lost a row to a stale pre-append offset; 4 of 5 runs failed. offset
+restored to the append-derived value:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2717 filtered out; finished in 0.07s
+```
+
+The five seam tests' red was compile-error red in the first half of the run
+(d3f91df1 stubs failing on the named seams) and is recorded there; the
+preservation test `shell_log_read_matches_each_command_to_its_own_start_across_many_commands`
+passed on arrival.
+
+### Update — 2026-11-08 15:49 (mutation)
+
+Enforcing item 3 of the escalation notes: every lock site this phase added or
+touched now uses `.unwrap_or_log()` (`crate::util::UnpoisonExt`) —
+`src/memory/index/mod.rs` (slot, `Drop`, `reconciled_empty()`), and
+`shell_life.rs`'s `open_shell_test_seam`. Item 4: the
+`guard.take().expect(...)` in `open_index` is now a match that reopens on the
+impossible empty slot rather than panicking; `IndexConn`'s derefs route an
+empty slot (inert after `Drop` is the only taker) through a leaked fallback
+connection instead of `.expect()`. `grep -c 'expect(' src/memory/index/mod.rs`
+= 0 in production paths.
+
+Per-corpus reconcile guard mutation (from the prior half of the run, recorded
+in `/tmp/mutation_red.txt` / `/tmp/mutation_green.txt`):
+
+```
+test memory::index::perf_tests::an_empty_corpus_is_reconciled_once_per_path ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2716 filtered out; finished in 0.01s
+```
+Green again with the guard restored:
+
+```
+test memory::index::perf_tests::an_empty_corpus_is_reconciled_once_per_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2716 filtered out; finished in 0.01s
+```
+
+### Update — 2026-11-08 15:49 (end-to-end verification)
+
+```
+shell_log_read_matches_each_command_to_its_own_start_across_many_commands passed=1 failed=0
+index_connection_is_opened_once_per_path passed=1 failed=0
+index_connection_follows_a_home_change passed=1 failed=0
+an_empty_corpus_is_reconciled_once_per_path passed=1 failed=0
+log_event_offsets_point_at_their_own_lines_under_concurrent_writers passed=1 failed=0
+admit_request_drops_entries_from_past_windows passed=1 failed=0
+blocking_read=1
+metadata_offset=0
+stale_doc=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.00s
+fmt_exit=0
+passed=2797 failed=0
+```
+
+### Findings — 2026-11-08
+
+- Two new files needed no allowlist beyond default caps; hygiene stayed at 16
+  passes with no adjustment.
+- The B17 race needed the test to assert *distinctness of offsets against the
+  file's actual line starts* (`dedup` against `line_starts`) — a
+  `read_line_at_offset`-only check was too coarse, because a stale offset can
+  still read back an event's line when lines are same-length. That stronger
+  assertion is what makes the mutation fail 4 of 5 runs.
