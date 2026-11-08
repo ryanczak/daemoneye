@@ -1,7 +1,7 @@
 # Phase 17a — detach-close
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced: bugs/bug-17a-1.md)
+**Status:** review
 **Drafted:** 2026-11-07
 **Depends on:** phase 16
 **Estimated diff:** ~300 lines
@@ -468,5 +468,141 @@ kill: (-1542974): No such process
 - `src/shell/launch.rs` — +65 -4
 
 **Commit:** af226bea4d26ae9ed30bb3ac50d5f7dc229c4777
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-08 07:08 (complete, server-authored)
+
+**Summary:** </think>All tasks done. Final message: Summary + Notes for review.</think>
+**Summary:** Both remaining items from `bugs/bug-17a-1.md` are fixed and committed (`c8206122`, working tree clean). (1) `an_exited_detached_child_is_reaped` is now a real test: the waiting code was extracted from `spawn_detached` into `reap_detached_child(id: &str, child: std::process::Child) -> Result<JoinHandle<()>>` (which `spawn_detached` itself calls — no test-only copy), and the test spawns a real `sh -c 'exit 0'` with `std::process::Command`, keeps its pid, hands the child to that function, and polls `/proc/<pid>/stat` until the entry disappears (2 s deadline) — it no longer calls `spawn_detached`, which under `cargo test` re-invokes the test binary. The architecture-doc garble "The tests are independent lifecycles" was restored to "The two are". (2) Full E2E ran clean: all five named tests `passed=1 failed=0`, `unwaited_drop=0`, `detach_key=4`, `readme_key=2`, `via_spawn_detached=0`, `arch_garble=0`, `build_warnings=0`, hygiene/doc_truth/bug_tracker all ok (16/16/6 passed), clippy clean, `fmt_exit=0`, and the suite count is unchanged at `passed=2775 failed=0`.
+
+**Notes for review:** My first rewrite of the reaping test still had a plausible-but-wrong exit condition — it broke the poll loop on the first non-zombie read, and since the child's `/proc` lifecycle is alive → `Z` → gone, an early read before the kernel reaps looks identical to "already reaped". That is exactly why the reviewer's mutation (child dropped unwaited) passed. The loop now only exits on `/proc` entry disappearance and fails at the deadline if a zombie was ever observed; I verified the mutation now fails and the restored reaper passes in `finished in 0.03s`. Both the restored mutation-paste caveat and this pitfall are recorded in the phase doc's Findings and end-to-end Update Log entries. No production code outside `launch.rs` changed; `spawn_detached`'s readiness contract is untouched (`await_ready` still decides success).
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.24s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.96s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ipc_ask_round_trip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_entry_format ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.95s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (1579880): No such process
+kill: (-1580559): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/architecture.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/phase-17a-detach-close.md` — +44 -1
+- `src/shell/launch.rs` — +56 -43
+
+**Commit:** c82061227caaaeb1bbcc0a6aa956358208935a1c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
