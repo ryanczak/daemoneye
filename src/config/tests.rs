@@ -1031,6 +1031,25 @@ fn detach_close_secs_defaults_to_300_and_zero_is_allowed() {
 }
 
 #[test]
+fn idle_reap_secs_defaults_to_3600_and_zero_is_allowed() {
+    let no_shells_table: Config = toml::from_str("[models.default]\n").unwrap();
+    assert_eq!(
+        no_shells_table.shells.idle_reap_secs, 3600,
+        "a config with no [shells] table defaults idle_reap_secs to 3600"
+    );
+    let zero: Config = toml::from_str("[shells]\nidle_reap_secs = 0\n").unwrap();
+    assert_eq!(
+        zero.shells.idle_reap_secs, 0,
+        "idle_reap_secs = 0 parses as 0 (never reap)"
+    );
+    let set: Config = toml::from_str("[shells]\nidle_reap_secs = 42\n").unwrap();
+    assert_eq!(
+        set.shells.idle_reap_secs, 42,
+        "an explicit value passes through"
+    );
+}
+
+#[test]
 fn shells_config_parses_from_toml() {
     let all: Config = toml::from_str(
         "[shells]\nmax_per_owner = 12\nexited_retention_secs = 999\n\

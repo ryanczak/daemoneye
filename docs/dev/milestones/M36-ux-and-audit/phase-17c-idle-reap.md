@@ -1,7 +1,7 @@
 # Phase 17c — idle-reap
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 17b
 **Estimated diff:** ~300 lines
@@ -163,3 +163,84 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-08 18:47 (started)
+
+Executor: Claude (Opus 4.6, headless run). Status flipped `todo →
+in-progress` and the milestone README's 17c row updated to match. Beginning
+Task 1 (red tests first) against `shell_lifecycle_tests.rs` and
+`src/config/tests.rs`.
+
+### Update — 2026-11-08 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the run ran out at 512 turns, most of them spent finding where
+the in-process test hosts write their casts. The partial tree is close to
+done: config, `reap_idle_shells` and all nine named tests pass. What remains
+is the tick wiring, the three docs, two small fixes and the closing steps.
+The spec was not the problem.
+
+### Update — 2026-11-08 19:20 (resumed, completed work)
+
+Executor: Claude (Opus 4.6, headless resume run). Built on the resumed tree.
+Both review fixes applied to `reap_idle_shells`: the presence filter moved out
+of the `with_shells` closure (the presence lock is no longer taken while the
+registry lock is held), and the candidate tuple now carries the record's own
+`ShellId`, so no `ShellId::parse` fallback probing s0 exists. Wired into the
+hourly tick beside `reap_exited` in `src/daemon/startup.rs` (exported as
+`pub(crate) use shell::reap_idle_shells` from `knowledge/mod.rs` since the
+module is private). Zero build warnings after wiring. Documented
+`idle_reap_secs` in `assets/etc/config.toml`, `README.md` and
+`docs/architecture.md`. Hygiene allowlist entry for `run_daemon` raised
+598 → 608 for the six-line tick call.
+
+### Update — 2026-11-08 (mutation)
+
+The `Foreground::Prompt` requirement was removed (probe result discarded):
+
+```
+test daemon::executor::knowledge::shell::tests::lifecycle::reap_idle_skips_a_shell_not_at_its_prompt ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2711 filtered out; finished in 0.11s
+```
+
+Restored, the requirement is live again:
+
+```
+test daemon::executor::knowledge::shell::tests::lifecycle::reap_idle_skips_a_shell_not_at_its_prompt ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2711 filtered out; finished in 0.06s
+```
+
+### Findings — 2026-11-08
+
+- `tests/hygiene_allowlist.txt` does not admit trailing `# comment`
+  annotations (they parse as malformed), so the `run_daemon` raise is a bare
+  count line; the reason is recorded in the Update Log above instead.
+- Dead helper `backdate_idle_cast` (left by the resumed tree; the tests
+  freshen mtime inline) removed rather than allowlisted.
+
+### Update — 2026-11-08 (end-to-end verification)
+
+Full § End-to-end verification transcript (`/tmp/e2e-17c.txt`):
+
+```
+reap_idle_closes_a_silent_adopted_shell_at_its_prompt passed=1 failed=0
+reap_idle_skips_a_user_shell passed=1 failed=0
+reap_idle_skips_a_shell_with_a_command_in_flight passed=1 failed=0
+reap_idle_skips_a_present_chat_sessions_shell passed=1 failed=0
+reap_idle_closes_an_absent_chat_sessions_shell passed=1 failed=0
+reap_idle_skips_a_recently_written_shell passed=1 failed=0
+reap_idle_skips_a_shell_not_at_its_prompt passed=1 failed=0
+reap_idle_does_nothing_when_idle_secs_is_zero passed=1 failed=0
+idle_reap_secs_defaults_to_3600_and_zero_is_allowed passed=1 failed=0
+reap_fn=1
+tick_call=1
+docs=3
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.92s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+fmt_exit=0
+passed=2791 failed=0
+real_owner_files=0
+```

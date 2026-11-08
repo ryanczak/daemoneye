@@ -17,6 +17,7 @@ pub(super) use memory::{
     update_memory,
 };
 pub(crate) use shell::format_err_chain;
+pub(crate) use shell::reap_idle_shells;
 // The top dashboard's Shells panel reads one recorded line of output through
 // the same cleaner the prompt block uses.
 pub(crate) use shell::visible_text;

@@ -483,6 +483,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             startup_config.shells.exited_retention_secs,
                             now,
                         );
+                        crate::daemon::executor::knowledge::reap_idle_shells(
+                            crate::shell::registry(),
+                            startup_config.shells.idle_reap_secs,
+                            now,
+                        )
+                        .await;
                         let program =
                             crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
                         for reaped in

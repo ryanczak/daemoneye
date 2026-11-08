@@ -541,6 +541,114 @@ pub(crate) async fn close_after_detach(
     ids
 }
 
+/// Close the shells that have sat idle at their prompt past `idle_secs`
+/// (M36 phase-17c, B11's last half): the maintenance tick's hourly pass calls
+/// this beside `reap_exited`, so a shell nobody can or will drive — one
+/// adopted without an owner, or a chat session's shell that never
+/// re-attaches — does not sit open forever.
+///
+/// A shell is **closed** only when all of these hold:
+///
+/// - `idle_secs > 0` (`0` = never reap);
+/// - its owner is not [`Owner::User`] — the user's own `/shell` shells are
+///   never reaped by the daemon;
+/// - it has no `in_flight` command;
+/// - `exited_unix` is `None` — a dead host is `reap_exited`'s job;
+/// - it is not an `Owner::Chat(s)` shell whose session `s` is present
+///   (a session that is attached still owns its shells);
+/// - its recording (`launch::resolve_cast(id, started_unix)`) has been
+///   silent: its modification time is `idle_secs` or more before
+///   `now_unix`. A missing or unreadable cast **skips** the shell: its
+///   silence cannot be measured, so it must not be killed;
+/// - a live `probe_foreground` reads [`crate::shell::Foreground::Prompt`].
+///   Program, Paused, Unknown and Exited all skip the shell: a silent
+///   long-running command is never killed, and an unanswerable shell is
+///   never assumed idle.
+///
+/// The close goes through [`close_shell_with`] with the record's own owner
+/// as the caller, so the hangup semantics and the observed-end accounting
+/// are identical to every other close. Never holds the registry lock across
+/// an await: the candidate facts (ids, owners, started stamps) are copied
+/// out under `with_shells`, then the mtime read, the probe and the close
+/// run with the lock released.
+pub(crate) async fn reap_idle_shells(
+    reg: &ShellRegistry,
+    idle_secs: u64,
+    now_unix: u64,
+) -> Vec<String> {
+    if idle_secs == 0 {
+        return Vec::new();
+    }
+    // Locked phase: copy the candidate facts out, no awaits inside. The
+    // presence check is left OUT of the closure — it takes the presence lock,
+    // which must not be reached while the registry lock is held.
+    let candidates: Vec<(ShellId, Owner, u64)> = with_shells(reg, |store| {
+        let mut out: Vec<(ShellId, Owner, u64)> = store
+            .values()
+            .filter(|record| {
+                !matches!(record.owner, Owner::User)
+                    && record.in_flight.is_none()
+                    && record.exited_unix.is_none()
+            })
+            .map(|record| (record.id.clone(), record.owner.clone(), record.started_unix))
+            .collect();
+        out.sort_by_key(|(id, _, _)| id.index());
+        out
+    });
+    let candidates: Vec<(ShellId, Owner, u64)> = candidates
+        .into_iter()
+        .filter(|(_, owner, _)| match owner {
+            Owner::Chat(session) => crate::daemon::session::presence_count(session) == 0,
+            _ => true,
+        })
+        .collect();
+
+    // Unlocked phase: the mtime read and the socket probe per candidate.
+    let mut idle: Vec<(ShellId, Owner)> = Vec::new();
+    for (id, owner, started_unix) in candidates {
+        let id_str = id.as_str();
+        let cast = crate::shell::resolve_cast(id_str, started_unix);
+        let Ok(meta) = std::fs::metadata(&cast) else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        let mtime_unix = modified_unix(modified);
+        if now_unix.saturating_sub(mtime_unix) < idle_secs {
+            continue;
+        }
+        if crate::shell::probe_foreground(reg, &id, crate::shell::PROBE_TIMEOUT).await
+            != crate::shell::Foreground::Prompt
+        {
+            continue;
+        }
+        idle.push((id, owner));
+    }
+
+    for (id, owner) in &idle {
+        close_shell_with(reg, id.as_str(), owner, SIGNAL_TIMEOUT).await;
+    }
+    if !idle.is_empty() {
+        let ids: Vec<String> = idle.iter().map(|(id, _)| id.as_str().to_owned()).collect();
+        log::info!(
+            "idle-reap: closed {} shell(s) silent at their prompt past {idle_secs}s: {ids:?}",
+            ids.len()
+        );
+    }
+    idle.into_iter()
+        .map(|(id, _)| id.as_str().to_owned())
+        .collect()
+}
+
+/// A `SystemTime` as unix seconds, saturating at `0` before the epoch —
+/// the same translation `now_unix` gives the clock.
+fn modified_unix(t: std::time::SystemTime) -> u64 {
+    t.duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 #[cfg(test)]
 pub(crate) mod lifecycle_test_support {
     //! Shared by `shell_exec.rs` and `bg_shell.rs`'s own copies — not by this

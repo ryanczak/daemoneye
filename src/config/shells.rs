@@ -22,6 +22,13 @@ pub struct ShellsConfig {
     /// Default: 300 seconds.
     #[serde(default = "default_shells_detach_close_secs")]
     pub detach_close_secs: u64,
+    /// Seconds a shell's recording must have been silent — no bytes added to
+    /// its `.cast` — before the maintenance tick closes it, when it is not a
+    /// user shell, has no command in flight and its host still answers at a
+    /// prompt. `0` = never reap.
+    /// Default: 3600 seconds.
+    #[serde(default = "default_shells_idle_reap_secs")]
+    pub idle_reap_secs: u64,
     /// Days to keep `var/log/shells/*.cast`. 0 = keep forever. Default: 7.
     #[serde(default = "default_shells_log_retention_days")]
     pub log_retention_days: u32,
@@ -52,6 +59,11 @@ fn default_shells_detach_close_secs() -> u64 {
     300
 }
 
+/// Default idle-reap limit (3600 s = 1 h). 0 = never reap.
+fn default_shells_idle_reap_secs() -> u64 {
+    3600
+}
+
 /// Default shell recording retention (7 days).
 fn default_shells_log_retention_days() -> u32 {
     7
@@ -78,6 +90,7 @@ impl Default for ShellsConfig {
             max_per_owner: default_shells_max_per_owner(),
             exited_retention_secs: default_shells_exited_retention_secs(),
             detach_close_secs: default_shells_detach_close_secs(),
+            idle_reap_secs: default_shells_idle_reap_secs(),
             log_retention_days: default_shells_log_retention_days(),
             scrollback_lines: default_shells_scrollback_lines(),
             rows: default_shells_rows(),
