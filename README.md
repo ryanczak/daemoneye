@@ -1021,6 +1021,7 @@ values are checked at daemon startup; see the lifecycle table in
 |---|---|---|---|
 | `max_per_owner` | integer | `5` | Maximum concurrent shells one owner (a chat session, a ghost) may hold. `0` = unlimited. |
 | `exited_retention_secs` | integer | `300` | How long an exited shell's registry record stays listed before it is reaped. `0` = reap a dead shell on the pass after its host is first seen dead. The `.cast` log has a separate, day-based retention below. |
+| `detach_close_secs` | integer | `300` | Seconds a chat session's shells survive after its last connection detaches; when the window passes with no re-attach, its non-dedicated shells are closed (a `dedicated` shell, a `/shell` shell and other sessions' shells are never touched). `0` = never close on detach. |
 | `log_retention_days` | integer | `7` | Days to keep `var/log/shells/*.cast` (and their `.meta.json` sidecars). `0` = keep forever. A shell still in the registry is never swept, however old its log. |
 | `scrollback_lines` | integer | `5000` | Rows of scrollback the screen model retains per shell. |
 | `rows` | integer | `40` | Rows of the PTY every shell spawns with. Clamped to `10..=200`, so `0` cannot open an unusable terminal. |
@@ -1030,6 +1031,7 @@ values are checked at daemon startup; see the lifecycle table in
 [shells]
 max_per_owner        = 5
 exited_retention_secs = 300
+detach_close_secs    = 300
 log_retention_days   = 7
 scrollback_lines     = 5000
 rows                 = 40

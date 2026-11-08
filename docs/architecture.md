@@ -505,7 +505,10 @@ of tmux panes:
   host that later reads alive is unstamped) — then `sweep_shell_logs`, which
   deletes `.cast` + `.meta.json` files older than
   `[shells] log_retention_days` (0 = never) **except** those whose shell is
-  still registered. The two are independent lifecycles on different clocks.
+  still registered. A chat session's own non-dedicated shells are also closed
+  `[shells] detach_close_secs` after its last presence detach, unless the
+  session re-attaches within that window (0 = never close on detach). The
+  tests are independent lifecycles on different clocks.
 
 Still **not** delivered by the shell engine (flagged for later milestones):
 client key bindings / an attach UI. (Background execution, ghost sessions and

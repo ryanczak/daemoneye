@@ -16,6 +16,12 @@ pub struct ShellsConfig {
     /// Default: 300 seconds.
     #[serde(default = "default_shells_exited_retention_secs")]
     pub exited_retention_secs: u64,
+    /// Seconds a chat session's non-dedicated shells survive its last
+    /// presence detach. The daemon closes them when the window passes with
+    /// no presence for the session. `0` = never close on detach.
+    /// Default: 300 seconds.
+    #[serde(default = "default_shells_detach_close_secs")]
+    pub detach_close_secs: u64,
     /// Days to keep `var/log/shells/*.cast`. 0 = keep forever. Default: 7.
     #[serde(default = "default_shells_log_retention_days")]
     pub log_retention_days: u32,
@@ -38,6 +44,11 @@ fn default_shells_max_per_owner() -> u32 {
 
 /// Default exited-shell retention (300 s = 5 min).
 fn default_shells_exited_retention_secs() -> u64 {
+    300
+}
+
+/// Default detach-close grace (300 s = 5 min).
+fn default_shells_detach_close_secs() -> u64 {
     300
 }
 
@@ -66,6 +77,7 @@ impl Default for ShellsConfig {
         Self {
             max_per_owner: default_shells_max_per_owner(),
             exited_retention_secs: default_shells_exited_retention_secs(),
+            detach_close_secs: default_shells_detach_close_secs(),
             log_retention_days: default_shells_log_retention_days(),
             scrollback_lines: default_shells_scrollback_lines(),
             rows: default_shells_rows(),

@@ -774,3 +774,190 @@ async fn closing_an_owners_shells_ends_only_that_owners_shells() {
     assert!(a_exited, "a's shell reports Exited within 2 s of the close");
     assert!(!b_exited, "b's shell must not be touched by a's teardown");
 }
+
+// ── detach-close (M36 phase-17a) ─────────────────────────────────────────
+
+/// A daemon-free `close_after_detach` exercise: the hosts are spawned
+/// directly by `spawn_for_on_host`, so the assertions read the same locks a
+/// real close observes. The shells run `sh -c 'sleep 1000'`, not bash — an
+/// interactive bash ignores TERM (measured at M25 drafting, § Current state
+/// 3), so a bash host would not report `Exited` and the hangup would pin
+/// nothing.
+async fn detach_close_spawn(id: ShellId) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir().context("tempdir for cast")?;
+    let cast = dir.path().join(format!("{}.cast", id.as_str()));
+    let backend = crate::shell::PtyBackend::spawn(
+        "sh",
+        &["-c".to_string(), "sleep 1000".to_string()],
+        TEST_ROWS,
+        TEST_COLS,
+        100,
+        &cast,
+        0,
+    )
+    .context("spawning sh -c 'sleep 1000'")?;
+    let lock =
+        crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+    let socket = socket_path(id.as_str());
+    let listener = bind(&socket).await.context("binding the host's socket")?;
+    // Like a real host process: serve until the shell exits, then release
+    // the lock — the test's `host_is_alive` reads false only once this task
+    // has ended, and `serve` alone never returns.
+    tokio::spawn(async move {
+        let _ =
+            crate::shell::serve_until_exit(listener, backend, std::time::Duration::from_millis(50))
+                .await;
+        drop(lock);
+    });
+    std::mem::forget(dir);
+    Ok(())
+}
+
+#[tokio::test]
+async fn last_detach_closes_the_sessions_shells_after_the_grace() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let owner = Owner::Chat("detach-1".into());
+    let id_a = spawn_for_on_host(
+        &reg,
+        owner.clone(),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("shell a spawns");
+    let id_b = spawn_for_on_host(
+        &reg,
+        owner.clone(),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("shell b spawns");
+    assert!(host_is_alive(&crate::shell::lock_path(id_a.as_str())));
+    assert!(host_is_alive(&crate::shell::lock_path(id_b.as_str())));
+
+    close_after_detach(&reg, "detach-1", Duration::from_millis(100)).await;
+
+    assert!(
+        !host_is_alive(&crate::shell::lock_path(id_a.as_str())),
+        "shell a's host is gone after the grace with no presence"
+    );
+    assert!(
+        !host_is_alive(&crate::shell::lock_path(id_b.as_str())),
+        "shell b's host is gone after the grace with no presence"
+    );
+}
+
+#[tokio::test]
+async fn a_reattach_within_the_grace_keeps_the_shells() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let owner = Owner::Chat("detach-2".into());
+    let id = spawn_for_on_host(
+        &reg,
+        owner.clone(),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the shell spawns");
+
+    // The session re-attaches before the grace ends: the presence count is
+    // positive when the grace expires, so nothing is closed.
+    let (push_tx, _push_rx) = tokio::sync::mpsc::unbounded_channel();
+    let conn = crate::daemon::session::PresenceConnection { push: push_tx };
+    crate::daemon::session::presence_register("detach-2", conn.clone());
+    assert_eq!(crate::daemon::session::presence_count("detach-2"), 1);
+
+    close_after_detach(&reg, "detach-2", Duration::from_millis(300)).await;
+
+    assert!(
+        host_is_alive(&crate::shell::lock_path(id.as_str())),
+        "a re-attach within the grace must leave the session's shell alone"
+    );
+    assert!(has_record(&reg, id.as_str()));
+    let _ = crate::daemon::session::presence_unregister("detach-2", &conn);
+}
+
+#[tokio::test]
+async fn detach_close_leaves_other_owners_and_dedicated_shells() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let session = Owner::Chat("detach-3".into());
+    let user = Owner::User;
+
+    let session_id = spawn_for_on_host(
+        &reg,
+        session.clone(),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the session's shell spawns");
+    let dedicated_id = spawn_for_on_host(
+        &reg,
+        session.clone(),
+        5,
+        crate::host::HostId::Local,
+        true,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the dedicated shell spawns");
+    let user_id = spawn_for_on_host(
+        &reg,
+        user.clone(),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the user shell spawns");
+    let other_id = spawn_for_on_host(
+        &reg,
+        Owner::Chat("detach-other".into()),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the other session's shell spawns");
+
+    close_after_detach(&reg, "detach-3", Duration::from_millis(100)).await;
+
+    assert!(
+        !host_is_alive(&crate::shell::lock_path(session_id.as_str())),
+        "the session's own non-dedicated shell is closed"
+    );
+    for (id, why) in [
+        (
+            dedicated_id.as_str(),
+            "a dedicated shell carries a background run",
+        ),
+        (
+            user_id.as_str(),
+            "an Owner::User shell is not this path's target",
+        ),
+        (
+            other_id.as_str(),
+            "another session's shell is not this path's target",
+        ),
+    ] {
+        assert!(
+            host_is_alive(&crate::shell::lock_path(id)),
+            "{why}: it must survive the session's detach"
+        );
+    }
+}

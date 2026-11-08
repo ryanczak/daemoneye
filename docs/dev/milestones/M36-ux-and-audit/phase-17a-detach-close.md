@@ -1,7 +1,7 @@
 # Phase 17a — detach-close
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-07
 **Depends on:** phase 16
 **Estimated diff:** ~300 lines
@@ -171,3 +171,81 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-07 21:22 (progress)
+
+Executor run started (Claude Opus 5.5, headless). Status flipped to
+`in-progress`; milestone README's 17a row updated to match. Beginning with
+Spec task 1: the five red tests.
+
+### Update — 2026-11-07 21:41 (red runs)
+
+Executor (Claude Opus 5.5, headless) wrote the five Spec-named tests before the
+implementation and ran them. Real output:
+
+```
+$ cargo test --lib detach_close
+running 3 tests
+test config::tests::detach_close_secs_defaults_to_300_and_zero_is_allowed ... FAILED
+test daemon::executor::knowledge::shell::tests::lifecycle::detach_close_leaves_other_owners_and_dedicated_shells ... FAILED
+test daemon::executor::knowledge::shell::tests::lifecycle::last_detach_closes_the_sessions_shells_after_the_grace ... FAILED
+test result: FAILED. 0 passed; 3 failed; 0 ignored; 0 measured; 2692 filtered out
+```
+
+(The fourth and fifth (`a_reattach_within_the_grace_keeps_the_shells`,
+`an_exited_detached_child_is_reaped`) do not exist yet at this point — the
+config field, `close_after_detach` and the launch waiting seam are the
+implementation, so a test naming any of them is a compile error, exactly as
+the Spec's red-run rule describes. Their first runs appear after task 2.)
+
+### Update — 2026-11-07 21:52 (mutation check)
+
+The `presence_count` check was commented out of `close_after_detach` and the
+reattach test re-run; it failed, naming the behaviour. The check was restored
+and the test re-run; it passed. Real result tails:
+
+```
+$ cargo test --lib a_reattach_within_the_grace_keeps_the_shells   # check removed
+thread '...a_reattach_within_the_grace_keeps_the_shells' (1517244) panicked at
+src/daemon/executor/knowledge/shell_lifecycle_tests.rs:884:5:
+a re-attach within the grace must leave the session's shell alone
+test result: FAILED. 0 passed; 1 failed
+
+$ cargo test --lib a_reattach_within_the_grace_keeps_the_shells   # check restored
+test daemon::executor::knowledge::shell::tests::lifecycle::a_reattach_within_the_grace_keeps_the_shells ... ok
+test result: ok. 1 passed; 0 failed
+```
+
+### Findings — 2026-11-07
+
+- An in-process test host that spawns with plain `serve` never releases its
+  per-id instance lock, so `host_is_alive` stays true for ever; the fixture
+  must mirror a real host's `serve_until_exit` + lock drop. The first cut of
+  the detach tests used `serve` and failed as a false "shell did not close".
+- The exited `sh -c 'exit 0'` child under the reaper thread can briefly read
+  as `Z` while the reaper thread lands; the launch test polls until it
+  disappears (or 2 s), not once.
+
+### Update — 2026-11-07 22:10 (end-to-end verification)
+
+The phase doc's E2E block ran against the real tree (after `cargo fmt --all`),
+output captured mechanically:
+
+```
+last_detach_closes_the_sessions_shells_after_the_grace passed=1 failed=0
+a_reattach_within_the_grace_keeps_the_shells passed=1 failed=0
+detach_close_leaves_other_owners_and_dedicated_shells passed=1 failed=0
+detach_close_secs_defaults_to_300_and_zero_is_allowed passed=1 failed=0
+an_exited_detached_child_is_reaped passed=1 failed=0
+unwaited_drop=0
+detach_key=4
+readme_key=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.44s
+fmt_exit=0
+```
+
+Full suite on the same tree: `passed=2775 failed=0`.

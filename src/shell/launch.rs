@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
@@ -180,8 +180,10 @@ pub async fn await_ready(sock: &Path, deadline: Instant) -> Result<()> {
 
 /// Spawn a detached shell host for `id` — a fresh `daemoneye shell-host`
 /// process in its own process group, with stdio detached — and wait until it
-/// answers `Status`. The child is never waited on, so it survives the caller's
-/// exit. Re-invokes the running binary via `current_exe()` (F5).
+/// answers `Status`. A blocking thread reaps the child the moment it exits,
+/// so an exited host's process entry is released while the daemon lives
+/// (B12) instead of reaping only at daemon exit. Re-invokes the running
+/// binary via `current_exe()` (F5).
 pub async fn spawn_detached(
     id: &str,
     shell: &str,
@@ -215,7 +217,23 @@ pub async fn spawn_detached(
         .stderr(Stdio::null())
         .process_group(0);
     let child = cmd.spawn()?;
-    drop(child);
+    let pid = child.id();
+    // Off the async runtime: `wait()` blocks until the child exits, which can
+    // be hours for a healthy host.
+    std::thread::Builder::new()
+        .name(format!("shell-host-reap-{pid}"))
+        .spawn(move || {
+            let mut child = child;
+            match child.wait() {
+                Ok(status) => {
+                    if !status.success() {
+                        log::warn!("shell host {id2}: exited with {status}", id2 = pid);
+                    }
+                }
+                Err(e) => log::warn!("shell host {pid}: waiting on the child failed: {e}"),
+            }
+        })
+        .context("spawning the shell-host reaper thread")?;
     await_ready(&socket_path(id), Instant::now() + Duration::from_secs(10)).await
 }
 
@@ -496,5 +514,48 @@ mod tests {
         let argv = child_argv("s3", "ssh", &args, 24, 80);
         assert_eq!(&argv[argv.len() - args.len()..], &args[..]);
         assert!(argv.contains(&"--".to_string()));
+    }
+
+    /// The waiting seam, exercised end to end: spawn a real `sh -c 'exit 0'`
+    /// child through `spawn_detached`, then within 2 s confirm that
+    /// `/proc/<pid>/stat` either no longer exists or does not show state
+    /// `Z`: an unwaited child reads as zombie until whatever parent exits —
+    /// with the reaper thread it is reaped instead.
+    #[tokio::test]
+    async fn an_exited_detached_child_is_reaped() {
+        let _guard = crate::test_home_guard();
+        Config::ensure_dirs().ok();
+        let _ = std::fs::remove_file(lock_path("s1"));
+        let _ = std::fs::remove_file(socket_path("s1"));
+        // `sh -c 'exit 0'` is the exited-host shape: the child ends at once,
+        // never answering `Status`, so the readiness probe times out. The
+        // reaping, not the readiness, is the behaviour under test.
+        let _ = spawn_detached("s1", "sh", &["exit 0".to_string()], 24, 80).await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut zombie = None;
+        while std::time::Instant::now() < deadline {
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg("ps -o pid=,stat=,args= -e")
+                .output()
+                .expect("ps runs");
+            let text = String::from_utf8_lossy(&out.stdout);
+            zombie = text.lines().find_map(|row| {
+                let mut parts = row.split_whitespace();
+                let _pid = parts.next();
+                let stat = parts.next().unwrap_or("");
+                let args = parts.next().unwrap_or("");
+                (args == "exit" && stat.starts_with('Z')).then(|| row.to_string())
+            });
+            if zombie.is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(
+            zombie.is_none(),
+            "the exited child must be reaped within 2 s, not left as a zombie: {:?}",
+            zombie
+        );
     }
 }

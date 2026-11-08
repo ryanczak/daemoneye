@@ -498,6 +498,49 @@ async fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
     }
 }
 
+/// Close the session `session_id`'s non-dedicated chat shells after its last
+/// detach (M36 phase-17a, B11's first half): sleep out the `grace`, then, if
+/// the session still has no live presence connection, hang up every
+/// `Owner::Chat(session_id)` shell that is not `dedicated`. A dedicated shell
+/// carries a background run and may still be running it, so it is left alone;
+/// the owner's other shells are not this path's target at all.
+///
+/// Runs through `close_owner_shell`'s shared close (`close_shell_with` on
+/// each id), so the hangup semantics and the observed-end accounting are
+/// identical. Never holds the registry lock across the grace: the ids are
+/// collected first, the sleep runs lock-free, and the presence re-check is
+/// its own short lock.
+pub(crate) async fn close_after_detach(
+    reg: &ShellRegistry,
+    session_id: &str,
+    grace: Duration,
+) -> Vec<String> {
+    if grace > Duration::ZERO {
+        tokio::time::sleep(grace).await;
+    }
+    if crate::daemon::session::presence_count(session_id) > 0 {
+        return Vec::new();
+    }
+    let owner = Owner::Chat(session_id.to_string());
+    let key = owner.key();
+    let ids = with_shells(reg, |store| {
+        let mut ids: Vec<String> = store
+            .values()
+            .filter(|record| record.owner.key() == key && !record.dedicated)
+            .map(|record| record.id.as_str().to_string())
+            .collect();
+        ids.sort_by_key(|id| ShellId::parse(id).map(|s| s.index()).unwrap_or(u32::MAX));
+        ids
+    });
+    for id in &ids {
+        close_shell_with(reg, id, &owner, SIGNAL_TIMEOUT).await;
+    }
+    if !ids.is_empty() {
+        log::info!("session {session_id} stayed detached past its grace; closed shells {ids:?}");
+    }
+    ids
+}
+
 #[cfg(test)]
 pub(crate) mod lifecycle_test_support {
     //! Shared by `shell_exec.rs` and `bg_shell.rs`'s own copies — not by this

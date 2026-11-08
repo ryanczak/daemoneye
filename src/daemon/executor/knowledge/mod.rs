@@ -58,6 +58,12 @@ pub(crate) use shell::open_shell_test_seam;
 /// because `daemon/ghost.rs` sits outside this module tree.
 pub(crate) use shell::close_owner_shells;
 
+/// The M36 phase-17a detach-close: a chat session's non-dedicated shells are
+/// closed after its last presence detach, unless the session re-attaches
+/// within the grace. Wired `pub(crate)` because `daemon/server/
+/// chat_presence.rs` sits outside this module tree.
+pub(crate) use shell::close_after_detach;
+
 /// The live check's ssh spawn fixture, re-exported for `file_ops/read.rs`'s
 /// ignored pinky test — same reason as `close_shell_with` above.
 #[cfg(test)]

@@ -120,6 +120,29 @@ where
     log::info!("chat presence detached for session {session_id} (last={was_last})");
     if was_last {
         record_chat_detach(&session_id, &sessions);
+        // B11 (M36 phase-17a): the session's shells get a grace. The task
+        // owns the id; no lock — presence or registry — crosses the sleep.
+        // `0` keeps today's behaviour: never close on detach.
+        let grace_secs = crate::config::Config::load()
+            .map(|c| c.shells.detach_close_secs)
+            .unwrap_or_else(|_| crate::config::Config::default().shells.detach_close_secs);
+        if grace_secs > 0 {
+            let sid = session_id.clone();
+            tokio::spawn(async move {
+                let reg = crate::shell::registry().clone();
+                let closed = crate::daemon::executor::knowledge::close_after_detach(
+                    &reg,
+                    &sid,
+                    std::time::Duration::from_secs(grace_secs),
+                )
+                .await;
+                if closed.is_empty() {
+                    log::info!(
+                        "detach-close for session {sid}: nothing to close (re-attached in time, or no shells)"
+                    );
+                }
+            });
+        }
     }
     result
 }
