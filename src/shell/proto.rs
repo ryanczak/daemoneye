@@ -71,6 +71,14 @@ pub enum ShellResponse {
     Screen {
         bytes: Vec<u8>,
     },
+    /// This subscriber fell more than the broadcast's capacity in chunks
+    /// behind, so that many chunks were dropped before this frame. The
+    /// receiver reconstructs what it can — a command reader marks the gap in
+    /// its output, a viewer may show it — and keeps reading; the stream
+    /// continues with the chunks after the gap.
+    Lagged {
+        skipped: u64,
+    },
     /// A rendered `ShellRequest::Screen`: scrollback + the marked screen.
     ScreenText {
         text: String,
@@ -225,6 +233,10 @@ mod tests {
             (
                 ShellResponse::Exited { code: 0 },
                 json!({"type": "Exited", "code": 0}),
+            ),
+            (
+                ShellResponse::Lagged { skipped: 7 },
+                json!({"type": "Lagged", "skipped": 7}),
             ),
         ];
         for (frame, expected) in cases {

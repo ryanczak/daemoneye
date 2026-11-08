@@ -41,7 +41,7 @@ fn src/daemon/server/mod.rs handle_client 214
 fn src/daemon/stream/conversation.rs run_conversation_loop 775
 fn src/main.rs async_main 173
 fn src/manifest.rs auto_search_context 211
-fn src/shell/client.rs read_to_marker 163
+fn src/shell/client.rs read_to_marker 198
 fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321
 fn src/tmux/cache.rs SessionCache::refresh 171
 fn src/webhook/process.rs maybe_analyze_alert 240

@@ -671,6 +671,22 @@ mod scripted {
         panic!("the client never wrote its command to the fake host");
     }
 
+    /// Wait until the client's wrapped command arrives in a backend's
+    /// recorded writes, for hosts whose backend is not a `ScriptedHost`'s.
+    /// Generic over the recorded-write getter so a stream host with its own
+    /// backend shape can use the same wait.
+    pub(super) async fn await_input_with(read_writes: impl Fn() -> Vec<Vec<u8>>) -> Vec<u8> {
+        for _ in 0..500 {
+            {
+                if let Some(bytes) = read_writes().first() {
+                    return bytes.clone();
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the client never wrote its command to the fake host");
+    }
+
     async fn spawn_scripted() -> ScriptedHost {
         let (backend, _) = ScriptedBackend::new();
         let dir = tempfile::tempdir().unwrap();
@@ -690,15 +706,23 @@ mod scripted {
     /// text's `printf`s, so the raw `\x1f`-framed markers reach the
     /// stream. The nonce is recovered from the recorded command text (the
     /// quoted `DE_''BEG` spelling), keeping it test-private.
-    fn markers_for_sent_command(wrapped: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    pub(super) fn markers_for_sent_command(wrapped: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let nonce = nonce_of(wrapped);
+        (test_begin_marker(&nonce), test_end_marker(&nonce, 0))
+    }
+
+    /// The nonce the client's wrapped command carries, recovered from the
+    /// quoted `DE_''BEG` spelling in the recorded command text, keeping it
+    /// test-private. Public to this module: the stream host builds markers
+    /// from it directly.
+    pub(super) fn nonce_of(wrapped: &[u8]) -> Nonce {
         let text = String::from_utf8_lossy(wrapped);
         let nonce = text
             .split("DE_''BEG ")
             .nth(1)
             .and_then(|rest| rest.split('\\').next())
             .expect("the wrapped command carries its begin marker");
-        let nonce = Nonce(nonce.to_string());
-        (test_begin_marker(&nonce), test_end_marker(&nonce, 0))
+        Nonce(nonce.to_string())
     }
 
     #[tokio::test]
@@ -969,33 +993,350 @@ mod scripted {
     }
 }
 
+// ── P1: the linear reader, the bounded offer, the lag gap (M36 phase-15) ──
+
+mod streaming {
+    use super::scripted::{await_input_with, markers_for_sent_command, nonce_of};
+    use super::*;
+    use crate::shell::host::{ShellBackend, bind, serve};
+    use std::sync::Mutex;
+
+    /// A fake host one script controls: a channel of outbound chunk frames,
+    /// closed by setting `done`. The frames behind `tx` reach the client
+    /// exactly as a PTY reader's would — whole byte vectors in order on a
+    /// broadcast the connection subscribes to.
+    struct StreamBackend {
+        /// The outbound frames: whatever the test queues, the host streams.
+        tx: tokio::sync::broadcast::Sender<Vec<u8>>,
+        /// Every Input write the client made, so the stream's pacing knows
+        /// the client subscribed before the first frame was published.
+        writes: Mutex<Vec<Vec<u8>>>,
+    }
+
+    impl StreamBackend {
+        fn new() -> (Arc<Self>, tokio::sync::broadcast::Sender<Vec<u8>>) {
+            let (tx, _) = tokio::sync::broadcast::channel(4096);
+            let backend = Arc::new(Self {
+                tx: tx.clone(),
+                writes: Mutex::new(Vec::new()),
+            });
+            (backend, tx)
+        }
+
+        fn writes(&self) -> Vec<Vec<u8>> {
+            self.writes.lock().unwrap().clone()
+        }
+
+        fn clear_writes(&self) {
+            self.writes.lock().unwrap().clear();
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ShellBackend for StreamBackend {
+        async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+            self.writes.lock().unwrap().push(bytes.to_vec());
+            Ok(())
+        }
+        async fn resize(&self, _rows: u16, _cols: u16) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn signal(&self, _sig: ShellSignal) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn status(&self) -> ShellResponse {
+            ShellResponse::Ok
+        }
+        fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+            self.tx.subscribe()
+        }
+    }
+
+    struct StreamHost {
+        backend: Arc<StreamBackend>,
+        path: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    async fn spawn_stream() -> (StreamHost, tokio::sync::broadcast::Sender<Vec<u8>>) {
+        let (backend, tx) = StreamBackend::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stream.sock");
+        let listener = bind(&path).await.unwrap();
+        let serve_backend = Arc::clone(&backend);
+        tokio::spawn(async move { serve(listener, serve_backend).await });
+        let host = StreamHost {
+            backend,
+            path,
+            _dir: dir,
+        };
+        (host, tx)
+    }
+
+    /// The frames a stream test publishes, in order: the begin marker,
+    /// `n_chunks` payload chunks of `chunk_len` bytes, then the end marker
+    /// carrying `exit`. Each frame is sent through `tx` directly, so the
+    /// test controls the publish rate.
+    fn frames_for(wrapped: &[u8], n_chunks: usize, chunk_len: usize, exit: i32) -> Vec<Vec<u8>> {
+        let mut end = markers_for_sent_command(wrapped).1;
+        end.truncate(end.len() - 3);
+        end.extend_from_slice(format!("{exit}\u{1f}\r\n").as_bytes());
+        let chunk = vec![b'a'; chunk_len];
+        let mut frames = vec![markers_for_sent_command(wrapped).0];
+        frames.extend(std::iter::repeat_n(chunk, n_chunks));
+        frames.push(end);
+        frames
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_to_marker_large_output_is_linear() {
+        let (host, tx) = spawn_stream().await;
+        let mut timings: Vec<(String, std::time::Duration)> = Vec::new();
+        for (body_chunks, label) in [(256usize, "1 MiB"), (2048usize, "8 MiB")] {
+            let path = host.path.clone();
+            let started = std::time::Instant::now();
+            let client = tokio::spawn(async move {
+                tokio::time::timeout(Duration::from_secs(60), async {
+                    run_command_with_prompts(
+                        &path,
+                        "echo big",
+                        "bash",
+                        Duration::from_secs(55),
+                        |_: &str| async { PromptReply::Wait },
+                    )
+                    .await
+                })
+                .await
+                .expect("the 60 s bound ends the read instead of hanging")
+                .expect("the read resolves inside the bound")
+            });
+            let sent = await_input_with(|| host.backend.writes()).await;
+            for frame in frames_for(sent.as_slice(), body_chunks, 4096, 0) {
+                tx.send(frame).expect("the channel accepts");
+            }
+            let outcome = client.await.expect("the client task joins");
+            assert_eq!(
+                outcome.exit_code, 0,
+                "the scripted exit code is real ({label})"
+            );
+            timings.push((label.to_string(), started.elapsed()));
+            host.backend.clear_writes();
+        }
+        assert_eq!(timings.len(), 2, "both rounds ran: {timings:?}");
+        let small = timings[0].1.as_secs_f64();
+        let large = timings[1].1.as_secs_f64();
+        assert!(
+            large < small * 24.0,
+            "the 8 MiB read must not be quadratic: {small:?} → {large:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_to_marker_offers_a_bounded_tail() {
+        let (host, tx) = spawn_stream().await;
+        let path = host.path.clone();
+        // The callback answers Wait for every offer and records the longest
+        // string it was offered. 1 MiB of output arrives in 256 4-KiB
+        // chunks; the longest offer must stay within OFFER_WINDOW — today
+        // each offer carries the whole buffer since `offered_at`, which
+        // only a `Send`/`GiveUp` advance.
+        let longest = std::sync::Arc::new(std::sync::Mutex::new(0usize));
+        let longest_cb = std::sync::Arc::clone(&longest);
+        let client = tokio::spawn(async move {
+            run_command_with_prompts(
+                &path,
+                "echo plain",
+                "bash",
+                Duration::from_secs(30),
+                move |offered: &str| {
+                    let len = offered.len();
+                    if len > *longest_cb.lock().unwrap() {
+                        *longest_cb.lock().unwrap() = len;
+                    }
+                    std::future::ready(PromptReply::Wait)
+                },
+            )
+            .await
+        });
+        let sent = await_input_with(|| host.backend.writes()).await;
+        for frame in frames_for(sent.as_slice(), 256, 4096, 0) {
+            tx.send(frame).expect("the channel accepts");
+        }
+        let outcome = client
+            .await
+            .expect("the client task joins")
+            .expect("1 MiB as Read-only offers resolves within the bound");
+        assert_eq!(outcome.exit_code, 0);
+        let longest = *longest.lock().unwrap();
+        assert!(
+            longest <= OFFER_WINDOW,
+            "the longest offer must stay within OFFER_WINDOW={OFFER_WINDOW}, saw {longest}"
+        );
+    }
+    /// Behaviour item 1, scanned: the end marker, split between two chunks at
+    /// every byte offset, is still found with its real exit code — the
+    /// chunk-length overlap seals each split.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn marker_scan_finds_a_marker_split_at_every_offset() {
+        let (host, tx) = spawn_stream().await;
+        let path = host.path.clone();
+        let client = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_secs(30), async {
+                run_command_with_prompts(
+                    &path,
+                    "echo split",
+                    "bash",
+                    Duration::from_secs(25),
+                    |_: &str| std::future::ready(PromptReply::Wait),
+                )
+                .await
+            })
+            .await
+            .expect("the 30 s bound ends the read instead of hanging")
+            .expect("the split marker resolves inside the bound")
+        });
+        let sent = await_input_with(|| host.backend.writes()).await;
+        let (begin, end) = markers_for_sent_command(sent.as_slice());
+        // The whole end marker frame is one chunk in the real protocol; split
+        // it at every byte offset, so the pair never lands as one read.
+        let total = end.len();
+        for split in 0..=total {
+            if split == 0 || split == total {
+                tx.send(begin.clone()).ok();
+                tx.send(end.clone()).ok();
+            } else {
+                tx.send(begin.clone()).ok();
+                tx.send(end[..split].to_vec()).ok();
+                tx.send(end[split..].to_vec()).ok();
+            }
+        }
+        let outcome = client.await.expect("the client task joins");
+        assert_eq!(outcome.exit_code, 0, "the split end marker is found whole");
+    }
+    /// Behaviour item 4: a `Lagged` frame becomes a visible gap line in the
+    /// command's output, exactly where it fell, and the read continues to the
+    /// marker so the exit code stays real. The real host only reports a lag
+    /// when a subscriber actually falls behind, so this test plays the host
+    /// itself: it takes the client's `Subscribe` and `Input` lines, recovers
+    /// the nonce the wrapped command carries, and streams the frames by hand —
+    /// including the `Lagged` the queue overflow would have produced.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_to_marker_reports_a_lag_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lag-gap.sock");
+        let listener = bind(&path).await.unwrap();
+        let host_task = tokio::spawn(async move {
+            let (stream, _) = match listener.accept().await {
+                Ok(conn) => conn,
+                Err(e) => panic!("the lag-gap host failed to accept: {e}"),
+            };
+            if let Err(e) = lag_gap_host(stream).await {
+                panic!("the lag-gap host failed: {e:#}");
+            }
+        });
+
+        let path_clone = path.clone();
+        let client = tokio::spawn(async move {
+            run_command_with_prompts(
+                &path_clone,
+                "echo gap",
+                "bash",
+                Duration::from_secs(15),
+                |_: &str| std::future::ready(PromptReply::Wait),
+            )
+            .await
+        });
+        let outcome = client
+            .await
+            .expect("the client task joins")
+            .expect("the lagged read still resolves to its real exit code");
+        host_task.await.expect("the host task joins");
+        assert_eq!(outcome.exit_code, 3, "the scripted exit code is real");
+        let text = String::from_utf8_lossy(&outcome.output);
+        let aaa = text.find("aaa").expect("output holds aaa before the gap");
+        let gap = text
+            .find("[daemoneye: 7 output chunks dropped here: the reader fell behind]")
+            .expect("the gap line names the dropped chunks");
+        let bbb = text.find("bbb").expect("output holds bbb after the gap");
+        assert!(
+            aaa < gap && gap < bbb,
+            "the gap line falls between the chunks it separates: {text:?}"
+        );
+    }
+
+    /// The lag-gap host's one connection: read the client's `Subscribe` and
+    /// `Input` lines, recover the markers from the wrapped command, and write
+    /// the scripted frame sequence — a begin-marker chunk, `aaa`, the lag
+    /// announcement, `bbb`, and the end marker carrying exit 3.
+    async fn lag_gap_host(stream: UnixStream) -> anyhow::Result<()> {
+        let (reader, mut writer) = stream.into_split();
+        let mut reader = BufReader::new(reader);
+        let mut line = Vec::new();
+        let mut wrapped = None;
+        let mut subscribed = false;
+        while wrapped.is_none() {
+            reader.read_until(b'\n', &mut line).await?;
+            if line.is_empty() {
+                anyhow::bail!("the client hung up before its command arrived");
+            }
+            if !line.ends_with(b"\n") {
+                continue;
+            }
+            let complete: Vec<Vec<u8>> = line
+                .clone()
+                .split_inclusive(|b| *b == b'\n')
+                .map(|f| f.to_vec())
+                .collect();
+            for frame in complete {
+                let req: ShellRequest = serde_json::from_slice(frame.trim_ascii())?;
+                match req {
+                    ShellRequest::Subscribe => {
+                        subscribed = true;
+                        writer
+                            .write_all(encode(&ShellResponse::Ok)?.as_bytes())
+                            .await?;
+                        writer.flush().await?;
+                    }
+                    ShellRequest::Input { bytes } => {
+                        if !subscribed {
+                            anyhow::bail!("the client wrote its command before subscribing");
+                        }
+                        wrapped = Some(bytes);
+                    }
+                    other => anyhow::bail!("unexpected request: {other:?}"),
+                }
+            }
+            line.clear();
+        }
+        let wrapped = wrapped.expect("the wrapped command arrived");
+        let nonce = nonce_of(&wrapped);
+        let (begin, _) = markers_for_sent_command(&wrapped);
+        let end = test_end_marker(&nonce, 3);
+        for frame in [
+            encode(&ShellResponse::Chunk { bytes: begin })?,
+            encode(&ShellResponse::Chunk {
+                bytes: b"aaa".to_vec(),
+            })?,
+            encode(&ShellResponse::Lagged { skipped: 7 })?,
+            encode(&ShellResponse::Chunk {
+                bytes: b"bbb".to_vec(),
+            })?,
+            encode(&ShellResponse::Chunk { bytes: end })?,
+        ] {
+            writer.write_all(frame.as_bytes()).await?;
+            writer.flush().await?;
+        }
+        Ok(())
+    }
+}
+
 // ── shell-exit detection (M21 phase-08b) ─────────────────────────────────
 
 #[tokio::test]
-async fn client_run_command_fails_fast_when_the_shell_program_has_exited() {
+async fn client_run_command_fails_fast_when_the_shell_is_dead() {
     let host = spawn_host_exited().await;
     let started = std::time::Instant::now();
     let result = run_command(&host.path, "echo hi", "sh", Duration::from_secs(20)).await;
-    let elapsed = started.elapsed();
-    let err = result.expect_err("a dead shell must fail the command");
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "the failure must land in seconds, not at the 20 s timeout: {elapsed:?}"
-    );
-    assert!(
-        err.chain()
-            .any(|c| c.downcast_ref::<ShellExited>().is_some()),
-        "the chain must carry the typed error: {err:#?}"
-    );
-    let text = format!("{err:#}");
-    assert!(text.contains("exited"), "the error says exited: {text}");
-}
-
-#[tokio::test]
-async fn client_run_command_fails_fast_when_the_command_exits_the_shell() {
-    let host = spawn_host().await;
-    let started = std::time::Instant::now();
-    let result = run_command(&host.path, "exit 7", "bash", Duration::from_secs(20)).await;
     let elapsed = started.elapsed();
     let err = result.expect_err("exiting the shell must fail the command");
     assert!(

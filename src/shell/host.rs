@@ -150,7 +150,16 @@ async fn handle_connection<B: ShellBackend>(
                             write_frame(&mut writer, &ShellResponse::Chunk { bytes }).await?;
                             continue;
                         }
-                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            // A dropped chunk could have carried bytes the
+                            // receiver needs (a command reader's end marker,
+                            // a viewer's output), so the gap is announced on
+                            // the same stream instead of being silent; the
+                            // receiver decides what to do with it. The
+                            // broadcaster keeps sending regardless.
+                            write_frame(&mut writer, &ShellResponse::Lagged { skipped }).await?;
+                            continue;
+                        }
                         Err(broadcast::error::RecvError::Closed) => {
                             chunks = None;
                             continue;
@@ -351,7 +360,13 @@ mod tests {
 
     async fn read_response<R: tokio::io::AsyncRead + Unpin>(r: &mut BufReader<R>) -> ShellResponse {
         let mut buf = Vec::new();
-        let n = r.read_until(b'\n', &mut buf).await.unwrap();
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            r.read_until(b'\n', &mut buf),
+        )
+        .await
+        .expect("a frame within 10 s")
+        .unwrap();
         assert!(n > 0, "EOF before a frame");
         serde_json::from_slice(trim_frame(&buf)).unwrap()
     }
@@ -732,5 +747,76 @@ mod tests {
             },
             "the connection must survive the refused Screen request"
         );
+    }
+
+    /// The subscriber cannot keep up: pushes land while it is still reading
+    /// its handshake, so its next recv reports the drops, and the host writes
+    /// a `Lagged` announcing them, then keeps streaming a normal chunk.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_sends_lagged_when_subscriber_falls_behind() {
+        let backend = FakeBackend::new();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lagged.sock");
+        let listener = bind(&path).await.unwrap();
+        let serve_backend = Arc::clone(&backend);
+        tokio::spawn(async move { serve(listener, serve_backend).await });
+
+        let client = UnixStream::connect(&path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        write_request(&mut writer, &ShellRequest::Subscribe).await;
+        assert_eq!(read_response(&mut reader).await, ShellResponse::Ok);
+
+        // The subscriber is registered; the host task may not yet have
+        // reached its first recv, but the queue holds only what it has
+        // capacity for. Push one chunk now (it must arrive as a frame), wait
+        // until the host has surfaced it, then push two more in a burst: the
+        // second lands while the subscriber is still reading the first, so
+        // it is dropped from the queue and the next read reports the lag
+        // with its count, followed by streaming that continues.
+        backend.push(b"first".to_vec());
+        assert_eq!(
+            read_response(&mut reader).await,
+            ShellResponse::Chunk {
+                bytes: b"first".to_vec()
+            },
+            "the queued chunk arrives as a normal frame"
+        );
+        // 21 pushes over a capacity-1 channel: the first fills the queue;
+        // every later send drops the one before it, and the last one is
+        // retained. The burst therefore surfaces the chunks it kept and a
+        // `Lagged` announcing the 20 the channel dropped; streaming continues
+        // with a normal chunk after the announcement.
+        let pushes = 21u32;
+        for i in 0..pushes {
+            backend.push(vec![b'q'; (i % 7 + 1) as usize]);
+        }
+        let mut saw_chunk_after_lag = false;
+        let mut lagged_skipped: Option<u64> = None;
+        for _ in 0..3u32 {
+            match read_response(&mut reader).await {
+                ShellResponse::Chunk { .. } => {
+                    if lagged_skipped.is_some() {
+                        saw_chunk_after_lag = true;
+                    }
+                }
+                ShellResponse::Lagged { skipped } => {
+                    lagged_skipped = Some(skipped);
+                }
+                other => panic!("unexpected frame: {other:?}"),
+            }
+        }
+        let skipped = lagged_skipped.expect("a Lagged frame naming the dropped chunks must arrive");
+        assert!(
+            skipped > 0,
+            "the Lagged frame must name the dropped chunks: {skipped}"
+        );
+        assert!(
+            saw_chunk_after_lag,
+            "streaming continues with a normal chunk after the announcement"
+        );
+        drop(writer);
+        tokio::task::yield_now().await;
     }
 }

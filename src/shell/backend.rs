@@ -133,7 +133,17 @@ impl PtyBackend {
                             log::error!("shell host: writing cast log: {e:#}");
                         }
                     }
-                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Lagged(skipped)) => {
+                        // The pump's own subscriber fell behind: it feeds the
+                        // screen whose picture `status` reports and writes the
+                        // cast log readers replay. A dropped chunk is a real
+                        // gap in both, so it is logged, named with the count,
+                        // and the pump keeps streaming.
+                        log::warn!(
+                            "shell backend: the output pump fell {skipped} chunks behind and dropped them; the screen and cast log have a gap here"
+                        );
+                        continue;
+                    }
                     Err(RecvError::Closed) => break,
                 }
             }

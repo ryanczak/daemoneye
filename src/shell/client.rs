@@ -10,7 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use crate::shell::proto::{ShellRequest, ShellResponse, ShellSignal, ShellState, encode};
-use crate::shell::pty::{CommandOutcome, Nonce, parse_outcome, wrap_command};
+use crate::shell::pty::{CommandOutcome, Nonce, end_marker, parse_outcome, wrap_command};
 #[cfg(test)]
 use crate::shell::test_begin_marker;
 #[cfg(test)]
@@ -19,6 +19,13 @@ use crate::shell::test_end_marker;
 /// How long one prompt answer may take to reach the shell. Bounded well below
 /// any plausible command timeout so a wedged host cannot wedge the caller.
 const PROMPT_ROUND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The most output, in bytes, one offer to `on_chunk` may carry: the tail of
+/// what arrived since the last answer. A prompt sits at the stream's tail
+/// (the classifiers match with `contains`), so a bounded window sees it,
+/// while a long-running command's output no longer re-decodes whole buffer
+/// sizes per chunk.
+const OFFER_WINDOW: usize = 4096;
 
 /// How often `read_to_marker` wakes to ask the host whether the shell's
 /// program is still alive. 500 ms keeps a dead shell's failure well under
@@ -448,6 +455,13 @@ where
     // parsed from the accumulated bytes, never from the last read's count.
     let mut line: Vec<u8> = Vec::new();
     let mut buf: Vec<u8> = Vec::new();
+    // The whole-buffer `parse_outcome` run is gated on the end marker's
+    // presence: once any chunk carried it, every later chunk rescans the
+    // whole buffer until the outcome parses (the exit-code field may still
+    // be arriving). Scanning only on this flag keeps the per-chunk cost at
+    // one windows pass of marker length instead of a full parse over
+    // everything accumulated.
+    let mut end_seen = false;
     // When the host reports the shell's program dead, drain this long for an
     // end marker that may already be in flight; past that, the shell has
     // exited and this command will never complete.
@@ -530,11 +544,26 @@ where
                 // so never decode a chunk on its own — accumulate bytes and
                 // hand the whole buffer to `parse_outcome`.
                 buf.extend_from_slice(&bytes);
-                if let Some(outcome) = parse_outcome(&buf, nonce) {
-                    return Ok(outcome);
+                if end_seen || {
+                    let overlap = end_marker(nonce).len().saturating_sub(1);
+                    let scan_from = buf.len().saturating_sub(bytes.len() + overlap);
+                    scan_from < buf.len()
+                        && buf[scan_from..]
+                            .windows(end_marker(nonce).len())
+                            .any(|w| w == end_marker(nonce).as_slice())
+                } {
+                    end_seen = true;
+                    if let Some(outcome) = parse_outcome(&buf, nonce) {
+                        return Ok(outcome);
+                    }
                 }
                 if buf.len() > offered_at {
-                    let seen = String::from_utf8_lossy(&buf[offered_at..]).into_owned();
+                    let since = &buf[offered_at..];
+                    // A prompt sits at the stream's tail, so only the last
+                    // window is offered: the decoded offer stays bounded no
+                    // matter how much output arrived since the last answer.
+                    let window = since.len().saturating_sub(OFFER_WINDOW);
+                    let seen = String::from_utf8_lossy(&since[window..]).into_owned();
                     // The callback blocks while a prompt waits for the user's
                     // answer. That wait is not the command's run time, so it is
                     // added back to the deadline: a slow typist is not cut off
@@ -575,6 +604,19 @@ where
                         }
                     }
                 }
+            }
+            ShellResponse::Lagged { skipped } => {
+                // A host whose broadcast queue overflowed dropped `skipped`
+                // chunks before this frame: the middle of the command's
+                // output is gone and cannot be recovered, so the gap is
+                // marked in the output text exactly where it fell. Reading
+                // continues, keeping the exit code real.
+                buf.extend_from_slice(
+                    format!(
+                        "\r\n[daemoneye: {skipped} output chunks dropped here: the reader fell behind]\r\n"
+                    )
+                    .as_bytes(),
+                );
             }
             _ => {
                 // `Ok`, `Status`, `Exited` and `Error` may interleave with the

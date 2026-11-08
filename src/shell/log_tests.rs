@@ -746,6 +746,111 @@ fn record(command: &str) -> CommandRecord {
     }
 }
 
+/// An index whose serialized form is truncated mid-record: the shape a host
+/// killed mid-`save` leaves on disk.
+fn truncated_index() -> String {
+    let dir = tempdir().unwrap();
+    let path = meta(dir.path());
+    MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: "x.cast".into(),
+        started_unix: 0,
+        commands: vec![record("a"), record("b")],
+    }
+    .save(&path)
+    .unwrap();
+    let mut json = std::fs::read_to_string(&path).unwrap();
+    let cut = json.len() - json.len() / 4;
+    json.truncate(cut);
+    json
+}
+
+/// B13: a corrupt (truncated) `.meta.json` must not be replaced by a fresh
+/// index — earlier records would be lost. `append` must fail instead, and
+/// leave the file's bytes as they were.
+#[test]
+fn meta_index_append_keeps_a_corrupt_index() {
+    let dir = tempdir().unwrap();
+    let meta = meta(dir.path());
+    let corrupt = truncated_index();
+    std::fs::write(&meta, &corrupt).unwrap();
+
+    let err = MetaIndex::append(&meta, &cast(dir.path()), "s7", 0, None, None, record("c"))
+        .expect_err("a corrupt index must fail the append, not reset it");
+    assert!(
+        err.to_string().to_lowercase().contains("corrupt") || err.to_string().contains("meta.json"),
+        "the error names the corrupt index: {err}"
+    );
+    let now = std::fs::read_to_string(&meta).unwrap();
+    assert_eq!(
+        now, corrupt,
+        "the file must be byte-identical after the refused append"
+    );
+}
+
+/// The save must be a rename: a reader that opened the old file before the
+/// save still reads the complete old bytes after it, and the save leaves no
+/// temporary file behind.
+#[test]
+fn meta_index_save_replaces_atomically() {
+    let dir = tempdir().unwrap();
+    let path = meta(dir.path());
+    let mut old = MetaIndex {
+        owner: None,
+        host: None,
+        shell_id: "s7".into(),
+        cast: path.file_name().unwrap().to_string_lossy().into_owned(),
+        started_unix: 0,
+        commands: vec![record("a")],
+    };
+    old.save(&path).unwrap();
+    let old_bytes = std::fs::read(&path).unwrap();
+
+    let mut reader = File::open(&path).unwrap();
+    old.commands.push(record("b"));
+    old.save(&path).unwrap();
+
+    let mut seen = String::new();
+    reader
+        .read_to_string(&mut seen)
+        .expect("the pre-save handle still reads");
+    assert_eq!(
+        seen.as_bytes(),
+        old_bytes.as_slice(),
+        "the reader opened before the save sees exactly the old bytes"
+    );
+
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        names,
+        vec![path.file_name().unwrap().to_string_lossy().into_owned()],
+        "the directory holds only the index: {names:?}"
+    );
+    let loaded = MetaIndex::load(&path).unwrap();
+    assert_eq!(loaded.commands.len(), 2, "the new index is in place");
+}
+
+/// The pre-fix behaviour this phase must keep: with no index on disk,
+/// `append` starts a fresh index at command 0.
+#[test]
+fn meta_index_append_starts_fresh_when_absent() {
+    let dir = tempdir().unwrap();
+    let (cast, meta) = (cast(dir.path()), meta(dir.path()));
+    CastWriter::create(&cast, 80, 24, 0).unwrap().byte_len();
+    MetaIndex::append(&meta, &cast, "s9", 5, None, None, record("first"))
+        .expect("an absent index is a fresh index");
+    let loaded = MetaIndex::load(&meta).unwrap();
+    assert_eq!(loaded.commands.len(), 1);
+    assert_eq!(loaded.commands[0].index, 0, "commands number from zero");
+    assert_eq!(loaded.shell_id, "s9");
+    assert_eq!(loaded.started_unix, 5);
+}
+
 #[test]
 fn meta_index_append_records_owner_and_host_once() {
     let dir = tempdir().unwrap();

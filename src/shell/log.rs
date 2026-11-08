@@ -5,7 +5,7 @@
 //! the cast file plus its real exit code, so reads slice a single command in
 //! O(1) and return exactly that command's output bytes.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -228,17 +228,30 @@ pub struct MetaIndex {
 }
 
 impl MetaIndex {
+    /// Write the index through a same-directory temporary file renamed over
+    /// the path, so a concurrent `read_shell` always reads one whole file:
+    /// either the previous save's complete bytes (an open file handle keeps
+    /// reading them after the rename) or this one's, never a half-written
+    /// mix. The temp carries the index's `0o600` mode and is unlinked by the
+    /// rename.
     pub fn save(&self, path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(self)?;
+        let tmp = path.with_extension(format!(
+            "{}meta.json.tmp",
+            path.extension().unwrap_or_default().to_string_lossy()
+        ));
         let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
             .mode(0o600)
-            .open(path)?;
+            .open(&tmp)?;
         file.write_all(json.as_bytes())?;
         file.write_all(b"\n")?;
         file.flush()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+            .with_context(|| format!("renaming the index into place at {}", path.display()))?;
         Ok(())
     }
 
@@ -265,18 +278,35 @@ impl MetaIndex {
     ) -> Result<()> {
         let mut meta = match MetaIndex::load(meta_path) {
             Ok(m) => m,
-            Err(_) => MetaIndex {
-                shell_id: shell_id.to_owned(),
-                cast: cast
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned(),
-                started_unix,
-                commands: Vec::new(),
-                owner: None,
-                host: None,
-            },
+            // No index yet is the one legitimate fresh start: the host has
+            // not recorded a command. Anything else — a truncated or
+            // malformed file — would lose every earlier record if it were
+            // replaced, so the append is refused and the file is left as it
+            // is (the caller logs and the command's output is unaffected).
+            Err(e)
+                if e.root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                MetaIndex {
+                    shell_id: shell_id.to_owned(),
+                    cast: cast
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    started_unix,
+                    commands: Vec::new(),
+                    owner: None,
+                    host: None,
+                }
+            }
+            Err(e) => {
+                return Err(e.context(format!(
+                    "the command index {} is corrupt; refusing to reset it",
+                    meta_path.display()
+                )));
+            }
         };
         if meta.owner.is_none() {
             meta.owner = owner.map(str::to_owned);
