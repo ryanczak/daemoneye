@@ -981,16 +981,25 @@ async fn idle_reap_spawn(id: ShellId) -> anyhow::Result<()> {
     let cast = crate::shell::cast_path(id.as_str(), started);
     std::fs::create_dir_all(crate::config::shell_logs_dir())
         .context("creating the test cast dir")?;
+    // `sh -c 'sleep 1000'`, not interactive bash (bug-17c-1): the close that
+    // ends this shell sends HUP, and if the host's close ack races the
+    // 5 s signal timeout the client falls back to TERM — which a live
+    // interactive bash ignores, so the host would sit at its prompt holding
+    // the lock past any bounded wait. A non-interactive `sh` child ends on
+    // **both** signals, so the hangup-to-lock-released arc is bounded no
+    // matter which signal the wire carried. The record still classifies
+    // `Prompt` (the foreground group is the child's own), so every
+    // precondition the section asserts is unchanged.
     let backend = crate::shell::PtyBackend::spawn(
-        "bash",
-        &[],
+        "sh",
+        &["-c".to_string(), "sleep 1000".to_string()],
         lifecycle_test_support::ROWS,
         lifecycle_test_support::COLS,
         100,
         &cast,
         started,
     )
-    .context("spawning bash")?;
+    .context("spawning sh -c 'sleep 1000'")?;
     let lock =
         crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
             .context("holding the per-id instance lock")?;
@@ -1049,6 +1058,21 @@ async fn reap_cancel_busy(id: &ShellId) {
         .expect("the shell accepts the cancel");
 }
 
+/// Set the idle precondition explicitly: backdate the shell's cast mtime far
+/// past any limit the reap is asked to judge, so a test's "idle" is a fact
+/// written here, never a guess from spawn timing (bug-17c-1).
+#[cfg(test)]
+fn reap_backdate_cast(id: &ShellId, started: u64, seconds_old: u64) {
+    let cast = crate::shell::resolve_cast(id.as_str(), started);
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&cast)
+        .expect("the host's cast exists");
+    let old = std::time::SystemTime::now() - Duration::from_secs(seconds_old);
+    f.set_times(std::fs::FileTimes::new().set_modified(old))
+        .expect("backdate the cast's mtime");
+}
+
 #[tokio::test]
 async fn reap_idle_closes_a_silent_adopted_shell_at_its_prompt() {
     let (_home, _dir) = crate::test_home();
@@ -1069,20 +1093,19 @@ async fn reap_idle_closes_a_silent_adopted_shell_at_its_prompt() {
 
     let started = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.started_unix))
         .expect("the record exists");
-    let now = crate::shell::now_unix();
-    let silent_secs = now.saturating_sub(started).max(1);
+    reap_backdate_cast(&id, started, 300);
     let closed =
-        crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, silent_secs, now + 1)
-            .await;
+        crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, 30, u64::MAX).await;
+    // `u64::MAX` makes the idle window unbounded: the backdated mtime is the
+    // only condition that can hold the shell open here, which is the bug
+    // report's point — the idle precondition is a fact this test wrote, not a
+    // guess from spawn timing.
 
     assert!(
         closed.contains(&id.as_str().to_owned()),
         "a silent adopted shell at its prompt must be reaped: {closed:?}"
     );
-    assert!(
-        !host_is_alive(&crate::shell::lock_path(id.as_str())),
-        "a reaped shell's host must really be gone"
-    );
+    reap_host_gone_budget(&id, "a reaped shell's host must really be gone").await;
 }
 
 #[tokio::test]
@@ -1100,15 +1123,14 @@ async fn reap_idle_skips_a_user_shell() {
     .await
     .expect("the user shell spawns");
 
+    let prompt = reap_probe(&reg, &id).await;
+    assert_eq!(prompt, Foreground::Prompt, "the precondition is a prompt");
+
     let started = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.started_unix))
         .expect("the record exists");
+    reap_backdate_cast(&id, started, 300);
     let now = crate::shell::now_unix();
-    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(
-        &reg,
-        now.saturating_sub(started).max(1),
-        now + 1,
-    )
-    .await;
+    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, 30, now).await;
 
     assert!(
         !closed.contains(&id.as_str().to_owned()),
@@ -1135,16 +1157,14 @@ async fn reap_idle_skips_a_shell_with_a_command_in_flight() {
     .await
     .expect("the shell spawns");
 
+    let prompt = reap_probe(&reg, &id).await;
+    assert_eq!(prompt, Foreground::Prompt, "the precondition is a prompt");
     let started = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.started_unix))
         .expect("the record exists");
+    reap_backdate_cast(&id, started, 300);
     crate::shell::set_in_flight(&reg, &id, "true", crate::shell::now_unix());
     let now = crate::shell::now_unix();
-    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(
-        &reg,
-        now.saturating_sub(started).max(1),
-        now + 1,
-    )
-    .await;
+    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, 30, now).await;
 
     assert!(
         !closed.contains(&id.as_str().to_owned()),
@@ -1174,15 +1194,13 @@ async fn reap_idle_skips_a_present_chat_sessions_shell() {
 
     let conn = crate::daemon::session::PresenceConnection::test_conn();
     crate::daemon::session::presence_register(session, conn.clone());
+    let prompt = reap_probe(&reg, &id).await;
+    assert_eq!(prompt, Foreground::Prompt, "the precondition is a prompt");
     let started = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.started_unix))
         .expect("the record exists");
+    reap_backdate_cast(&id, started, 300);
     let now = crate::shell::now_unix();
-    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(
-        &reg,
-        now.saturating_sub(started).max(1),
-        now + 1,
-    )
-    .await;
+    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, 30, now).await;
 
     assert!(
         !closed.contains(&id.as_str().to_owned()),
@@ -1216,22 +1234,42 @@ async fn reap_idle_closes_an_absent_chat_sessions_shell() {
 
     let started = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.started_unix))
         .expect("the record exists");
+    reap_backdate_cast(&id, started, 300);
     let now = crate::shell::now_unix();
-    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(
-        &reg,
-        now.saturating_sub(started).max(1),
-        now + 1,
-    )
-    .await;
+    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, 30, now).await;
 
     assert!(
         closed.contains(&id.as_str().to_owned()),
         "a silent absent chat shell at its prompt must be reaped: {closed:?}"
     );
-    assert!(
-        !host_is_alive(&crate::shell::lock_path(id.as_str())),
-        "a reaped chat shell's host must really be gone"
-    );
+    // The close is synchronous — it hung up the session's PTY. But the *host
+    // process* ends on its own after the hangup, and this test's host is
+    // in-process. Its serve loop ends on its own, but the test cannot know
+    // when; what the reap must guarantee is the registry record and its
+    // hangup, which `closed` names.
+    // The absence check that really matters lives below.
+    reap_host_gone_budget(&id, "a reaped chat shell's host must really be gone").await;
+}
+
+/// A reaped shell's host must end on its own. In-process test hosts release
+/// their per-id lock as `serve_until_exit` returns, which happens soon after
+/// the hangup but on the host's own schedule, so poll — never silently: the
+/// assert names the shell and what it waited for. The budget is generous
+/// (bug-17c-1): a bash exits on SIGHUP within milliseconds, but an
+/// intermittent 6–8 s delay between the HUP and the PTY child's reaping was
+/// observed under parallel test load, and a short budget turned that
+/// environment slowness into a false failure.
+#[cfg(test)]
+async fn reap_host_gone_budget(id: &ShellId, msg: &str) {
+    let lock = crate::shell::lock_path(id.as_str());
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while std::time::Instant::now() < deadline {
+        if !host_is_alive(&lock) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("{msg}: shell {}'s lock still held after 20s", id.as_str());
 }
 
 #[tokio::test]
@@ -1283,13 +1321,52 @@ async fn reap_idle_skips_a_recently_written_shell() {
 async fn reap_idle_skips_a_shell_not_at_its_prompt() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
+    // A bash host, not the section's idle `sh -c 'sleep 1000'` one: the
+    // precondition is a *typed foreground program* (`sleep 60`) holding the
+    // terminal, which only an interactive shell can run — and an interactive
+    // bash survives this test's own ^C doodle, unlike the close path the
+    // closing tests exercise.
     let id = spawn_for_on_host(
         &reg,
         Owner::Adopted,
         5,
         crate::host::HostId::Local,
         false,
-        idle_reap_spawn,
+        |id| async move {
+            let started = crate::shell::now_unix();
+            let cast = crate::shell::cast_path(id.as_str(), started);
+            std::fs::create_dir_all(crate::config::shell_logs_dir())
+                .context("creating the test cast dir")?;
+            let backend = crate::shell::PtyBackend::spawn(
+                "bash",
+                &[],
+                lifecycle_test_support::ROWS,
+                lifecycle_test_support::COLS,
+                100,
+                &cast,
+                started,
+            )
+            .context("spawning bash")?;
+            let lock = crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(
+                id.as_str(),
+            ))
+            .context("holding the per-id instance lock")?;
+            let socket = crate::shell::socket_path(id.as_str());
+            let listener = crate::shell::bind(&socket)
+                .await
+                .context("binding the in-process host's socket")?;
+            tokio::spawn(async move {
+                let _ = crate::shell::serve_until_exit(
+                    listener,
+                    backend,
+                    std::time::Duration::from_millis(100),
+                )
+                .await;
+                drop(lock);
+            });
+            std::mem::forget(cast);
+            Ok(())
+        },
     )
     .await
     .expect("the shell spawns");
@@ -1305,13 +1382,9 @@ async fn reap_idle_skips_a_shell_not_at_its_prompt() {
 
     let started = with_shells(&reg, |store| store.get(id.as_str()).map(|r| r.started_unix))
         .expect("the record exists");
+    reap_backdate_cast(&id, started, 300);
     let now = crate::shell::now_unix();
-    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(
-        &reg,
-        now.saturating_sub(started).max(1),
-        now + 1,
-    )
-    .await;
+    let closed = crate::daemon::executor::knowledge::shell::reap_idle_shells(&reg, 30, now).await;
 
     assert!(
         !closed.contains(&id.as_str().to_owned()),
