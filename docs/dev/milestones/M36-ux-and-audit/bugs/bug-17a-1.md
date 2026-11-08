@@ -1,7 +1,7 @@
 # Bug 1 on phase-17a: `an_exited_detached_child_is_reaped` passes with the child dropped unwaited, so B12 is untested
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (c8206122, approved 2026-11-07)
 **Filed:** 2026-11-07
 
 ## What's wrong

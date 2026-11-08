@@ -1,7 +1,7 @@
 # Phase 17a — detach-close
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-07
 **Depends on:** phase 16
 **Estimated diff:** ~300 lines
@@ -178,6 +178,45 @@ E2E
 - Ghost and scheduler shell teardown, which already happens.
 
 ## Update Log
+
+<!-- entries appended below this line -->
+
+### Review verdict — 2026-11-07
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-17a-1](bugs/bug-17a-1.md), major,
+  `missing_spec_test`). The zombie-reap test passed with `drop(child)` back
+  in place. It went through `spawn_detached`, which re-runs the test binary,
+  and its `ps` match could never see a zombie.
+  - Fixed in `c8206122`: `reap_detached_child` is the seam `spawn_detached`
+    calls. The test hands it a real `sh -c 'exit 0'` child and polls until
+    `/proc/<pid>/stat` disappears.
+  - Reviewer mutation (the reaper thread drops the child unwaited): fails
+    with `zombie_seen=true` in 2.02 s. Restored, it passes in 0.03 s.
+  - Gates: fmt, 0 build warnings, clippy, hygiene, `doc_truth` and
+    `bug_tracker` ok, `passed=2775 failed=0`, unchanged as required.
+- **Executor:** glm-5.3-flash (opencode.ai). The first run took 494 turns
+  and the bounce 140. The executor's summaries call themselves "Claude
+  Opus 5.5"; the telemetry record names the served model.
+- **Scope deviations:**
+  - The bounce run deleted this Update Log's
+    `<!-- entries appended below this line -->` marker. The reviewer
+    restored it.
+  - The first run garbled one `docs/architecture.md` sentence ("The two
+    are" became "The tests are"). Fixed in the bounce.
+  - `shell_lifecycle_tests.rs` was corrupted mid-edit and rebuilt from
+    HEAD. The final diff is additions only.
+- **Calibration and open notes, not bounced:**
+  - **Early close on a flapping session.** A session that re-attaches and
+    detaches again within its grace has two sleeping detach tasks. The
+    first can close its shells before the second grace runs out. Rare,
+    and the session was detached at that moment.
+  - **Possible log noise.** The reaper logs `warn` on a non-success
+    host exit, which may be noisy if a closed host exits by signal.
+  - **A falsifiability lesson for specs.** The first bounce criteria
+    caught nothing: `/proc` already appeared in a doc comment, and the
+    architecture garble spanned a line break. Run every new criterion
+    against the tree before dispatch, as the skill says.
 
 ### Findings — 2026-11-08 (bounce-1 fix)
 
