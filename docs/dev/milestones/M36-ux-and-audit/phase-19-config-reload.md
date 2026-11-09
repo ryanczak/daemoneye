@@ -1,7 +1,7 @@
 # Phase 19 — config-reload
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 18
 **Estimated diff:** ~450 lines
@@ -194,3 +194,61 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-09 02:00 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor: Claude
+(Sonnet 4.5, headless).
+
+### Update — 2026-11-08 18:25 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the spec held and the run was building, not reading. At the
+512-turn cap the tree carries Behaviour 1–4 and the IPC half of 5: the
+handle module with its six tests, the replaceable masking patterns and
+stream budgets with their two tests, `Request::Reload` /
+`Response::Reloaded` with the round-trip test, all 21 daemon-side
+`Config::load()` sites on `config::current()`, the handle installed in
+`run_daemon`, and the scheduler and maintenance tick reading it each pass.
+`cargo build` is clean. The test build is **not**: the run changed
+`ghost_foreground_refusal` to take `&Config` and left its four tests
+passing `&Result<Config>`. What is left is a bounded list, so a fresh
+context seeded with the diff finishes it. `max_turns` raised to 1000 by
+the PE.
+
+### Notes for executor — 2026-11-08
+
+The working tree already carries most of this phase; **do not redo it**
+and do not revert it. `cargo build` passes. Work in this order, and after
+each step run the one command that checks it.
+
+1. **Make `cargo test` compile.** In `src/daemon/executor/dispatch_foreground.rs`
+   the tests near the end call `ghost_foreground_refusal(true, &config)` with
+   a `Result<Config>` where the function now takes `&Config`; fix the four
+   call sites (unwrap the fixture results in the tests). In
+   `src/ai/filter.rs` the test module imports `init_masking` without using
+   it; clippy denies it. Done when
+   `cargo clippy --all-targets --all-features -- -D warnings` prints no
+   error and `cargo test --lib -- reload_ masking_reinit stream_timeouts_reinit an_uninstalled_handle ipc_reload_round_trip`
+   prints `test result: ok` with nine tests.
+2. **`daemoneye reload`.** Add `Commands::Reload` in `src/main.rs` and a
+   `src/cli/commands/reload.rs` that sends `Request::Reload` through the
+   same client call `Request::Refresh` uses (`request_once` in
+   `src/cli/commands/slash.rs`). Print the applied keys and the
+   restart-required keys as two labelled lists, `nothing changed` when
+   both are empty; on `Response::Error` print the message to stderr and
+   exit non-zero. Done when `cargo build` passes and
+   `target/debug/daemoneye reload --help` prints.
+3. **Docs** (Spec step 3): CLAUDE.md Important Invariant plus the
+   `src/config/` row; README § Command reference row and one sentence in
+   § Configuration on when an edit takes effect; the
+   `("README.md", "daemoneye reload", …)` tuple in `tests/doc_truth.rs`.
+   Done when `grep -c 'daemoneye reload' README.md` is 1 or more and
+   `cargo test --test doc_truth` is ok.
+4. **Update Log:** a `(red runs)` entry — the nine seam tests were red as
+   compile errors before the tree existed; say so in two lines.
+5. **Mutation** (Spec step 4), pasted red and green.
+6. **Live check** (Spec step 5), transcript captured to a file and pasted.
+7. **Findings**, then § End-to-end verification pasted, then **commit** as
+   Spec step 7 says. Also fix the `(started)` entry above: the executor is
+   glm-5.3-flash, not Claude.
