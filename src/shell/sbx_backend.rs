@@ -556,4 +556,35 @@ mod tests {
             "the error must carry the vm detail: {err}"
         );
     }
+
+    #[test]
+    fn sbx_status_passes_programs_through() {
+        let dir = tempfile::tempdir().unwrap();
+        let inner = spawn_inner(&dir);
+        // The records belong to the inner PTY's terminal; the pass-through
+        // property is that the outer frame carries whatever the inner
+        // frame carried. With the inner bash holding no records, the
+        // pass-through answers empty - and any inner record would have to
+        // appear here unchanged.
+        let canned: CannedRuns = Arc::new(Mutex::new(vec![VmRun {
+            code: Some(0),
+            stdout: "bash=1 fg=2 state=S".into(),
+            stderr: String::new(),
+        }]));
+        let backend = SbxBackend::new(
+            Arc::clone(&inner),
+            target(),
+            fake_runner(canned, Arc::new(Mutex::new(Vec::new()))),
+        );
+        let rt = runtime();
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. } => {
+                assert!(
+                    programs.is_empty(),
+                    "an inner host with no records answers with no records: {programs:?}"
+                );
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
 }

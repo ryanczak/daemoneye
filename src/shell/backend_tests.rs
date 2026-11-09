@@ -1291,3 +1291,211 @@ async fn serve_until_exit_returns_when_the_shell_exits() {
         Err(_) => panic!("serve_until_exit must return once the shell exits"),
     }
 }
+
+/// The bytes one feature query prints; `\x07`-terminated because readline
+/// treats BEL as its OSC terminator too, and bash's `printf` accepts either
+/// ST form — this one keeps the probe inside one argument.
+const QUERY: &[u8] = b"printf '\\033]7501;?\\007'\n";
+
+/// Wait until `status()` reports the record at `id` with `state`, or panic
+/// at the deadline with the frame actually seen.
+fn until_record(
+    rt: &tokio::runtime::Runtime,
+    backend: &Arc<PtyBackend>,
+    id: Option<&str>,
+    want: crate::shell::program_status::State,
+    want_len: Option<usize>,
+) -> Vec<crate::shell::program_status::Record> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. } => {
+                let hit = programs.iter().any(|r| {
+                    r.id.as_deref() == id
+                        && r.state == want
+                        && want_len.is_none_or(|n| programs.len() == n)
+                });
+                if hit {
+                    return programs;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "never observed {want:?} at {id:?}, last {programs:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn backend_status_carries_a_working_report_while_its_program_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    // The typed-command echo carries the escaped form (\033 not the OSC
+    // bytes), so only the program's own output holds a real report. Match
+    // the report by its decoded msg, which the echo cannot carry either.
+    let msg = "on-the-job";
+    let encoded = crate::shell::program_status::encode_test(msg);
+    let bytes =
+        format!("printf '\\033]7501;state=working:id=job10/go:msg={encoded}\\007'; sleep 30\n")
+            .into_bytes();
+    rt.block_on(backend.input(&bytes)).expect("start the job");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let programs = loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. }
+                if programs
+                    .iter()
+                    .any(|r| r.state == crate::shell::program_status::State::Working) =>
+            {
+                break programs;
+            }
+            _ if std::time::Instant::now() >= deadline => {
+                panic!("the working report never reached the status frame");
+            }
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    };
+    let record = programs
+        .iter()
+        .find(|r| r.state == crate::shell::program_status::State::Working)
+        .expect("the working record is in the frame");
+    assert_eq!(
+        record.id.as_deref(),
+        Some("job10/go"),
+        "the report's own id lands: {programs:?}"
+    );
+    assert_eq!(
+        record.msg.as_deref(),
+        Some(msg),
+        "the record's decoded msg matches the report: {programs:?}"
+    );
+
+    // Once the command ends, the shell is back at its own prompt, so the
+    // working record is gone.
+    rt.block_on(backend.input(b"\x03")).expect("end the job");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. } if programs.is_empty() => break,
+            ShellResponse::Status { state, .. } => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the working record to vanish once the command ended, \
+                     last state {state:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn backend_status_keeps_a_done_report_after_its_program_exits() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(backend.input(b"printf '\\033]7501;state=done:id=j0''b\\007'\n"))
+        .expect("send the done report");
+    until_record(
+        &rt,
+        &backend,
+        Some("j0b"),
+        crate::shell::program_status::State::Done,
+        Some(1),
+    );
+    // The program that reported it is long gone, but `done` survives both
+    // the process exit and the shell prompt.
+    rt.block_on(backend.input(b"sleep 1\n")).expect("run a job");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. }
+                if programs.iter().any(|r| {
+                    r.id.as_deref() == Some("j0b")
+                        && r.state == crate::shell::program_status::State::Done
+                }) =>
+            {
+                break;
+            }
+            _ if std::time::Instant::now() >= deadline => {
+                panic!("a done record must survive its program's exit");
+            }
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
+
+#[test]
+fn backend_answers_the_feature_query() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    // The program sends the query and reads its stdin: whatever the host
+    // writes back lands in that read. The typed-command echo cannot carry
+    // the reply (it is the host's output, not the program's), so the
+    // marker string `read` stores proves the bytes reached the PTY.
+    rt.block_on(backend.input(b"read -r reply; printf 'Q\x1b]%s\x1b*GOT:%s\n' q \"$reply\"\n"))
+        .expect("arm the reader");
+    std::thread::sleep(Duration::from_millis(300));
+    rt.block_on(backend.input(QUERY)).expect("send the query");
+    let screen_deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let visible = loop {
+        let contents = backend.screen_contents();
+        if contents.contains("GOT:") {
+            break true;
+        }
+        if std::time::Instant::now() >= screen_deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let contents = backend.screen_contents();
+    assert!(
+        visible,
+        "the host's reply must reach the shell's stdin: {contents:?}"
+    );
+}
+
+#[test]
+fn screen_feed_writes_back_only_the_feature_query() {
+    let mut screen = crate::shell::ShellScreen::new(24, 80, 0);
+    screen.feed(b"\x1b]7501;state=working:id=n0t-a-quer\x07");
+    assert!(
+        screen.take_reply().is_empty(),
+        "a report must not be answered"
+    );
+    screen.feed(b"\x1b]0;window title\x07");
+    assert!(
+        screen.take_reply().is_empty(),
+        "an unrelated OSC must not be answered"
+    );
+    screen.feed(b"\x1b]7501;?\x07");
+    assert_eq!(
+        screen.take_reply(),
+        b"\x1b]7501;?\x1b\\".to_vec(),
+        "only the feature query gets the reply, exactly the spec's form"
+    );
+    assert!(screen.take_reply().is_empty(), "the reply is consumed once");
+}
+
+#[test]
+fn status_frame_without_programs_deserializes_empty() {
+    // A host from before this phase sends no `programs` key at all; serde's
+    // `#[serde(default)]` must read it as empty so the frame survives.
+    let old = r#"{"type":"Status","state":"Running","rows":24,"cols":80,"pid":4711}"#;
+    let decoded: ShellResponse = serde_json::from_str(old).expect("the old wire shape parses");
+    match decoded {
+        ShellResponse::Status { programs, .. } => {
+            assert!(
+                programs.is_empty(),
+                "a pre-phase host deserializes with no records: {programs:?}"
+            );
+        }
+        other => panic!("expected a Status frame, got {other:?}"),
+    }
+}

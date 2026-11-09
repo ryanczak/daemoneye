@@ -468,6 +468,13 @@ impl Table {
 // The `reduce` helper folds a Report::Status into the record a slot gets;
 // tests exercise it directly until phase 21b wires the frame.
 
+/// Standard base64 of `text` for one test payload. Test-only: production
+/// paths decode, never encode.
+#[cfg(test)]
+pub(crate) fn encode_test(text: &str) -> String {
+    STANDARD.encode(text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -841,5 +848,49 @@ impl vt100::Callbacks for ScreenCallbacks {
             }
             None => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod osc_tests {
+    use super::*;
+
+    #[test]
+    fn osc_callback_reaches_the_report_through_vt100() {
+        let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+        screen.feed(b"\x1b]7501;state=working:id=o0sc:app=mk\x07");
+        let records = screen.programs();
+        assert_eq!(
+            records.len(),
+            1,
+            "the report through vt100's callback lands in the table: {records:?}"
+        );
+        assert_eq!(records[0].id.as_deref(), Some("o0sc"));
+        assert_eq!(records[0].state, State::Working);
+    }
+
+    #[test]
+    fn osc_query_through_vt100_sets_the_reply() {
+        let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+        screen.feed(b"\x1b]7501;?\x07");
+        assert_eq!(
+            screen.take_reply(),
+            b"\x1b]7501;?\x1b\\".to_vec(),
+            "the query through vt100 deposits the reply"
+        );
+    }
+
+    #[test]
+    fn osc_bel_terminated_report_parses_the_same() {
+        let mut bel = crate::shell::ShellScreen::new(4, 20, 0);
+        bel.feed(b"\x1b]7501;state=done:id=b0el\x07");
+        let mut st = crate::shell::ShellScreen::new(4, 20, 0);
+        st.feed(b"\x1b]7501;state=done:id=b0el\x1b\\");
+        let bel_records = bel.programs();
+        let st_records = st.programs();
+        assert_eq!(
+            bel_records, st_records,
+            "BEL and ST terminate the same report: {bel_records:?} vs {st_records:?}"
+        );
     }
 }
