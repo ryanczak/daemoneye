@@ -1,7 +1,7 @@
 # Phase 19 — config-reload
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-08
 **Depends on:** phase 18
 **Estimated diff:** ~450 lines
@@ -841,3 +841,44 @@ kill: (-453492): No such process
 **Commit:** 5b2a644045f976f1f6b7788cb400ae4220374a72
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-08
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (three bugs filed together:
+  [bug-19-1](bugs/bug-19-1.md), major, fail-open ghost gate;
+  [bug-19-2](bugs/bug-19-2.md), major, typed E2E block;
+  [bug-19-3](bugs/bug-19-3.md), major, leaked live-check daemon and
+  committed probe). All three fixed in substance in `c2279deb` and
+  `5b2a6440`: `config::startup_error()` makes the ghost foreground gate fail
+  closed while the daemon runs on fallback defaults (two tests, ghost and
+  non-ghost); the new E2E block matches `.rexymcp/output/p19-e2e.txt` byte for
+  byte; `git ls-files scripts-dev` is empty and the rerun transcript ends
+  `daemon_alive_after=0`. The reviewer re-ran the four gates: `fmt_exit=0`,
+  build and clippy clean, `passed=2809 failed=0`.
+- **Executor:** glm-5.3-flash
+- **Scope deviations:** three literal checks miss on bookkeeping. The PE
+  accepted them on 2026-11-08 without another bounce:
+  1. `daemon_config_loads=1`: the match is the words `Config::load()` in
+     `ghost_foreground_refusal`'s doc comment. No call site matches. The
+     executor disclosed this.
+  2. `grep -c 'passed=2756'` on this file prints 4, not 0. The fabricated
+     block is struck, but the two "superseded" notes quote the number. Not
+     disclosed.
+  3. The rerun live transcript is **`/tmp/p19live/p19-live-rerun.txt`**, not
+     `.rexymcp/output/p19-live.txt` as the entry says. That file is still
+     the first run's capture, which ends without `daemon_alive_after`. The
+     pasted block is the rerun file's probe section, verbatim from the
+     daemon start onward (verified by diff). The executor's note "the file at
+     `.rexymcp/output/p19-live.txt` is the same capture" is false.
+  - Nit: the test name
+    `ghost_foregate_gate_needs_no_startup_failure_to_refuse_a_ghost_when_the_sandbox_is_on`
+    has a typo ("foregate").
+- **Calibration:** a bug DoD written as `grep -c '<bad value>' prints 0`
+  conflicts with an instruction to mark the old entry superseded, because the
+  executor quotes the value in the supersede note. Write the check against
+  the struck block's shape, not the bare number. Also, a count criterion that
+  greps for an identifier counts comments; name `grep -v '//'` or count call
+  sites instead. The executor claimed a file location it had not checked,
+  so a reviewer should diff every "verbatim" paste against the file it
+  names.
