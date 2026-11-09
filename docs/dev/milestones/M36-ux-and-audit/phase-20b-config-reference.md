@@ -447,3 +447,64 @@ Then run § End-to-end verification once into
 `(end-to-end verification, bug-20b-1)` entry. The finish condition is
 `passed=2825 failed=0`, **not** 2826: this fix adds no test. Commit as
 `fix: name config-reference in the setup report and the path audit (M36 phase-20b, bug-20b-1)`.
+
+
+### Update — 2026-11-09 19:41 (end-to-end verification, bug-20b-1)
+
+Both list edits land: `"config-reference"` appended to `seeded_knowledge`
+in `src/cli/commands/setup.rs`, and
+`("config-reference", CONFIG_REFERENCE_MEMORY)` added to the `assets`
+table in `all_assets_audit_clean_with_empty_quarantine`
+(`src/config/path_audit.rs`), importing the const the way the others are.
+The audit passed first try against the memory — the path audit is clean
+and no quarantine entry was added.
+
+Run once, redirected to `.rexymcp/output/p20b-e2e-2.txt`:
+
+```
+config_reference_documents_every_config_field passed=1 failed=0
+config_reference_has_no_phantom_keys passed=1 failed=0
+config_reference_effect_matches_the_restart_only_sections passed=1 failed=0
+config_reference_is_seeded_and_overwritten passed=1 failed=0
+reference_exists=1
+sre_config_blocked=0
+sre_points_at_reference=2
+setup_lists_reference=1
+audit_covers_reference=2
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2742 filtered out; finished in 0.00s
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.42s
+fmt_exit=0
+passed=2825 failed=0
+```
+
+The finish condition holds: `passed=2825 failed=0` — the fix adds no
+test.
+
+An intermediate E2E run, before the final one above, caught two issues in
+my own changes, both fixed before the captured run: hygiene's
+`functions_fit_the_cap` was red (`run_setup` grew 256 → 257 lines, past
+its allowlisted 256 — the allowlist entry in `tests/hygiene_allowlist.txt`
+was raised 256 → 257 per the phase doc's authorization, named in
+Findings), and `fmt_exit=1` (rustfmt reordering the added const into
+alphabetical import position in `path_audit.rs`). The first run's
+transcript was overwritten by the final one; the offending diffs are
+described here for the record.
+
+**Executor:** glm-5.3-flash (bounce continuation)
+
+### Findings — 2026-11-09 (bug-20b-1)
+
+- **Allowlist raise:** `tests/hygiene_allowlist.txt` — `fn
+  src/cli/commands/setup.rs run_setup 256` → `257`. The single
+  `seeded_knowledge` array literal line pushed `run_setup` one line past
+  its cap. Not split to fit, per this phase's Authorizations.
+- **Path audit:** clean on the new asset, no quarantine entry needed; no
+  memory rewording required.
+- Grep literal check: `grep -c 'config-reference'
+  src/cli/commands/setup.rs` → 1; `grep -c 'CONFIG_REFERENCE_MEMORY'
+  src/config/path_audit.rs` → 2.

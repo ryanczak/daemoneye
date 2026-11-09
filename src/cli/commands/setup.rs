@@ -71,6 +71,7 @@ pub fn run_setup(
         "scheduling-guide",
         "scripts-and-sudoers",
         "agent-runtime-layout",
+        "config-reference",
     ];
     let seeded_session = ["pane-referencing-convention", "unicode-decoration-pref"];
     if overwrite_memory {
