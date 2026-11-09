@@ -217,7 +217,7 @@ impl ShellBackend for PtyBackend {
         let (state, rows, cols, pid, raw_mode, alt_screen, foreground, programs) = {
             let mut shell = self.shell.lock().unwrap_or_log();
             let alive = shell.is_alive().with_context(|| "checking shell liveness");
-            let screen = self.screen.lock().unwrap_or_log();
+            let mut screen = self.screen.lock().unwrap_or_log();
             let (rows, cols) = screen.size();
             let alt_screen = screen.is_alt_screen();
             let raw_mode = shell.raw_mode();
@@ -246,11 +246,20 @@ impl ShellBackend for PtyBackend {
                     }
                 }
                 Ok(false) => ShellState::Exited,
-                Err(e) => {
+                Err(ref e) => {
                     log::error!("shell host: checking shell liveness: {e:#}");
                     ShellState::Exited
                 }
             };
+            let holding = matches!(&alive, Ok(true))
+                && (shell.has_foreground_job() || shell.resumed_pgid_alive().is_some());
+            let mut programs = screen.programs();
+            if !holding {
+                // Lifetime (spec): working and blocked records die once the
+                // program that reported them no longer holds the terminal.
+                screen.expire_programs();
+                programs = screen.programs();
+            }
             (
                 state,
                 rows,
@@ -259,7 +268,7 @@ impl ShellBackend for PtyBackend {
                 raw_mode,
                 Some(alt_screen),
                 foreground,
-                screen.programs(),
+                programs,
             )
         };
         ShellResponse::Status {

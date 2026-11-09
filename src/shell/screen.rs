@@ -84,6 +84,12 @@ impl ShellScreen {
         self.parser.callbacks().table.records()
     }
 
+    /// Drop the `working` and `blocked` records: the lifetime rule fires
+    /// when the program that reported them no longer holds the terminal.
+    pub fn expire_programs(&mut self) {
+        self.parser.callbacks_mut().table.expire(false);
+    }
+
     /// The visible screen as plain text (F2) — what the terminal shows now.
     pub fn contents(&self) -> String {
         self.parser.screen().contents()
