@@ -302,14 +302,25 @@ where
         )));
     }
 
+    // Only the config's prompt is masked — a secret must never cross the
+    // wire on a config edit. An ordinary file's diff reaches the client
+    // verbatim: the client reviews what will be written, and an `old_string`
+    // copied from a masked diff would not match the real contents.
+    let mask = |s: &str| {
+        if is_config {
+            crate::ai::mask_sensitive(s)
+        } else {
+            s.to_string()
+        }
+    };
     send_response_split(
         tx,
         Response::EditFilePrompt {
             id: id.to_string(),
             path: path.to_string(),
             operation: "edit".to_string(),
-            existing_content: Some(crate::ai::mask_sensitive(&original)),
-            new_content: Some(crate::ai::mask_sensitive(&updated)),
+            existing_content: Some(mask(&original)),
+            new_content: Some(mask(&updated)),
             dest_path: None,
             sudo: false,
             always_asked: is_config,
@@ -2807,6 +2818,61 @@ mod tests {
             s.contains("no config handle is installed"),
             "the reload's own error comes back: {s:?}"
         );
+    }
+
+    /// A local edit of a non-config file sends its prompt unmasked. Only the
+    /// config's diff is masked — an ordinary file's prompt carries its real
+    /// contents, and `always_asked=false` keeps the client's normal
+    /// auto-approval rules applying to it.
+    #[tokio::test]
+    async fn edit_file_ordinary_edit_prompt_is_not_masked() {
+        let (_home, dir) = crate::test_home();
+        let file = dir.path().join("secrets.txt");
+        std::fs::write(&file, "password = \"hunter2-real\"\n").unwrap();
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t20a-plain",
+                path: file.to_str().unwrap(),
+                old_string: "hunter2-real",
+                new_string: "hunter2-rotated",
+                host: &crate::host::HostId::Local,
+                sudo: false,
+            },
+            Some("sess-20a"),
+            &mut tx,
+            &mut rx,
+            Box::new(|_id| Box::pin(async { Ok(()) })),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the approved write resolves: {e}"));
+        let got = prompts.lock().unwrap().clone();
+        assert_eq!(got.len(), 1, "exactly one EditFilePrompt fires: {got:?}");
+        assert!(
+            got[0].contains("hunter2-real"),
+            "an ordinary file's prompt carries its real contents: {got:?}"
+        );
+        assert!(
+            got[0].contains("hunter2-rotated"),
+            "the new content is unmasked too: {got:?}"
+        );
+        assert!(
+            !got[0].contains("<REDACTED>"),
+            "nothing in the diff was masked: {got:?}"
+        );
+        assert!(
+            got[0].contains("always_asked=false"),
+            "the ordinary edit still follows the normal approval rules: {got:?}"
+        );
+        let written = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            written.contains("hunter2-rotated"),
+            "the write landed: {written:?}"
+        );
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(s.contains("Edited"), "the write reports success: {s:?}");
     }
 
     /// The reload report after a config edit renders through the seam this
