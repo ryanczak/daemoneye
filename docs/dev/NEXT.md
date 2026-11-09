@@ -7,9 +7,9 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 20a — self-config
-([`phase-20a-self-config.md`](milestones/M36-ux-and-audit/phase-20a-self-config.md)),
-drafted 2026-11-08 (decision 8, second half, first part). Phases 01–19 are `done`.
+**Active phase:** phase 20b — config-reference
+([`phase-20b-config-reference.md`](milestones/M36-ux-and-audit/phase-20b-config-reference.md)),
+drafted 2026-11-09 (decision 8, last part). Phases 01–20a are `done`.
 Twenty-six phases are planned in the README's table: 04 was split into
 04a/04b and 21 added on 2026-11-03, 05 was split into 05a/05b on
 2026-11-04, 17 was split into 17a/17b/17c on 2026-11-07, and 20 into 20a/20b on
