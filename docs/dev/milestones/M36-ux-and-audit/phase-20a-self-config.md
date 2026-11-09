@@ -1,7 +1,7 @@
 # Phase 20a — self-config
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-08
 **Depends on:** phase 19
 **Estimated diff:** ~400 lines
@@ -345,3 +345,141 @@ and `lock_invariant` in that order; the clippy line is its
   gave 0 fails out of 400; with the restored test-home guard in place the
   full `cargo test --lib` runs green (`2731 passed; 0 failed`).
   Left to the reviewer as an adjacent, out-of-scope observation.
+
+### Update — 2026-11-09 16:14 (complete, server-authored)
+
+**Summary:** **Summary.** Resumed M36 phase-20a and closed the six remaining steps from the architect's note. (1) Restored the dropped `let _guard = crate::test_home_guard();` as the first line of `read_bounds_symlinked_home_admits_the_masked_config` in `src/daemon/executor/file_ops/read_tests.rs`; the test is named correctly again and `cargo test --lib file_ops` printed `test result: ok` five consecutive runs. (2) Added `config_edit_is_never_auto_approved` in `src/cli/commands/stream.rs`'s tests, covering `edit_file_auto_approved` with `file_edits_all` and with a per-path session grant, and `edit_file_grants_session`, all with `always_asked = true` — `1 passed`, no clippy regression (`Default`-init form). (3) Updated CLAUDE.md's `read_file`/`edit_file` rows and README's § AI tools rows: `claude_md_blocked_claim=0`, README's `read_file` row no longer names `etc/config.toml` as refused, `doc_truth` ok. (4) Wrote the one-line `(red runs)` entry as the note directed. (5) Ran the mutation check with the real outputs captured into `.rexymcp/output/p20a-mutation-red.txt` / `-green.txt` and pasted into a `(mutation)` entry. (6) Ran the E2E block once into `.rexymcp/output/p20a-e2e.txt` and pasted it verbatim into an `(end-to-end verification)` entry, plus `### Findings` naming the restored guard and the allowlist raises the phase authorized. Committed `06bb8586` including the start-of-phase status flip and the started entry; `git status --short` is clean; phase status left `in-progress` with no hand-written `(complete)` entry.
+
+**Notes for review.** All eleven named tests print `passed=1 failed=0` in the E2E loop; full `cargo test` is `passed=2820 failed=0`, clippy clean, `fmt_exit=0`, `build_warnings=0`. Per the Authorizations I raised allowlist entries to today's measured values (`stream_prompts.rs` 810>800, `ask_with_session_ratatui` 725>723, `run_edit_with_spawn` 288>271, `run_copy_with_spawn` 216>214; new entries `run_edit_file 151`, `ops.rs` test module 2289) rather than splitting the code — reasons in Findings. Adjacent, out-of-scope observation in Findings: one `bg_shell` completion test failed on a clean worktree of pre-20a HEAD during the escalation's flake window (its full suite run's single failure), but 400 isolated repeats under `strace -e trace=kill` gave 0 fails and the suite is now steady green — likely environment contention, not code; left for the reviewer.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.93s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test minimal_config_parsing ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test config_pricing_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test ghost_config_parsing ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+kill: (750090): No such process
+kill: (-750769): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-cdde14477076ad75)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-345455f6ee91564c)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-476c3973573a21f0)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-98695f326ced6daf)
+     Running tests/integration.rs (target/debug/deps/integration-f0e5ce1af26d5698)
+     Running tests/isolation.rs (target/debug/deps/isolation-80b73b54a6043572)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-45311796544630a3)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-b06e25869468a096)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -2
+- `README.md` — +2 -2
+- `docs/dev/milestones/M36-ux-and-audit/phase-20a-self-config.md` — +109 -0
+- `src/cli/commands/stream.rs` — +33 -0
+- `src/daemon/executor/file_ops/read_tests.rs` — +1 -0
+- `tests/hygiene_allowlist.txt` — +6 -3
+
+**Commit:** 06bb858678875a9bb5456096c939b0d5c957ca78
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
