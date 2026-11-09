@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 
-use crate::config::{Config, ShellsConfig};
 use crate::host::ssh_argv;
 use crate::shell::foreground::Foreground;
 use crate::shell::launch;
@@ -275,13 +274,9 @@ pub fn login_shell() -> String {
 }
 
 /// The `(rows, cols)` every production spawn passes: `[shells] rows`/`cols`
-/// (D10), or `ShellsConfig::default().size()` when the config cannot be
-/// loaded. One helper so every spawn site reads the same geometry and the
-/// sites can never drift apart.
+/// (D10), through the config handle, so a reload follows.
 pub fn spawn_size() -> (u16, u16) {
-    Config::load()
-        .map(|cfg| cfg.shells.size())
-        .unwrap_or_else(|_| ShellsConfig::default().size())
+    crate::config::current().shells.size()
 }
 
 /// The shell name whose exit-variable syntax the marker protocol must use.
@@ -445,7 +440,7 @@ pub async fn spawn_ghost_ssh_host(
 /// Refuses `HostId::Local` and any name `[hosts]` does not configure; a host
 /// with an empty destination is its own refusal.
 pub fn host_entry(name: &str) -> anyhow::Result<crate::config::HostEntry> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = crate::config::current();
     if name.eq_ignore_ascii_case("local") {
         return Err(anyhow::anyhow!(
             "the local host is implicit — it has no [hosts] entry and needs no ssh \
@@ -490,7 +485,7 @@ pub fn host_entry(name: &str) -> anyhow::Result<crate::config::HostEntry> {
 /// remote destination), and a configured host whose `ssh` is empty — a
 /// half-written entry is a mistake, not an invitation to guess.
 pub fn host_entry_or_bare(name: &str) -> anyhow::Result<crate::config::HostEntry> {
-    let cfg = Config::load().unwrap_or_default();
+    let cfg = crate::config::current();
     if name.eq_ignore_ascii_case("local") {
         return Err(anyhow::anyhow!(
             "the local host is implicit — it has no [hosts] entry and needs no ssh \

@@ -6,8 +6,8 @@ pub mod types;
 use crate::util::UnpoisonExt;
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{OnceLock, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -120,8 +120,9 @@ const MAX_SSE_BUFFER_BYTES: usize = 1 << 20;
 
 // ── Stream timeouts (two-phase budgets) ─────────────────────────────────────
 
-/// Stream-timeout budgets, set once at daemon start from `[ai]` config.
-#[derive(Debug, Clone, Copy)]
+/// Stream-timeout budgets, read at stream start from `[ai]` config and
+/// replaced on every `init_stream_timeouts` call (a reload re-installs).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StreamTimeouts {
     pub first_token: Duration,
     pub stream_idle: Duration,
@@ -138,11 +139,13 @@ impl Default for StreamTimeouts {
     }
 }
 
-static STREAM_TIMEOUTS: OnceLock<StreamTimeouts> = OnceLock::new();
+static STREAM_TIMEOUTS: RwLock<Option<StreamTimeouts>> = RwLock::new(None);
 
-/// Install the configured budgets. Later calls are ignored (OnceLock).
+/// Install the configured budgets. Safe to call on every reload: a later
+/// call replaces the whole set, and a stream already in flight keeps the
+/// budgets it read when it started
 pub fn init_stream_timeouts(cfg: &crate::config::AiConfig) {
-    let _ = STREAM_TIMEOUTS.set(StreamTimeouts {
+    *STREAM_TIMEOUTS.write().unwrap_or_log() = Some(StreamTimeouts {
         first_token: Duration::from_secs(cfg.first_token_timeout_secs),
         stream_idle: Duration::from_secs(cfg.stream_idle_timeout_secs),
         connect: Duration::from_secs(cfg.connect_timeout_secs),
@@ -150,7 +153,8 @@ pub fn init_stream_timeouts(cfg: &crate::config::AiConfig) {
 }
 
 pub fn stream_timeouts() -> StreamTimeouts {
-    STREAM_TIMEOUTS.get().copied().unwrap_or_default()
+    let guard = STREAM_TIMEOUTS.read().unwrap_or_log();
+    guard.as_ref().copied().unwrap_or_default()
 }
 
 /// Select which timeout bounds the next stream read: the (long) first-token
@@ -790,6 +794,62 @@ mod stream_idle_tests {
         assert!(
             msg.contains("idle mid-response"),
             "idle timeout must be reported as a mid-response stall, got: {msg}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stream_timeout_reinit_tests {
+    use super::{StreamTimeouts, init_stream_timeouts, stream_timeouts};
+    use std::time::Duration;
+
+    /// `init_stream_timeouts` replaces the budget set on every call, so a
+    /// reload follows `[ai]`; a stream that already read the old set keeps it.
+    #[test]
+    fn stream_timeouts_reinit_applies_new_budgets() {
+        assert_eq!(
+            stream_timeouts(),
+            StreamTimeouts::default(),
+            "defaults before any init"
+        );
+
+        let cfg = crate::config::AiConfig {
+            first_token_timeout_secs: 11,
+            stream_idle_timeout_secs: 22,
+            connect_timeout_secs: 33,
+            ..Default::default()
+        };
+        init_stream_timeouts(&cfg);
+        let first = stream_timeouts();
+        assert_eq!(
+            first.first_token,
+            Duration::from_secs(11),
+            "first-token budget applied"
+        );
+        assert_eq!(
+            first.stream_idle,
+            Duration::from_secs(22),
+            "idle budget applied"
+        );
+        assert_eq!(
+            first.connect,
+            Duration::from_secs(33),
+            "connect budget applied"
+        );
+
+        // A caller that borrowed the set before the re-init keeps its copy.
+        let in_flight = first;
+        init_stream_timeouts(&crate::config::AiConfig::default());
+        let after = stream_timeouts();
+        assert_eq!(
+            after.first_token,
+            Duration::from_secs(600),
+            "re-init back to defaults replaces the set"
+        );
+        assert_eq!(
+            in_flight.first_token,
+            Duration::from_secs(11),
+            "a stream that started under the old budgets keeps them"
         );
     }
 }

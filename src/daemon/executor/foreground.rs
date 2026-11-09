@@ -86,7 +86,7 @@ where
             let refusal = match crate::host::HostId::parse(name) {
                 Err(e) => Err(format!("Error: {e}")),
                 Ok(h) => policy
-                    .for_host(&h, &crate::config::Config::load().unwrap_or_default().hosts)
+                    .for_host(&h, &crate::config::current().hosts)
                     .map_err(|e| format!("Error: {e}")),
             };
             match refusal {
@@ -355,7 +355,7 @@ where
     // first command behind a fail-closed preflight (a failure returns the
     // reason as the tool result and the command is never run on the host).
     // The ghost's sandbox profile is its agent name.
-    let sandbox_cfg = crate::config::Config::load().unwrap_or_default().sandbox;
+    let sandbox_cfg = crate::config::current().sandbox.clone();
     if super::ghost_sandbox::ghost_sandbox_pty(is_ghost, &sandbox_cfg, ghost_policy) {
         let sid = session_id.unwrap_or_default().to_string();
         let profile = with_sessions(sessions, |store| {
@@ -443,10 +443,7 @@ where
     // window path below: its container is launched there.
     if super::ghost_remote::ghost_local_pty(
         is_ghost,
-        crate::config::Config::load()
-            .unwrap_or_default()
-            .sandbox
-            .enabled,
+        crate::config::current().sandbox.enabled,
         ghost_policy,
     ) {
         let owner = crate::shell::Owner::Ghost(session_id.unwrap_or_default().to_string());

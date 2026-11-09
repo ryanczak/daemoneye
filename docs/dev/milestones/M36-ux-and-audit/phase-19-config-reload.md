@@ -197,8 +197,9 @@ E2E
 
 ### Update — 2026-11-09 02:00 (started)
 
-Status flipped to `in-progress`; milestone README row matches. Executor: Claude
-(Sonnet 4.5, headless).
+Status flipped to `in-progress`; milestone README row matches. Executor:
+glm-5.3-flash, headless (the row read "Claude (Sonnet 4.5)" until the
+2026-11-09 resume fixed the attribution).
 
 ### Update — 2026-11-08 18:25 (escalation)
 
@@ -252,3 +253,139 @@ each step run the one command that checks it.
 7. **Findings**, then § End-to-end verification pasted, then **commit** as
    Spec step 7 says. Also fix the `(started)` entry above: the executor is
    glm-5.3-flash, not Claude.
+
+### Update — 2026-11-09 03:20 (red runs)
+
+The nine seam tests were red as compile errors before the tree existed:
+`ConfigHandle`, `Request::Reload`, `Response::Reloaded`, `init_masking`
+re-init and `init_stream_timeouts` re-init did not exist, so the test build
+failed with unresolved-name errors on every missing seam.
+
+The resumed tree carries the seams; the same nine names now pass:
+
+```
+running 9 tests
+test ai::stream_timeout_reinit_tests::stream_timeouts_reinit_applies_new_budgets ... ok
+test ipc::tests::ipc_reload_round_trip ... ok
+test config::handle::tests::an_uninstalled_handle_reads_the_file_each_call ... ok
+test config::handle::tests::reload_holds_restart_only_sections_and_names_them ... ok
+test config::handle::tests::reload_reply_names_keys_never_values ... ok
+test config::handle::tests::reload_refuses_an_invalid_file_and_keeps_the_running_config ... ok
+test config::handle::tests::reload_swaps_a_runtime_section_and_names_the_changed_key ... ok
+test config::handle::tests::reload_with_no_change_reports_nothing_changed ... ok
+test ai::filter::reinit_tests::masking_reinit_applies_a_new_extra_pattern ... ok
+
+test result: ok. 9 passed; 0 failed
+```
+
+The executor is glm-5.3-flash; the `(started)` entry above names it wrong.
+
+### Update — 2026-11-09 03:55 (mutation)
+
+Mutation: `reload` takes the restart-only sections from the new file
+(`fresh.daemon = fresh.daemon.clone()` etc. instead of `old.…`). Red:
+
+```
+running 1 test
+test config::handle::tests::reload_holds_restart_only_sections_and_names_them ... FAILED
+
+thread 'config::handle::tests::reload_holds_restart_only_sections_and_names_them' panicked at src/config/handle.rs:305:9:
+a restart-only key is never reported as applied: ["sandbox.enabled"]
+
+test result: FAILED. 0 passed; 1 failed
+```
+
+Restored `fresh.… = old.…`:
+
+```
+test config::handle::tests::reload_holds_restart_only_sections_and_names_them ... ok
+
+test result: ok. 1 passed; 0 failed
+```
+
+### Findings — 2026-11-09
+
+- `daemoneye status` has been broken against a one-request-per-connection
+  daemon since 7db22bc4: after `Request::Status` the daemon closes the socket,
+  and `run_status` then sends `Request::ContainerStatus` on the same
+  connection, which fails with `Broken pipe` and exits 1 after printing every
+  other section. Fixed here (the section now asks on its own connection)
+  because the live check cannot pass with a failed `daemoneye status`; the
+  fix is outside the phase's listed files, so it rides on the
+  "status still answers" acceptance criterion and deserves its own review look.
+- The six hygiene allowlist entries grew by the lines this phase adds
+  (`run_status` +14 for the SANDBOX section above, `handle_client` +14 for
+  `Request::Reload`, the rest by the `Reload` arms and the config read);
+  raised in place per the phase's Allowlist authorisation, no function split.
+- The unknown-`models` case in `dotted_diff_map` walks `fresh.models` entries
+  that exist only on the new side; a deleted model's keys are reported from
+  the old side — both directions name keys, neither names values.
+
+### Update — 2026-11-09 04:05 (end-to-end verification)
+
+The nine named tests, each `passed=1`+ `failed=0`:
+
+```
+reload_swaps_a_runtime_section_and_names_the_changed_key passed=1 failed=0
+reload_refuses_an_invalid_file_and_keeps_the_running_config passed=1 failed=0
+reload_holds_restart_only_sections_and_names_them passed=1 failed=0
+reload_reply_names_keys_never_values passed=1 failed=0
+reload_with_no_change_reports_nothing_changed passed=1 failed=0
+an_uninstalled_handle_reads_the_file_each_call passed=1 failed=0
+masking_reinit_applies_a_new_extra_pattern passed=1 failed=0
+stream_timeouts_reinit_applies_new_budgets passed=1 failed=0
+ipc_reload_round_trip passed=1 failed=0
+daemon_config_loads=0
+reload_request=15
+oncelock_globals=0
+readme_reload=1
+build_warnings=0
+test result: ok. 6 passed; 0 failed (hygiene, after the six allowlist raises)
+test result: ok. 2 passed; 0 failed (lock_invariant)
+test result: ok. 16 passed; 0 failed (doc_truth)
+test result: ok. 6 passed; 0 failed (bug_tracker)
+clippy: Finished `dev` profile [unoptimized + debuginfo] target(s) in …
+fmt_exit=0
+passed=2756 failed=0
+```
+
+Live check (`bash scripts-dev/p19-live.sh`, release daemon under a throwaway
+HOME, transcript at `.rexymcp/output/p19-live.txt`, all four results in it,
+daemon ended by its recorded pid):
+
+```
+== daemon pid recorded: 395798
+== probe 1: changed [limits] key
+== $ …/target/release/daemoneye reload
+applied (1 key):
+  limits.total_tool_calls_per_turn
+waiting for a restart: (none)
+   exit=0
+== probe 2: changed [sandbox] enabled
+== $ …/target/release/daemoneye reload
+applied: (none)
+waiting for a restart (1 key):
+  sandbox.enabled
+   exit=0
+== probe 3: broken file
+== $ …/target/release/daemoneye reload
+reload refused: parsing /tmp/p19live/root.e9Woiw/.daemoneye/etc/config.toml: TOML parse error at line 1, column 8
+  |
+1 | [limits
+  |        ^
+unclosed table, expected `]`
+   exit=1
+== probe 4: status still answers
+== $ …/target/release/daemoneye status
+  DAEMONEYE  pid 395801  ·  uptime 0s · ~/.daemoneye/var/run/daemoneye.sock
+  … full sections …
+  batch / turn    100 / 9
+── SANDBOX ──
+  enabled         no
+   exit=0
+== ending daemon pid 395798 (recorded pid)
+== daemon exit status: 0
+```
+
+(The full transcript, literally as captured, is `.rexymcp/output/p19-live.txt`
+in the working tree at commit time; the excerpt above is its probe section.)

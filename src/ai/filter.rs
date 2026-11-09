@@ -1,9 +1,13 @@
+use crate::util::UnpoisonExt;
 use regex::Regex;
 use std::borrow::Cow;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-static PATTERNS: OnceLock<Vec<(Regex, String, bool)>> = OnceLock::new();
+/// The compiled pattern set. An empty list means "not initialised yet" and
+/// `mask_sensitive` builds the built-ins on first use; `init_masking`
+/// replaces the whole list on every call, so a reload can re-apply it.
+static PATTERNS: RwLock<Option<Vec<(Regex, String, bool)>>> = RwLock::new(None);
 
 // Per-type redaction counters (lifetime of the daemon process).
 static REDACT_AWS_KEY: AtomicUsize = AtomicUsize::new(0);
@@ -164,15 +168,30 @@ fn compile_patterns(extra: &[String]) -> Vec<(Regex, String, bool)> {
 }
 
 /// Initialise the global pattern set with built-in patterns plus `extra_patterns`
-/// from the user's config. Call once at daemon startup before the first
-/// `mask_sensitive` invocation. If not called, only built-in patterns are used.
+/// from the user's config. Callable on every reload: a later call replaces the
+/// whole set. If never called, only built-in patterns are used.
 pub fn init_masking(extra_patterns: &[String]) {
-    let _ = PATTERNS.set(compile_patterns(extra_patterns));
+    let compiled = compile_patterns(extra_patterns);
+    *PATTERNS.write().unwrap_or_log() = Some(compiled);
+}
+
+/// The live pattern set: whatever `init_masking` installed last, or the
+/// built-ins alone when it has never run. The read lock is dropped before any
+/// replacement runs, because matching does no I/O and cannot block the writer.
+fn patterns() -> std::sync::RwLockReadGuard<'static, Option<Vec<(Regex, String, bool)>>> {
+    // A never-initialised handle still masks with the built-ins, as the
+    // OnceLock's `get_or_init` did. `init_masking` is what installs extras.
+    if PATTERNS.read().unwrap_or_log().is_none() {
+        *PATTERNS.write().unwrap_or_log() = Some(compile_patterns(&[]));
+    }
+    PATTERNS.read().unwrap_or_log()
 }
 
 /// Mask all known-sensitive patterns in `text` before it is sent to an AI API.
 pub fn mask_sensitive(text: &str) -> String {
-    let pats = PATTERNS.get_or_init(|| compile_patterns(&[]));
+    let guard = patterns();
+    let empty = Vec::new();
+    let pats = guard.as_ref().unwrap_or(&empty);
     let mut result: Cow<str> = Cow::Borrowed(text);
     for (re, rep, is_user) in pats {
         if re.is_match(&result) {
@@ -647,5 +666,47 @@ mod tests {
                 "a non-secret string must be byte-identical: {text:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reinit_tests {
+    use super::super::filter::{init_masking, mask_json_value, mask_sensitive};
+
+    /// `init_masking` replaces the whole pattern set on every call, so a
+    /// reload can add a user pattern that `mask_sensitive` then applies —
+    /// the never-again-set-once behaviour the OnceLock had.
+    #[test]
+    fn masking_reinit_applies_a_new_extra_pattern() {
+        const TOKEN: &str = "DEPROBE-00000000000000000000000000000099";
+        let never = mask_sensitive(TOKEN);
+        assert_eq!(
+            never, TOKEN,
+            "with no user pattern the token passes through unmasked: {never}"
+        );
+
+        init_masking(&[r"DEPROBE-[A-Z0-9]{32}".to_string()]);
+        let masked = mask_sensitive(TOKEN);
+        assert_eq!(
+            masked, "<REDACTED>",
+            "after re-init the user pattern masks the token: {masked}"
+        );
+
+        // The JSON walk goes through the same set.
+        let mut v = serde_json::json!({"body": TOKEN});
+        mask_json_value(&mut v);
+        assert_eq!(
+            v.to_string(),
+            r#"{"body":"<REDACTED>"}"#,
+            "the re-initialised set masks inside a JSON tree: {v}"
+        );
+
+        // Re-init back to the built-ins: the user pattern is gone.
+        init_masking(&[]);
+        assert_eq!(
+            mask_sensitive(TOKEN),
+            TOKEN,
+            "re-init to built-ins drops the user pattern"
+        );
     }
 }

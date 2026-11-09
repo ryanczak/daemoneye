@@ -73,10 +73,7 @@ where
     F: FnOnce(crate::shell::ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
+    let max_per_owner = crate::config::current().shells.max_per_owner;
     let mut sink = tokio::io::sink();
     let mut eof = tokio::io::BufReader::new(tokio::io::empty());
     let outcome = super::shell_exec::run_in_shell_with_prompts(

@@ -283,11 +283,7 @@ impl GhostManager {
         let mut gc = ghost_config.clone();
         // Merge daemon-wide default: if either source enables the flag, the ghost gets it.
         gc.auto_approve_commands |= ghost_commands_default;
-        apply_ssh_target_resolution(
-            &mut gc,
-            &crate::config::Config::load().unwrap_or_default().hosts,
-            &session_id,
-        );
+        apply_ssh_target_resolution(&mut gc, &crate::config::current().hosts, &session_id);
 
         let entry = SessionEntry {
             messages,

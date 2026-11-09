@@ -249,6 +249,11 @@ pub enum Request {
     ChatAttach {
         session_id: String,
     },
+    /// Re-read `~/.daemoneye/etc/config.toml`, swap what is safe to swap at
+    /// runtime, and report the keys that changed. The daemon replies with
+    /// `Response::Reloaded`, or `Response::Error` when the file is invalid —
+    /// an invalid file is refused and the running config stays.
+    Reload,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -672,6 +677,16 @@ pub enum Response {
     /// All saved sessions (response to `ListSavedSessions`).
     SavedSessionList { sessions: Vec<SessionSummary> },
 
+    /// The reload report (response to `Request::Reload`). Both lists name
+    /// dotted config keys, sorted, never values.
+    Reloaded {
+        /// Keys swapped into the running config on this reload.
+        applied: Vec<String>,
+        /// Keys that changed under a restart-only section and are still held
+        /// at their running values until the daemon restarts.
+        restart_required: Vec<String>,
+    },
+
     /// Effective limits config + live session counters (response to `QueryLimits`).
     LimitsInfo {
         /// Effective limits from `config.limits`.
@@ -730,6 +745,7 @@ impl Response {
             Response::SessionSaved { .. } => "SessionSaved",
             Response::SessionLoaded { .. } => "SessionLoaded",
             Response::SavedSessionList { .. } => "SavedSessionList",
+            Response::Reloaded { .. } => "Reloaded",
             Response::LimitsInfo { .. } => "LimitsInfo",
         }
     }

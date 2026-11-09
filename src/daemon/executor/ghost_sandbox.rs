@@ -117,10 +117,7 @@ where
     F: FnOnce(crate::shell::ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
+    let max_per_owner = crate::config::current().shells.max_per_owner;
     let opened = crate::shell::shell_for_owner_in_sandbox(
         reg,
         owner.clone(),

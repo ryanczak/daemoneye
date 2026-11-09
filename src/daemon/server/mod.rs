@@ -18,7 +18,6 @@ use ask::handle_ask;
 use handlers::*;
 use sessions::*;
 
-use crate::config::Config;
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use crate::ipc::{Request, Response};
@@ -127,10 +126,7 @@ pub async fn handle_client(
     // even reach the approval gate (which trusts whatever is on the other end).
     check_peer_identity(&stream)?;
 
-    let config = Config::load().unwrap_or_else(|_| {
-        log::warn!("Failed to load config, using defaults");
-        Config::default()
-    });
+    let config = crate::config::current();
 
     /// Maximum size of a single incoming IPC message (1 MiB).
     /// Prevents a malicious or buggy client from exhausting daemon memory by
@@ -235,6 +231,21 @@ pub async fn handle_client(
         Request::Refresh => {
             handle_refresh(&mut tx).await?;
         }
+        Request::Reload => match crate::config::daemon_reload() {
+            Ok((applied, restart_required)) => {
+                send_response_split(
+                    &mut tx,
+                    Response::Reloaded {
+                        applied,
+                        restart_required,
+                    },
+                )
+                .await?;
+            }
+            Err(e) => {
+                send_response_split(&mut tx, Response::Error(format!("{e:#}"))).await?;
+            }
+        },
         Request::SetModel {
             session_id,
             model: model_name,

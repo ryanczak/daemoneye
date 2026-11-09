@@ -11,28 +11,13 @@ use super::*;
 /// run will use, so a ghost with an unreadable config is refused here
 /// instead of the gate reading "sandbox off" out of the defaults — the gate
 /// fails closed (M32 phase-01).
-fn ghost_foreground_refusal(
-    is_ghost: bool,
-    config: &anyhow::Result<crate::config::Config>,
-) -> Option<String> {
-    match config {
-        Err(e) => is_ghost.then(|| {
-            // `{e:#}` prints the whole chain: `Config::load` wraps the parse
-            // error in a `parsing <path>` context, and `{e}` alone would show
-            // only that outer layer, dropping the error the operator needs.
-            format!(
-                "Error: foreground execution is refused because the configuration \
-                 could not be read: {e:#}. Fix or remove that file, then retry; \
-                 nothing was run."
-            )
-        }),
-        Ok(config) => (!ghost_may_run_foreground(is_ghost, config.sandbox.enabled)).then(|| {
-            "Foreground execution is not sandboxed and is denied for ghost \
+fn ghost_foreground_refusal(is_ghost: bool, config: &crate::config::Config) -> Option<String> {
+    (!ghost_may_run_foreground(is_ghost, config.sandbox.enabled)).then(|| {
+        "Foreground execution is not sandboxed and is denied for ghost \
                  shells while the container sandbox is enabled. Re-issue this \
                  command with `wait: false` so it runs in a container."
-                .to_string()
-        }),
-    }
+            .to_string()
+    })
 }
 
 /// The approved call, carried whole so each stage keeps a short parameter
@@ -73,11 +58,10 @@ where
             ..
         } => {
             // Ghost gate — a ghost has no unsandboxed door out (M19 phase-03).
-            // One load per call feeds both this gate and the approved run's
-            // `max_per_owner`; an unreadable config fails the gate **closed**
-            // for a ghost and reads as the defaults for a non-ghost
-            // (M32 phase-01).
-            let config = crate::config::Config::load();
+            // The handle feeds both this gate and the approved run's
+            // `max_per_owner`; a reload of `[sandbox]`/`[shells]` takes
+            // effect at the next call.
+            let config = crate::config::current();
             if let Some(r) = ghost_foreground_refusal(is_ghost, &config) {
                 return Ok(ToolCallOutcome::Result(r));
             }
@@ -153,12 +137,7 @@ where
                             interactive,
                             cmd_id,
                             session_id,
-                            max_per_owner: config
-                                .as_ref()
-                                .map(|c| c.shells.max_per_owner)
-                                .unwrap_or_else(|_| {
-                                    crate::config::Config::default().shells.max_per_owner
-                                }),
+                            max_per_owner: config.shells.max_per_owner,
                         };
                         let outcome = run_approved(run, host, tx, rx).await?;
                         return Ok(ToolCallOutcome::Result(outcome));
@@ -506,50 +485,10 @@ where
 mod ghost_foreground_gate_tests {
     use super::ghost_foreground_refusal;
 
-    /// The unreadable config the `Err` arm is tested with: built in the test,
-    /// never read from a real `config.toml`.
-    fn unreadable() -> anyhow::Result<crate::config::Config> {
-        Err(anyhow::anyhow!("toml parse error at line 3"))
-    }
-
-    fn readable(sandbox_enabled: bool) -> anyhow::Result<crate::config::Config> {
+    fn readable(sandbox_enabled: bool) -> crate::config::Config {
         let mut c = crate::config::Config::default();
         c.sandbox.enabled = sandbox_enabled;
-        Ok(c)
-    }
-
-    #[test]
-    fn ghost_foreground_refusal_refuses_a_ghost_when_the_config_is_unreadable() {
-        let r = ghost_foreground_refusal(true, &unreadable());
-        let text = r.expect("a ghost with an unreadable config is refused");
-        assert!(
-            text.contains("toml parse error at line 3"),
-            "the refusal must name the load error, got: {text}"
-        );
-        assert!(
-            text.starts_with("Error:"),
-            "refusals read as errors: {text}"
-        );
-    }
-
-    /// M32 #1: the refusal names the parse error under the context
-    /// `Config::load` wraps it in, and names the file once.
-    #[test]
-    fn ghost_foreground_refusal_names_the_error_under_its_context() {
-        let config: anyhow::Result<crate::config::Config> =
-            Err(anyhow::anyhow!("expected `=`, found newline at line 3")
-                .context("parsing /home/op/.daemoneye/etc/config.toml"));
-        let text = ghost_foreground_refusal(true, &config)
-            .expect("a ghost with an unreadable config is refused");
-        assert!(
-            text.contains("expected `=`, found newline at line 3"),
-            "the refusal must carry the parse error itself: {text}"
-        );
-        assert_eq!(
-            text.matches("/home/op/.daemoneye/etc/config.toml").count(),
-            1,
-            "the file is named once: {text}"
-        );
+        c
     }
 
     #[test]
@@ -567,15 +506,6 @@ mod ghost_foreground_gate_tests {
             ghost_foreground_refusal(true, &readable(false)),
             None,
             "with the sandbox off, foreground is no worse for a ghost than any other command"
-        );
-    }
-
-    #[test]
-    fn ghost_foreground_refusal_allows_a_non_ghost_when_the_config_is_unreadable() {
-        assert_eq!(
-            ghost_foreground_refusal(false, &unreadable()),
-            None,
-            "a non-ghost keeps today's behaviour: the run falls back to the defaults"
         );
     }
 }

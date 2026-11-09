@@ -96,7 +96,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 | `src/tmux/cache.rs` | Background 2 s poll; `SessionCache`, `PaneState`, `get_labeled_context()` |
 | `src/tmux/session.rs` | Session-level tmux helpers: `other_sessions_context()`, `format_other_sessions()`, `client_dimensions()`, `session_environment()`, `list_sessions()`, `session_exists()` |
 | `src/util.rs` | `UnpoisonExt` trait — `unwrap_or_log()` extension on `LockResult` that logs ERROR on poison recovery |
-| `src/config/` | Config, FHS paths and first-run seeding; the public surface is re-exported from `mod.rs`. `types.rs` `Config` + the remaining per-section structs + `resolve_api_key()`, `sandbox.rs` `[sandbox]` + `[execution]`, `shells.rs` `[shells]` + `[limits]`, `models.rs` `[hosts.*]`, `[models.*]` + pricing, `[ai]` and `PromptDef`, `load.rs` the path constructors (`config_dir()`, `var_log_dir()`, …), `seeds.rs` `SRE_PROMPT_TOML` + asset seeding, `path_audit.rs` the M6 path-audit gate, `lifecycle.rs` the M6 artifact-lifecycle policy table |
+| `src/config/` | Config, FHS paths and first-run seeding; the public surface is re-exported from `mod.rs`. `types.rs` `Config` + the remaining per-section structs + `resolve_api_key()`, `handle.rs` the process-wide `ConfigHandle` (`install`/`current`/`schedule_config`/`daemon_reload`, the `reload` report naming dotted keys), `sandbox.rs` `[sandbox]` + `[execution]`, `shells.rs` `[shells]` + `[limits]`, `models.rs` `[hosts.*]`, `[models.*]` + pricing, `[ai]` and `PromptDef`, `load.rs` the path constructors (`config_dir()`, `var_log_dir()`, …), `seeds.rs` `SRE_PROMPT_TOML` + asset seeding, `path_audit.rs` the M6 path-audit gate, `lifecycle.rs` the M6 artifact-lifecycle policy table |
 | `src/scheduler.rs` | `ScheduleStore` (atomic JSON persistence); `ActionOn` enum (`Alert`/`Script`/`Ghost`); `ScheduleKind` (`Once`/`Every`/`Cron`); `parse_cron()` helper |
 | `src/scripts.rs` | Script management in `~/.daemoneye/scripts/` (chmod 700, path-traversal validation); `install_sudoers()` |
 | `src/runbook.rs` | TOML runbook loader; `watchdog_system_prompt()` for AI watchdog analysis |
@@ -219,6 +219,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 
 ## Important Invariants
 
+- Daemon-side code reads its config through `config::current()` (`src/config/handle.rs`), never `Config::load()`. The daemon installs the process-wide handle in `run_daemon`; `Request::Reload` / `daemoneye reload` re-reads `config.toml`, keeps the restart-only sections (`daemon`, `webhook`, `sandbox`, `execution`) at their running values, and swaps the rest. Uninstalled — a CLI process or a unit test — `current()` falls back to a per-call `Config::load().unwrap_or_default()`, so only a daemon reads a swapped config.
 - Every `events.jsonl` record carries `ts`, `event`, and `pid`; `log_event` stamps
   `pid` itself, so call sites must not pass one. Key **order** in the serialized
   line is `serde_json`'s (alphabetical — this crate does not enable

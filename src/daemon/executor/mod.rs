@@ -608,12 +608,7 @@ where
     // The configured host names, read once for the classification. On a load
     // error the map is empty, so every named host classifies as `new_host` —
     // the honest class for "I could not read the host table".
-    let known_hosts: Vec<String> = crate::config::Config::load()
-        .unwrap_or_default()
-        .hosts
-        .keys()
-        .cloned()
-        .collect();
+    let known_hosts: Vec<String> = crate::config::current().hosts.keys().cloned().collect();
 
     // ── Ghost Shell Logic ──────────────────────────────────────────────────
     if let Some(policy) = ghost_policy {

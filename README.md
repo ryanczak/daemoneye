@@ -463,6 +463,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye top --run <id>` | The live view opened on that run's detail: `Enter` on a run in Runs opens the same view, `Esc` returns to the panels |
 | `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
 | `daemoneye reindex` | Rebuild the memory search index from the memory files on disk; reports rows before and after |
+| `daemoneye reload` | Ask the running daemon to re-read `config.toml`; prints the keys that changed and the keys that wait for a restart, and exits non-zero when the file is refused |
 | `daemoneye audit-prompts` | Audit installed prompt and knowledge memory files for stale path references; exits non-zero on findings, never writes |
 | `daemoneye doctor` | One line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux); exit 1 only on a FAIL; tmux is optional and never fails it |
 
@@ -708,7 +709,7 @@ View logs with `daemoneye logs` (tails `~/.daemoneye/var/log/daemon.log`) or thr
 
 ## Configuration
 
-DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values. Every key below also appears — commented, with its default — in the seeded template (`assets/etc/config.toml`); a test gate keeps that template in sync with the config structs, so the file on disk is always a complete reference.
+DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values. Every key below also appears — commented, with its default — in the seeded template (`assets/etc/config.toml`); a test gate keeps that template in sync with the config structs, so the file on disk is always a complete reference. A hand edit to the file takes effect when the daemon next reloads it (`daemoneye reload`) or restarts — not at the next request; a few sections (`[daemon]`, `[webhook]`, `[sandbox]`, `[execution]`) always wait for a restart.
 
 ### Full example
 

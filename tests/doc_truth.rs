@@ -134,6 +134,11 @@ const REQUIRED_CLAIMS: &[(&str, &str, &str)] = &[
         "daemoneye audit-prompts",
         "audit-prompts is a shipped subcommand and went undocumented for four milestones",
     ),
+    (
+        "README.md",
+        "daemoneye reload",
+        "reload is a shipped subcommand and the operator's path to applying a config edit without a restart",
+    ),
 ];
 
 /// The heading that opens the AI-tools table in `CLAUDE.md`.

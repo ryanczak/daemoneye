@@ -90,7 +90,7 @@ pub async fn open_shell_id(
     rows: Option<u64>,
     cols: Option<u64>,
 ) -> Result<(ShellId, crate::host::HostId, (u16, u16)), String> {
-    let config = crate::config::Config::load().unwrap_or_default();
+    let config = crate::config::current();
     let max_per_owner = config.shells.max_per_owner;
     let size = resolve_size(rows, cols, crate::shell::spawn_size());
     let host = match host.map(crate::host::HostId::parse) {

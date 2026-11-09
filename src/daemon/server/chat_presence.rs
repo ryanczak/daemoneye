@@ -123,9 +123,7 @@ where
         // B11 (M36 phase-17a): the session's shells get a grace. The task
         // owns the id; no lock — presence or registry — crosses the sleep.
         // `0` keeps today's behaviour: never close on detach.
-        let grace_secs = crate::config::Config::load()
-            .map(|c| c.shells.detach_close_secs)
-            .unwrap_or_else(|_| crate::config::Config::default().shells.detach_close_secs);
+        let grace_secs = crate::config::current().shells.detach_close_secs;
         if grace_secs > 0 {
             let sid = session_id.clone();
             tokio::spawn(async move {

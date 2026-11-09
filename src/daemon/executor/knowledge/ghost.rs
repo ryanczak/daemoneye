@@ -69,7 +69,7 @@ pub async fn spawn_ghost(
 ) -> anyhow::Result<ToolCallOutcome> {
     use crate::daemon::ghost::check_ghost_capacity;
 
-    let spawn_config = crate::config::Config::load().unwrap_or_default();
+    let spawn_config = crate::config::current();
     if !check_ghost_capacity(&spawn_config) {
         return Ok(ToolCallOutcome::Result(format!(
             "Cannot spawn ghost shell: concurrency limit ({}) reached. \

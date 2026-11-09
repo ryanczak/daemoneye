@@ -206,6 +206,10 @@ enum Commands {
     /// against the known inventory. Exits non-zero if any path is superseded or
     /// unknown. Never writes or modifies any file.
     AuditPrompts,
+    /// Re-read the daemon's config.toml, swapping what is safe to swap at
+    /// runtime (a restart-only section keeps its running values). Exits
+    /// non-zero when the daemon refuses an invalid file.
+    Reload,
     /// Rebuild the memory search index from the memory files on disk.
     ///
     /// The index at ~/.daemoneye/var/index/memory.db is a derived cache; this
@@ -409,6 +413,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Ask { query, raw } => {
             cli::run_ask(query, raw).await?;
+        }
+        Commands::Reload => {
+            cli::run_reload().await?;
         }
         Commands::Ping => {
             cli::run_ping().await?;

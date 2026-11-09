@@ -104,7 +104,7 @@ pub(super) async fn start_background_sandboxed(
     cmd: &str,
     max_per_owner: u32,
 ) -> anyhow::Result<(BackgroundStart, CommandHandle)> {
-    let cfg = crate::config::Config::load().unwrap_or_default().sandbox;
+    let cfg = crate::config::current().sandbox.clone();
     let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
     let run = crate::shell::real_runner(program);
     let sandbox = super::chat_sandbox::ensure_chat_sandbox(

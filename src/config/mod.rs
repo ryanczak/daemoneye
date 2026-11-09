@@ -2,6 +2,7 @@
 //! and first-run asset seeding. Split across submodules in phase-09; the
 //! public surface is re-exported here.
 
+mod handle;
 mod lifecycle;
 mod load;
 mod models;
@@ -12,6 +13,7 @@ mod seeds;
 mod shells;
 mod types;
 
+pub use handle::*;
 pub use lifecycle::*;
 pub use load::*;
 pub use models::*;

@@ -738,7 +738,8 @@ pub(in super::super) async fn ask_with_session_ratatui(
             | Response::LimitsInfo { .. }
             | Response::SessionSaved { .. }
             | Response::SessionLoaded { .. }
-            | Response::SavedSessionList { .. } => {}
+            | Response::SavedSessionList { .. }
+            | Response::Reloaded { .. } => {}
         }
     }
 

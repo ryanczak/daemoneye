@@ -11,16 +11,16 @@
 fn src/ai/backends/anthropic.rs AnthropicClient::chat 252
 fn src/ai/backends/gemini.rs GeminiClient::chat 263
 fn src/ai/backends/openai.rs OpenAiClient::chat 238
-fn src/cli/commands/ask.rs run_ask_raw 169
+fn src/cli/commands/ask.rs run_ask_raw 170
 fn src/cli/commands/chat_loop.rs read_input_line_inner_ratatui 189
 fn src/cli/commands/chat_loop.rs run_chat_ratatui 537
 fn src/cli/commands/setup.rs run_setup 256
 file src/cli/commands/top_tui.rs 954
 file src/daemon/executor/shell_exec.rs 826
-fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 722
+fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 723
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
-fn src/cli/status.rs run_status 435
+fn src/cli/status.rs run_status 449
 fn src/cli/viewer.rs viewer_loop 234
 fn src/daemon/context/background.rs run_compaction 184
 fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 214
@@ -34,13 +34,13 @@ fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
 fn src/daemon/ghost/turn.rs do_ghost_turn 775
 fn src/daemon/ghost.rs trigger_ghost_turn 183
-fn src/daemon/startup.rs run_daemon 608
+fn src/daemon/startup.rs run_daemon 614
 fn src/daemon/scheduled.rs run_scheduled_job_inner 193
 fn src/daemon/server/ask.rs handle_ask 573
 fn src/daemon/server/handlers.rs handle_status 200
-fn src/daemon/server/mod.rs handle_client 214
+fn src/daemon/server/mod.rs handle_client 228
 fn src/daemon/stream/conversation.rs run_conversation_loop 775
-fn src/main.rs async_main 173
+fn src/main.rs async_main 176
 fn src/manifest.rs auto_search_context 211
 fn src/shell/client.rs read_to_marker 236
 fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321

@@ -661,9 +661,23 @@ pub async fn run_status() -> Result<()> {
                     }
 
                     // ── SANDBOX ───────────────────────────────────────────────
-                    send_request(&mut tx, Request::ContainerStatus).await?;
-                    if let Ok(Response::ContainerStatus { report }) = recv(&mut rx).await {
-                        sandbox_section(&report).render(tw);
+                    // The daemon answers one request per connection (see
+                    // `handle_client`), so this second request on the status
+                    // connection always lands on a closed socket. Ask on its
+                    // own connection instead; a missing answer must not fail
+                    // the whole status the daemon already delivered.
+                    let sbx_conn = connect().await.ok();
+                    if let Some(stream) = sbx_conn {
+                        let (srx, mut stx) = stream.into_split();
+                        let mut srx = BufReader::new(srx);
+                        if let Ok(Response::ContainerStatus { report }) =
+                            match send_request(&mut stx, Request::ContainerStatus).await {
+                                Ok(()) => recv(&mut srx).await,
+                                Err(e) => Err(e),
+                            }
+                        {
+                            sandbox_section(&report).render(tw);
+                        }
                     }
                 }
                 _ => {

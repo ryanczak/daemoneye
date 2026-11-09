@@ -1251,3 +1251,35 @@ fn chat_attach_request_round_trip() {
         _ => panic!("wrong variant"),
     }
 }
+
+#[test]
+fn ipc_reload_round_trip() {
+    let req = roundtrip_req(&Request::Reload);
+    assert!(
+        matches!(req, Request::Reload),
+        "Reload round-trips with no fields"
+    );
+
+    let ok = roundtrip_resp(&Response::Reloaded {
+        applied: vec!["limits.total_tool_calls_per_turn".to_string()],
+        restart_required: vec!["sandbox.enabled".to_string()],
+    });
+    match ok {
+        Response::Reloaded {
+            applied,
+            restart_required,
+        } => {
+            assert_eq!(
+                applied,
+                vec!["limits.total_tool_calls_per_turn".to_string()],
+                "applied keys survive the wire: {applied:?}"
+            );
+            assert_eq!(
+                restart_required,
+                vec!["sandbox.enabled".to_string()],
+                "restart keys survive the wire: {restart_required:?}"
+            );
+        }
+        _ => panic!("wrong variant"),
+    }
+}

@@ -105,6 +105,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             Config::default()
         }
     };
+    // Install the process-wide handle every daemon-side reader goes through.
+    // After this line, `config::current()` serves the running config and
+    // `Config::Reload` swaps it without a restart.
+    crate::config::install(std::sync::Arc::new(crate::config::ConfigHandle::new(
+        startup_config.clone(),
+    )));
 
     // Warn about any limit configuration that is likely unintentional.
     startup_config.limits.validate();
@@ -349,13 +355,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Scheduler task: poll every second for due jobs.
     {
         let store_sup = Arc::clone(&schedule_store);
-        let cfg_sup = startup_config.clone();
         let sessions_sup = sessions.clone();
         let cache_sup = Arc::clone(&cache);
         let sn_sup = initial_session.clone().unwrap_or_default();
         tokio::spawn(supervise("scheduler", Arc::clone(&shutdown), move || {
             let store = Arc::clone(&store_sup);
-            let cfg = cfg_sup.clone();
             let sessions_sched = sessions_sup.clone();
             let cache_sched = Arc::clone(&cache_sup);
             let sn = sn_sup.clone();
@@ -367,10 +371,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     for job in due {
                         let store2 = Arc::clone(&store);
                         let sn2 = sn.clone();
-                        let cfg2 = cfg.clone();
                         let sessions2 = sessions_sched.clone();
                         let cache2 = Arc::clone(&cache_sched);
                         tokio::spawn(async move {
+                            // The config goes through the handle at each
+                            // tick, so a reload follows the next due job.
+                            let cfg2 = crate::config::schedule_config();
                             // The refusal is already recorded on the run's
                             // log; a tick-level caller has nothing to do
                             // with it.
@@ -454,23 +460,27 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
                     // Unlocked phase: everything blocking happens out here.
                     sweep_counter = sweep_counter.wrapping_add(1);
+                    // Every tick (and every sweep burst inside it) reads the
+                    // config through the handle, so a reload follows the
+                    // next tick's sweeps and reaps.
+                    let tick_config = crate::config::schedule_config();
                     if sweep_counter.is_multiple_of(60) {
                         crate::daemon::utils::sweep_event_segments(
-                            startup_config.events.retention_days,
+                            tick_config.events.retention_days,
                         );
                         crate::daemon::utils::sweep_session_archives(
-                            startup_config.sessions.archive_retention_days,
+                            tick_config.sessions.archive_retention_days,
                             &active_ids,
                         );
                         crate::daemon::utils::sweep_session_logs(
-                            startup_config.sessions.log_retention_days,
+                            tick_config.sessions.log_retention_days,
                             &active_ids,
                         );
                         crate::daemon::utils::sweep_pane_logs(
-                            startup_config.retention.pane_log_retention_days,
+                            tick_config.retention.pane_log_retention_days,
                         );
                         crate::daemon::utils::sweep_agent_mailboxes(
-                            startup_config.retention.mailbox_retention_days,
+                            tick_config.retention.mailbox_retention_days,
                         );
                         // Reap the record first so a just-reaped shell's log
                         // is swept on the same tick rather than the next one.
@@ -480,12 +490,12 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             .unwrap_or(0);
                         crate::shell::reap_exited(
                             crate::shell::registry(),
-                            startup_config.shells.exited_retention_secs,
+                            tick_config.shells.exited_retention_secs,
                             now,
                         );
                         crate::daemon::executor::knowledge::reap_idle_shells(
                             crate::shell::registry(),
-                            startup_config.shells.idle_reap_secs,
+                            tick_config.shells.idle_reap_secs,
                             now,
                         )
                         .await;

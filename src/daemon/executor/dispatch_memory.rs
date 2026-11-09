@@ -112,7 +112,7 @@ fn recall_context(
     let Some(sid) = session_id else {
         return "Error: recall_context requires a session".to_string();
     };
-    let limits = crate::config::Config::load().unwrap_or_default().limits;
+    let limits = crate::config::current().limits.clone();
     match crate::daemon::context::recall::recall(sid, args, &limits) {
         Ok(r) => r,
         Err(e) => format!("Error: {}", e),

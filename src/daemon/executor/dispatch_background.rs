@@ -93,13 +93,8 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     let owner = chat_owner(session_id);
-    let max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
-    let sandboxed = chat_sandbox::chat_sandbox_enabled(
-        &crate::config::Config::load().unwrap_or_default().sandbox,
-    );
+    let max_per_owner = crate::config::current().shells.max_per_owner;
+    let sandboxed = chat_sandbox::chat_sandbox_enabled(&crate::config::current().sandbox);
     let started = if sandboxed {
         bg_shell::start_background_sandboxed(
             crate::shell::registry(),

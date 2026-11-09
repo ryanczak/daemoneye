@@ -153,10 +153,7 @@ where
 
             if sudo {
                 let cmd = super::write::build_remote_sudo_edit_cmd(path, old_string, new_string);
-                let max_per_owner = crate::config::Config::load()
-                    .unwrap_or_default()
-                    .shells
-                    .max_per_owner;
+                let max_per_owner = crate::config::current().shells.max_per_owner;
                 let run = super::super::shell_exec::run_in_shell_with_prompts(
                     crate::shell::registry(),
                     Owner::Chat(owner_key()),

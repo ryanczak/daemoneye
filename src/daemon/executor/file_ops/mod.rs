@@ -167,10 +167,7 @@ where
     if let crate::host::HostId::Named(name) = &host {
         crate::shell::host_entry_or_bare(name)?;
     }
-    let max_per_owner = crate::config::Config::load()
-        .unwrap_or_default()
-        .shells
-        .max_per_owner;
+    let max_per_owner = crate::config::current().shells.max_per_owner;
     let (id, socket) = shell_for_owner(
         reg,
         owner,
