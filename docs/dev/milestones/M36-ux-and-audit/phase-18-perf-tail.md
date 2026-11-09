@@ -1,7 +1,7 @@
 # Phase 18 — perf-tail
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-08
 **Depends on:** phase 17c
 **Estimated diff:** ~400 lines
@@ -586,3 +586,47 @@ passed=2797 failed=0
 ```
 
 Status `in-progress (architect takeover) → review`.
+
+### Review verdict — 2026-11-08
+
+- **Verdict:** escalated
+- **Bounces:** 1 ([bug-18-1](bugs/bug-18-1.md), major, `prod_unwrap`).
+  The resumed run removed `IndexConn`'s `.expect()` calls by routing the
+  "taken after drop" state through `dormant` / `spare` fallbacks that
+  `Box::leak`ed a fresh in-memory connection and ended in a nested
+  `panic!`. Fixed by architect takeover in `a5f45ff1`: the slot holds a
+  non-optional `IndexSlot`, and `IndexConn` is the slot's guard or a
+  transient connection of its own, so the state cannot exist.
+  - Mutation: forcing every open to re-key the slot failed
+    `index_connection_is_opened_once_per_path` (3 vs 2); restored, it
+    passed.
+  - Gates, re-run at review as separate commands: `fmt_exit=0`,
+    `build_warnings=0`, clippy clean, hygiene, `doc_truth`, `bug_tracker`
+    and `lock_invariant` ok, `passed=2797 failed=0`. `blocking_read=1`,
+    `metadata_offset=0`, `stale_doc=0`, `index_leak_or_panic=0`. The
+    `shell_log_read_*` and unwritable-index tests pass, and the phase only
+    added to existing test files.
+- **Escalation:** four executor runs.
+  - Run 1 did P2 and part of the rest, then hit `budget_exceeded` at 512
+    turns.
+  - The resume completed P3/P4, B17, P8 and L2 (`632f8573`) and was
+    bounced for bug-18-1.
+  - The bounce re-dispatch (`session-phase-18-6af11201`) ran 165 turns
+    with no edit: 164 `bash` calls, all reads, the last twenty
+    re-grepping the one file the bug named. Same read paralysis as
+    phase-16's bounce run, so the architect stopped it and took the fix
+    over.
+- **Executor:** glm-5.3-flash (opencode.ai); bug-18-1 by Claude (direct)
+- **Scope deviations:**
+  - The takeover wired the test-only open counter into `open_at`. Nothing
+    had incremented it, so the approved P3 test compared 0 to 0. This
+    touches an approved seam against the bounce note; it is test-only and
+    changes no behaviour.
+- **Calibration:** a third glm-5.3-flash bounce run with zero edits
+  (phase-16, phase-16's bounce, phase-18's bounce). The read-only
+  governor cannot see these runs because it counts Write tools and the
+  run calls only `bash`. A one-file structural bounce is cheaper taken
+  over than re-dispatched to this model.
+- **Review independence:** the reviewer also wrote the takeover fix. The
+  gates and criteria were re-run fresh, but the design was not read by a
+  second pair of eyes.
