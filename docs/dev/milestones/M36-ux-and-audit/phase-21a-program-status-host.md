@@ -1,7 +1,7 @@
 # Phase 21a — program-status-host
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-09: bug-21a-1, bug-21a-2, bug-21a-3)
 **Drafted:** 2026-11-09
 **Depends on:** phase 20b
 **Estimated diff:** ~450 lines, half of it tests
@@ -139,6 +139,16 @@ visible).
 
 - [ ] Every test named in the Test plan passes. Today none exists.
 - [ ] `base64_dep=1`: `Cargo.toml` names `base64`. Today 0.
+- [ ] **bug-21a-1:** `feed_clear_removes_the_subtree_and_clear_without_id_empties`,
+      `feed_unknown_key_keeps_the_kind`, `feed_evicts_the_least_recently_updated_at_the_cap`
+      and `feed_skips_an_uppercase_key_and_an_empty_pair` each pass, printed
+      by the end-to-end loop with `passed=1` and `failed=0`. Today none of
+      them exists.
+- [ ] **bug-21a-2:** `backend_status_drops_a_working_report_once_another_program_holds_the_terminal`
+      passes, printed the same way. Today it doesn't exist.
+- [ ] **bug-21a-3:** `sbx_status_passes_programs_through` asserts a
+      non-empty record list. The Update Log has a `(mutation)` entry showing
+      that the test fails when the pass-through is replaced with `Vec::new()`.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok;
       `build_warnings=0`, clippy is clean, `fmt_exit=0`, `failed=0`.
 
@@ -147,7 +157,7 @@ visible).
 ```sh
 bash <<'E2E'
 cargo test --lib program_status 2>&1 | grep -E '^test result'
-for t in backend_status_carries_a_working_report_while_its_program_runs backend_status_keeps_a_done_report_after_its_program_exits backend_answers_the_feature_query screen_feed_writes_back_only_the_feature_query status_frame_without_programs_deserializes_empty sbx_status_passes_programs_through format_screen_read_lists_program_records_masked; do
+for t in backend_status_carries_a_working_report_while_its_program_runs backend_status_keeps_a_done_report_after_its_program_exits backend_answers_the_feature_query screen_feed_writes_back_only_the_feature_query status_frame_without_programs_deserializes_empty sbx_status_passes_programs_through format_screen_read_lists_program_records_masked feed_clear_removes_the_subtree_and_clear_without_id_empties feed_unknown_key_keeps_the_kind feed_evicts_the_least_recently_updated_at_the_cap feed_skips_an_uppercase_key_and_an_empty_pair backend_status_drops_a_working_report_once_another_program_holds_the_terminal; do
   cargo test --lib "$t" 2>&1 | grep -E '^test result' | awk -v t="$t" '{p+=$4; f+=$6} END {print t, "passed=" p, "failed=" f}'
 done
 grep -c '^base64' Cargo.toml | sed 's/^/base64_dep=/'
