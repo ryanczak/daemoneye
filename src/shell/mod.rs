@@ -13,6 +13,7 @@ mod launch;
 mod log;
 mod proto;
 mod pty;
+pub mod program_status;
 mod registry;
 mod sbx_backend;
 mod screen;

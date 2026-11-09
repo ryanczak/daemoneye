@@ -20,6 +20,9 @@ env_logger = { version = "0.11.11", default-features = false, features = ["auto-
 futures-util = "0.3.34"
 # Pinned to 0.2: libc's only newer release is 1.0.0-alpha.4, a pre-release.
 libc = "0.2.191"
+# OSC 7501's `msg` and `title` are standard base64 of UTF-8; version 0.22
+# because 0.22.1 is already in Cargo.lock (termwiz pins it).
+base64 = "0.22"
 log = "0.4.35"
 nix = { version = "0.31.3", features = ["fs"] }
 # PTY spawn/resize behind a safe API — chosen so no `unsafe` (openpty, forkpty,
