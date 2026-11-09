@@ -1,7 +1,7 @@
 # Phase 20a — self-config
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 19
 **Estimated diff:** ~400 lines
@@ -181,3 +181,58 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-08 20:52 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor:
+glm-5.3-flash, headless.
+
+### Update — 2026-11-09 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the first run hit `budget_exceeded` at 1000 turns with most
+of the phase on disk and working. The spec was fine; the executor lost track
+of one regression it had introduced and of the closing steps. Turns 200–500
+and 900–1000 ran bash only and made no edits. Resuming keeps the diff.
+
+Architect's gate run on the partial tree: build, clippy and fmt are clean.
+10 of the 11 named tests exist and pass in isolation, and
+`config_read_blocked=0`. The full suite gives `passed=2729 failed=1`:
+`edit_file_config_prompt_is_masked_and_always_asked` fails about one run in
+three under `cargo test --lib file_ops`, with `always_asked=false`.
+
+### Notes for executor — 2026-11-09
+
+Green gates and a clean build are **not** evidence the phase is done.
+Already done, do not redo: the guards (`is_daemoneye_config`),
+`parse_config_text`, the masked and validated edit, `always_asked` on the
+wire and in the client predicates, the reload report, and 10 of the 11
+tests. Remaining work, in order. Each step ends where it says.
+
+1. **The flake is your own regression.** Rewriting
+   `read_bounds_symlinked_home_blocks_config` into
+   `read_bounds_symlinked_home_admits_the_masked_config` (`read_tests.rs`)
+   dropped its first line, `let _guard = crate::test_home_guard();`. The
+   test now sets `HOME` without the lock and never restores it, so a
+   concurrent config test resolves the wrong `config_dir()` and sees
+   `always_asked=false`. Put the guard back. Done when
+   `cargo test --lib file_ops` prints `test result: ok` five runs in a row.
+   Do not investigate `spawn_in_process_host` or anything else.
+2. **Add `config_edit_is_never_auto_approved`** beside
+   `a_root_edit_never_grants_a_session_approval` in
+   `src/cli/commands/stream.rs`'s tests. Cover `edit_file_auto_approved`
+   with `file_edits_all` set and with the path session-granted, and
+   `edit_file_grants_session`, all with `always_asked = true`. Done when
+   `cargo test --lib config_edit_is_never_auto_approved` prints
+   `1 passed`.
+3. **Docs (Behaviour 4).** Done when
+   `grep -c 'blocked only from \`etc/config.toml\`' CLAUDE.md` prints 0
+   and README's `read_file` row no longer names `etc/config.toml` as
+   refused. Then `cargo test --test doc_truth` must be ok.
+4. **Red runs.** The tests were written alongside the code, so no honest
+   pre-code red run exists. Write a `(red runs)` entry saying exactly that,
+   in one line. Do not reconstruct one.
+5. **Spec step 4, the mutation check**, real output pasted.
+6. **Spec steps 5–7:** run the E2E block once into
+   `.rexymcp/output/p20a-e2e.txt` and paste that file verbatim. Then write
+   Findings, which must name the restored guard, and commit.
