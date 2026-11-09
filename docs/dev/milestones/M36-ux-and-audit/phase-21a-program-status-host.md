@@ -1,7 +1,7 @@
 # Phase 21a — program-status-host
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-09
 **Depends on:** phase 20b
 **Estimated diff:** ~450 lines, half of it tests
@@ -182,3 +182,8 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-09 21:45 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor:
+Claude Opus 4.5 (1M), headless.
