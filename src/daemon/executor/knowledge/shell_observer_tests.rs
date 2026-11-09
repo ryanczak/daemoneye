@@ -1718,3 +1718,73 @@ fn scrollback_part_strips_the_visible_suffix() {
         "an empty screen strips nothing"
     );
 }
+
+// -----------------------------------------------------------------------
+// OSC 7501 in the read_shell_screen header (M36 phase 21a)
+// -----------------------------------------------------------------------
+
+/// The header this phase adds, derived from one `Record` — the pure path the
+/// live read takes. `mask_sensitive` and `escape_controls` are the production
+/// helpers the line runs through, so the masked-output pin below is real.
+fn program_line_of(
+    id: Option<&str>,
+    state: crate::shell::program_status::State,
+    kind: Option<crate::shell::program_status::Kind>,
+    progress: Option<u8>,
+    app: Option<&str>,
+    title: Option<String>,
+    msg: Option<String>,
+) -> String {
+    crate::daemon::executor::knowledge::shell::program_line(&crate::shell::program_status::Record {
+        id: id.map(str::to_string),
+        state,
+        kind,
+        progress,
+        app: app.map(str::to_string),
+        title,
+        msg,
+    })
+}
+
+#[test]
+fn format_screen_read_lists_program_records_masked() {
+    // An `sk-` key inside msg comes back masked before anything else.
+    let line = program_line_of(
+        Some("build/step"),
+        crate::shell::program_status::State::Blocked,
+        Some(crate::shell::program_status::Kind::Auth),
+        Some(50),
+        Some("terraform"),
+        Some("Apply plan".to_string()),
+        Some("key is sk-abc123def456ghi789jkl for the endpoint".to_string()),
+    );
+    assert!(
+        !line.contains("sk-abc123def456ghi789jkl"),
+        "a key in a record's msg never renders unmasked: {line}"
+    );
+    assert!(
+        line.contains("<REDACTED>"),
+        "the masked form replaces the key: {line}"
+    );
+
+    // A bidi override in title is made visible, not acted on.
+    let line = program_line_of(
+        None,
+        crate::shell::program_status::State::Idle,
+        None,
+        None,
+        None,
+        Some("left\u{202e}right".to_string()),
+        None,
+    );
+    assert!(
+        !line.contains('\u{202e}'),
+        "a bidi override never lands raw in the header: {line:?}"
+    );
+
+    // With no records, nothing is appended — the header is unchanged.
+    let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+    screen.feed(b"plain");
+    let empty = crate::daemon::executor::knowledge::shell::programs_of(None);
+    assert!(empty.is_empty());
+}

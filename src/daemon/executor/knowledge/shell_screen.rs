@@ -345,6 +345,7 @@ pub(crate) async fn read_shell_screen_in(
         &head,
         lines,
         pattern_re.as_ref(),
+        &programs_of(status.as_ref()),
     );
     let out = match note {
         Some(line) => format!("{line}\n{out}"),
@@ -423,6 +424,56 @@ pub(super) fn scrollback_part(with_scrollback: &str, visible: &str) -> String {
 
 /// Pure: the result text. Header, then the scrollback section when there is
 /// one, then the visible rows tailed by `lines`; `pattern` filters both.
+/// The OSC 7501 records a `Status` reply carried, or `&[]` for a reply
+/// that predates the field. A non-`Status` reply also answers empty: only
+/// the terminal's own frame names its programs.
+pub(crate) fn programs_of(
+    status: Option<&crate::shell::ShellResponse>,
+) -> Vec<crate::shell::program_status::Record> {
+    match status {
+        Some(crate::shell::ShellResponse::Status { programs, .. }) => programs.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// One header line for one program-status record: app, state (with its
+/// kind), progress, id, title, msg. Title and msg go through
+/// `mask_sensitive`, then their control and bidi characters are made
+/// visible the way `escape_controls` does it, so a record can carry neither
+/// a raw escape byte nor an invisible one into the panel.
+pub(crate) fn program_line(record: &crate::shell::program_status::Record) -> String {
+    use crate::ai::filter::mask_sensitive;
+    use crate::cli::render::escape_controls;
+
+    let shown = |text: &Option<String>| -> String {
+        text.as_deref()
+            .map(|t| escape_controls(&mask_sensitive(t)))
+            .unwrap_or_default()
+    };
+    let state = match record.kind {
+        Some(kind) => format!("{} ({})", record.state.as_str(), kind.as_str()),
+        None => record.state.as_str().to_string(),
+    };
+    let mut line = format!("Program {} ({state})", record.app.as_deref().unwrap_or("?"));
+    if let Some(p) = record.progress {
+        line.push_str(&format!(" {p}%"));
+    }
+    if let Some(id) = &record.id {
+        line.push_str(&format!(" id:{id}"));
+    }
+    let title = shown(&record.title);
+    if !title.is_empty() {
+        line.push_str(&format!(" title: {title}"));
+    }
+    let msg = shown(&record.msg);
+    if !msg.is_empty() {
+        line.push_str(&format!(" msg: {msg}"));
+    }
+    line
+}
+
+/// Pure: the result text. Header, then the scrollback section when there is
+/// one, then the visible rows tailed by `lines`; `pattern` filters both.
 fn format_screen_read(
     shell: &str,
     foreground: &crate::shell::Foreground,
@@ -430,6 +481,7 @@ fn format_screen_read(
     head: &str,
     lines: Option<u64>,
     pattern: Option<&regex::Regex>,
+    programs: &[crate::shell::program_status::Record],
 ) -> String {
     let keep = |row: &&str| pattern.is_none_or(|re| re.is_match(row));
     let mut out = format!(
@@ -448,6 +500,10 @@ fn format_screen_read(
             None => String::new(),
         },
     );
+    for record in programs {
+        out.push_str(&program_line(record));
+        out.push('\n');
+    }
     if !head.is_empty() {
         let rows: Vec<&str> = head.lines().filter(keep).collect();
         out.push_str(&format!("--- scrollback ({} rows) ---\n", rows.len()));
