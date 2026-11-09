@@ -7,11 +7,28 @@
 use super::*;
 
 /// The gate's verdict for a foreground call: the refusal text to send when
-/// the call may not go on, `None` when it may. `config` is the same load the
-/// run will use, so a ghost with an unreadable config is refused here
-/// instead of the gate reading "sandbox off" out of the defaults — the gate
-/// fails closed (M32 phase-01).
-fn ghost_foreground_refusal(is_ghost: bool, config: &crate::config::Config) -> Option<String> {
+/// the call may not go on, `None` when it may. `startup_failed` says the
+/// daemon fell back to defaults because its startup `Config::load()` failed
+/// (bug-19-1): a ghost running on defaults is an unsandboxed command on the
+/// host, so the gate fails closed there and names the load error — a
+/// non-ghost keeps the fallback-defaults behaviour every request had before
+/// the handle (M32 phase-01 for the sandbox arm).
+fn ghost_foreground_refusal(
+    is_ghost: bool,
+    config: &crate::config::Config,
+    startup_failed: Option<&anyhow::Error>,
+) -> Option<String> {
+    if is_ghost && let Some(e) = startup_failed {
+        // `{e:#}` prints the whole chain: a startup load wraps the parse
+        // error in a `parsing <path>` context, and `{e}` alone would show
+        // only that outer layer, dropping the error the operator needs.
+        return Some(format!(
+            "Error: foreground execution is refused because the running \
+             configuration is fallback defaults — the configuration could \
+             not be read at startup: {e:#}. Fix or remove that file, then \
+             restart the daemon; nothing was run."
+        ));
+    }
     (!ghost_may_run_foreground(is_ghost, config.sandbox.enabled)).then(|| {
         "Foreground execution is not sandboxed and is denied for ghost \
                  shells while the container sandbox is enabled. Re-issue this \
@@ -60,9 +77,13 @@ where
             // Ghost gate — a ghost has no unsandboxed door out (M19 phase-03).
             // The handle feeds both this gate and the approved run's
             // `max_per_owner`; a reload of `[sandbox]`/`[shells]` takes
-            // effect at the next call.
+            // effect at the next call. When the daemon started on fallback
+            // defaults because its startup load failed, a ghost is refused
+            // here (bug-19-1): the defaults carry `sandbox.enabled = false`.
             let config = crate::config::current();
-            if let Some(r) = ghost_foreground_refusal(is_ghost, &config) {
+            if let Some(r) =
+                ghost_foreground_refusal(is_ghost, &config, crate::config::startup_error().as_ref())
+            {
                 return Ok(ToolCallOutcome::Result(r));
             }
 
@@ -491,9 +512,24 @@ mod ghost_foreground_gate_tests {
         c
     }
 
+    /// A startup load failure as `Config::load` wraps it: the parse error
+    /// under a `parsing <path>` context.
+    fn startup_failure() -> anyhow::Error {
+        anyhow::anyhow!("expected `=`, found newline at line 3")
+            .context("parsing /home/op/.daemoneye/etc/config.toml")
+    }
+
+    fn refusal(
+        is_ghost: bool,
+        config: &crate::config::Config,
+        startup_failed: Option<&anyhow::Error>,
+    ) -> Option<String> {
+        ghost_foreground_refusal(is_ghost, config, startup_failed)
+    }
+
     #[test]
     fn ghost_foreground_refusal_refuses_a_ghost_when_the_sandbox_is_on() {
-        let r = ghost_foreground_refusal(true, &readable(true));
+        let r = refusal(true, &readable(true), None);
         assert!(
             r.is_some(),
             "a ghost is refused foreground while the sandbox is enabled"
@@ -503,10 +539,58 @@ mod ghost_foreground_gate_tests {
     #[test]
     fn ghost_foreground_refusal_allows_a_ghost_when_the_sandbox_is_off() {
         assert_eq!(
-            ghost_foreground_refusal(true, &readable(false)),
+            refusal(true, &readable(false), None),
             None,
             "with the sandbox off, foreground is no worse for a ghost than any other command"
         );
+    }
+
+    /// bug-19-1: while the daemon runs on fallback defaults because its
+    /// startup load failed, a ghost foreground call is refused and the
+    /// refusal names the load error.
+    #[test]
+    fn ghost_foreground_is_refused_while_the_daemon_runs_on_fallback_defaults() {
+        let e = startup_failure();
+        let r = refusal(true, &readable(false), Some(&e));
+        let text = r.expect("a ghost on fallback defaults is refused");
+        assert!(
+            text.contains("expected `=`, found newline at line 3"),
+            "the refusal must name the load error, got: {text}"
+        );
+        assert!(
+            text.contains("/home/op/.daemoneye/etc/config.toml"),
+            "the refusal must name the file under its context, got: {text}"
+        );
+        assert!(
+            text.contains("fallback defaults"),
+            "the refusal must say the daemon is on defaults, got: {text}"
+        );
+        assert!(
+            text.starts_with("Error:"),
+            "refusals read as errors: {text}"
+        );
+    }
+
+    /// bug-19-1: the load-error condition is ghost-only — a non-ghost call is
+    /// not refused for it, keeping the fallback-defaults behaviour every
+    /// request had before the handle.
+    #[test]
+    fn a_non_ghost_call_is_not_refused_while_the_daemon_runs_on_fallback_defaults() {
+        let e = startup_failure();
+        assert_eq!(
+            refusal(false, &readable(false), Some(&e)),
+            None,
+            "a non-ghost keeps the fallback-defaults behaviour; only the ghost gate fails closed"
+        );
+    }
+
+    /// The gate's load-error arm fires only on a real startup failure: with
+    /// the file read successfully the sandbox arm decides, as on the happy
+    /// path.
+    #[test]
+    fn ghost_foregate_gate_needs_no_startup_failure_to_refuse_a_ghost_when_the_sandbox_is_on() {
+        let r = refusal(true, &readable(true), None);
+        assert!(r.is_some(), "sandbox-on alone refuses a ghost");
     }
 }
 

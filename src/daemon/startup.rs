@@ -99,9 +99,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Validate API key before binding the socket so the error is immediate
     // and obvious rather than surfacing as a cryptic 401 mid-conversation.
     let startup_config = match Config::load() {
-        Ok(cfg) => cfg,
+        Ok(cfg) => {
+            crate::config::set_startup_error(Ok(()));
+            cfg
+        }
         Err(e) => {
-            log::error!("Failed to load config, using defaults: {e}");
+            log::error!("Failed to load config, using defaults: {e:#}");
+            // Record the failure beside the handle: the ghost foreground gate
+            // fails closed while the daemon runs on these defaults (bug-19-1).
+            crate::config::set_startup_error(Err(anyhow::anyhow!("{e:#}")));
             Config::default()
         }
     };

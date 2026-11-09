@@ -73,11 +73,37 @@ impl ConfigHandle {
 
 static HANDLE: RwLock<Option<std::sync::Arc<ConfigHandle>>> = RwLock::new(None);
 
+/// The startup load's error, carried beside the handle. `Some` means the
+/// daemon is running on **fallback defaults** because its startup
+/// `Config::load()` failed — the condition the ghost foreground gate fails
+/// closed on (bug-19-1). A successful reload clears only the parts of the
+/// condition the swap actually covered: `sandbox` is restart-only, so a
+/// ghost stays refused until a restart with a readable file.
+static STARTUP_ERROR: RwLock<Option<anyhow::Error>> = RwLock::new(None);
+
 /// Install the process-wide handle. Called once by `run_daemon` at startup.
 pub fn install(handle: std::sync::Arc<ConfigHandle>) {
     *HANDLE.write().unwrap_or_log() = Some(handle);
 }
+/// Record the startup load's outcome beside the handle. Called once by
+/// `run_daemon`: `Err` when it fell back to defaults, `Ok(())` otherwise.
+pub fn set_startup_error(result: anyhow::Result<()>) {
+    *STARTUP_ERROR.write().unwrap_or_log() = result.err();
+}
 
+/// The startup load's error, when the daemon runs on fallback defaults.
+/// Uninstalled (CLI processes, unit tests), there is no fallback condition
+/// and `None` is returned.
+pub fn startup_error() -> Option<anyhow::Error> {
+    if !installed() {
+        return None;
+    }
+    STARTUP_ERROR
+        .read()
+        .unwrap_or_log()
+        .as_ref()
+        .map(|e| anyhow::Error::msg(e.to_string()))
+}
 /// Is a handle installed? Tests that own a handle never install it.
 pub fn installed() -> bool {
     HANDLE.read().unwrap_or_log().is_some()
