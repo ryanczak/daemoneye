@@ -7,12 +7,13 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 19 — config-reload
-([`phase-19-config-reload.md`](milestones/M36-ux-and-audit/phase-19-config-reload.md)),
-drafted 2026-11-08 (decision 8, first half). Phases 01–18 are `done`.
-Twenty-five phases are planned in the README's table: 04 was split into
+**Active phase:** phase 20a — self-config
+([`phase-20a-self-config.md`](milestones/M36-ux-and-audit/phase-20a-self-config.md)),
+drafted 2026-11-08 (decision 8, second half, first part). Phases 01–19 are `done`.
+Twenty-six phases are planned in the README's table: 04 was split into
 04a/04b and 21 added on 2026-11-03, 05 was split into 05a/05b on
-2026-11-04, and 17 was split into 17a/17b/17c on 2026-11-07.
+2026-11-04, 17 was split into 17a/17b/17c on 2026-11-07, and 20 into 20a/20b on
+2026-11-08.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

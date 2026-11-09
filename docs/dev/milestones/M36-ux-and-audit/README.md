@@ -153,7 +153,7 @@ the same code, so they ship together.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 25 (phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04; 17 split into 17a/17b/17c on 2026-11-07).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 26 (phase 20 split into 20a/20b on 2026-11-08; phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04; 17 split into 17a/17b/17c on 2026-11-07).
 Phases 01–04 are the PE's four items; 05–07 the approval-prompt findings
 that share their code; 08–16 the remaining `major` rows, most severe
 first; 17 the shell-lifecycle fix; 18 the performance tail; 19–20 the
@@ -185,7 +185,8 @@ config so the shell-state surfaces it extends have settled.
 | 17c | idle-reap ([phase-17c-idle-reap.md](phase-17c-idle-reap.md)) — the maintenance tick closes shells (never `/shell` ones, never one with a command in flight, never a chat shell whose session is present) whose recording has been silent for `[shells] idle_reap_secs` | B11 (second half) | done        |
 | 18 | perf-tail ([phase-18-perf-tail.md](phase-18-perf-tail.md)) — `read_shell_log` walks records with a cursor off the runtime; one index connection and schema check per daemon, the offset from the append; prompt assembly stops rebuilding an empty corpus each turn; `ip_limits` pruned; the `build_match_expr` sentence in CLAUDE.md | P2, P3, B17, P4, P8, L2 | done        |
 | 19 | config-reload ([phase-19-config-reload.md](phase-19-config-reload.md)) — the daemon holds its `Config` behind one shared, swappable handle that every per-request reader goes through; `Request::Reload` / `daemoneye reload` re-read and validate `config.toml`, swap the runtime-safe sections, re-init masking and stream timeouts, and reply with the keys that changed and the keys that wait for a restart; an invalid file is refused and the running config stays | decision 8 | done        |
-| 20 | self-config — `read_file` and `edit_file` admit `etc/config.toml` (masked read, always-asked edit with a masked diff, `Config` validation before the write, a reload after it); the `config-reference` knowledge memory, seeded and in `--overwrite-memory`, gated by `doc_truth` against the `Config` structs; the `read_file` / `edit_file` rows in CLAUDE.md and README follow | decision 8 | todo |
+| 20a | self-config ([phase-20a-self-config.md](phase-20a-self-config.md)) — `read_file` and `edit_file` admit `etc/config.toml` alone: masked read, an always-asked edit with a masked diff, `Config` validation before the write, a reload after it whose report the result carries; the `read_file` / `edit_file` rows in CLAUDE.md and README follow (split 20a/20b on 2026-11-08) | decision 8 | todo |
+| 20b | config-reference — the `config-reference` knowledge memory documents every `config.toml` key (type, range, default, when a change takes effect), seeded and in `--overwrite-memory`, gated by `doc_truth` against the `Config` structs | decision 8 | todo |
 | 21 | program-status — OSC 7501: daemon shells parse program reports into per-shell records (spec grammar, limits, lifetime, security; masked) surfaced in `list_shells`, `read_shell_screen`, `watch_shell` and `top`; the chat client emits its own working/blocked/idle state; may split consume/emit at drafting | decision 9 | todo |
 
 ## Notes
