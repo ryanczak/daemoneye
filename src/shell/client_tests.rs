@@ -516,6 +516,7 @@ mod oneshot {
             raw_mode: None,
             alt_screen: None,
             foreground: None,
+            programs: Vec::new(),
         };
         let server = start_server(expected.clone()).await;
         let answered = status(&server.path, Duration::from_secs(5))

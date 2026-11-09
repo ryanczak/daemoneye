@@ -351,6 +351,7 @@ mod tests {
                 raw_mode: None,
                 alt_screen: None,
                 foreground: None,
+                programs: Vec::new(),
             }
         }
         fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
@@ -443,7 +444,8 @@ mod tests {
                 pid: 0,
                 raw_mode: None,
                 alt_screen: None,
-                foreground: None
+                foreground: None,
+                programs: Vec::new()
             }
         );
 
@@ -581,7 +583,8 @@ mod tests {
                 pid: 0,
                 raw_mode: None,
                 alt_screen: None,
-                foreground: None
+                foreground: None,
+                programs: Vec::new()
             }
         );
     }
@@ -613,7 +616,8 @@ mod tests {
                 pid: 0,
                 raw_mode: None,
                 alt_screen: None,
-                foreground: None
+                foreground: None,
+                programs: Vec::new()
             }
         );
     }
@@ -743,7 +747,8 @@ mod tests {
                 pid: 0,
                 raw_mode: None,
                 alt_screen: None,
-                foreground: None
+                foreground: None,
+                programs: Vec::new()
             },
             "the connection must survive the refused Screen request"
         );

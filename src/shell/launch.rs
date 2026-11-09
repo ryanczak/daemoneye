@@ -339,6 +339,7 @@ mod tests {
                         raw_mode: None,
                         alt_screen: None,
                         foreground: None,
+                        programs: Vec::new(),
                     })
                     .unwrap();
                     let _ = stream.write_all(resp.as_bytes()).await;
@@ -376,6 +377,7 @@ mod tests {
                         raw_mode: None,
                         alt_screen: None,
                         foreground: None,
+                        programs: Vec::new(),
                     })
                     .unwrap();
                     let _ = stream.write_all(resp.as_bytes()).await;

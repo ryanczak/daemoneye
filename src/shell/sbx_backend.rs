@@ -92,6 +92,7 @@ impl<B: ShellBackend> ShellBackend for SbxBackend<B> {
             raw_mode,
             alt_screen,
             foreground,
+            programs,
             ..
         } = &inner
         else {
@@ -99,6 +100,9 @@ impl<B: ShellBackend> ShellBackend for SbxBackend<B> {
         };
         let (rows, cols, pid) = (*rows, *cols, *pid);
         let (raw_mode, alt_screen, foreground) = (*raw_mode, *alt_screen, foreground.clone());
+        // The records belong to the inner PTY's terminal; the VM probe only
+        // decides the state, so they pass through untouched.
+        let programs = programs.clone();
         let inner_state = *inner_state;
         if inner_state == ShellState::Exited {
             return inner;
@@ -128,6 +132,7 @@ impl<B: ShellBackend> ShellBackend for SbxBackend<B> {
             raw_mode,
             alt_screen,
             foreground,
+            programs,
         }
     }
 

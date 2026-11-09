@@ -111,6 +111,10 @@ pub enum ShellResponse {
         /// the group is the shell's own. `None` on a pre-milestone host.
         #[serde(default)]
         foreground: Option<String>,
+        /// The OSC 7501 program-status records this shell's terminal holds,
+        /// ordered by id. Empty on a host from before this phase.
+        #[serde(default)]
+        programs: Vec<crate::shell::program_status::Record>,
     },
     Exited {
         code: i32,
@@ -194,6 +198,7 @@ mod tests {
                     raw_mode: Some(true),
                     alt_screen: Some(false),
                     foreground: Some("vim".into()),
+                    programs: Vec::new(),
                 },
                 json!({
                     "type": "Status",
@@ -218,6 +223,7 @@ mod tests {
                     raw_mode: None,
                     alt_screen: None,
                     foreground: None,
+                    programs: Vec::new(),
                 },
                 json!({
                     "type": "Status",
@@ -380,6 +386,7 @@ mod tests {
                 raw_mode,
                 alt_screen,
                 foreground,
+                ..
             } => {
                 assert_eq!(state, ShellState::Running, "state parses");
                 assert_eq!((rows, cols, pid), (24, 80, 4711), "geometry parses");

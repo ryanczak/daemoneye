@@ -123,6 +123,15 @@ impl PtyBackend {
                             let mut screen = pump_this.screen.lock().unwrap_or_log();
                             screen.feed(&chunk);
                             let _ = pump_this.out_tx.send(chunk.clone());
+                            // The feature-query reply is the only byte this
+                            // host ever writes back for OSC 7501: taken after
+                            // the screen lock is released (lock order below)
+                            // and written straight to the shell's input.
+                            let reply = screen.take_reply();
+                            if !reply.is_empty() {
+                                drop(screen);
+                                let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);
+                            }
                         }
                         let log_res = pump_this
                             .log
@@ -205,7 +214,7 @@ impl ShellBackend for PtyBackend {
     }
 
     async fn status(&self) -> ShellResponse {
-        let (state, rows, cols, pid, raw_mode, alt_screen, foreground) = {
+        let (state, rows, cols, pid, raw_mode, alt_screen, foreground, programs) = {
             let mut shell = self.shell.lock().unwrap_or_log();
             let alive = shell.is_alive().with_context(|| "checking shell liveness");
             let screen = self.screen.lock().unwrap_or_log();
@@ -250,6 +259,7 @@ impl ShellBackend for PtyBackend {
                 raw_mode,
                 Some(alt_screen),
                 foreground,
+                screen.programs(),
             )
         };
         ShellResponse::Status {
@@ -260,6 +270,7 @@ impl ShellBackend for PtyBackend {
             raw_mode,
             alt_screen,
             foreground,
+            programs,
         }
     }
 

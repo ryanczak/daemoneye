@@ -188,6 +188,7 @@ mod tests {
             raw_mode: raw,
             alt_screen: alt,
             foreground: fg.map(str::to_string),
+            programs: Vec::new(),
         }
     }
 
