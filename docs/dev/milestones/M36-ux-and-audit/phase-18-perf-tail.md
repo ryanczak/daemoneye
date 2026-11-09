@@ -1,7 +1,7 @@
 # Phase 18 — perf-tail
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 17c
 **Estimated diff:** ~400 lines
@@ -121,6 +121,10 @@ except that the daemon stops stalling workers on them.
       unwritable-index tests.
 - [ ] Hygiene, `doc_truth` and `bug_tracker` are ok, `build_warnings=0`,
       clippy is clean, `fmt_exit=0` and `failed=0`.
+- [ ] **bug-18-1:** `index_leak_or_panic=0`: `src/memory/index/mod.rs` has
+      no `Box::leak` and no `panic!(`. Today it is 6.
+- [ ] **bug-18-1:** `cargo test` totals **2797, not 2798**. The fix adds no
+      test.
 
 ## End-to-end verification
 
@@ -132,6 +136,7 @@ done
 grep -c 'spawn_blocking' src/daemon/server/shells.rs | sed 's/^/blocking_read=/'
 grep -c 'metadata(&path)' src/daemon/utils/event_log.rs | sed 's/^/metadata_offset=/'
 grep -c 'quotes each user term' CLAUDE.md | sed 's/^/stale_doc=/'
+grep -c 'Box::leak\|panic!(' src/memory/index/mod.rs | sed 's/^/index_leak_or_panic=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
@@ -463,3 +468,21 @@ kill: (-319165): No such process
 **Commit:** 632f8573d4b4d88e8d59fcfae9306993a7766379
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-08 (bounce, bug-18-1)
+
+Status `review` → `in-progress`. See [`bugs/bug-18-1.md`](bugs/bug-18-1.md).
+
+**Notes for executor:** green gates and a clean tree are **expected** here
+and are **not** evidence the phase is done. Everything else in this phase
+is approved: P2, P3/P4 behaviour, B17 with its concurrency test and
+mutation, P8, L2, and the `.unwrap_or_log()` lock sites. Do not touch them.
+The only work left is in `src/memory/index/mod.rs`:
+
+1. Remove `IndexConn`'s `dormant` / `dormant_mut` / `spare` / `spare_value`
+   fallbacks. Change the type so a held connection cannot be missing, and
+   keep `open_index`'s callers compiling.
+2. `index_leak_or_panic=0`, and the six named tests still pass.
+3. Re-run § End-to-end verification and paste it. The total must be
+   **2797, not 2798**.
+
