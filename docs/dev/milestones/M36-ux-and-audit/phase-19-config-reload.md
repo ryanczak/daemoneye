@@ -1,7 +1,7 @@
 # Phase 19 — config-reload
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 18
 **Estimated diff:** ~450 lines
@@ -144,6 +144,15 @@ clones.
       `OnceLock`. Today 2.
 - [ ] `readme_reload=1` or more, and `doc_truth` names it. Today 0.
 - [ ] The live-check transcript shows all four results.
+- [ ] **bug-19-1:** `ghost_foreground_is_refused_while_the_daemon_runs_on_fallback_defaults`
+      passes, and a non-ghost call is covered too. Today the test does not
+      exist.
+- [ ] **bug-19-2:** `grep -c 'passed=2756'` on this file prints 0 (1
+      today), and a new `(end-to-end verification)` entry pastes a file
+      captured in one run.
+- [ ] **bug-19-3:** the live transcript ends with `daemon_alive_after=0`
+      (absent today), and `git ls-files scripts-dev | wc -l` prints 0 (1
+      today).
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok,
       `build_warnings=0`, clippy is clean, `fmt_exit=0` and `failed=0`.
 
@@ -541,3 +550,37 @@ kill: (-417036): No such process
 **Commit:** 20cec4b4f9666546b36aa4b746d5c68341feb93e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-08 (bounce, bugs 19-1, 19-2, 19-3)
+
+Status `review` → `in-progress`. See [`bugs/bug-19-1.md`](bugs/bug-19-1.md),
+[`bugs/bug-19-2.md`](bugs/bug-19-2.md) and [`bugs/bug-19-3.md`](bugs/bug-19-3.md).
+
+**Notes for executor:** green gates and a clean tree are **expected** here
+and are **not** evidence the phase is done. Approved, do not touch: the
+handle module and its six tests, the masking and stream-timeout re-init
+and their tests, `Request::Reload` / `Response::Reloaded`, the 21 migrated
+sites, the scheduler and tick wiring, `daemoneye reload`, the docs, the
+`doc_truth` tuple, the six allowlist raises, and the `daemoneye status`
+fix in `src/cli/status.rs` (accepted as a disclosed deviation). The work
+left, in order:
+
+1. **bug-19-1.** Make the ghost foreground gate fail closed again when the
+   daemon is running on fallback defaults because its startup load
+   failed. Restore the coverage the three deleted tests gave, under the
+   names the bug lists. Fix the doc comment. Done when
+   `cargo test --lib ghost_foreground` prints `test result: ok` with the
+   new tests in it.
+2. **bug-19-3.** Delete `scripts-dev/p19-live.sh` from the tree and keep
+   the probe in `.rexymcp/output/`, which git ignores. End the daemon by
+   its own pid (`daemoneye daemon` forks, so `$!` is the parent), then
+   probe that pid and print `daemon_alive_after=0` or `=1`. Re-run the
+   live check into `.rexymcp/output/p19-live.txt`. Done when the file
+   ends with `daemon_alive_after=0`.
+3. **bug-19-2.** Add one line under the old `(end-to-end verification)`
+   heading saying it is superseded and why, and delete its block. Run
+   § End-to-end verification **once** with its output redirected to
+   `.rexymcp/output/p19-e2e.txt`, then paste that file verbatim in a new
+   entry, followed by the live transcript file verbatim. Done when
+   `grep -c 'passed=2756'` on this file prints 0.
+4. **Commit** as one `fix:` commit naming the three bugs.
