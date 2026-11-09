@@ -269,6 +269,28 @@ pub(crate) fn reduce(
     Some((id, state, kind))
 }
 
+/// The effective `app` of one record: its own, or else its nearest
+/// ancestor's, walking `records` up the id path.
+fn effective_app(
+    own: Option<String>,
+    id: Option<&str>,
+    records: &BTreeMap<String, Slot>,
+) -> Option<String> {
+    own.or_else(|| {
+        let id = id?;
+        let mut prefix = id;
+        while let Some(idx) = prefix.rfind('/') {
+            prefix = &prefix[..idx];
+            if let Some(slot) = records.get(prefix)
+                && let Some(app) = &slot.record.app
+            {
+                return Some(app.clone());
+            }
+        }
+        None
+    })
+}
+
 /// Parse the payload — the bytes after `7501;` vte already split off — into
 /// a [`Report`]. `None` for a payload that is not the protocol's shape.
 /// `limit` receives which sequence limit a dropped payload broke.
@@ -313,7 +335,12 @@ pub fn parse(payload: &[u8], limit: &mut Option<Limit>) -> Option<Report> {
             Ok(Pair::App(a)) => app = Some(a),
             Ok(Pair::Title(t)) => title = Some(t),
             Ok(Pair::Msg(m)) => msg = Some(m),
-            Err(_) => {}
+            // A non-integer or out-of-range `progress` is a malformed pair:
+            // it is skipped and the rest still applies.
+            Err(PairError::Progress) => {}
+            // An unknown or missing `state`, a bad id, a broken limit, bad
+            // base64 or a control character drop the report whole.
+            Err(_) => return None,
         }
     }
     if !saw_pair {
@@ -356,10 +383,14 @@ impl Table {
     pub fn records(&self) -> Vec<Record> {
         let mut out = Vec::new();
         if let Some(slot) = &self.root {
-            out.push(slot.record.clone());
+            let mut record = slot.record.clone();
+            record.app = effective_app(slot.record.app.clone(), None, &self.records);
+            out.push(record);
         }
-        for slot in self.records.values() {
-            out.push(slot.record.clone());
+        for (id, slot) in &self.records {
+            let mut record = slot.record.clone();
+            record.app = effective_app(slot.record.app.clone(), Some(id), &self.records);
+            out.push(record);
         }
         out
     }
@@ -388,10 +419,22 @@ impl Table {
         }
     }
 
-    /// Clear the record `id` names and every record beneath it.
+    /// Clear the record `id` names and every record beneath it. A record
+    /// clears when it is the id, or when `id` is a proper path prefix of
+    /// it — `id` followed by a `/`, the ancestor test the grammar's
+    /// `/`-separation gives.
     pub fn clear_one(&mut self, id: &str) {
-        self.records
-            .retain(|other, _| !(other == id || other.strip_prefix(&format!("{id}/")).is_some()));
+        if id.is_empty() {
+            self.root = None;
+            self.records.clear();
+            return;
+        }
+        let mut boundary = String::with_capacity(id.len() + 1);
+        boundary.push_str(id);
+        boundary.push('/');
+        self.records.retain(|other, _| {
+            !(other == id || (other.len() > boundary.len() && other.starts_with(&boundary)))
+        });
         if self
             .root
             .as_ref()
@@ -413,3 +456,320 @@ impl Table {
 }
 // The `reduce` helper folds a Report::Status into the record a slot gets;
 // tests exercise it directly until phase 21b wires the frame.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(line: &str) -> Option<Report> {
+        let mut limit = None;
+        parse(line.as_bytes(), &mut limit)
+    }
+
+    fn status(line: &str) -> Report {
+        report(line).expect("a well-formed report parses")
+    }
+
+    #[test]
+    fn program_status_parses_a_report_into_a_record() {
+        let r = status(
+            "state=working:progress=42:id=build/test:app=cargo:title=YnVpbGRpbmcgdGhlIHByb2plY3Q=:msg=d2FpdGluZyBvbiB0aGUgdXNlcg==",
+        );
+        let Report::Status {
+            state,
+            id,
+            kind,
+            progress,
+            app,
+            title,
+            msg,
+        } = r
+        else {
+            panic!("expected a status report: {r:?}")
+        };
+        assert_eq!(state, Some(State::Working));
+        assert_eq!(kind, None);
+        assert_eq!(progress, Some(42));
+        assert_eq!(id, Some("build/test".to_string()));
+        assert_eq!(app, Some("cargo".to_string()));
+        assert_eq!(title.as_deref(), Some("building the project"));
+        assert_eq!(msg.as_deref(), Some("waiting on the user"));
+    }
+
+    #[test]
+    fn program_status_accepts_unpadded_base64() {
+        let r = status("state=done:title=YWJj:msg=YWJj");
+        let Report::Status { title, msg, .. } = r else {
+            panic!("expected a status report")
+        };
+        assert_eq!(title.as_deref(), Some("abc"));
+        assert_eq!(msg.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn program_status_replaces_a_record_whole() {
+        let mut t = Table::new();
+        t.apply(
+            Record {
+                id: Some("a".into()),
+                state: State::Working,
+                kind: None,
+                progress: Some(10),
+                app: Some("mk".into()),
+                title: Some("first".into()),
+                msg: None,
+            },
+            1,
+        );
+        t.apply(
+            Record {
+                id: Some("a".into()),
+                state: State::Done,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: Some("later".into()),
+            },
+            2,
+        );
+        let records = t.records();
+        assert_eq!(records.len(), 1);
+        let r = &records[0];
+        assert_eq!(r.state, State::Done, "the later report's state wins");
+        assert_eq!(r.progress, None, "keys the later report omits are gone");
+        assert_eq!(r.app, None, "whole-replacement, not a merge");
+        assert_eq!(r.msg.as_deref(), Some("later"));
+    }
+
+    #[test]
+    fn program_status_skips_a_malformed_pair_and_unknown_keys() {
+        let r =
+            status("state=working:zzz=whatever:badpairover=100:wedge kicked:junk:msg=d2FpdGluZw==");
+        let Report::Status { state, msg, .. } = r else {
+            panic!("expected a status report")
+        };
+        assert_eq!(state, Some(State::Working), "the rest still applies");
+        assert_eq!(msg.as_deref(), Some("waiting"));
+    }
+
+    #[test]
+    fn program_status_drops_an_unknown_or_missing_state() {
+        assert_eq!(report("state=sewing"), None, "an unknown state drops it");
+        assert_eq!(report("progress=50"), None, "a missing state drops it");
+    }
+
+    #[test]
+    fn program_status_drops_a_bad_id() {
+        let mut t = Table::new();
+        t.apply(
+            Record {
+                id: None,
+                state: State::Idle,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: None,
+            },
+            1,
+        );
+        assert!(parse_id(&"a".repeat(33)).is_none(), "33-byte segment");
+        assert!(parse_id(["a"; 9].join("/").as_str()).is_none(), "9 levels");
+        assert!(parse_id("bad/seg ment").is_none(), "a bad character");
+        assert_eq!(t.records().len(), 1, "the root record is unchanged");
+    }
+
+    #[test]
+    fn program_status_drops_a_report_over_a_limit() {
+        // msg at its limit and one past it
+        let at = STANDARD.encode("m".repeat(MSG_DECODED_LIMIT));
+        let over = STANDARD.encode("m".repeat(MSG_DECODED_LIMIT + 1));
+        assert!(report(&format!("state=working:msg={at}")).is_some());
+        assert_eq!(report(&format!("state=working:msg={over}")), None);
+        // title
+        let at = STANDARD.encode("t".repeat(TITLE_DECODED_LIMIT));
+        let over = STANDARD.encode("t".repeat(TITLE_DECODED_LIMIT + 1));
+        assert!(report(&format!("state=working:title={at}")).is_some());
+        assert_eq!(report(&format!("state=working:title={over}")), None);
+        // app
+        assert!(report("state=working:app=0123456789012345678901234567890a").is_some());
+        assert_eq!(
+            report("state=working:app=0123456789012345678901234567890ab"),
+            None
+        );
+        // key
+        assert_eq!(report("state=working:thiskeyistoolongfor=?"), None);
+        // payload over the sequence limit
+        let big = format!("state=working:{}", "x".repeat(5000));
+        let mut limit = None;
+        assert_eq!(parse(big.as_bytes(), &mut limit), None);
+        assert_eq!(limit, Some(Limit::Sequence));
+    }
+
+    #[test]
+    fn program_status_drops_bad_base64_and_control_characters() {
+        assert_eq!(report("state=working:msg=!!!not-base64"), None);
+        assert_eq!(report("state=working:msg=YQpi"), None, "a decoded \\n");
+        assert_eq!(report("state=working:msg=YWIJYw=="), None, "a decoded \\t");
+        assert_eq!(report("state=working:title=wps="), None, "U+009B");
+    }
+
+    #[test]
+    fn program_status_clear_removes_the_subtree() {
+        let mut t = Table::new();
+        for (id, state) in [("a", State::Idle), ("ab", State::Done)] {
+            t.apply(
+                Record {
+                    id: Some(id.into()),
+                    state,
+                    kind: None,
+                    progress: None,
+                    app: None,
+                    title: None,
+                    msg: None,
+                },
+                1,
+            );
+        }
+        assert_eq!(t.records().len(), 2);
+        t.clear_one("a");
+        let ids: Vec<Option<String>> = t.records().iter().map(|r| r.id.clone()).collect();
+        assert!(
+            ids.contains(&Some("ab".into())),
+            "clear on `a` keeps `ab` (a sibling, not beneath `a`): {ids:?}"
+        );
+        t.clear_one("ab");
+        assert_eq!(
+            t.records().len(),
+            0,
+            "clear of the last id empties the table"
+        );
+        t.apply(
+            Record {
+                id: Some("a/child".into()),
+                state: State::Working,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: None,
+            },
+            2,
+        );
+        assert_eq!(t.records().len(), 1);
+        t.clear_one("a");
+        let ids: Vec<Option<String>> = t.records().iter().map(|r| r.id.clone()).collect();
+        assert!(
+            !ids.contains(&Some("a/child".into())),
+            "clear on `a` removes the record beneath it: {ids:?}"
+        );
+        let mut t2 = Table::new();
+        t2.apply(
+            Record {
+                id: None,
+                state: State::Idle,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: None,
+            },
+            1,
+        );
+        t2.clear_one("");
+        assert_eq!(t2.root, None, "clear without an id empties the table");
+    }
+
+    #[test]
+    fn program_status_evicts_the_least_recently_updated_at_the_cap() {
+        let mut t = Table::new();
+        for i in 0..RECORDS_CAP {
+            t.apply(
+                Record {
+                    id: Some(format!("r{i}")),
+                    state: State::Idle,
+                    kind: None,
+                    progress: None,
+                    app: None,
+                    title: None,
+                    msg: None,
+                },
+                i as u64,
+            );
+        }
+        assert_eq!(t.records.len(), RECORDS_CAP);
+        // Touch r0 so it is no longer the least recently updated.
+        t.apply(
+            Record {
+                id: Some("r0".into()),
+                state: State::Idle,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: None,
+            },
+            RECORDS_CAP as u64,
+        );
+        t.apply(
+            Record {
+                id: Some("new".into()),
+                state: State::Idle,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: None,
+            },
+            RECORDS_CAP as u64 + 1,
+        );
+        assert_eq!(t.records.len(), RECORDS_CAP, "the cap holds");
+        assert!(t.records.contains_key("r0"), "the touched record survives");
+        assert!(
+            !t.records.contains_key("r1"),
+            "the least recently updated record went"
+        );
+    }
+
+    #[test]
+    fn program_status_app_inherits_from_the_nearest_ancestor() {
+        let mut t = Table::new();
+        t.apply(
+            Record {
+                id: Some("a".into()),
+                state: State::Idle,
+                kind: None,
+                progress: None,
+                app: Some("parent".into()),
+                title: None,
+                msg: None,
+            },
+            1,
+        );
+        t.apply(
+            Record {
+                id: Some("a/b".into()),
+                state: State::Idle,
+                kind: None,
+                progress: None,
+                app: None,
+                title: None,
+                msg: None,
+            },
+            2,
+        );
+        let mut out: BTreeMap<String, Option<String>> = BTreeMap::new();
+        for r in t.records() {
+            if let Some(id) = r.id {
+                out.insert(id, r.app);
+            }
+        }
+        assert_eq!(out.get("a").and_then(|a| a.as_deref()), Some("parent"));
+        assert_eq!(
+            out.get("a/b").and_then(|a| a.as_deref()),
+            Some("parent"),
+            "the child inherits its nearest ancestor's app at read time"
+        );
+    }
+}
