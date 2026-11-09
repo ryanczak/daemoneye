@@ -524,6 +524,12 @@ pub enum Response {
         /// never auto-approves such an edit and says so in the panel.
         #[serde(default)]
         sudo: bool,
+        /// true = an edit the client can never auto-approve: no session-wide
+        /// file-edit approval and no per-path grant covers it, `[A]` approves
+        /// **this** edit only, and the panel says so. Defaulted `false` so an
+        /// old frame still decodes.
+        #[serde(default)]
+        always_asked: bool,
     },
 
     /// Sent after each AI turn completes, carrying the prompt token count from

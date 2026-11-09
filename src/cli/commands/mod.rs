@@ -30,7 +30,7 @@ pub use ipc_client::{connect, recv, send_request};
 pub use lifecycle::{liveness_line, run_logs, run_ping, run_stop, run_stop_run};
 pub use profile::run_profile;
 pub use reindex::run_reindex;
-pub use reload::run_reload;
+pub use reload::{format_reload, run_reload};
 pub use run_resume::run_resume;
 pub use scorecard::{run_records_between, run_scorecard};
 pub use setup::run_setup;

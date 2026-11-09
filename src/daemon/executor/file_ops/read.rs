@@ -191,18 +191,15 @@ pub async fn run_read_file(
 
     {
         let candidate = super::resolve_path_for_guard(path);
-        let blocked = super::guard_roots().into_iter().flat_map(|root| {
-            [
-                root.join("etc").join("config.toml"),
-                root.join("etc").join("prompts").join("sre.toml"),
-            ]
-        });
+        let blocked = super::guard_roots()
+            .into_iter()
+            .flat_map(|root| [root.join("etc").join("prompts").join("sre.toml")]);
         if blocked.into_iter().any(|b| b == candidate) {
             return Ok(ToolCallOutcome::Result(
                 "Error: read_file cannot access daemoneye credential files \
-                 (etc/config.toml, etc/prompts/sre.toml). These may contain \
-                 sensitive API keys. Use read_script, read_runbook, read_memory, \
-                 or search_repository for other daemoneye-managed data."
+                 (etc/prompts/sre.toml). These may contain sensitive API keys. \
+                 Use read_script, read_runbook, read_memory, or search_repository \
+                 for other daemoneye-managed data."
                     .to_string(),
             ));
         }

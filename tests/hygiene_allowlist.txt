@@ -17,15 +17,12 @@ fn src/cli/commands/chat_loop.rs run_chat_ratatui 537
 fn src/cli/commands/setup.rs run_setup 256
 file src/cli/commands/top_tui.rs 954
 file src/daemon/executor/shell_exec.rs 826
-fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 723
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/status.rs run_status 449
 fn src/cli/viewer.rs viewer_loop 234
 fn src/daemon/context/background.rs run_compaction 184
-fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 214
 fn src/daemon/executor/file_ops/ops.rs run_create_with_spawn 164
-fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 271
 fn src/daemon/executor/file_ops/read.rs run_read_file 198
 fn src/daemon/executor/foreground.rs run_background 440
 fn src/daemon/executor/knowledge/shell_watch.rs watch_shell_with 159
@@ -46,3 +43,9 @@ fn src/shell/client.rs read_to_marker 236
 fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321
 fn src/tmux/cache.rs SessionCache::refresh 171
 fn src/webhook/process.rs maybe_analyze_alert 240
+file src/cli/commands/stream_prompts.rs 810
+fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 725
+fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 288
+fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 216
+test src/daemon/executor/file_ops/ops.rs 2289
+fn src/daemon/executor/file_ops/write.rs run_edit_file 151

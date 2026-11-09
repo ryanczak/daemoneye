@@ -296,6 +296,7 @@ pub(super) fn approvals_list_body(a: &SessionApproval) -> Vec<String> {
         "a ghost reaching outside its sandbox",
         "your own /shell shells",
         "a sudo file edit",
+        "an edit to the daemoneye config",
     ] {
         body.push(format!("  · {kind}"));
     }

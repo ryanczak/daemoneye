@@ -136,6 +136,18 @@ fn in_daemoneye_dir(path: &str) -> bool {
     guard_roots().iter().any(|root| candidate.starts_with(root))
 }
 
+/// True when `path` — resolved for guard purposes — is **exactly** the
+/// daemon host's `etc/config.toml`, under either the canonical root or the
+/// raw one. A symlink to it resolves to it, so it is the file; anything
+/// else under `~/.daemoneye/` (a `.bak`, a `.de_tmp`, a sibling `.toml`,
+/// `etc/prompts/sre.toml`) is not.
+fn is_daemoneye_config(path: &str) -> bool {
+    let candidate = resolve_path_for_guard(path);
+    guard_roots()
+        .iter()
+        .any(|root| candidate == root.join("etc").join("config.toml"))
+}
+
 /// Run `cmd` in a shell on `host` and return the shell's **real** captured
 /// output — the PTY-substrate transport for a file op, with no tmux pane and
 /// no polling.

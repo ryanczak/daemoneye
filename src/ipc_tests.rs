@@ -1229,11 +1229,45 @@ fn edit_file_prompt_root_flag_defaults_to_false() {
         new_content: Some("b".to_string()),
         dest_path: None,
         sudo: true,
+        always_asked: true,
     };
     match roundtrip_resp(&resp) {
         Response::EditFilePrompt { sudo, .. } => assert!(
             sudo,
             "a root edit's flag survives the wire round trip: sudo={sudo}"
+        ),
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn edit_file_prompt_without_the_flag_decodes() {
+    // An older daemon's line carries no always-asked key; the client must
+    // read it as false, or every pre-20a edit prompt would be un-sessionable.
+    let json = r#"{"EditFilePrompt":{"id":"ef_3","path":"/etc/hosts","operation":"edit","existing_content":"a","new_content":"b","dest_path":null}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+    match parsed {
+        Response::EditFilePrompt { always_asked, .. } => assert!(
+            !always_asked,
+            "a prompt without the key is not always asked: always_asked={always_asked}"
+        ),
+        _ => panic!("wrong variant"),
+    }
+
+    let resp = Response::EditFilePrompt {
+        id: "ef_4".to_string(),
+        path: "/etc/hosts".to_string(),
+        operation: "edit".to_string(),
+        existing_content: Some("a".to_string()),
+        new_content: Some("b".to_string()),
+        dest_path: None,
+        sudo: false,
+        always_asked: true,
+    };
+    match roundtrip_resp(&resp) {
+        Response::EditFilePrompt { always_asked, .. } => assert!(
+            always_asked,
+            "a config edit's flag survives the wire round trip: always_asked={always_asked}"
         ),
         _ => panic!("wrong variant"),
     }

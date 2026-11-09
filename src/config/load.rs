@@ -129,6 +129,21 @@ fn dirs_next() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
+/// Parse `config.toml` text the way [`Config::load`] does: deserialize,
+/// run the validators, and hand back the `Config`. Shared by `load` and
+/// the `edit_file` config path, which validates an edited file in memory
+/// before prompting — the error carries the same `parsing <path>` context
+/// either way.
+pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<Config> {
+    let mut cfg: Config =
+        toml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
+    cfg.validate_pricing();
+    cfg.validate_compaction();
+    cfg.validate_hosts();
+    cfg.validate_budget();
+    Ok(cfg)
+}
+
 impl Config {
     /// Resolve a named model entry.  `name = None` resolves the `"default"` model.
     /// Falls back to `"default"` if the named key is absent, then to any first
@@ -160,13 +175,7 @@ impl Config {
         }
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let mut cfg: Config =
-            toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        cfg.validate_pricing();
-        cfg.validate_compaction();
-        cfg.validate_hosts();
-        cfg.validate_budget();
-        Ok(cfg)
+        super::parse_config_text(&path, &text)
     }
 
     /// A negative `budget.max_cost_per_day` is warned about and treated as

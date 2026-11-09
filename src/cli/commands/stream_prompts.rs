@@ -709,18 +709,26 @@ pub(super) async fn prompt_schedule_write_ratatui(
 }
 
 /// A sudo edit is never auto-approved: neither the session-wide file-edit
-/// approval nor a per-path one covers an edit that runs as root.
+/// approval nor a per-path one covers an edit that runs as root. Neither
+/// covers a config edit (`always_asked`) either.
 pub(super) fn edit_file_auto_approved(
     approval: &super::approval::SessionApproval,
     path: &str,
     sudo: bool,
+    always_asked: bool,
 ) -> bool {
-    !sudo && (approval.file_edits_all || approval.file_edits.contains(path))
+    !sudo && !always_asked && (approval.file_edits_all || approval.file_edits.contains(path))
 }
 
-/// `[A]pprove for session` on a sudo edit approves this edit only.
-pub(super) fn edit_file_grants_session(is_session: bool, all_approved: bool, sudo: bool) -> bool {
-    is_session && !all_approved && !sudo
+/// `[A]pprove for session` on a sudo edit or a config edit approves this
+/// edit only.
+pub(super) fn edit_file_grants_session(
+    is_session: bool,
+    all_approved: bool,
+    sudo: bool,
+    always_asked: bool,
+) -> bool {
+    is_session && !all_approved && !sudo && !always_asked
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -735,6 +743,7 @@ pub(super) async fn prompt_edit_file_ratatui(
     new_content: Option<&str>,
     dest_path: Option<&str>,
     sudo: bool,
+    always_asked: bool,
 ) -> (bool, Option<String>) {
     let op_label = match operation {
         "create" => "create file",
@@ -745,6 +754,10 @@ pub(super) async fn prompt_edit_file_ratatui(
     let _ = renderer.commit(&format!("\n  ⚙ AI wants to {}: {}\n", op_label, path));
     if sudo {
         let _ = renderer.commit("  ⚠ runs as root (sudo) on the host\n");
+    }
+    if always_asked {
+        let _ = renderer
+            .commit("  ⚠ config edits cannot be session-approved — [A] approves this edit only\n");
     }
     if operation == "copy"
         && let Some(dst) = dest_path
@@ -765,7 +778,7 @@ pub(super) async fn prompt_edit_file_ratatui(
 
     let all_approved = approval.file_edits_all;
 
-    if edit_file_auto_approved(approval, path, sudo) {
+    if edit_file_auto_approved(approval, path, sudo, always_asked) {
         let _ = renderer.commit("  ✓ auto-approved (session)\n");
         return (true, None);
     }
@@ -775,7 +788,7 @@ pub(super) async fn prompt_edit_file_ratatui(
         prompt_with_session_approve_view(renderer, stdin, status, &prompt_text, &view).await;
 
     if approved {
-        if edit_file_grants_session(is_session, all_approved, sudo) {
+        if edit_file_grants_session(is_session, all_approved, sudo, always_asked) {
             approval.file_edits.insert(path.to_string());
             let _ = renderer.commit(&format!(
                 "  ✓ approved — edits to '{}' auto-approved for this session\n",
@@ -784,6 +797,9 @@ pub(super) async fn prompt_edit_file_ratatui(
         } else if sudo {
             let _ =
                 renderer.commit("  ✓ approved — sudo edits are never approved for the session\n");
+        } else if always_asked {
+            let _ =
+                renderer.commit("  ✓ approved — config edits are never approved for the session\n");
         } else {
             let _ = renderer.commit("  ✓ approved\n");
         }

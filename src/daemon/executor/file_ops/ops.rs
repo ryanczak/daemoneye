@@ -141,6 +141,7 @@ where
                     new_content: Some(new_string.to_string()),
                     dest_path: None,
                     sudo,
+                    always_asked: false,
                 },
             )
             .await?;
@@ -288,16 +289,30 @@ where
 
     let updated = original.replacen(old_string, new_string, 1);
 
+    // A config edit is validated before anything is shown or prompted: the
+    // replaced text must parse as the daemon's `Config`, so the daemon never
+    // fails to start on its own change. On refusal nothing is prompted and
+    // the file is untouched.
+    let is_config = super::is_daemoneye_config(path);
+    if is_config && let Err(e) = crate::config::parse_config_text(&std_path, &updated) {
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: the edit would leave {} unparseable — the file is unchanged. \
+             {e:#}",
+            path
+        )));
+    }
+
     send_response_split(
         tx,
         Response::EditFilePrompt {
             id: id.to_string(),
             path: path.to_string(),
             operation: "edit".to_string(),
-            existing_content: Some(original.clone()),
-            new_content: Some(updated.clone()),
+            existing_content: Some(crate::ai::mask_sensitive(&original)),
+            new_content: Some(crate::ai::mask_sensitive(&updated)),
             dest_path: None,
             sudo: false,
+            always_asked: is_config,
         },
     )
     .await?;
@@ -360,10 +375,36 @@ where
 
     let old_lines = old_string.lines().count();
     let new_lines = new_string.lines().count();
-    Ok(ToolCallOutcome::Result(format!(
+    let mut result = format!(
         "Edited {}: replaced {} line(s) with {} line(s).",
         path, old_lines, new_lines
-    )))
+    );
+    // A config edit makes the daemon re-read and live-swap what it can; the
+    // report rides on the tool result. A failed reload (or no installed
+    // handle — the CLI-side unit tests) never undoes the write, but it is
+    // named so the model knows what the running config did and did not pick
+    // up.
+    if is_config {
+        result.push_str(&format_edit_reload_report());
+    }
+    Ok(ToolCallOutcome::Result(result))
+}
+
+/// Run the phase-19 reload and render its outcome the way `daemoneye
+/// reload` does. The formatting seam takes the error only: the applied /
+/// restart-required lists come out of [`crate::cli::commands::format_reload`]
+/// directly, so the wording stays in one place.
+fn format_edit_reload_report() -> String {
+    match crate::config::daemon_reload() {
+        Ok((applied, restart_required)) => format!(
+            "\n\nReload: {}",
+            crate::cli::commands::format_reload(&applied, &restart_required)
+        ),
+        Err(e) => format!(
+            "\n\nThe write succeeded, but the reload refused it: {e:#}. \
+             Restart the daemon (or run `daemoneye reload`) to pick it up."
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +509,7 @@ where
                     new_content: Some(content.to_string()),
                     dest_path: None,
                     sudo: false,
+                    always_asked: false,
                 },
             )
             .await?;
@@ -542,6 +584,7 @@ where
             new_content: Some(content.to_string()),
             dest_path: None,
             sudo: false,
+            always_asked: false,
         },
     )
     .await?;
@@ -689,18 +732,29 @@ mod tests {
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
                         for line in text.lines() {
-                            if let Ok(Response::EditFilePrompt { id, path, .. }) =
-                                serde_json::from_str::<Response>(line)
+                            if let Ok(Response::EditFilePrompt {
+                                id,
+                                path,
+                                sudo,
+                                always_asked,
+                                existing_content,
+                                new_content,
+                                ..
+                            }) = serde_json::from_str::<Response>(line)
                             {
                                 let reply = Request::EditFileResponse {
                                     id,
                                     approved: true,
                                     user_message: None,
                                 };
-                                prompt_ref.lock().unwrap().push(path);
+                                prompt_ref.lock().unwrap().push(format!(
+                                    "edit:{path}:sudo={sudo}:always_asked={always_asked}\
+                                     \nexisting:{existing_content:?}\nnew:{new_content:?}"
+                                ));
                                 let mut wire = serde_json::to_string(&reply).unwrap();
                                 wire.push('\n');
                                 let _ = pump_out.write_all(wire.as_bytes()).await;
+                                continue;
                             }
                         }
                     }
@@ -735,18 +789,22 @@ mod tests {
                     Ok(n) => {
                         let text = String::from_utf8_lossy(&buf[..n]).to_string();
                         for line in text.lines() {
-                            if let Ok(Response::EditFilePrompt { id, path, sudo, .. }) =
-                                serde_json::from_str::<Response>(line)
+                            if let Ok(Response::EditFilePrompt {
+                                id,
+                                path,
+                                sudo,
+                                always_asked,
+                                ..
+                            }) = serde_json::from_str::<Response>(line)
                             {
                                 let reply = Request::EditFileResponse {
                                     id,
                                     approved: true,
                                     user_message: None,
                                 };
-                                prompt_ref
-                                    .lock()
-                                    .unwrap()
-                                    .push(format!("edit:{path}:sudo={sudo}"));
+                                prompt_ref.lock().unwrap().push(format!(
+                                    "edit:{path}:sudo={sudo}:always_asked={always_asked}"
+                                ));
                                 let mut wire = serde_json::to_string(&reply).unwrap();
                                 wire.push('\n');
                                 let _ = pump_out.write_all(wire.as_bytes()).await;
@@ -2403,6 +2461,479 @@ mod tests {
         assert!(
             timeout.contains("may still complete") && !timeout.contains("was not changed"),
             "timeout: indeterminate: {timeout}"
+        );
+    }
+
+    // ── M36 phase-20a: the daemon's own config.toml is the admitted edit ──
+
+    /// A test `HOME` with the config holding a secret, so the masked-prompt
+    /// test drives a real file.
+    fn config_edit_test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+        let (guard, dir) = crate::test_home();
+        std::fs::write(
+            dir.path().join(".daemoneye/etc/config.toml"),
+            "[models.default]\nprovider = \"anthropic\"\napi_key = \"sk-ant-secret-value-0001\"\n\
+             model = \"claude\"\n\n[limits]\ntotal_tool_calls_per_turn = 0\n",
+        )
+        .unwrap();
+        (guard, dir)
+    }
+
+    /// The config path with `operation` create, delete or copy, `host` naming
+    /// a configured host, or `sudo: true` — each is refused before any prompt.
+    #[tokio::test]
+    async fn edit_file_config_refuses_create_delete_copy_host_and_sudo() {
+        let (_home, dir) = config_edit_test_home();
+        let cfg = dir.path().join(".daemoneye/etc/config.toml");
+        let elsewhere = dir.path().join("elsewhere.toml");
+        let refused = |args, out: &'static str| async move {
+            let outcome = super::super::run_edit_file(
+                args,
+                Some("sess-20a"),
+                super::super::super::GhostCtx {
+                    policy: None,
+                    is_ghost: false,
+                },
+                &mut tokio::io::sink(),
+                &mut tokio::io::BufReader::new(tokio::io::empty()),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{out} must resolve: {e}"));
+            let ToolCallOutcome::Result(s) = outcome else {
+                panic!("expected a Result outcome for {out}")
+            };
+            s
+        };
+
+        let create = refused(
+            super::super::EditArgs {
+                id: "t20a-c",
+                path: cfg.to_str().unwrap(),
+                operation: "create",
+                old_string: None,
+                new_string: None,
+                content: Some("nope\n"),
+                dest_path: None,
+                host: None,
+                sudo: false,
+            },
+            "the config create",
+        )
+        .await;
+        assert!(
+            create.contains("only operation=\"edit\""),
+            "the config create is refused: {create:?}"
+        );
+
+        let delete = refused(
+            super::super::EditArgs {
+                id: "t20a-d",
+                path: cfg.to_str().unwrap(),
+                operation: "delete",
+                old_string: None,
+                new_string: None,
+                content: None,
+                dest_path: None,
+                host: None,
+                sudo: false,
+            },
+            "the config delete",
+        )
+        .await;
+        assert!(
+            delete.contains("only operation=\"edit\""),
+            "the config delete is refused: {delete:?}"
+        );
+
+        let copy = refused(
+            super::super::EditArgs {
+                id: "t20a-p",
+                path: cfg.to_str().unwrap(),
+                operation: "copy",
+                old_string: None,
+                new_string: None,
+                content: None,
+                dest_path: Some(elsewhere.to_str().unwrap()),
+                host: None,
+                sudo: false,
+            },
+            "the config copy",
+        )
+        .await;
+        assert!(
+            copy.contains("only operation=\"edit\""),
+            "the config copy is refused: {copy:?}"
+        );
+
+        let host = refused(
+            super::super::EditArgs {
+                id: "t20a-h",
+                path: cfg.to_str().unwrap(),
+                operation: "edit",
+                old_string: Some("total_tool_calls_per_turn = 0"),
+                new_string: Some("total_tool_calls_per_turn = 50"),
+                content: None,
+                dest_path: None,
+                host: Some("de-test-unreachable.invalid"),
+                sudo: false,
+            },
+            "the config edit with host",
+        )
+        .await;
+        assert!(
+            host.contains("daemon host's file"),
+            "a config edit naming a host is refused: {host:?}"
+        );
+        assert!(
+            !host.contains("EditFile"),
+            "nothing is offered for approval: {host:?}"
+        );
+
+        let sudo_edit = refused(
+            super::super::EditArgs {
+                id: "t20a-s",
+                path: cfg.to_str().unwrap(),
+                operation: "edit",
+                old_string: Some("total_tool_calls_per_turn = 0"),
+                new_string: Some("total_tool_calls_per_turn = 50"),
+                content: None,
+                dest_path: None,
+                host: None,
+                sudo: true,
+            },
+            "the config sudo edit",
+        )
+        .await;
+        assert!(
+            sudo_edit.contains("sudo is not supported"),
+            "a config edit as root is refused: {sudo_edit:?}"
+        );
+
+        // The file is byte-for-byte unchanged after every refusal.
+        let after = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            after.contains("total_tool_calls_per_turn = 0"),
+            "the file is unchanged: {after:?}"
+        );
+    }
+
+    /// A sibling `.toml`, a `.bak` and the `.de_tmp` scratch file keep
+    /// today's config-directory refusal.
+    #[tokio::test]
+    async fn edit_file_still_refuses_other_daemoneye_paths() {
+        let (_home, dir) = config_edit_test_home();
+        let etc = dir.path().join(".daemoneye/etc");
+        for name in ["other.toml", "config.toml.bak", "config.toml.de_tmp"] {
+            let path = etc.join(name);
+            std::fs::write(&path, "sibling\n").unwrap();
+            let outcome = super::super::run_edit_file(
+                super::super::EditArgs {
+                    id: "t20a-other",
+                    path: path.to_str().unwrap(),
+                    operation: "edit",
+                    old_string: Some("sibling"),
+                    new_string: Some("edited"),
+                    content: None,
+                    dest_path: None,
+                    host: None,
+                    sudo: false,
+                },
+                Some("sess-20a"),
+                super::super::super::GhostCtx {
+                    policy: None,
+                    is_ghost: false,
+                },
+                &mut tokio::io::sink(),
+                &mut tokio::io::BufReader::new(tokio::io::empty()),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{name} must resolve: {e}"));
+            let ToolCallOutcome::Result(s) = outcome else {
+                panic!("expected a Result outcome for {name}")
+            };
+            assert!(
+                s.contains("cannot access the daemoneye configuration"),
+                "{name} stays refused: {s:?}"
+            );
+        }
+    }
+
+    /// An edit whose result does not parse as a `Config` is refused with the
+    /// TOML error, nothing is prompted, and the file is byte-for-byte
+    /// unchanged.
+    #[tokio::test]
+    async fn edit_file_config_refuses_an_unparseable_result_and_leaves_the_file() {
+        let (_home, dir) = config_edit_test_home();
+        let cfg = dir.path().join(".daemoneye/etc/config.toml");
+        let before = std::fs::read_to_string(&cfg).unwrap();
+        let outcome = super::super::run_edit_file(
+            super::super::EditArgs {
+                id: "t20a-bad",
+                path: cfg.to_str().unwrap(),
+                operation: "edit",
+                old_string: Some("total_tool_calls_per_turn = 0"),
+                new_string: Some("limits = total [ [ [ broken"),
+                content: None,
+                dest_path: None,
+                host: None,
+                sudo: false,
+            },
+            Some("sess-20a"),
+            super::super::super::GhostCtx {
+                policy: None,
+                is_ghost: false,
+            },
+            &mut tokio::io::sink(),
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the refusal resolves: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("unparseable"),
+            "the refusal names the TOML failure: {s:?}"
+        );
+        assert!(
+            !s.contains("EditFile"),
+            "nothing is offered for approval: {s:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&cfg).unwrap(),
+            before,
+            "the file is byte-for-byte unchanged"
+        );
+    }
+
+    /// An `old_string` copied from the masked read carries the mask
+    /// placeholder, which is not in the file's real contents — so it does not
+    /// match, nothing is written, and the secret can never be written back.
+    #[tokio::test]
+    async fn edit_file_config_masked_placeholder_never_matches() {
+        let (_home, dir) = config_edit_test_home();
+        let cfg = dir.path().join(".daemoneye/etc/config.toml");
+        let before = std::fs::read_to_string(&cfg).unwrap();
+        let outcome = super::super::run_edit_file(
+            super::super::EditArgs {
+                id: "t20a-mask",
+                path: cfg.to_str().unwrap(),
+                operation: "edit",
+                old_string: Some("api_key = \"<REDACTED>\"\n"),
+                new_string: Some("api_key = \"<REDACTED>-edited\"\n"),
+                content: None,
+                dest_path: None,
+                host: None,
+                sudo: false,
+            },
+            Some("sess-20a"),
+            super::super::super::GhostCtx {
+                policy: None,
+                is_ghost: false,
+            },
+            &mut tokio::io::sink(),
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the refusal resolves: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("old_string not found"),
+            "a masked placeholder does not match the real contents: {s:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&cfg).unwrap(),
+            before,
+            "nothing was written"
+        );
+    }
+
+    /// The config edit's prompt is masked and is never auto-approved: the
+    /// frame carries `always_asked = true` even with the pump's blanket
+    /// approval, and neither the existing nor the new content contains the
+    /// secret value.
+    #[tokio::test]
+    async fn edit_file_config_prompt_is_masked_and_always_asked() {
+        let (_home, dir) = config_edit_test_home();
+        let cfg = dir.path().join(".daemoneye/etc/config.toml");
+        let (mut tx, mut rx, prompts) = auto_approve_channel().await.unwrap();
+        let outcome = run_edit_with_spawn(
+            RunEditArgs {
+                id: "t20a-prompt",
+                path: cfg.to_str().unwrap(),
+                old_string: "total_tool_calls_per_turn = 0",
+                new_string: "total_tool_calls_per_turn = 50",
+                host: &crate::host::HostId::Local,
+                sudo: false,
+            },
+            Some("sess-20a"),
+            &mut tx,
+            &mut rx,
+            Box::new(|_id| Box::pin(async { Ok(()) })),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the approved write resolves: {e}"));
+        let got = prompts.lock().unwrap().clone();
+        assert_eq!(got.len(), 1, "exactly one EditFilePrompt fires: {got:?}");
+        assert!(
+            got[0].contains("always_asked=true"),
+            "the prompt is never auto-approved on the wire: {got:?}"
+        );
+        assert!(
+            !got[0].contains("sk-ant-secret-value-0001"),
+            "the prompt never carries the secret value: {got:?}"
+        );
+        assert!(
+            got[0].contains("REDACTED"),
+            "the prompt's contents are masked: {got:?}"
+        );
+        let written = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            written.contains("total_tool_calls_per_turn = 50"),
+            "the write used the unmasked strings and landed: {written:?}"
+        );
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(s.contains("Edited"), "the write reports success: {s:?}");
+        assert!(
+            s.contains("The write succeeded, but the reload refused it"),
+            "with no installed handle the result names the reload's error \
+             without failing the write: {s:?}"
+        );
+        assert!(
+            s.contains("no config handle is installed"),
+            "the reload's own error comes back: {s:?}"
+        );
+    }
+
+    /// The reload report after a config edit renders through the seam this
+    /// file imports: `format_reload`'s two lists, and the refusal rendering
+    /// the un-installed-handle error comes back in.
+    #[test]
+    fn edit_file_config_reports_the_reload_after_the_write() {
+        assert_eq!(
+            format!(
+                "\n\nReload: {}",
+                crate::cli::commands::format_reload(
+                    &["limits.total_tool_calls_per_turn".to_string()],
+                    &[],
+                )
+            ),
+            "\n\nReload: applied (1 key):\n  limits.total_tool_calls_per_turn\n\
+             waiting for a restart: (none)",
+            "the applied keys render through the formatter daemoneye reload uses"
+        );
+        assert_eq!(
+            format!(
+                "\n\nReload: {}",
+                crate::cli::commands::format_reload(&[], &[])
+            ),
+            "\n\nReload: nothing changed",
+            "a no-change reload reads as `nothing changed`"
+        );
+        let e = anyhow::Error::msg("no config handle is installed — reload is a daemon-side op");
+        let s = format!(
+            "\n\nThe write succeeded, but the reload refused it: {e:#}. \
+             Restart the daemon (or run `daemoneye reload`) to pick it up."
+        );
+        assert!(
+            s.contains("The write succeeded"),
+            "a refused reload never undoes the write: {s:?}"
+        );
+        assert!(
+            s.contains("no config handle is installed"),
+            "the reload's error is named: {s:?}"
+        );
+    }
+
+    /// The seeded template round-trips through the validate-and-write path:
+    /// copy `assets/etc/config.toml` into the test home (the real artifact,
+    /// not a hand-written TOML string), read it, and apply a `[limits]` edit.
+    /// Paused: the approval await's 120 s real-time deadline never expires
+    /// while the empty pipe reads EOF at once.
+    #[tokio::test(start_paused = true)]
+    async fn the_seeded_template_round_trips_through_a_config_edit() {
+        let (_home, dir) = crate::test_home();
+        let cfg = dir.path().join(".daemoneye/etc/config.toml");
+        std::fs::copy("assets/etc/config.toml", &cfg).unwrap();
+
+        // The template is 429 lines; the default window is 200, so read the
+        // `[limits]` block at its own page too.
+        let read = super::super::read::run_read_file(
+            cfg.to_str().unwrap(),
+            Some(200),
+            Some(60),
+            None,
+            None,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the seeded template's limits page is readable: {e}"));
+        let ToolCallOutcome::Result(read_text) = read else {
+            panic!("expected a Result outcome")
+        };
+        let limits_line = read_text
+            .lines()
+            .find(|l| l.contains("total_tool_calls_per_turn"))
+            .unwrap_or("(absent)");
+        assert!(
+            limits_line.contains("= 0") && limits_line.contains("max total"),
+            "the seeded template's [limits] block came back: {limits_line:?} in {read_text:?}"
+        );
+
+        // The auto-approve pump answers the prompt the client would.
+        let (mut sink_tx, mut sink_rx, _prompts) = auto_approve_channel().await.unwrap();
+
+        let outcome = super::super::run_edit_file(
+            super::super::EditArgs {
+                id: "t20a-template",
+                path: cfg.to_str().unwrap(),
+                operation: "edit",
+                old_string: Some(
+                    "# [limits]\n# per_tool_batch            = 100    # max consecutive",
+                ),
+                new_string: Some(
+                    "[limits]\ntotal_tool_calls_per_turn = 42\n\n\
+                     # [limits]\n# per_tool_batch            = 100    # max consecutive",
+                ),
+                content: None,
+                dest_path: None,
+                host: None,
+                sudo: false,
+            },
+            Some("sess-20a"),
+            super::super::super::GhostCtx {
+                policy: None,
+                is_ghost: false,
+            },
+            &mut sink_tx,
+            &mut sink_rx,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("the template edit resolves: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("Edited"),
+            "the template edit is a normal approved edit: {s:?}"
+        );
+        let after = std::fs::read_to_string(&cfg).unwrap();
+        assert!(
+            after.contains("total_tool_calls_per_turn = 42\n"),
+            "the [limits] key landed uncommented: {}",
+            after
+                .lines()
+                .find(|l| l.starts_with("total_tool_"))
+                .unwrap_or("(absent)")
+        );
+        let parsed = crate::config::parse_config_text(&cfg, &after)
+            .unwrap_or_else(|e| panic!("the edited template must parse: {e}"));
+        assert_eq!(
+            parsed.limits.total_tool_calls_per_turn, 42,
+            "the running config would pick the value up"
         );
     }
 }

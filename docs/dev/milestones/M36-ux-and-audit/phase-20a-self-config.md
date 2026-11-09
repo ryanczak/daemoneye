@@ -236,3 +236,112 @@ tests. Remaining work, in order. Each step ends where it says.
 6. **Spec steps 5–7:** run the E2E block once into
    `.rexymcp/output/p20a-e2e.txt` and paste that file verbatim. Then write
    Findings, which must name the restored guard, and commit.
+
+### Update — 2026-11-09 18:20 (red runs)
+
+The eleven named tests were written alongside the implementation by the
+first (budget_exhausted) run, so no honest pre-code red run exists; none
+was reconstructed.
+
+### Update — 2026-11-09 18:2x (mutation)
+
+Making the always-asked flag a hard `false` for the config in
+`ops.rs` (line 315) turns the test red; restoring `is_config` turns it
+green. Real output follows.
+
+`cargo test --lib edit_file_config_prompt_is_masked_and_always_asked`
+after the mutation (`.rexymcp/output/p20a-mutation-red.txt`):
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.27s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+
+running 1 test
+test daemon::executor::file_ops::ops::tests::edit_file_config_prompt_is_masked_and_always_asked ... FAILED
+
+failures:
+
+---- daemon::executor::file_ops::ops::tests::edit_file_config_prompt_is_masked_and_always_asked stdout ----
+
+thread 'daemon::executor::file_ops::ops::tests::edit_file_config_prompt_is_masked_and_always_asked' (672201) panicked at src/daemon/executor/file_ops/ops.rs:2780:9:
+the prompt is never auto-approved on the wire: ["edit:/tmp/.tmpTEE6zy/.daemoneye/etc/config.toml:sudo=false:always_asked=false\nexisting:Some(\"[models.default]\\nprovider = \\\"anthropic\\\"\\n<REDACTED>\\nmodel = \\\"claude\\\"\\n\\n[limits]\\ntotal_tool_calls_per_turn = 0\\n\")\nnew:Some(\"[models.default]\\nprovider = \\\"anthropic\\\"\\n<REDACTED>\\nmodel = \\\"claude\\\"\\n\\n[limits]\\ntotal_tool_calls_per_turn = 50\\n\")"]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::file_ops::ops::tests::edit_file_config_prompt_is_masked_and_always_asked
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2739 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `--lib`
+```
+
+After restoring (`.rexymcp/output/p20a-mutation-green.txt`):
+
+```
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.27s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-2914766807b85c19)
+
+running 1 test
+test daemon::executor::file_ops::ops::tests::edit_file_config_prompt_is_masked_and_always_asked ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2740 filtered out; finished in 0.03s
+```
+
+### Update — 2026-11-09 18:40 (end-to-end verification)
+
+The § End-to-end verification block ran exactly once, redirected to
+`.rexymcp/output/p20a-e2e.txt`; the block is pasted verbatim below and the
+file's content is identical.
+
+```
+read_file_admits_the_config_with_secrets_masked passed=1 failed=0
+read_file_still_refuses_the_prompt_file passed=1 failed=0
+edit_file_config_refuses_create_delete_copy_host_and_sudo passed=1 failed=0
+edit_file_still_refuses_other_daemoneye_paths passed=1 failed=0
+edit_file_config_refuses_an_unparseable_result_and_leaves_the_file passed=1 failed=0
+edit_file_config_masked_placeholder_never_matches passed=1 failed=0
+edit_file_config_prompt_is_masked_and_always_asked passed=1 failed=0
+edit_file_config_reports_the_reload_after_the_write passed=1 failed=0
+config_edit_is_never_auto_approved passed=1 failed=0
+edit_file_prompt_without_the_flag_decodes passed=1 failed=0
+the_seeded_template_round_trips_through_a_config_edit passed=1 failed=0
+config_read_blocked=0
+claude_md_blocked_claim=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2820 failed=0
+```
+
+The four `--test` result lines are `hygiene`, `doc_truth`, `bug_tracker`
+and `lock_invariant` in that order; the clippy line is its
+`Finished ... dev profile` tail.
+
+### Findings — 2026-11-09
+
+- Step 1's flake was the executor's own regression: rewriting
+  `read_bounds_symlinked_home_blocks_config` into
+  `read_bounds_symlinked_home_admits_the_masked_config` had dropped the
+  test's first line, `let _guard = crate::test_home_guard();`, so the test
+  set `HOME` without the lock and a concurrent config test saw
+  `always_asked=false`. The guard is back; `cargo test --lib file_ops` is
+  `ok` five runs in a row (76 passed; 0 failed each).
+- The hygiene gate reported `stream_prompts.rs` (810 > 800),
+  `ask_with_session_ratatui` (725 > 723), `run_edit_with_spawn`
+  (288 > 271) and `run_copy_with_spawn` (216 > 214) over their caps, and
+  `ops.rs`'s test module at 2289 > 2000 plus two not-yet-allowlisted
+  subjects (`run_edit_file` at 151, the `ops.rs` test module). Per the
+  Authorizations, the allowlist entries were raised to today's measured
+  values rather than splitting the code.
+- One full-suite run matched the escalation note's transitive-victim
+  shape in `bg_shell`: `bg_completion_on_a_failed_outcome_records_status_failed`
+  failed `status: completed`-vs-`failed` on HEAD before any 20a edit ran
+  (reproduced in a clean worktree of HEAD), but ob 400 repeat-runs under
+  `strace -f -e trace=kill` with the suite's normal contention removed it
+  gave 0 fails out of 400; with the restored test-home guard in place the
+  full `cargo test --lib` runs green (`2731 passed; 0 failed`).
+  Left to the reviewer as an adjacent, out-of-scope observation.

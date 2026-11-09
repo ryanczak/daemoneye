@@ -622,6 +622,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 new_content,
                 dest_path,
                 sudo,
+                always_asked,
             } => {
                 let hint = approval.hint();
                 let sb = prompt_status(
@@ -645,6 +646,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     new_content.as_deref(),
                     dest_path.as_deref(),
                     sudo,
+                    always_asked,
                 )
                 .await;
                 send_request(

@@ -336,8 +336,11 @@ async fn read_bounds_byte_cap_single_line() {
     );
 }
 
+/// A symlinked `~/.daemoneye` pointing to the real one: the config at its
+/// real path is admitted (it is the file) and comes back masked — the
+/// phase-14 preservation now carries the phase-20a admission.
 #[tokio::test]
-async fn read_bounds_symlinked_home_blocks_config() {
+async fn read_bounds_symlinked_home_admits_the_masked_config() {
     let _guard = crate::test_home_guard();
     let tmp = TmpHome::new();
     let real = tmp.0.join("de-real");
@@ -352,10 +355,13 @@ async fn read_bounds_symlinked_home_blocks_config() {
     let ToolCallOutcome::Result(s) = result else {
         panic!()
     };
-    assert!(s.contains("credential files"), "got: {s}");
     assert!(
-        !s.contains("api_key"),
-        "the key file must not come back: {s}"
+        !s.contains("sk-secret"),
+        "the key file's secret is masked: {s}"
+    );
+    assert!(
+        s.contains("<REDACTED>"),
+        "the masking runs on the admitted config: {s}"
     );
 }
 
@@ -974,4 +980,68 @@ async fn read_file_on_pinky_end_to_end() {
         ])
         .status();
     let _ = (_home, dir);
+}
+
+// ── M36 phase-20a: the daemon's own config.toml is the admitted file ──────
+
+/// A test `HOME` with the config seeded and a secret in it: the shape the
+/// masked read test drives.
+fn config_read_test_home() -> (crate::TestHomeGuard, tempfile::TempDir) {
+    let (guard, dir) = crate::test_home();
+    std::fs::write(
+        dir.path().join(".daemoneye/etc/config.toml"),
+        "[models.default]\nprovider = \"anthropic\"\napi_key = \"sk-ant-secret-value-0001\"\n\
+         model = \"claude\"\n\n[hosts.web01]\nssh = \"matt@web01.lan\"\npassword = \"hunter2\"\n",
+    )
+    .unwrap();
+    (guard, dir)
+}
+
+/// The config's contents come back through the same masking every read
+/// gets: the api_key value and the host's password never appear.
+#[tokio::test]
+async fn read_file_admits_the_config_with_secrets_masked() {
+    let (_home, dir) = config_read_test_home();
+    let cfg = dir.path().join(".daemoneye/etc/config.toml");
+    let result = super::run_read_file(cfg.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(
+        s.contains("provider = \"anthropic\""),
+        "the admitted file's non-secret content is visible: {s:?}"
+    );
+    assert!(
+        !s.contains("sk-ant-secret-value-0001"),
+        "the api_key value must never appear: {s:?}"
+    );
+    assert!(
+        !s.contains("hunter2"),
+        "the host password must never appear: {s:?}"
+    );
+    assert!(
+        s.contains("<REDACTED>"),
+        "the secret value is masked in place: {s:?}"
+    );
+}
+
+/// Preservation: `etc/prompts/sre.toml` keeps today's refusal.
+#[tokio::test]
+async fn read_file_still_refuses_the_prompt_file() {
+    let (_home, dir) = config_read_test_home();
+    let sre = dir.path().join(".daemoneye/etc/prompts/sre.toml");
+    std::fs::create_dir_all(sre.parent().unwrap()).unwrap();
+    std::fs::write(&sre, "system = \"x\"\n").unwrap();
+    let result = super::run_read_file(sre.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(
+        s.contains("credential files"),
+        "the prompt file stays refused: {s:?}"
+    );
 }

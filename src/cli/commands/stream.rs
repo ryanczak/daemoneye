@@ -395,24 +395,65 @@ mod tests {
         };
         a.file_edits.insert("/etc/x".to_string());
         assert!(
-            !edit_file_auto_approved(&a, "/etc/x", true),
+            !edit_file_auto_approved(&a, "/etc/x", true, false),
             "the session-wide approval must not cover a root edit"
         );
         assert!(
-            edit_file_auto_approved(&a, "/etc/x", false),
+            edit_file_auto_approved(&a, "/etc/x", false, false),
             "without the root flag the session approval covers the path as before"
+        );
+        assert!(
+            !edit_file_auto_approved(&a, "/etc/x", false, true),
+            "the session-wide approval must not cover a config edit either"
         );
     }
 
     #[test]
     fn a_root_edit_never_grants_a_session_approval() {
         assert!(
-            !edit_file_grants_session(true, false, true),
+            !edit_file_grants_session(true, false, true, false),
             "an approved-for-session answer on a root edit approves only this edit"
         );
         assert!(
-            edit_file_grants_session(true, false, false),
+            !edit_file_grants_session(true, false, false, true),
+            "an approved-for-session answer on a config edit approves only this edit"
+        );
+        assert!(
+            edit_file_grants_session(true, false, false, false),
             "an ordinary edit still grants its session approval"
+        );
+    }
+
+    #[test]
+    fn config_edit_is_never_auto_approved() {
+        let mut a = super::super::approval::SessionApproval {
+            file_edits_all: true,
+            ..Default::default()
+        };
+        a.file_edits.insert("/etc/x".to_string());
+        // Session-wide approval, per-path grant, and both together: an edit
+        // the daemon marks always-asked still prompts.
+        assert!(
+            !edit_file_auto_approved(&a, "/etc/x", false, true),
+            "file_edits_all must not cover a config edit"
+        );
+        assert!(
+            !edit_file_auto_approved(
+                &{
+                    let mut b = super::super::approval::SessionApproval::default();
+                    b.file_edits.insert("/etc/x".to_string());
+                    b
+                },
+                "/etc/x",
+                false,
+                true
+            ),
+            "the per-path session grant must not cover a config edit"
+        );
+        // And an approved answer on always-asked grants nothing for later asks.
+        assert!(
+            !edit_file_grants_session(true, false, false, true),
+            "an approved config edit approves only this edit"
         );
     }
 

@@ -77,7 +77,7 @@ where
         ));
     }
     {
-        if super::in_daemoneye_dir(path) {
+        if super::in_daemoneye_dir(path) && !super::is_daemoneye_config(path) {
             return Ok(ToolCallOutcome::Result(
                 "Error: edit_file cannot access the daemoneye configuration \
                  directory. Use the dedicated tools (write_script, write_runbook, \
@@ -98,6 +98,39 @@ where
         Ok(id) => id,
         Err(msg) => return Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
     };
+
+    // ── Config scoping refusals, before any prompt: exactly the config
+    // opens, for operation="edit" on the daemon host, never as root, and
+    // never as a copy destination ──────────────────────────────────────────
+    if dest_path.is_some_and(super::in_daemoneye_dir) {
+        return Ok(ToolCallOutcome::Result(
+            "Error: edit_file cannot copy into the daemoneye configuration \
+             directory."
+                .to_string(),
+        ));
+    }
+    if super::is_daemoneye_config(path) {
+        if operation != "edit" {
+            return Ok(ToolCallOutcome::Result(format!(
+                "Error: edit_file operation=\"{operation}\" cannot touch the \
+                 daemoneye config — only operation=\"edit\" opens etc/config.toml."
+            )));
+        }
+        if sudo {
+            return Ok(ToolCallOutcome::Result(
+                "Error: a config edit runs as the daemon user — sudo is not \
+                 supported for etc/config.toml."
+                    .to_string(),
+            ));
+        }
+        if host_id != crate::host::HostId::Local {
+            return Ok(ToolCallOutcome::Result(
+                "Error: the daemoneye config is the daemon host's file — omit \
+                 host (or pass \"local\") to edit it."
+                    .to_string(),
+            ));
+        }
+    }
 
     // ── sudo scoping refusals, before any prompt ──────────────────────────
     if sudo {

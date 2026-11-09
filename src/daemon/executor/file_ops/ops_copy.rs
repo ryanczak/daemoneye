@@ -81,6 +81,7 @@ where
                     new_content: None,
                     dest_path: Some(format!("{} (remote via host {})", dest, name)),
                     sudo: false,
+                    always_asked: false,
                 },
             )
             .await?;
@@ -198,6 +199,7 @@ where
             new_content: Some(source_content.clone()),
             dest_path: Some(dest.to_string()),
             sudo: false,
+            always_asked: false,
         },
     )
     .await?;

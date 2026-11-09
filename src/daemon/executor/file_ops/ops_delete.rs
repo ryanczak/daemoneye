@@ -52,6 +52,7 @@ where
                     new_content: None,
                     dest_path: None,
                     sudo: false,
+                    always_asked: false,
                 },
             )
             .await?;
@@ -142,6 +143,7 @@ where
             new_content: None,
             dest_path: None,
             sudo: false,
+            always_asked: false,
         },
     )
     .await?;
