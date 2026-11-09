@@ -208,7 +208,8 @@ mod tests {
                     "pid": 1234,
                     "raw_mode": true,
                     "alt_screen": false,
-                    "foreground": "vim"
+                    "foreground": "vim",
+                    "programs": []
                 }),
             ),
             (
@@ -233,7 +234,8 @@ mod tests {
                     "pid": 1,
                     "raw_mode": null,
                     "alt_screen": null,
-                    "foreground": null
+                    "foreground": null,
+                    "programs": []
                 }),
             ),
             (

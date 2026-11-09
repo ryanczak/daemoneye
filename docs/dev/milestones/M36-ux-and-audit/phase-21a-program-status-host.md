@@ -200,3 +200,51 @@ the transcript log), and went green as the parser's drop rules landed
 skipped as the malformed-pair case, ancestor-prefix fix in `clear_one`,
 root-record clear). `cargo test --lib program_status` now 11 passed / 0
 failed; clippy `-D warnings` clean; `cargo fmt --all --check` clean.
+
+### Update — 2026-11-09 15:10 (end-to-end verification)
+
+Run once, redirected to `.rexymcp/output/p21a-e2e.txt`, pasted verbatim:
+
+```
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 2750 filtered out; finished in 0.00s
+backend_status_carries_a_working_report_while_its_program_runs passed=1 failed=0
+backend_status_keeps_a_done_report_after_its_program_exits passed=1 failed=0
+backend_answers_the_feature_query passed=1 failed=0
+screen_feed_writes_back_only_the_feature_query passed=1 failed=0
+status_frame_without_programs_deserializes_empty passed=1 failed=0
+sbx_status_passes_programs_through passed=1 failed=0
+format_screen_read_lists_program_records_masked passed=1 failed=0
+base64_dep=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.97s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.44s
+fmt_exit=0
+passed=2846 failed=0
+```
+
+The first E2E attempt read `passed=2753 failed=1` — the wire-format pin
+`proto_response_frames_match_the_pinned_wire_format` red because the two
+`Status` fixtures did not carry the new `programs` key; the pin now names
+`"programs": []` on both, and all 4 hygiene gates / doc_truth / bug_tracker /
+lock_invariant / clippy / fmt are clean, `failed=0` across the full suite.
+
+### Findings — 2026-11-09
+
+- No allowlist raise: `src/shell/program_status.rs` (829 lines with tests
+  inline), `src/shell/screen.rs`, `src/shell/backend.rs`,
+  `src/shell/sbx_backend.rs`, `src/shell/proto.rs` and
+  `src/daemon/executor/knowledge/shell_screen.rs` all stay inside the M31
+  caps; `tests/hygiene.rs` passes unchanged.
+- The spec test name `…_clear_removes_the_subtree` reads "clear on `a` keeps
+  `ab`": the test as drafted first asserted the opposite (subtree removal of
+  a same-prefix sibling). Implemented per the test plan's wording — clear on
+  `a` removes `a` itself and anything under `a/…`, keeps `ab` — with an
+  added `a/child` case pinning actual subtree removal.
+- Spec-pinned literals grep-clean: `7501` reachable at
+  `src/shell/program_status.rs:817` (`let [b"7501", payload] = params`),
+  the reply bytes `ESC ] 7501 ; ? ESC \` pinned by
+  `screen_feed_writes_back_only_the_feature_query` and the
+  `backend_answers_the_feature_query` read-back, `base64_dep=1`.
