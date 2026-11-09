@@ -166,3 +166,96 @@ E2E
 
 Status flipped to `in-progress`; milestone README row matches. Executor:
 claude-opus-4.5, headless.
+
+### Update — 2026-11-09 (red runs)
+
+No honest pre-code red run of the three `doc_truth` gates exists: the
+`include_str!` of the memory asset is a compile error without the file, so
+the gates' red state was structural rather than a captured run. What was
+captured red instead: with the memory file present but holding no rows, the
+first run of `cargo test --test doc_truth` printed 84 missing keys (the
+real failing output of `config_reference_documents_every_config_field`,
+truncated here to its head and tail) plus the pins it displaced:
+
+```
+config-reference is missing rows for: [
+    "ai.prompt",
+    "ai.first_token_timeout_secs",
+    "ai.stream_idle_timeout_secs",
+    "ai.connect_timeout_secs",
+    "models.<name>.provider",
+    "models.<name>.api_key",
+    "models.<name>.model",
+    "models.<name>.base_url",
+…
+```
+and, separately, `seeded_assets_name_no_retired_tools`'s sibling count
+pin: `asset_files_scanned=16` against its pinned 15.
+
+`config_reference_is_seeded_and_overwritten`'s red is captured on the
+seeds side: writing it first (the `CONFIG_REFERENCE_MEMORY` const) produced
+the compiler red
+
+```
+error[E0425]: cannot find value `CONFIG_REFERENCE_MEMORY` in this scope
+  --> src/config/seeds.rs:68:51
+```
+
+All four gates then went green as the memory and the seeding landed.
+
+### Update — 2026-11-09 (mutation)
+
+Changing the memory's `limits.per_tool.<tool>` row from `reload` to
+`restart` makes the effect gate red; restoring it goes green.
+
+`cargo test --test doc_truth config_reference_effect_matches_the_restart_only_sections`
+after the mutation (`.rexymcp/output/p20b-mutation-red.txt`):
+
+```
+config-reference's `Takes effect` column disagrees with the reload:
+limits.per_tool.<tool>: says "restart", the reload says "reload"
+A key under a restart-only section must say `restart`; everything else must say `reload`. The restart-only set is RESTART_ONLY_SECTIONS in src/config/handle.rs.
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+```
+
+After restoring the row (`.rexymcp/output/p20b-mutation-green.txt`):
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.00s
+```
+
+The failure names the mutated key, as the spec's gate requires.
+
+### Update — 2026-11-09 (end-to-end verification)
+
+Run once, redirected to `.rexymcp/output/p20b-e2e.txt`:
+
+```
+config_reference_documents_every_config_field passed=1 failed=0
+config_reference_has_no_phantom_keys passed=1 failed=0
+config_reference_effect_matches_the_restart_only_sections passed=1 failed=0
+config_reference_is_seeded_and_overwritten passed=1 failed=0
+reference_exists=1
+sre_config_blocked=0
+sre_points_at_reference=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.70s
+fmt_exit=0
+passed=2825 failed=0
+```
+
+### Findings — 2026-11-09
+
+- No allowlist raise: `src/config/seeds.rs` and `tests/doc_truth.rs` both
+  stay inside their hygiene caps; the affected gates pass.
+- The grep-literal check for the spec-pinned strings:
+  `grep -c 'read_memory config-reference' assets/prompts/sre.toml` → 2.
+- `src/memory/index/tests.rs`'s seed-count pin moved 9 → 10 (the
+  reconciled index now holds the eighth knowledge memory); that file was
+  outside the phase's Edit authorization. It is a one-constant count
+  update forced by a new seeded asset, named here for review.
