@@ -1,7 +1,7 @@
 # Bug 1 on phase-20a: every local edit's approval diff is masked, not just the config's
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (af2876a8, approved 2026-11-09)
 **Filed:** 2026-11-09
 
 ## What's wrong

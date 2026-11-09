@@ -1,7 +1,7 @@
 # Phase 20a — self-config
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-08
 **Depends on:** phase 19
 **Estimated diff:** ~400 lines
@@ -653,3 +653,46 @@ kill: (-786287): No such process
 **Commit:** af2876a8fc0246b6cb9e40a493cd36b57c2a7498
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-09
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-20a-1](bugs/bug-20a-1.md), major,
+  `scope_deviation`). The local edit's `EditFilePrompt` masked its diff for
+  every file, not only the config. Fixed in `af2876a8`: the prompt is masked
+  only when `is_config` holds. `edit_file_ordinary_edit_prompt_is_not_masked`
+  pins that an ordinary file's diff stays real, and its mutation run
+  (`.rexymcp/output/p20a-mutation2-red.txt` / `-green.txt`) shows the test
+  red against unconditional masking and green after the restore.
+- **Escalations before the bounce:** 1. The first run hit
+  `budget_exceeded` at 1000 turns, after long bash-only stretches and a
+  self-inflicted `HOME` leak (a dropped `test_home_guard()`). It was resumed
+  with `continue_phase`, which finished in 514 turns. The fix for the bounce
+  took 79.
+- **Executor:** glm-5.3-flash
+- **Reviewer's gates:** `fmt_exit=0`, `build_warnings=0`, clippy clean,
+  `passed=2821 failed=0`, exactly the finish condition. The E2E file
+  `.rexymcp/output/p20a-e2e-2.txt` shows all twelve named tests at
+  `passed=1 failed=0`, `config_read_blocked=0` and
+  `claude_md_blocked_claim=0`.
+- **Scope deviations:**
+  - The bounce run did not paste its mutation and E2E outputs into Update
+    Log entries as the Notes asked. It wrote them to the
+    `.rexymcp/output/` files named above, and the completion summary names
+    them. The reviewer read both files: they are real captures and agree
+    with the reviewer's run.
+  - The bounce's two allowlist raises are not in a Findings entry:
+    `run_edit_with_spawn` 288 → 299 and the `ops.rs` test module
+    2289 → 2344. Both are authorised.
+  - Out of scope: the first resume reported
+    `bg_completion_on_a_failed_outcome_records_status_failed` failing once
+    on the pre-phase HEAD. It did not reproduce in three full reviewer
+    runs.
+- **Calibration:**
+  - A test rewrite that drops a `test_home_guard()` line makes a concurrent
+    test flake. The executor then spent ~100 turns chasing unrelated code.
+    When a new test flakes under `--lib <module>` but passes alone, check
+    first for a test in the diff that sets `HOME` without the guard.
+  - `continue_phase` blocks the MCP call, and the client drops the wait
+    after 1800 s while the run carries on. Read the outcome from
+    `rexymcp status`, not the tool.
