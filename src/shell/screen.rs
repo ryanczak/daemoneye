@@ -44,7 +44,7 @@ fn marker_label(color: CellColor) -> &'static str {
 /// A live view of one shell's terminal: what a human at that terminal would
 /// see right now. The transcript of record is the cast log, not this.
 pub struct ShellScreen {
-    parser: vt100::Parser,
+    parser: vt100::Parser<super::program_status::ScreenCallbacks>,
 }
 
 impl ShellScreen {
@@ -53,10 +53,11 @@ impl ShellScreen {
     /// A 0 row or column count becomes 1: vt100 0.18 sizes are `NonZeroU16`.
     pub fn new(rows: u16, cols: u16, scrollback: usize) -> Self {
         Self {
-            parser: vt100::Parser::new(
+            parser: vt100::Parser::new_with_callbacks(
                 NonZeroU16::new(rows).unwrap_or(NonZeroU16::MIN),
                 NonZeroU16::new(cols).unwrap_or(NonZeroU16::MIN),
                 scrollback,
+                super::program_status::ScreenCallbacks::default(),
             ),
         }
     }
@@ -66,6 +67,21 @@ impl ShellScreen {
     /// partial sequences across calls, so feeding in arbitrary chunks is safe.
     pub fn feed(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        // A 7501 report may carry the feature query's reply; the caller
+        // takes it after the feed, exactly once.
+    }
+
+    /// The OSC 7501 reply byte sequence the last feed deposited, if any.
+    /// Only the feature query produces one, and it is the only byte this
+    /// host ever writes back for the protocol.
+    pub fn take_reply(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.parser.callbacks_mut().reply)
+    }
+
+    /// The OSC 7501 records the programs in this terminal reported, as the
+    /// `Status` frame carries them, ordered by id.
+    pub fn programs(&self) -> Vec<super::program_status::Record> {
+        self.parser.callbacks().table.records()
     }
 
     /// The visible screen as plain text (F2) — what the terminal shows now.

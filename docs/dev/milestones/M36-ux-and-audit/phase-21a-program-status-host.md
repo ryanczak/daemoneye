@@ -187,3 +187,16 @@ E2E
 
 Status flipped to `in-progress`; milestone README row matches. Executor:
 Claude Opus 4.5 (1M), headless.
+
+### Update — 2026-11-09 14:35 (progress)
+
+Spec task 1's red runs could not be captured honestly: the pure module and
+its tests were written together, so the first compile passed. What was
+captured red instead: 4 of the 11 pure tests failed against the first
+parser build (`clear_removes_the_subtree`, `app_inherits…`,
+`drops_a_report_over_a_limit`, `drops_bad_base64…` — real failing output in
+the transcript log), and went green as the parser's drop rules landed
+(`Err(_) => return None` for the whole-report conditions, `Err(Progress)`
+skipped as the malformed-pair case, ancestor-prefix fix in `clear_one`,
+root-record clear). `cargo test --lib program_status` now 11 passed / 0
+failed; clippy `-D warnings` clean; `cargo fmt --all --check` clean.

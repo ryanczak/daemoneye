@@ -379,6 +379,16 @@ impl Table {
         Self::default()
     }
 
+    /// The count the eviction cap measures: records with ids plus the root.
+    pub fn len(&self) -> usize {
+        usize::from(self.root.is_some()) + self.records.len()
+    }
+
+    /// Whether no record (root or ided) is held.
+    pub fn is_empty(&self) -> bool {
+        self.root.is_none() && self.records.is_empty()
+    }
+
     /// The records as the frame carries them: root first, then by id.
     pub fn records(&self) -> Vec<Record> {
         let mut out = Vec::new();
@@ -454,6 +464,7 @@ impl Table {
         self.records.retain(|_, s| !s.record.state.is_ephemeral());
     }
 }
+
 // The `reduce` helper folds a Report::Status into the record a slot gets;
 // tests exercise it directly until phase 21b wires the frame.
 
@@ -771,5 +782,64 @@ mod tests {
             Some("parent"),
             "the child inherits its nearest ancestor's app at read time"
         );
+    }
+}
+
+// ── The vt100 callback (M36 phase 21a) ──────────────────────────────────---
+
+/// The vt100 0.18 callbacks for one shell screen: OSC 7501 reports go to the
+/// record table, the feature query gets the reply `ESC ] 7501 ; ? ESC \`
+/// back on the shell's input, every other unhandled OSC stays unhandled.
+#[derive(Debug, Default)]
+pub struct ScreenCallbacks {
+    /// The table the reports land in.
+    pub table: Table,
+    /// The reply bytes the host owes the shell once its input write can
+    /// happen: exactly `ESC ] 7501 ; ? ESC \`, and only from a query. The
+    /// host is the only writer back for this protocol.
+    pub reply: Vec<u8>,
+}
+
+impl vt100::Callbacks for ScreenCallbacks {
+    fn unhandled_osc(&mut self, _screen: &mut vt100::Screen, params: &[&[u8]]) {
+        // vte splits an OSC on `;`, so a legal report arrives as exactly
+        // `[7501, payload]` and the query as `[7501, ?]`. The value grammar
+        // holds no `;`, so any other shape that starts with `7501` is
+        // dropped; an OSC that is not 7501 at all is ignored as it is today.
+        let [b"7501", payload] = params else {
+            return;
+        };
+        let mut limit = None;
+        match parse(payload, &mut limit) {
+            Some(Report::Query) => {
+                self.reply = b"\x1b]7501;?\x1b\\".to_vec();
+            }
+            Some(Report::Status {
+                state,
+                id,
+                kind,
+                progress,
+                app,
+                title,
+                msg,
+            }) => {
+                let updated = self.table.len() as u64;
+                if let Some((id, state, kind)) = reduce(state, kind, id) {
+                    self.table.apply(
+                        Record {
+                            id,
+                            state,
+                            kind,
+                            progress,
+                            app,
+                            title,
+                            msg,
+                        },
+                        updated,
+                    );
+                }
+            }
+            None => {}
+        }
     }
 }
