@@ -1,7 +1,7 @@
 # Phase 20a — self-config
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-08
 **Depends on:** phase 19
 **Estimated diff:** ~400 lines
@@ -135,6 +135,9 @@ memory.
       `blocked only from \`etc/config.toml\``. Today 1.
 - [ ] The prompt-file refusal holds: `read_file_still_refuses_the_prompt_file`
       passes (preservation).
+- [ ] **bug-20a-1:** `edit_file_ordinary_edit_prompt_is_not_masked` passes:
+      a local edit of a non-config file sends its prompt unmasked. Today the
+      test does not exist, and every local edit's prompt is masked.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok,
       `build_warnings=0`, clippy is clean, `fmt_exit=0` and `failed=0`.
 
@@ -142,7 +145,7 @@ memory.
 
 ```sh
 bash <<'E2E'
-for t in read_file_admits_the_config_with_secrets_masked read_file_still_refuses_the_prompt_file edit_file_config_refuses_create_delete_copy_host_and_sudo edit_file_still_refuses_other_daemoneye_paths edit_file_config_refuses_an_unparseable_result_and_leaves_the_file edit_file_config_masked_placeholder_never_matches edit_file_config_prompt_is_masked_and_always_asked edit_file_config_reports_the_reload_after_the_write config_edit_is_never_auto_approved edit_file_prompt_without_the_flag_decodes the_seeded_template_round_trips_through_a_config_edit; do
+for t in read_file_admits_the_config_with_secrets_masked read_file_still_refuses_the_prompt_file edit_file_config_refuses_create_delete_copy_host_and_sudo edit_file_still_refuses_other_daemoneye_paths edit_file_config_refuses_an_unparseable_result_and_leaves_the_file edit_file_config_masked_placeholder_never_matches edit_file_config_prompt_is_masked_and_always_asked edit_file_config_reports_the_reload_after_the_write config_edit_is_never_auto_approved edit_file_prompt_without_the_flag_decodes the_seeded_template_round_trips_through_a_config_edit edit_file_ordinary_edit_prompt_is_not_masked; do
   cargo test --lib "$t" 2>&1 | grep -E '^test result' | awk -v t="$t" '{p+=$4; f+=$6} END {print t, "passed=" p, "failed=" f}'
 done
 grep -c 'join("config.toml")' src/daemon/executor/file_ops/read.rs | sed 's/^/config_read_blocked=/'
@@ -483,3 +486,36 @@ kill: (-750769): No such process
 **Commit:** 06bb858678875a9bb5456096c939b0d5c957ca78
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-09 (bounced: bug-20a-1)
+
+Status is back to `in-progress`. The reviewer's gates: `fmt_exit=0`,
+`build_warnings=0`, clippy clean, `passed=2820 failed=0` on two runs. The
+E2E paste is identical to `.rexymcp/output/p20a-e2e.txt`, and the mutation
+evidence is real. One defect: [bug-20a-1](bugs/bug-20a-1.md). The local
+edit's `EditFilePrompt` masks its diff for **every** file, not only the
+config.
+
+### Notes for executor — 2026-11-09 (bounce)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything else in this phase is approved; do not touch
+it, re-read it or re-verify it. There is exactly one change left:
+
+1. In `run_edit_with_spawn` (`src/daemon/executor/file_ops/ops.rs`), the
+   local `EditFilePrompt` masks `existing_content` and `new_content` only
+   when `is_config` holds. Any other file's prompt carries `original` and
+   `updated` unmasked, as before the phase.
+2. Add `edit_file_ordinary_edit_prompt_is_not_masked` beside
+   `edit_file_config_prompt_is_masked_and_always_asked`. Use the same
+   `auto_approve_channel` pump and a non-config file under
+   `crate::test_home()` containing `password = "hunter2-real"`. Assert that
+   the recorded prompt contains `hunter2-real` and `always_asked=false`.
+3. **Mutation check:** put the unconditional masking back, confirm the new
+   test fails, restore it, and confirm it passes. Paste both real results
+   in a `(mutation, bug-20a-1)` entry.
+4. Run § End-to-end verification once into
+   `.rexymcp/output/p20a-e2e-2.txt` and paste it verbatim in a new entry.
+   The finish condition is `passed=2821 failed=0`, exactly one more than
+   2820.
+5. Commit as `fix: mask the edit prompt only for the config (M36 phase-20a, bug-20a-1)`.
