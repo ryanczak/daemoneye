@@ -153,11 +153,11 @@ the same code, so they ship together.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 26 (phase 20 split into 20a/20b on 2026-11-08; phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04; 17 split into 17a/17b/17c on 2026-11-07).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 28 (phase 21 split into 21a/21b/21c on 2026-11-09; phase 20 split into 20a/20b on 2026-11-08; phase 04 split into 04a/04b on 2026-11-03; 21 added 2026-11-03; 05 split into 05a/05b on 2026-11-04; 17 split into 17a/17b/17c on 2026-11-07).
 Phases 01–04 are the PE's four items; 05–07 the approval-prompt findings
 that share their code; 08–16 the remaining `major` rows, most severe
 first; 17 the shell-lifecycle fix; 18 the performance tail; 19–20 the
-self-maintained config (decision 8), reload first so the edit can use it. 21 is OSC 7501 (decision 9), after the
+self-maintained config (decision 8), reload first so the edit can use it. 21a–21c are OSC 7501 (decision 9), after the
 config so the shell-state surfaces it extends have settled.
 
 | #  | Phase | Scope | Status |
@@ -187,7 +187,9 @@ config so the shell-state surfaces it extends have settled.
 | 19 | config-reload ([phase-19-config-reload.md](phase-19-config-reload.md)) — the daemon holds its `Config` behind one shared, swappable handle that every per-request reader goes through; `Request::Reload` / `daemoneye reload` re-read and validate `config.toml`, swap the runtime-safe sections, re-init masking and stream timeouts, and reply with the keys that changed and the keys that wait for a restart; an invalid file is refused and the running config stays | decision 8 | done        |
 | 20a | self-config ([phase-20a-self-config.md](phase-20a-self-config.md)) — `read_file` and `edit_file` admit `etc/config.toml` alone: masked read, an always-asked edit with a masked diff, `Config` validation before the write, a reload after it whose report the result carries; the `read_file` / `edit_file` rows in CLAUDE.md and README follow (split 20a/20b on 2026-11-08) | decision 8 | done        |
 | 20b | config-reference ([phase-20b-config-reference.md](phase-20b-config-reference.md)) — the `config-reference` knowledge memory documents every `config.toml` key (type, range, default, when a change takes effect), seeded and in `--overwrite-memory`, gated by `doc_truth` against the `Config` structs (keys and the reload/restart column); `sre.toml` stops calling the config blocked | decision 8 | done        |
-| 21 | program-status — OSC 7501: daemon shells parse program reports into per-shell records (spec grammar, limits, lifetime, security; masked) surfaced in `list_shells`, `read_shell_screen`, `watch_shell` and `top`; the chat client emits its own working/blocked/idle state; may split consume/emit at drafting | decision 9 | todo |
+| 21a | program-status-host ([phase-21a-program-status-host.md](phase-21a-program-status-host.md)) — shell hosts parse OSC 7501 reports into per-shell records (grammar, limits, lifetime, security), answer only the feature query, carry the records on `Status`; `read_shell_screen`'s header shows them masked (split 21a/21b/21c on 2026-11-09) | decision 9 | todo |
+| 21b | program-status-surfaces — `list_shells`, `ShellInfo` and `top`'s Shells panel show each shell's program status from a bounded live refresh; `watch_shell` returns on a `blocked`/`done`/`error` report; the program's word outranks the screen-scraped state | decision 9 | todo |
+| 21c | program-status-emit — the chat client reports `working` / `blocked:kind=permission\|auth` / `idle` / `clear` to the user's terminal; the tmux passthrough decision | decision 9 | todo |
 
 ## Notes
 
