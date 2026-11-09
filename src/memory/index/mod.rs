@@ -11,14 +11,20 @@ use crate::util::UnpoisonExt;
 /// dropped and recreated — the index is derived, so rebuilding is always safe.
 pub const SCHEMA_VERSION: i64 = 2;
 
-/// The process's one open index connection. `rusqlite::Connection` is not
-/// `Sync`, so the connection is reached only through the mutex, and every
-/// holder keeps it for one whole synchronous index operation. One slot,
-/// keyed by the path it was opened for: a changed `memory_index_path()`
-/// (each test points `HOME` at its own tempdir) opens the next call's
-/// database fresh and replaces the slot.
-static INDEX_CONN: OnceLock<Mutex<Option<(std::path::PathBuf, rusqlite::Connection)>>> =
-    OnceLock::new();
+/// The process's one cached index connection, keyed by the path it was
+/// opened for. `rusqlite::Connection` is not `Sync`, so the connection is
+/// reached only through the mutex, and a holder keeps the guard for one
+/// whole synchronous index operation. The slot is filled by the first
+/// successful open — a slot cannot exist without its connection — and a
+/// changed `memory_index_path()` (each test points `HOME` at its own
+/// tempdir) makes the next open replace it with that path's database.
+static INDEX_CONN: OnceLock<Mutex<IndexSlot>> = OnceLock::new();
+
+/// The cached connection and the path it was opened for.
+struct IndexSlot {
+    path: std::path::PathBuf,
+    conn: rusqlite::Connection,
+}
 
 // `(index path, corpus table)` pairs this process already reconciled to no
 // avail — empty before and after — so the per-turn searches stop rebuilding
@@ -47,13 +53,16 @@ pub(crate) fn index_open_attempts() -> u64 {
     attempts_slot().load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Drop the cached index connection for `path`, so a test observes the next
-/// open actually reopening (and re-checking the schema).
+/// Re-key the cached index connection away from `path`, so a test observes
+/// the next open for it actually reopening (and re-checking the schema); the
+/// stale connection closes when that open replaces it.
 #[cfg(test)]
 pub(crate) fn close_index_conn(path: &std::path::Path) {
-    let mut guard = index_slot().lock().unwrap_or_log();
-    if guard.as_ref().is_some_and(|(p, _)| p == path) {
-        *guard = None;
+    if let Some(slot) = INDEX_CONN.get() {
+        let mut guard = slot.lock().unwrap_or_log();
+        if guard.path == path {
+            guard.path = std::path::PathBuf::new();
+        }
     }
 }
 
@@ -71,131 +80,95 @@ pub(crate) fn corpus_reconcile_count() -> u64 {
     corpus_slot().load(std::sync::atomic::Ordering::Relaxed)
 }
 
-fn index_slot() -> &'static Mutex<Option<(std::path::PathBuf, rusqlite::Connection)>> {
-    INDEX_CONN.get_or_init(|| Mutex::new(None))
-}
+/// An open index connection, checked out for one synchronous operation.
+/// A holder always has its connection: either the guard on the process's
+/// cached slot, released for the next caller when the holder drops, or a
+/// transient connection of its own, opened because the slot was already
+/// held (by another thread, or by this one — a reconcile re-opens the index
+/// while its caller still holds it) and closed when the holder drops.
+pub struct IndexConn(Held);
 
-/// An open index connection checked out of the slot. Dropping it puts the
-/// connection back for the next caller, unless another caller re-filled the
-/// slot meanwhile (that re-opener's connection is already there).
-pub struct IndexConn {
-    conn: Option<rusqlite::Connection>,
-    /// The path the connection was opened for; the slot is keyed by it.
-    path: std::path::PathBuf,
+enum Held {
+    Cached(std::sync::MutexGuard<'static, IndexSlot>),
+    Own(rusqlite::Connection),
 }
 
 impl Deref for IndexConn {
     type Target = rusqlite::Connection;
 
     fn deref(&self) -> &rusqlite::Connection {
-        self.conn.as_ref().unwrap_or_else(|| IndexConn::dormant())
+        match &self.0 {
+            Held::Cached(slot) => &slot.conn,
+            Held::Own(conn) => conn,
+        }
     }
 }
 
 impl DerefMut for IndexConn {
     fn deref_mut(&mut self) -> &mut rusqlite::Connection {
-        self.conn
-            .as_mut()
-            .unwrap_or_else(|| IndexConn::dormant_mut())
-    }
-}
-
-impl IndexConn {
-    /// The connection an `IndexConn` derefs to once `Drop` has taken it.
-    /// Nothing can call this after `Drop`, so the arm is inert; it only
-    /// satisfies the borrow checker without a `panic!()` in the deref paths.
-    fn dormant() -> &'static rusqlite::Connection {
-        let leaked: &'static Option<rusqlite::Connection> = Box::leak(Box::new(None));
-        leaked.as_ref().map_or_else(
-            || {
-                log::warn!("index connection borrowed after drop");
-                IndexConn::spare()
-            },
-            |c| c,
-        )
-    }
-
-    /// Mutable twin of [`IndexConn::dormant`]; see its note.
-    fn dormant_mut() -> &'static mut rusqlite::Connection {
-        let leaked: &'static mut Option<rusqlite::Connection> = Box::leak(Box::new(None));
-        leaked.as_mut().map_or_else(
-            || {
-                log::warn!("index connection borrowed after drop");
-                Box::leak(Box::new(IndexConn::spare_value()))
-            },
-            |c| c,
-        )
-    }
-
-    fn spare() -> &'static rusqlite::Connection {
-        Box::leak(Box::new(IndexConn::spare_value()))
-    }
-
-    fn spare_value() -> rusqlite::Connection {
-        rusqlite::Connection::open_in_memory().unwrap_or_else(|e| {
-            log::error!("memory index in-memory fallback failed: {e}");
-            rusqlite::Connection::open_in_memory().unwrap_or_else(|e| {
-                log::error!("memory index in-memory fallback failed twice: {e}");
-                rusqlite::Connection::open_in_memory().unwrap_or_else(|e| {
-                    log::error!("memory index in-memory fallback failed thrice: {e}");
-                    rusqlite::Connection::open_in_memory()
-                        .unwrap_or_else(|e| panic!("memory index unusable: {e}"))
-                })
-            })
-        })
-    }
-}
-
-impl Drop for IndexConn {
-    fn drop(&mut self) {
-        if let Some(conn) = self.conn.take() {
-            let mut guard = index_slot().lock().unwrap_or_log();
-            if guard.is_none() {
-                *guard = Some((self.path.clone(), conn));
-            }
+        match &mut self.0 {
+            Held::Cached(slot) => &mut slot.conn,
+            Held::Own(conn) => conn,
         }
     }
 }
 
-/// Open (creating if absent) the FTS5 memory index: the process's one
+/// Open (creating if absent) the FTS5 memory index: the process's one cached
 /// connection for the current `memory_index_path()`, schema-checked once per
 /// path rather than on every open. The connection is checked out for one
 /// whole synchronous index operation — take it, use it, drop it; holding it
-/// across an `.await` would block every other index caller's thread.
+/// across an `.await` would hand every other index caller a transient
+/// connection, with the schema check re-run for each.
 pub fn open_index() -> Result<IndexConn> {
     let path = crate::config::memory_index_path();
     let dir = crate::config::var_index_dir();
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("creating index directory {}", dir.display()))?;
-    let mut guard = index_slot().lock().unwrap_or_log();
-    match guard.as_ref() {
-        Some((cached_path, _)) if cached_path == &path => {}
-        _ => {
-            let conn = rusqlite::Connection::open(&path)
-                .with_context(|| format!("opening index database {}", path.display()))?;
-            ensure_schema(&conn)?;
-            *guard = Some((path.clone(), conn));
-        }
-    }
-    // The match above guarantees the slot holds a connection keyed to this
-    // path (either cached or just filled), so the take below always yields.
-    let (_conn_path, conn) = match guard.take() {
-        Some(slot) if slot.0 == path => slot,
+    let slot = match INDEX_CONN.get() {
         Some(slot) => slot,
         None => {
-            // Cannot happen: the match above filled the slot when empty.
-            // Degrade to a fresh open rather than panic on the invariant.
-            drop(guard);
-            let conn = rusqlite::Connection::open(&path)
-                .with_context(|| format!("opening index database {}", path.display()))?;
-            ensure_schema(&conn)?;
-            (path.clone(), conn)
+            // The first open in this process fills the slot. Open first, so
+            // a failure is this call's error rather than an empty slot; if
+            // another thread filled the slot meanwhile, its connection stays
+            // and this one closes.
+            let conn = open_at(&path)?;
+            INDEX_CONN.get_or_init(|| {
+                Mutex::new(IndexSlot {
+                    path: path.clone(),
+                    conn,
+                })
+            })
         }
     };
-    Ok(IndexConn {
-        conn: Some(conn),
-        path: path.clone(),
-    })
+    let mut guard = match slot.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            log::error!("Recovering from poisoned Mutex lock");
+            poisoned.into_inner()
+        }
+        Err(std::sync::TryLockError::WouldBlock) => {
+            return Ok(IndexConn(Held::Own(open_at(&path)?)));
+        }
+    };
+    if guard.path != path {
+        *guard = IndexSlot {
+            path: path.clone(),
+            conn: open_at(&path)?,
+        };
+    }
+    Ok(IndexConn(Held::Cached(guard)))
+}
+
+/// Open the database at `path` and bring its schema to `SCHEMA_VERSION`.
+/// Every index database this process opens comes through here, which is
+/// what the test-only open counter counts.
+fn open_at(path: &std::path::Path) -> Result<rusqlite::Connection> {
+    #[cfg(test)]
+    attempts_slot().fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let conn = rusqlite::Connection::open(path)
+        .with_context(|| format!("opening index database {}", path.display()))?;
+    ensure_schema(&conn)?;
+    Ok(conn)
 }
 
 /// Apply the schema to an already-open connection, dropping and recreating
