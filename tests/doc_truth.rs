@@ -949,7 +949,7 @@ fn e2e_seeded_asset_tool_hygiene() {
          seeded_assets_name_no_retired_tools for the file-by-file list"
     );
     assert_eq!(
-        scanned, 15,
+        scanned, 16,
         "the asset walk saw a different file count than pinned; if this is a new \
          asset, update the assertion deliberately — do not let a silently-skipped \
          directory change it"
@@ -969,7 +969,7 @@ fn e2e_seeded_asset_tool_hygiene() {
     );
     assert_eq!(
         printed,
-        "retired_in_assets=0 asset_files_scanned=15 toolkit_memory_gone=true sysadmin_watch_pane=0",
+        "retired_in_assets=0 asset_files_scanned=16 toolkit_memory_gone=true sysadmin_watch_pane=0",
         "capture drifted from the pinned line"
     );
 }
@@ -1095,5 +1095,206 @@ fn readme_documents_every_chat_slash_command() {
     assert!(
         missing.is_empty(),
         "README.md's In-chat slash commands section does not document: {missing:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The `config-reference` knowledge memory (M36 phase 20b)
+// ---------------------------------------------------------------------------
+//
+// `assets/memory/knowledge/config-reference.md` documents every `config.toml`
+// key: type, range, default, and whether a change takes effect on reload or
+// waits for a restart. The template gates (`seeded_config_template_*`) hold
+// `assets/etc/config.toml` to the `Config` structs; the gates below hold the
+// memory to them the same way, so a key the structs gain is a key the memory
+// must gain.
+
+/// The memory asset, read with `include_str!` so the gate sees the same bytes
+/// that get seeded, not a file located at runtime.
+const CONFIG_REFERENCE: &str = include_str!("../assets/memory/knowledge/config-reference.md");
+
+/// Every `| \`dotted.key\` | … |` row in the memory, with the `Takes effect`
+/// cell's exact text.
+fn reference_rows(mem: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for raw in mem.lines() {
+        let line = raw.trim();
+        if !line.starts_with("| `") {
+            continue;
+        }
+        let cells: Vec<&str> = line.split('|').collect();
+        // ["", " `key` ", " type ", " range ", " default ", " effect ", ""]
+        if cells.len() < 6 {
+            continue;
+        }
+        let key = cells[1].trim().trim_matches('`').to_string();
+        let effect = cells[5].trim().to_string();
+        out.push((key, effect));
+    }
+    out
+}
+
+/// The `(section, field)` pairs the memory must document, derived from the
+/// `Config` structs exactly as the template gates derive them. Map-valued
+/// tables (`models`, `hosts`) spell the entry name as `<name>`, the way both
+/// the template and the memory do it; `limits.per_tool` (a map of scalars)
+/// is one `<tool>` row; the `sandbox` subsections are flattened into
+/// `sandbox.<sub>.<field>` keys.
+fn expected_reference_keys(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (section, ty) in config_sections(src) {
+        let body = struct_body(src, &ty).unwrap_or_else(|| panic!("struct {ty} not found"));
+        let fields = struct_fields(body);
+
+        for field in &fields {
+            // Classify the field the way it is documented: a map of tables
+            // (`models`, `hosts`) gets `<name>` rows; a map whose value is
+            // itself a struct (`sandbox.profile`) is expanded into
+            // `sandbox.profile.<name>.<field>` rows; a scalar map gets one
+            // `<tool>`-style row; everything else is one plain dotted key.
+            let is_map_of_tables = matches!(
+                (section.as_str(), field.as_str()),
+                ("models", _) | ("hosts", _)
+            );
+            let is_scalar_map = section == "limits" && field == "per_tool";
+            if is_map_of_tables {
+                out.push(format!("{section}.<name>.{field}"));
+            } else if is_scalar_map {
+                out.push(format!("{section}.{field}.<tool>"));
+            } else if section == "sandbox" {
+                // `sandbox.limits`, `sandbox.profile` and
+                // `sandbox.ghost_defaults` are their own structs.
+                let sub = match field.as_str() {
+                    "limits" => Some(("limits", "SandboxLimits")),
+                    "profile" => Some(("profile", "SandboxProfile")),
+                    "ghost_defaults" => Some(("ghost_defaults", "SandboxGhostDefaults")),
+                    _ => None,
+                };
+                match sub {
+                    Some((sub_name, sub_ty)) => {
+                        let sub_body = struct_body(src, sub_ty)
+                            .unwrap_or_else(|| panic!("struct {sub_ty} not found"));
+                        for sub_field in struct_fields(sub_body) {
+                            if sub_name == "profile" {
+                                out.push(format!("sandbox.{sub_name}.<name>.{sub_field}"));
+                            } else {
+                                out.push(format!("sandbox.{sub_name}.{sub_field}"));
+                            }
+                        }
+                    }
+                    None => out.push(format!("{section}.{field}")),
+                }
+            } else {
+                out.push(format!("{section}.{field}"));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn config_reference_documents_every_config_field() {
+    let src = config_types_src();
+    let rows: std::collections::BTreeSet<String> = reference_rows(CONFIG_REFERENCE)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+
+    let missing: Vec<String> = expected_reference_keys(&src)
+        .into_iter()
+        .filter(|k| !rows.contains(k))
+        .collect();
+
+    assert!(
+        missing.is_empty(),
+        "config-reference is missing rows for: {missing:#?}\n\
+         Every key the `Config` structs can parse must have a row — a knob the \
+         model cannot look up is one it edits blind."
+    );
+}
+
+#[test]
+fn config_reference_has_no_phantom_keys() {
+    let src = config_types_src();
+    let known: Vec<String> = expected_reference_keys(&src);
+
+    let phantom: Vec<String> = reference_rows(CONFIG_REFERENCE)
+        .into_iter()
+        .map(|(k, _)| k)
+        .filter(|k| !known.contains(k))
+        .collect();
+
+    assert!(
+        phantom.is_empty(),
+        "config-reference documents keys that do not resolve to a `Config` \
+         field: {phantom:#?}\n\
+         A row for a key that is not in the structs is advice to set something \
+         the daemon silently ignores. Remove it or add the field."
+    );
+}
+
+#[test]
+fn config_reference_effect_matches_the_restart_only_sections() {
+    let src = config_types_src();
+    // Read the restart-only set straight out of `src/config/handle.rs` — do
+    // not copy the list here. A section the reload learns to swap changes
+    // this test's expected values without any edit to the memory.
+    let handle_src = std::fs::read_to_string("src/config/handle.rs")
+        .unwrap_or_else(|e| panic!("read src/config/handle.rs: {e}"));
+    let start = handle_src
+        .find("const RESTART_ONLY_SECTIONS")
+        .unwrap_or_else(|| panic!("handle.rs no longer declares RESTART_ONLY_SECTIONS"));
+    // The declaration is `const RESTART_ONLY_SECTIONS: [&str; 4] = ["a", …]`
+    // — the value slice starts after `= [` (the `[&str; 4]` type bracket
+    // comes first and must not be matched).
+    let open = handle_src[start..]
+        .find("= [")
+        .map(|i| i + 3 + start)
+        .unwrap_or_else(|| panic!("handle.rs RESTART_ONLY_SECTIONS is no longer an array"));
+    let close = handle_src[open..]
+        .find(']')
+        .unwrap_or_else(|| panic!("handle.rs RESTART_ONLY_SECTIONS is no longer an array"))
+        + open;
+    let restart_only: Vec<String> = handle_src[open..close]
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let _ = &src;
+
+    let known: std::collections::BTreeSet<String> =
+        expected_reference_keys(&src).into_iter().collect();
+
+    let mut wrong = Vec::new();
+    for (key, effect) in reference_rows(CONFIG_REFERENCE) {
+        if effect != "reload" && effect != "restart" {
+            wrong.push(format!(
+                "{key}: takes-effect is {effect:?}, not `reload`/`restart`"
+            ));
+            continue;
+        }
+        if !known.contains(&key) {
+            continue;
+        }
+        let section = key.split('.').next().unwrap_or("");
+        let expected = if restart_only.iter().any(|s| s == section) {
+            "restart"
+        } else {
+            "reload"
+        };
+        if effect != expected {
+            wrong.push(format!(
+                "{key}: says {effect:?}, the reload says {expected:?}"
+            ));
+        }
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "config-reference's `Takes effect` column disagrees with the reload:\n{}\n\
+         A key under a restart-only section must say `restart`; everything else \
+         must say `reload`. The restart-only set is RESTART_ONLY_SECTIONS in \
+         src/config/handle.rs.",
+        wrong.join("\n")
     );
 }

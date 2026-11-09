@@ -65,6 +65,7 @@ impl Config {
         seed_knowledge_memory("scheduling-guide", SCHEDULING_GUIDE_MEMORY)?;
         seed_knowledge_memory("scripts-and-sudoers", SCRIPTS_AND_SUDOERS_MEMORY)?;
         seed_knowledge_memory("agent-runtime-layout", AGENT_RUNTIME_LAYOUT_MEMORY)?;
+        seed_knowledge_memory("config-reference", CONFIG_REFERENCE_MEMORY)?;
 
         // Seed built-in session memories if they don't already exist.
         seed_session_memory(
@@ -193,6 +194,12 @@ pub fn overwrite_knowledge_memories() -> Result<()> {
         true,
     )?;
     seed_memory_inner(
+        "knowledge",
+        "config-reference",
+        CONFIG_REFERENCE_MEMORY,
+        true,
+    )?;
+    seed_memory_inner(
         "session",
         "pane-referencing-convention",
         PANE_REFERENCING_CONVENTION_MEMORY,
@@ -239,6 +246,8 @@ pub(crate) const SCRIPTS_AND_SUDOERS_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/scripts-and-sudoers.md");
 pub(crate) const AGENT_RUNTIME_LAYOUT_MEMORY: &str =
     include_str!("../../assets/memory/knowledge/agent-runtime-layout.md");
+pub(crate) const CONFIG_REFERENCE_MEMORY: &str =
+    include_str!("../../assets/memory/knowledge/config-reference.md");
 
 // ---------------------------------------------------------------------------
 // Seeded session memories (written to ~/.daemoneye/memory/session/ on first run)
@@ -262,6 +271,46 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+
+    /// `config-reference` seeds like the other knowledge memories and is
+    /// rewritten by `--overwrite-memory`: `ensure_dirs` writes it when it is
+    /// absent, never touching user edits; `overwrite_knowledge_memories`
+    /// replaces it with the version bundled in the binary.
+    #[test]
+    fn config_reference_is_seeded_and_overwritten() {
+        let (guard, dir) = crate::test_home();
+        let _keep = (guard, dir);
+        let path = crate::config::config_dir().join("memory/knowledge/config-reference.md");
+
+        std::fs::remove_file(&path).expect("ensure_dirs seeded the memory");
+        assert!(
+            !path.exists(),
+            "the pre-existence check needs the memory gone, not just unread"
+        );
+
+        crate::config::Config::ensure_dirs().expect("ensure_dirs seeds the missing memory");
+        let seeded = std::fs::read_to_string(&path).expect("read the seeded memory");
+        assert_eq!(
+            seeded, CONFIG_REFERENCE_MEMORY,
+            "the seeded copy is the compiled-in asset"
+        );
+        std::fs::write(&path, "stale\n").expect("mark the seeded copy stale");
+
+        // A user edit survives: ensure_dirs is a first-run write.
+        crate::config::Config::ensure_dirs().expect("ensure_dirs again");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read after the second ensure_dirs"),
+            "stale\n",
+            "ensure_dirs must never clobber an existing memory, seeded or not"
+        );
+
+        crate::config::overwrite_knowledge_memories().expect("overwrite includes config-reference");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read the overwritten memory"),
+            CONFIG_REFERENCE_MEMORY,
+            "--overwrite-memory must replace the memory with the bundled asset"
+        );
+    }
 
     fn temp_root(tag: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("de-lock-{}-{}", std::process::id(), tag));

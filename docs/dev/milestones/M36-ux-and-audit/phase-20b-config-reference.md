@@ -1,7 +1,7 @@
 # Phase 20b — config-reference
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-09
 **Depends on:** phase 20a
 **Estimated diff:** ~400 lines, mostly the memory's markdown
@@ -161,3 +161,8 @@ E2E
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-09 17:44 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor:
+claude-opus-4.5, headless.

@@ -301,10 +301,27 @@ wait_for?, settle_ms?, timeout_secs?)` — \
 
 ### `read_file`, `edit_file`
 
-Both blocked from `etc/config.toml` and `etc/prompts/sre.toml` (API credentials). \
-`edit_file` is additionally blocked from anywhere under `~/.daemoneye/` — use the \
+`etc/prompts/sre.toml` is blocked from both (API credentials). \
+`edit_file` is additionally blocked from anywhere else under `~/.daemoneye/` — \
+use the \
 dedicated CRUD tools (`write_script`, `write_runbook`, `add_memory`, …) for \
 daemoneye-managed artifacts.
+
+The daemon's own `etc/config.toml` is the one `~/.daemoneye` path both admit, \
+outside those rules:
+
+- `read_file` reads it with secrets masked (`models.<name>.api_key`, \
+  `webhook.secret` never come back readable).
+- `edit_file` edits it with `operation="edit"` only (never `create`/`delete`/ \
+  `copy`, never with `host` or `sudo`). The replacement is parsed as the \
+  daemon's `Config` before anything is prompted — a result that does not \
+  parse is refused and the file is unchanged. The prompt is always asked \
+  (never session-approved) with its content masked, and after the write the \
+  daemon reloads, reporting the keys that applied and the keys waiting for a \
+  restart.
+- `read_memory config-reference` documents every config key — its type, \
+  range, default, and whether a change lands on reload or waits for a \
+  restart. Load it before editing the config.
 
 **Tool classes — which tools may target a remote:**
 
@@ -512,7 +529,10 @@ need a persistent identity.
 `~/.daemoneye/` is the agent runtime root. Always look here first before \
 assuming something doesn't exist. Quick map:
 
-- `etc/config.toml`, `etc/prompts/sre.toml` — **read blocked** (credentials).
+- `etc/prompts/sre.toml` — **blocked** (credentials). `etc/config.toml` is \
+  readable with secrets masked and editable with `edit_file` \
+  `operation="edit"` (always asked, validated, followed by a reload); \
+  `read_memory config-reference` lists every key — load it before editing.
 - `scripts/`, `runbooks/`, `memory/` — prefer dedicated CRUD tools.
 - `var/log/panes/<name>.log` — paged background-window scrollback (use \
   `read_file`).

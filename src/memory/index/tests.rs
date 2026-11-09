@@ -650,16 +650,17 @@ fn fresh_index_is_reconciled_on_first_search() {
         "should find the webhook-setup memory"
     );
 
-    // Assert the index now holds 9 rows (7 knowledge + 2 session) — the
+    // Assert the index now holds 10 rows (8 knowledge + 2 session) — the
     // knowledge count tracks the seed list in config/seeds.rs; the
-    // pane-toolkit memory was retired in M22 phase 10b.
+    // pane-toolkit memory was retired in M22 phase 10b, config-reference
+    // was added in M36 phase 20b.
     let conn = open_index().expect("open_index should succeed");
     let count: i64 = conn
         .query_row("SELECT count(*) FROM memories", [], |r| r.get(0))
         .expect("count rows");
     assert_eq!(
-        count, 9,
-        "reconciled index should have 9 rows (7 knowledge + 2 session)"
+        count, 10,
+        "reconciled index should have 10 rows (8 knowledge + 2 session)"
     );
 }
 
