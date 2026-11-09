@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-
 // ── The five states ──────────────────────────────────────────────────────---
 
 /// The spec's five states.
@@ -99,7 +98,6 @@ pub struct Record {
     #[serde(default)]
     pub msg: Option<String>,
 }
-
 
 // ── Grammar ──────────────────────────────────────────────────────────────---
 
@@ -196,7 +194,9 @@ fn parse_pair(key: &str, value: &str) -> Result<Pair, PairError> {
         return Err(PairError::Key);
     }
     match key {
-        "state" => State::from_str(value.as_bytes()).map(Pair::State).ok_or(PairError::State),
+        "state" => State::from_str(value.as_bytes())
+            .map(Pair::State)
+            .ok_or(PairError::State),
         "id" => parse_id(value).map(Pair::Id).ok_or(PairError::Id),
         // An unknown kind is absent, not malformed (Keys section).
         "kind" => Ok(Pair::Kind(Kind::from_str(value.as_bytes()))),
@@ -373,15 +373,16 @@ impl Table {
         match &slot.record.id {
             None => self.root = Some(slot),
             Some(id) => {
-                if self.records.len() >= RECORDS_CAP && !self.records.contains_key(id)
+                if self.records.len() >= RECORDS_CAP
+                    && !self.records.contains_key(id)
                     && let Some(oldest) = self
                         .records
                         .iter()
                         .min_by_key(|(_, s)| s.updated)
                         .map(|(k, _)| k.clone())
-                    {
-                        self.records.remove(&oldest);
-                    }
+                {
+                    self.records.remove(&oldest);
+                }
                 self.records.insert(id.clone(), slot);
             }
         }
@@ -389,10 +390,13 @@ impl Table {
 
     /// Clear the record `id` names and every record beneath it.
     pub fn clear_one(&mut self, id: &str) {
-        self.records.retain(|other, _| {
-            !(other == id || other.strip_prefix(&format!("{id}/")).is_some())
-        });
-        if self.root.as_ref().is_some_and(|s| s.record.id.as_deref() == Some(id)) {
+        self.records
+            .retain(|other, _| !(other == id || other.strip_prefix(&format!("{id}/")).is_some()));
+        if self
+            .root
+            .as_ref()
+            .is_some_and(|s| s.record.id.as_deref() == Some(id))
+        {
             self.root = None;
         }
     }
@@ -403,10 +407,7 @@ impl Table {
         if holding {
             return;
         }
-        self.root = self
-            .root
-            .take()
-            .filter(|s| !s.record.state.is_ephemeral());
+        self.root = self.root.take().filter(|s| !s.record.state.is_ephemeral());
         self.records.retain(|_, s| !s.record.state.is_ephemeral());
     }
 }
