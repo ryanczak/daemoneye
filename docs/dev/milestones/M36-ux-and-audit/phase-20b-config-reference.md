@@ -1,7 +1,7 @@
 # Phase 20b — config-reference
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-09
 **Depends on:** phase 20a
 **Estimated diff:** ~400 lines, mostly the memory's markdown
@@ -118,6 +118,10 @@ unreadable and points config edits at the memory.
 - [ ] `sre_config_blocked=0`: the prompt no longer claims the config is
       blocked. Today 2.
 - [ ] `sre_points_at_reference=1` or more. Today 0.
+- [ ] **bug-20b-1:** `setup_lists_reference=1` or more and
+      `audit_covers_reference=1` or more, and
+      `all_assets_audit_clean_with_empty_quarantine` passes. Today both
+      counts are 0.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok,
       `build_warnings=0`, clippy is clean, `fmt_exit=0` and `failed=0`.
 
@@ -132,6 +136,9 @@ cargo test --lib config_reference_is_seeded_and_overwritten 2>&1 | grep -E '^tes
 test -f assets/memory/knowledge/config-reference.md && echo reference_exists=1 || echo reference_exists=0
 grep -c 'etc/config.toml.*blocked\|blocked from `etc/config.toml`' assets/prompts/sre.toml | sed 's/^/sre_config_blocked=/'
 grep -c 'read_memory config-reference' assets/prompts/sre.toml | sed 's/^/sre_points_at_reference=/'
+grep -c 'config-reference' src/cli/commands/setup.rs | sed 's/^/setup_lists_reference=/'
+grep -c 'CONFIG_REFERENCE_MEMORY' src/config/path_audit.rs | sed 's/^/audit_covers_reference=/'
+cargo test --lib all_assets_audit_clean_with_empty_quarantine 2>&1 | grep -E '^test result'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker lock_invariant; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
@@ -404,3 +411,39 @@ kill: (-835018): No such process
 **Commit:** 5331dd94f4ca6118ff7fd276b69482057fc5c5fe
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-09 (bounced: bug-20b-1)
+
+Status is back to `in-progress`. The reviewer's gates: `fmt_exit=0`,
+`build_warnings=0`, clippy clean, `passed=2825 failed=0`. The E2E paste is
+identical to `.rexymcp/output/p20b-e2e.txt`, and the mutation evidence is
+real. Sampled defaults (`ai.first_token_timeout_secs`,
+`shells.idle_reap_secs`, `shells.detach_close_secs`,
+`limits.total_tool_calls_per_turn`) match the code. The
+`src/memory/index/tests.rs` seed-count pin (9 → 10) is accepted.
+
+One defect: [bug-20b-1](bugs/bug-20b-1.md). Behaviour 2's setup-report
+list and path-audit list don't name the new memory.
+
+### Notes for executor — 2026-11-09 (bounce)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** The memory, the seeding, the three `doc_truth` gates and
+the prompt are approved. Do not touch, re-read or re-verify them. There
+are exactly two edits left:
+
+1. Add `"config-reference"` to `seeded_knowledge` in
+   `src/cli/commands/setup.rs`, after `"agent-runtime-layout"`.
+2. Add `("config-reference", CONFIG_REFERENCE_MEMORY)` to the `assets`
+   table in `all_assets_audit_clean_with_empty_quarantine`
+   (`src/config/path_audit.rs`), importing the const the way the others
+   are. Run
+   `cargo test --lib all_assets_audit_clean_with_empty_quarantine`. If it
+   reports findings, reword the offending path in the memory. Never add a
+   quarantine entry.
+
+Then run § End-to-end verification once into
+`.rexymcp/output/p20b-e2e-2.txt` and paste it verbatim in a new
+`(end-to-end verification, bug-20b-1)` entry. The finish condition is
+`passed=2825 failed=0`, **not** 2826: this fix adds no test. Commit as
+`fix: name config-reference in the setup report and the path audit (M36 phase-20b, bug-20b-1)`.
