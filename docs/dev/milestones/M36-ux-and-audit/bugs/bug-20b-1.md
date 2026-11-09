@@ -1,7 +1,7 @@
 # Bug 1 on phase-20b: the setup report and the path audit don't know about config-reference
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (e5353ae1, approved 2026-11-09)
 **Filed:** 2026-11-09
 
 ## What's wrong

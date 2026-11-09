@@ -1,7 +1,7 @@
 # Phase 20b — config-reference
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-09
 **Depends on:** phase 20a
 **Estimated diff:** ~400 lines, mostly the memory's markdown
@@ -670,3 +670,30 @@ kill: (-864301): No such process
 **Commit:** e5353ae1000230111011740c4facd7bc7c454f2b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-09
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-20b-1](bugs/bug-20b-1.md), major). Behaviour 2's
+  setup report (`src/cli/commands/setup.rs`) and the path audit's asset
+  table (`src/config/path_audit.rs`) did not name the new memory. Fixed
+  in `e5353ae1`, the two prescribed edits, in 42 turns. The path audit is
+  clean on the new asset with an empty quarantine.
+- **Executor:** glm-5.3-flash. The first bounce dispatch (`b2f19fc9`) was
+  stopped by the human at turn 7 before any edit, and a fresh dispatch did
+  the work.
+- **Reviewer's gates:** `fmt_exit=0`, `build_warnings=0`, clippy clean,
+  `passed=2825 failed=0` (unchanged, as the no-new-test finish condition
+  required). The E2E paste is identical to
+  `.rexymcp/output/p20b-e2e-2.txt`.
+- **Scope deviations:**
+  - `src/memory/index/tests.rs`'s seed-count pin moved 9 → 10, outside
+    the Edit authorization. Accepted: a new seeded asset forces it.
+  - The allowlist raise `run_setup` 256 → 257 is authorised and named in
+    Findings.
+- **Calibration:** "every list of seeded memory names" in Behaviour 2 was
+  prose. The executor updated the lists it found by symbol
+  (`seeds.rs`) and missed the two literal string arrays. When a spec says
+  "every list of X", a count criterion per list catches a miss before
+  review. The bounce's
+  `setup_lists_reference` / `audit_covers_reference` greps did that.
