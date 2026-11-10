@@ -1,7 +1,7 @@
 # Phase 21b — program-status-surfaces
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-10
 **Depends on:** phase 21a
 **Estimated diff:** ~450 lines, about half of it tests
@@ -173,4 +173,74 @@ E2E
 
 ## Update Log
 
+### Update — 2026-11-10 11:35 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor:
+Claude Opus 4.5 (1M), headless (phase-21b-program-status-surfaces).
+
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-10 (refined re-dispatch)
+
+The first run used all 1000 turns and **changed no source file**. 955 of
+its calls were `grep` for strings that don't exist in this repo
+(`prev-run-res`, `veil`, `topicarg`, `so far`, …). Nothing in this phase
+needs a search like that. Every symbol you need is in the map below, so
+read those files and **write**.
+
+**Rules for this run:**
+
+- Your **first edit lands within your first 15 turns**. It is step 1 of
+  the edit order: the new `ShellRecord` field.
+- Grep only for a symbol that is named in this doc or that you have seen
+  in a file you read. **Never grep for a word you made up.** If a grep
+  returns nothing, stop searching and read the file the map names.
+- Run `cargo build` after every edit, and `cargo test --lib program_status_surface`
+  after every test you add.
+
+**Symbol map** (all of these exist today):
+
+| What | Where |
+|---|---|
+| Probe a host | `crate::shell::status(&sock, timeout)` in `src/shell/client.rs`, which returns `ShellResponse::Status { programs, .. }` |
+| A shell's socket | `crate::shell::socket_path(id)` in `src/shell/launch.rs` |
+| Registry access | `with_shells(reg, \|store\| …)`, used throughout `knowledge/shell.rs` |
+| Where to store | `ShellRecord` in `src/shell/registry.rs`, beside `last_foreground`. Its two constructors set `last_foreground: None` |
+| Render a record | `program_line(&Record)` and `programs_of(Option<&ShellResponse>)` in `knowledge/shell_screen.rs` |
+| `list_shells` | `list_shells` → `list_shells_in` → `resolve_scope` → `collect_row` → `format_shell_rows` (`ShellRow`) in `knowledge/shell.rs`, called from `dispatch_shells.rs` |
+| `top` and the IPC reply | `handle_shell_list` in `src/daemon/server/shells.rs` builds `ShellInfo` (`src/ipc_types.rs`). `shells_text` in `src/cli/commands/top_text.rs` draws both `top --once` and the TUI panel |
+| `watch_shell` | `watch_shell_with` in `knowledge/shell_watch.rs` (poll loop; `WATCH_POLL`) |
+| Test homes | `knowledge/shell_tests.rs` (`list_shells`), `knowledge/shell_observer_tests.rs` (`watch_shell`, real hosts), the `top_text.rs` tests |
+
+**Edit order.** Each step ends at a green `cargo build`.
+
+1. Add `last_programs: Vec<crate::shell::program_status::Record>` to
+   `ShellRecord`, and set it to empty in both constructors.
+2. Write `refresh_programs(reg, ids)` (async, in `knowledge/shell.rs`).
+   It collects the sockets under the lock, probes them all at once with
+   no lock held (each probe under a 1 s timeout), then stores the
+   `programs` of each `Status` reply.
+3. `ShellRow` gains `programs: Vec<String>` (from `program_line`). Make
+   `format_shell_rows` print them before the foreground, and make
+   `list_shells` async and call `refresh_programs` first. The `.await` in
+   `dispatch_shells.rs` follows.
+4. Give `ShellInfo` its `programs` field (`#[serde(default)]`). Have
+   `handle_shell_list` call `refresh_programs` and fill it. Have
+   `shells_text` show the first line in place of the foreground.
+5. Make `watch_shell_with` call a new helper each poll that compares the
+   host's `programs` with the snapshot taken at the start (Behaviour 4).
+6. Write the tests (each named `program_status_surface_…`), then the docs
+   (Spec step 5), then run the end-to-end block.
+
+The red-runs step may record the first compile failure of the new tests.
+It doesn't need to come before step 1.
+
+### Update — 2026-11-10 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** The first run was a degenerate search loop (955 greps for
+made-up strings, no source edit), not a spec contradiction. One refined
+attempt, with a symbol map, an edit order that starts with a write and a
+no-invented-grep rule, comes before a takeover (glm read paralysis has
+happened before on M36).
+
