@@ -7,13 +7,14 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 21a — program-status-host
-([`phase-21a-program-status-host.md`](milestones/M36-ux-and-audit/phase-21a-program-status-host.md)),
-drafted 2026-11-09 (decision 9, consume side, first half). Phases 01–20b
-are `done`. Twenty-eight phases are planned in the README's table: 04 was
-split into 04a/04b and 21 added on 2026-11-03, 05 was split into 05a/05b on
-2026-11-04, 17 was split into 17a/17b/17c on 2026-11-07, 20 into 20a/20b on
-2026-11-08, and 21 into 21a/21b/21c on 2026-11-09.
+**Active phase:** phase 21b — program-status-surfaces
+([`phase-21b-program-status-surfaces.md`](milestones/M36-ux-and-audit/phase-21b-program-status-surfaces.md)),
+drafted 2026-11-10 (decision 9, consume side, second half). Phases 01–21a
+are `done` (21a closed `escalated` after five bounces). Twenty-eight phases
+are planned in the README's table: 04 was split into 04a/04b and 21 added on
+2026-11-03, 05 was split into 05a/05b on 2026-11-04, 17 was split into
+17a/17b/17c on 2026-11-07, 20 into 20a/20b on 2026-11-08, and 21 into
+21a/21b/21c on 2026-11-09.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
