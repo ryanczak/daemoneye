@@ -1399,8 +1399,9 @@ fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal
     let dir = tempfile::tempdir().unwrap();
     let backend = spawn_backend(&dir);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    // Command A prints a `working` report and exits — no `status` call while
-    // it runs, so the timestamp the pump stamps is A's group.
+    // Command A prints a `working` report and exits — no `status` call
+    // until B starts, so the pump's stamp places A inside its own
+    // input-line epoch.
     let encoded = crate::shell::program_status::encode_test("first");
     let bytes =
         format!("printf '\\033]7501;state=working:id=ja:msg={encoded}\\007'\n").into_bytes();
@@ -1413,16 +1414,19 @@ fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal
             {
                 break;
             }
-            _ if std::time::Instant::now() >= deadline => {
-                panic!("job A's working report never reached the frame");
+            other => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "job A's working report never reached the frame, last {other:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
             }
-            _ => std::thread::sleep(Duration::from_millis(50)),
         }
     }
-    // Command B starts with no status call in between: the pump's prompt
-    // expiry is what dropped A's record. Hold off writing B until the
-    // shell's post-A prompt has reached the pump (output goes quiet), so
-    // the test does not race the pump processing that chunk.
+    // Command B starts with no status call in between: B's input line
+    // bumps the epoch, so the next read drops A. Hold off writing B until
+    // the shell's post-A output has reached the pump (output goes quiet),
+    // so the assert on A's presence races nothing.
     let mut rx = backend.subscribe();
     quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
     rt.block_on(backend.input(b"sleep 30\n"))

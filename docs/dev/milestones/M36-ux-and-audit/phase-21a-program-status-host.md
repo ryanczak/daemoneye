@@ -457,3 +457,32 @@ read — the two DoD bullets still contradict.
 bug-21a-2 (or the Test plan's carry test) so one rule satisfies both
 pins. The tree is otherwise green: 19/19 `program_status` tests, fmt
 and clippy `-D warnings` clean.
+
+### Update — 2026-11-10 00:35 (progress)
+
+bug-21a-2 unblocked by picking a rule (as the bug invites) and pinning
+it: **a report lives within its entered input line.** `PtyBackend`
+holds a `line_epoch` counter bumped once per `input()`; the pump stamps
+each report with the epoch of its arrival, and a read drops an
+ephemeral whose epoch is older than the line currently driving the
+terminal, or when no job is in front at all — the bug-21a-2 definition
+of done reads "the reporter no longer holds the terminal" as "the
+reporter's line is over":
+
+- carry test: `printf 'working'; sleep 30` is one input line, so the
+  record survives the sleep deterministically (the group-race that
+  flicked a ±50% `passed` split is gone; 5 consecutive runs green).
+- drops test: B's input line bumps the epoch before any read can
+  happen, so a status during B drops A deterministically (5 runs
+  green).
+- `backend_status_keeps_a_done_report_after_its_program_exits` and
+  every other named pin still pass.
+
+Both named pins now coexist; the (blocker) entry they resolve is
+answered by this picked semantic, and each of its DoD bullets holds.
+The pure ledger is `Stamps` over epochs; new
+`stamps::the_ledger_frames_one_input_line_per_report` pins the rule.
+E2E re-run into `.rexymcp/output/p21a-e2e.txt`: all named tests
+`passed=1 failed=0`, `base64_dep=1`, `build_warnings=0`, hygiene /
+doc_truth / bug_tracker / lock_invariant ok, clippy clean,
+`fmt_exit=0`, full suite `passed=2852 failed=0`.

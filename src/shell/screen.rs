@@ -97,20 +97,22 @@ impl ShellScreen {
         cb.stamps.has_vacancy(&cb.table.held_ids())
     }
 
-    /// Stamp every record the feed just deposited with the group that held
-    /// the terminal at its arrival (bug-21a-2); `None` when the shell's
-    /// own group held it — a builtin printed the report before the job's
-    /// group was forked. Runs after the screen lock was released and
-    /// retaken; called only when `fresh_stamp_ids` said the feed carried
-    /// something unstamped.
-    pub fn stamp_reporters(&mut self, group: Option<i64>) {
+    /// Stamp every record the feed just deposited with the input-line
+    /// epoch of its arrival (bug-21a-2): a report survives its own line's
+    /// later commands and drops when a newer line is entered. Runs after
+    /// the screen lock was released and retaken; called only when
+    /// `fresh_stamp_ids` said the feed carried something unstamped.
+    pub fn stamp_reporters(&mut self, epoch: u64) {
         for id in self.parser.callbacks().table.held_ids() {
             let key = if id.is_empty() {
                 None
             } else {
                 Some(id.as_str())
             };
-            self.parser.callbacks_mut().stamps.stamp_missing(key, group);
+            self.parser
+                .callbacks_mut()
+                .stamps
+                .stamp_missing(key, Some(epoch));
         }
     }
 
@@ -119,7 +121,7 @@ impl ShellScreen {
     /// foreground group the report was stamped with must still be the one
     /// holding (Bug-21a-2 — "is the reporter still in front", not "is
     /// anything in front"). `idle`, `done` and `error` records survive.
-    pub fn expire_stamps(&mut self, held_now: Option<i64>) {
+    pub fn expire_stamps(&mut self, held_now: Option<u64>) {
         let stale = self.parser.callbacks().stamps.stale(held_now);
         self.parser.callbacks_mut().table.expire_stale(&stale);
     }

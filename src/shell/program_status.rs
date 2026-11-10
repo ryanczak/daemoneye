@@ -969,7 +969,7 @@ impl vt100::Callbacks for ScreenCallbacks {
 /// reports into.
 #[derive(Debug, Default)]
 pub struct Stamps {
-    ledger: std::collections::HashMap<String, Option<i64>>,
+    ledger: std::collections::HashMap<String, Option<u64>>,
 }
 
 impl Stamps {
@@ -981,18 +981,23 @@ impl Stamps {
     }
 
     /// The group the record named by `id` reported under, if any.
-    pub fn held_by(&self, id: Option<&str>) -> Option<Option<i64>> {
-        self.ledger.get(id.unwrap_or("")).copied()
-    }
-
-    /// The ids whose reporter no longer holds the terminal: what the table
-    /// drops on a read. `held_now` is the foreground group the terminal is
-    /// held by right now, `None` when the shell is exited or its tty query
-    /// failed — so every ephemeral report is stale.
-    pub fn stale(&self, held_now: Option<i64>) -> std::collections::HashSet<String> {
+    /// The ids whose reporter's line is over: what the table drops on a
+    /// read. `held_now` is None when no job is in front (the shell's
+    /// prompt, or the shell exited) — every ephemeral report whose line
+    /// is over goes; `Some(current)` is the input-line epoch the terminal
+    /// is being driven by right now. A record whose epoch is older (a
+    /// newer `input` line has been entered) reads as "the reporter no
+    /// longer holds the terminal": its line ended. A record from the
+    /// current line survives — its reporter may be any later command of
+    /// the same line (`printf 'working'; sleep 30`).
+    pub fn stale(&self, held_now: Option<u64>) -> std::collections::HashSet<String> {
         self.ledger
             .iter()
-            .filter(|(_, reported)| **reported != held_now)
+            .filter(|(_, reported)| match (reported, held_now) {
+                (Some(epoch), Some(current)) => *epoch < current,
+                (Some(_), None) => true,
+                (None, _) => false,
+            })
             .map(|(id, _)| id.clone())
             .collect()
     }
@@ -1006,10 +1011,10 @@ impl Stamps {
     /// Stamp `id`, but only where it has no group yet — never backwards:
     /// a re-report by a later arrival must not rewrite an earlier stamp
     /// the ledger already holds.
-    pub fn stamp_missing(&mut self, id: Option<&str>, foreground: Option<i64>) {
+    pub fn stamp_missing(&mut self, id: Option<&str>, epoch: Option<u64>) {
         let key = id.unwrap_or("");
         if !self.ledger.contains_key(key) {
-            self.ledger.insert(key.to_string(), foreground);
+            self.ledger.insert(key.to_string(), epoch);
         }
     }
 }
@@ -1063,24 +1068,25 @@ mod stamps_tests {
     use super::*;
 
     #[test]
-    fn stamps_expire_when_the_reporter_leaves_the_foreground() {
+    fn the_ledger_frames_one_input_line_per_report() {
         let mut stamps = Stamps::default();
-        stamps.stamp_missing(Some("job"), Some(400));
-        stamps.stamp_missing(None, Some(400));
-        let stale = stamps.stale(Some(500));
+        stamps.stamp_missing(Some("job"), Some(1));
+        stamps.stamp_missing(None, Some(1));
+        // The current line is still 1: everything stands.
+        assert!(stamps.stale(Some(1)).is_empty());
+        // A newer line entered: the reporters' line is over.
+        let stale = stamps.stale(Some(2));
         assert!(
             stale.contains("job") && stale.contains(""),
-            "a later group in front makes both reporters stale: {stale:?}"
+            "a newer input line ended both reporters: {stale:?}"
         );
-        assert!(stamps.stale(Some(400)).is_empty(), "the same group stands");
-        assert_eq!(stamps.stale(None).len(), 2, "a dead shell expires all");
-        // Re-reporting by a later arrival must not rewrite the stamp.
-        stamps.stamp_missing(Some("job"), Some(400));
+        // At the prompt (no line driving), everything goes.
+        assert_eq!(stamps.stale(None).len(), 2);
+        // The ledger never outgrows the table.
         stamps.retain(&["other".to_string()]);
         assert!(
-            stamps.held_by(Some("job")).is_none(),
-            "the ledger never outgrows the table: {:?}",
-            stamps.held_by(Some("job"))
+            stamps.ledger.is_empty(),
+            "the ledger never outgrows the table"
         );
     }
 }

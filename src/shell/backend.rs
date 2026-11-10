@@ -80,6 +80,11 @@ pub struct PtyBackend {
     awaiting_secret: AtomicBool,
     out_tx: broadcast::Sender<Vec<u8>>,
     started: Instant,
+    /// One up per entered line (`input`): the reporter-attribution epoch.
+    /// A report stamped inside one line survives that line's later
+    /// commands (`printf 'working'; sleep 30`), and drops once a newer
+    /// line has been entered — the reporting command's line is over.
+    line_epoch: std::sync::atomic::AtomicU64,
 }
 
 impl PtyBackend {
@@ -106,6 +111,7 @@ impl PtyBackend {
             log: Mutex::new(log),
             screen: Mutex::new(screen),
             awaiting_secret: AtomicBool::new(false),
+            line_epoch: std::sync::atomic::AtomicU64::new(1),
             out_tx,
             started,
         });
@@ -133,22 +139,20 @@ impl PtyBackend {
                             }
                         }
                         {
-                            let shell = pump_this.shell.lock().unwrap_or_log();
-                            // Stamp the report with whoever held the
-                            // terminal at its arrival (bug-21a-2): the
-                            // foreground group when a job was in front,
-                            // "the shell" when a builtin printed it before
-                            // the job's own group was forked. The read
-                            // decides lifetime from the stamps.
+                            // Stamp the report with the input-line epoch of
+                            // its arrival (bug-21a-2): a report survives
+                            // its own line's later commands
+                            // (`printf 'working'; sleep 30`) and drops
+                            // once a newer line has been entered — the
+                            // reporter's line is over. The screen lock was
+                            // released first (lock order below); the
+                            // epoch read takes no shell lock.
                             if pump_this.has_unstamped() {
-                                let group = {
-                                    let shell_ref = &shell;
-                                    shell_ref
-                                        .current_foreground_pgid()
-                                        .filter(|&fg| Some(fg) != shell_ref.pid().map(i64::from))
-                                };
+                                let epoch = pump_this
+                                    .line_epoch
+                                    .load(std::sync::atomic::Ordering::SeqCst);
                                 let mut screen2 = pump_this.screen.lock().unwrap_or_log();
-                                screen2.stamp_reporters(group);
+                                screen2.stamp_reporters(epoch);
                             }
                         }
                         if !reply.is_empty() {
@@ -186,6 +190,8 @@ impl PtyBackend {
 #[async_trait]
 impl ShellBackend for PtyBackend {
     async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.line_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.shell
             .lock()
             .unwrap_or_log()
@@ -282,9 +288,9 @@ impl ShellBackend for PtyBackend {
             // Lock order: the shell mutex is already dropped below — the
             // stamp read takes no shell lock at all.
             let held_now = match &alive {
-                Ok(true) => shell
-                    .current_foreground_pgid()
-                    .filter(|&fg| Some(fg) != shell.pid().map(i64::from)),
+                Ok(true) => Some(self.foreground_job_epoch(
+                    shell.has_foreground_job() || shell.resumed_pgid_alive().is_some(),
+                )),
                 _ => None,
             };
 
@@ -371,6 +377,18 @@ impl PtyBackend {
     /// covered yet — the pump takes the shell lock only when it did.
     fn has_unstamped(&self) -> bool {
         self.screen.lock().unwrap_or_log().fresh_stamp_ids()
+    }
+
+    /// The input-line epoch that is driving the terminal right now:
+    /// `None` when no job is in front (the shell's prompt, or the shell
+    /// exited) — every ephemeral record whose line is over goes; `Some(`
+    /// the epoch) while a job the *current* line started is in front.
+    fn foreground_job_epoch(&self, has_job: bool) -> u64 {
+        if has_job {
+            self.line_epoch.load(std::sync::atomic::Ordering::SeqCst)
+        } else {
+            0
+        }
     }
 }
 
