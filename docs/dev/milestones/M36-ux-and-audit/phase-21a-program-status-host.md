@@ -202,6 +202,11 @@ E2E
 
 ## Update Log
 
+### Update — 2026-11-10 03:36 (started)
+
+Status stays `in-progress` (bounce 2026-11-10: bug-21a-5); milestone README
+row matches. Executor: Claude Sonnet 4.5, headless (resume for bug-21a-5).
+
 <!-- entries appended below this line -->
 
 ### Update — 2026-11-09 21:45 (started)

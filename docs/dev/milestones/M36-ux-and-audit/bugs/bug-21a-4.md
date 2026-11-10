@@ -1,7 +1,7 @@
 # Bug 4 on phase-21a: any keystroke into a running program drops its working record
 
 **Severity:** major
-**Status:** superseded by bug-21a-5 (its DoD test shape contradicted its rule)
+**Status:** fixed (superseded by bug-21a-5: its DoD test shape contradicted its rule)
 **Filed:** 2026-11-10
 
 ## What's wrong
