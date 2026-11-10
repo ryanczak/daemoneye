@@ -84,10 +84,44 @@ impl ShellScreen {
         self.parser.callbacks().table.records()
     }
 
-    /// Drop the `working` and `blocked` records: the lifetime rule fires
-    /// when the program that reported them no longer holds the terminal.
-    pub fn expire_programs(&mut self) {
-        self.parser.callbacks_mut().table.expire(false);
+    /// Whether the last feed deposited a reply: taken before the write
+    /// happens, so the pump makes one decision about the lock.
+    pub fn has_reply(&self) -> bool {
+        !self.parser.callbacks().reply.is_empty()
+    }
+
+    /// Whether the last feed carried a report the ledger has no group for
+    /// yet — the ids a fresh stamp write must cover.
+    pub fn fresh_stamp_ids(&self) -> bool {
+        let cb = self.parser.callbacks();
+        cb.stamps.has_vacancy(&cb.table.held_ids())
+    }
+
+    /// Stamp every record the feed just deposited with the group that held
+    /// the terminal at its arrival (bug-21a-2); `None` when the shell's
+    /// own group held it — a builtin printed the report before the job's
+    /// group was forked. Runs after the screen lock was released and
+    /// retaken; called only when `fresh_stamp_ids` said the feed carried
+    /// something unstamped.
+    pub fn stamp_reporters(&mut self, group: Option<i64>) {
+        for id in self.parser.callbacks().table.held_ids() {
+            let key = if id.is_empty() {
+                None
+            } else {
+                Some(id.as_str())
+            };
+            self.parser.callbacks_mut().stamps.stamp_missing(key, group);
+        }
+    }
+
+    /// Drop the `working` and `blocked` records the reporter no longer
+    /// holds. `still_holds` is the terminal's answer for one record id: the
+    /// foreground group the report was stamped with must still be the one
+    /// holding (Bug-21a-2 — "is the reporter still in front", not "is
+    /// anything in front"). `idle`, `done` and `error` records survive.
+    pub fn expire_stamps(&mut self, held_now: Option<i64>) {
+        let stale = self.parser.callbacks().stamps.stale(held_now);
+        self.parser.callbacks_mut().table.expire_stale(&stale);
     }
 
     /// The visible screen as plain text (F2) — what the terminal shows now.

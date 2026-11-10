@@ -411,3 +411,49 @@ kill: (-929706): No such process
 **Commit:** b490466913cfb1470a887ad7b919fd99efecdd08
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-09 23:55 (progress)
+
+bug-21a-1 landed with its four feed-path tests green (`feed_clear_…`,
+`feed_unknown_key_keeps_the_kind`, `feed_evicts_…`, `feed_skips_an_uppercase_key_and_an_empty_pair`)
+— the red run into `.rexymcp/output/red-feed-full.txt` showed `14 passed;
+4 failed` before the parser's `clear`/unknown-key/LRU/empty-pair fixes;
+`Table` gained `Report::Clear` routing, `next_stamp` arrival stamps and
+`Stamps` (bug-21a-2's reporting-group ledger). bug-21a-3's
+`sbx_status_passes_programs_through` now asserts the inner record
+unchanged on the outer frame, and the `(mutation)` run replacing the
+pass-through with `Vec::new()` failed it
+(`.rexymcp/output/p21a-mutation.txt`, then reverted, green again).
+
+**bug-21a-2 is blocked on the bug report itself.** Empirically pinned
+across ~20 instrumented runs (probes in
+`.rexymcp/output/c6..c9.txt`, now removed from the tree): whether the
+carry test (`printf 'working'; sleep 30`) shows the record during the
+sleep is decided by ~µs of pump scheduling — if the pump processes the
+report chunk before bash forks `sleep`, the report is stamped with the
+shell's own group (a builtin printf at the tty) and a read with the job
+in front drops it; if it processes after the fork, it is stamped with
+the job's group and survives. The tty cannot distinguish "the shell is
+between its own children" from "the shell is back at the prompt", and
+bug-21a-2's DoD requires opposite outcomes for that identical shape
+(its bullet 1: the carry test must still pass; its test: the drops test
+with no status call between A and B). Every rule expressible from the
+tty observables (group equality, group-vs-job, None-stamp vs job)
+satisfies one bullet and falsifies the other.
+
+**Blocked on:** a principal-engineer decision on the lifetime rule —
+e.g. reporter attribution via backend `input()` line boundaries (an
+input-epoch stamp), or accepting that the carry test's sleep belongs to
+the reporter's own command line and writing the pair of tests around
+that.
+
+**What I tried:** (1) pump-time fg-group stamps with read-time inequality
+— the carry test went to ~50% flake; (2) prompt-signal (raw_mode) expiry
+in the pump — expired every report at an interactive bash's prompt,
+killed the carry test outright; (3) None-vs-job stamp asymmetry at the
+read — the two DoD bullets still contradict.
+
+**What I need:** the architect to pick the lifetime semantics and amend
+bug-21a-2 (or the Test plan's carry test) so one rule satisfies both
+pins. The tree is otherwise green: 19/19 `program_status` tests, fmt
+and clippy `-D warnings` clean.

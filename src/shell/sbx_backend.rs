@@ -561,11 +561,29 @@ mod tests {
     fn sbx_status_passes_programs_through() {
         let dir = tempfile::tempdir().unwrap();
         let inner = spawn_inner(&dir);
-        // The records belong to the inner PTY's terminal; the pass-through
-        // property is that the outer frame carries whatever the inner
-        // frame carried. With the inner bash holding no records, the
-        // pass-through answers empty - and any inner record would have to
-        // appear here unchanged.
+        // bug-21a-3: an inner host with nothing on its terminal proves the
+        // wiring only when there is something to carry. The inner bash is
+        // fed a `done` report — which survives its program's exit — and the
+        // outer frame must carry that record unchanged, whatever the VM's
+        // `Find` said the state is.
+        let rt = runtime();
+        rt.block_on(
+            inner.input(b"printf 'MC''RK\\n'; printf '\\033]7501;state=done:id=sbx21\\007'\n"),
+        )
+        .expect("feed the inner host a done report");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let inner_programs = loop {
+            if let ShellResponse::Status { programs, .. } = rt.block_on(inner.status())
+                && programs.iter().any(|r| r.id.as_deref() == Some("sbx21"))
+            {
+                break programs;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the inner host's done record must be readable on its own frame"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
         let canned: CannedRuns = Arc::new(Mutex::new(vec![VmRun {
             code: Some(0),
             stdout: "bash=1 fg=2 state=S".into(),
@@ -576,12 +594,15 @@ mod tests {
             target(),
             fake_runner(canned, Arc::new(Mutex::new(Vec::new()))),
         );
-        let rt = runtime();
         match rt.block_on(backend.status()) {
             ShellResponse::Status { programs, .. } => {
                 assert!(
-                    programs.is_empty(),
-                    "an inner host with no records answers with no records: {programs:?}"
+                    !programs.is_empty(),
+                    "bug-21a-3: a vacuous empty check proved nothing — the outer                      frame must carry the inner host's records: {programs:?}"
+                );
+                assert_eq!(
+                    programs, inner_programs,
+                    "the records pass through unchanged: {programs:?} vs {inner_programs:?}"
                 );
             }
             other => panic!("expected a Status frame, got {other:?}"),

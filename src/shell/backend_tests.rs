@@ -1395,6 +1395,56 @@ fn backend_status_carries_a_working_report_while_its_program_runs() {
 }
 
 #[test]
+fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    // Command A prints a `working` report and exits — no `status` call while
+    // it runs, so the timestamp the pump stamps is A's group.
+    let encoded = crate::shell::program_status::encode_test("first");
+    let bytes =
+        format!("printf '\\033]7501;state=working:id=ja:msg={encoded}\\007'\n").into_bytes();
+    rt.block_on(backend.input(&bytes)).expect("start job A");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. }
+                if programs.iter().any(|r| r.id.as_deref() == Some("ja")) =>
+            {
+                break;
+            }
+            _ if std::time::Instant::now() >= deadline => {
+                panic!("job A's working report never reached the frame");
+            }
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    // Command B starts with no status call in between: the pump's prompt
+    // expiry is what dropped A's record. Hold off writing B until the
+    // shell's post-A prompt has reached the pump (output goes quiet), so
+    // the test does not race the pump processing that chunk.
+    let mut rx = backend.subscribe();
+    quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+    rt.block_on(backend.input(b"sleep 30\n"))
+        .expect("start job B");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. }
+                if !programs.iter().any(|r| r.id.as_deref() == Some("ja")) =>
+            {
+                break;
+            }
+            _ if std::time::Instant::now() >= deadline => {
+                panic!("A's working record must drop once another program holds the terminal");
+            }
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+    rt.block_on(backend.input(b"\x03")).expect("end job B");
+}
+
+#[test]
 fn backend_status_keeps_a_done_report_after_its_program_exits() {
     let dir = tempfile::tempdir().unwrap();
     let backend = spawn_backend(&dir);

@@ -101,6 +101,8 @@ pub struct Record {
 
 // ── Grammar ──────────────────────────────────────────────────────────────---
 
+/// The digest's Limits row: a `msg`-shaped key name past this is not one of
+/// the protocol's keys.
 const KEY_LIMIT: usize = 16;
 const MSG_ENCODED_LIMIT: usize = 2732;
 const MSG_DECODED_LIMIT: usize = 2048;
@@ -137,7 +139,11 @@ pub enum PairError {
     App,
     Title(Limit),
     Msg(Limit),
+    /// The key is outside the alphabet: a malformed pair, skipped.
     Key,
+    /// The key is within the alphabet but past the Limits section's
+    /// 16-byte cap: a broken limit, so the report drops whole.
+    KeyTooLong,
 }
 
 fn segment_ok(seg: &str) -> bool {
@@ -187,11 +193,16 @@ enum Pair {
     App(String),
     Title(String),
     Msg(String),
+    /// A key the protocol does not define: ignored, never applied.
+    Unknown,
 }
 
 fn parse_pair(key: &str, value: &str) -> Result<Pair, PairError> {
-    if key.len() > KEY_LIMIT || !key.bytes().all(|b| b.is_ascii_lowercase()) {
+    if !key.bytes().all(|b| b.is_ascii_lowercase()) {
         return Err(PairError::Key);
+    }
+    if key.len() > KEY_LIMIT {
+        return Err(PairError::KeyTooLong);
     }
     match key {
         "state" => State::from_str(value.as_bytes())
@@ -226,7 +237,7 @@ fn parse_pair(key: &str, value: &str) -> Result<Pair, PairError> {
             }
         }
         // Unknown keys are ignored, not reported.
-        _ => Ok(Pair::Kind(None)),
+        _ => Ok(Pair::Unknown),
     }
 }
 
@@ -237,6 +248,10 @@ fn parse_pair(key: &str, value: &str) -> Result<Pair, PairError> {
 pub enum Report {
     /// `OSC 7501 ; ? ST`, the feature query.
     Query,
+    /// The digest's `clear` row: not a state, but the report the terminal
+    /// acts on — the addressed record and everything beneath it goes, or
+    /// with no id every record does.
+    Clear { id: Option<String> },
     /// One program-status report: the values the pairs set. Each `Option`
     /// reads exactly as the digest's Keys section: absent vs. malformed, so
     /// `reduce` can tell a dropped record from a half-applied one.
@@ -308,6 +323,27 @@ pub fn parse(payload: &[u8], limit: &mut Option<Limit>) -> Option<Report> {
     if text.trim() == "?" {
         return Some(Report::Query);
     }
+    // `clear` rides the `state=` key but is not one of the five states, and
+    // a stateless table cannot hold a cleared-only report. A payload of
+    // exactly `state=clear[:id=<grammar-valid id>]` is the clear report; an
+    // id that fails the grammar, or any other pair alongside it, is not this
+    // protocol's clear form and drops whole.
+    let clear = |payload: &str| -> Option<Option<String>> {
+        let mut id = None;
+        let mut saw_state = false;
+        for pair in payload.split(':') {
+            let (key, value) = pair.split_once('=')?;
+            match key.trim() {
+                "state" if value.trim() == "clear" => saw_state = true,
+                "id" if id.is_none() => id = Some(parse_id(value.trim())?),
+                _ => return None,
+            }
+        }
+        saw_state.then_some(id)
+    };
+    if let Some(clear_id) = clear(text) {
+        return Some(Report::Clear { id: clear_id });
+    }
     let mut state = None;
     let mut id = None;
     let mut kind = None;
@@ -319,7 +355,9 @@ pub fn parse(payload: &[u8], limit: &mut Option<Limit>) -> Option<Report> {
     for pair in text.split(':') {
         let pair = pair.trim();
         if pair.is_empty() {
-            return None;
+            // An empty pair (`state=done::app=x`) is malformed, but skipped
+            // like any other: the rest still applies (Syntax section).
+            continue;
         }
         let Some((key, value)) = pair.split_once('=') else {
             // A pair without `=` is malformed; it is skipped and the rest
@@ -327,7 +365,7 @@ pub fn parse(payload: &[u8], limit: &mut Option<Limit>) -> Option<Report> {
             continue;
         };
         saw_pair = true;
-        match parse_pair(&key.trim().to_lowercase(), value.trim()) {
+        match parse_pair(key.trim(), value.trim()) {
             Ok(Pair::State(s)) => state = Some(s),
             Ok(Pair::Id(i)) => id = Some(i),
             Ok(Pair::Kind(k)) => kind = k,
@@ -335,9 +373,19 @@ pub fn parse(payload: &[u8], limit: &mut Option<Limit>) -> Option<Report> {
             Ok(Pair::App(a)) => app = Some(a),
             Ok(Pair::Title(t)) => title = Some(t),
             Ok(Pair::Msg(m)) => msg = Some(m),
+            // An unknown key is ignored: nothing is applied to it (Syntax
+            // section).
+            Ok(Pair::Unknown) => {}
             // A non-integer or out-of-range `progress` is a malformed pair:
             // it is skipped and the rest still applies.
             Err(PairError::Progress) => {}
+            // A key outside the alphabet — uppercase folded or not — is a
+            // malformed pair: skipped, never applied, the rest stands.
+            Err(PairError::Key) => {}
+            // A key past the Limits section's 16-byte cap drops the report
+            // whole: the cap is a limit, not a pair grammar, and the Limits
+            // section discards a report breaking a limit.
+            Err(PairError::KeyTooLong) => return None,
             // An unknown or missing `state`, a bad id, a broken limit, bad
             // base64 or a control character drop the report whole.
             Err(_) => return None,
@@ -364,6 +412,9 @@ pub struct Table {
     records: BTreeMap<String, Slot>,
     /// The root record: `Option` of the same shape, no id.
     root: Option<Slot>,
+    /// The last report-arrival stamp handed out; one per `apply`, never
+    /// reused and never reset by a `clear`.
+    next_stamp: u64,
 }
 
 /// One report's slot in the table: the record and how recently it updated.
@@ -387,6 +438,15 @@ impl Table {
     /// Whether no record (root or ided) is held.
     pub fn is_empty(&self) -> bool {
         self.root.is_none() && self.records.is_empty()
+    }
+
+    /// The next report-arrival stamp: one per `apply`, in arrival order,
+    /// never reused and never reset by a `clear`. With it, eviction past
+    /// the cap measures recency; with `table.len()`, a full table stamped
+    /// every report alike and eviction fell to key order.
+    pub fn next_stamp(&mut self) -> u64 {
+        self.next_stamp = self.next_stamp.wrapping_add(1);
+        self.next_stamp
     }
 
     /// The records as the frame carries them: root first, then by id.
@@ -454,14 +514,43 @@ impl Table {
         }
     }
 
-    /// Drop working and blocked records whose program no longer holds the
-    /// terminal (`holding` false).
-    pub fn expire(&mut self, holding: bool) {
-        if holding {
-            return;
+    /// Remove every record: `state=clear` with no id.
+    pub fn clear_all(&mut self) {
+        self.root = None;
+        self.records.clear();
+    }
+
+    /// The record ids the table now holds, the root keyed `""` and sorted,
+    /// what `Stamps::retain` trims its ledger down to after every apply or
+    /// clear.
+    pub fn held_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.records.keys().cloned().collect();
+        if self.root.is_some() {
+            ids.push(String::new());
         }
-        self.root = self.root.take().filter(|s| !s.record.state.is_ephemeral());
-        self.records.retain(|_, s| !s.record.state.is_ephemeral());
+        ids
+    }
+
+    /// Drop working and blocked records the reporter no longer holds the
+    /// terminal for. Bug-21a-2: the lifetime check is "the reporter is
+    /// still in front", so the report stamp ledger decides, not whether
+    /// anything is in front. `stale` is the ledger's own verdict.
+    pub fn expire_stale(&mut self, stale: &std::collections::HashSet<String>) {
+        let stale_id = |id: Option<&str>| -> bool {
+            match id {
+                None => stale.contains(""),
+                Some(id) => stale.contains(id),
+            }
+        };
+        if self
+            .root
+            .as_ref()
+            .is_some_and(|s| s.record.state.is_ephemeral() && stale_id(None))
+        {
+            self.root = None;
+        }
+        self.records
+            .retain(|key, s| !(s.record.state.is_ephemeral() && stale_id(Some(key.as_str()))));
     }
 }
 
@@ -616,8 +705,16 @@ mod tests {
             report("state=working:app=0123456789012345678901234567890ab"),
             None
         );
-        // key
-        assert_eq!(report("state=working:thiskeyistoolongfor=?"), None);
+        // key: the digest's 16-byte cap, at the limit and one past it
+        assert!(
+            report(&format!("state=working:{}=?", "k".repeat(16))).is_some(),
+            "a 16-byte lowercase key names no known pair but is legal, ignored"
+        );
+        assert_eq!(
+            report(&format!("state=working:{}=?", "k".repeat(17))),
+            None,
+            "a key past the 16-byte cap drops the report whole"
+        );
         // payload over the sequence limit
         let big = format!("state=working:{}", "x".repeat(5000));
         let mut limit = None;
@@ -805,6 +902,11 @@ pub struct ScreenCallbacks {
     /// happen: exactly `ESC ] 7501 ; ? ESC \`, and only from a query. The
     /// host is the only writer back for this protocol.
     pub reply: Vec<u8>,
+    /// The report-stamp ledger: for each record id (the root record keyed
+    /// `""`), the foreground process group the terminal was held by when
+    /// that report arrived. Bug-21a-2: the lifetime check is "is the
+    /// reporter still in front", not "is anything in front".
+    pub stamps: Stamps,
 }
 
 impl vt100::Callbacks for ScreenCallbacks {
@@ -821,6 +923,13 @@ impl vt100::Callbacks for ScreenCallbacks {
             Some(Report::Query) => {
                 self.reply = b"\x1b]7501;?\x1b\\".to_vec();
             }
+            Some(Report::Clear { id }) => {
+                match id {
+                    Some(id) => self.table.clear_one(&id),
+                    None => self.table.clear_all(),
+                }
+                self.stamps.retain(&self.table.held_ids());
+            }
             Some(Report::Status {
                 state,
                 id,
@@ -830,7 +939,7 @@ impl vt100::Callbacks for ScreenCallbacks {
                 title,
                 msg,
             }) => {
-                let updated = self.table.len() as u64;
+                let updated = self.table.next_stamp();
                 if let Some((id, state, kind)) = reduce(state, kind, id) {
                     self.table.apply(
                         Record {
@@ -844,9 +953,63 @@ impl vt100::Callbacks for ScreenCallbacks {
                         },
                         updated,
                     );
+                    self.stamps.retain(&self.table.held_ids());
                 }
             }
             None => {}
+        }
+    }
+}
+
+/// Bug-21a-2's ledger: the pure table holds only what the reports said, so
+/// the reporting fact — which process group held the terminal when each
+/// ephemeral report arrived — lives beside it. Keyed by record id, with the
+/// root record under `""`. `None` stamps the "the shell itself held the
+/// terminal" case, which is what a program that prints before it execs
+/// reports into.
+#[derive(Debug, Default)]
+pub struct Stamps {
+    ledger: std::collections::HashMap<String, Option<i64>>,
+}
+
+impl Stamps {
+    /// Drop every stamp the table no longer backs: called with the post-
+    /// apply id list, so a replaced-then-cleared record cannot pin a group
+    /// in the ledger forever.
+    pub fn retain(&mut self, ids: &[String]) {
+        self.ledger.retain(|key, _| ids.contains(key));
+    }
+
+    /// The group the record named by `id` reported under, if any.
+    pub fn held_by(&self, id: Option<&str>) -> Option<Option<i64>> {
+        self.ledger.get(id.unwrap_or("")).copied()
+    }
+
+    /// The ids whose reporter no longer holds the terminal: what the table
+    /// drops on a read. `held_now` is the foreground group the terminal is
+    /// held by right now, `None` when the shell is exited or its tty query
+    /// failed — so every ephemeral report is stale.
+    pub fn stale(&self, held_now: Option<i64>) -> std::collections::HashSet<String> {
+        self.ledger
+            .iter()
+            .filter(|(_, reported)| **reported != held_now)
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// Whether any of `ids` has no group recorded yet: the feed carried a
+    /// report the stamp write still has to cover.
+    pub fn has_vacancy(&self, ids: &[String]) -> bool {
+        ids.iter().any(|id| !self.ledger.contains_key(id))
+    }
+
+    /// Stamp `id`, but only where it has no group yet — never backwards:
+    /// a re-report by a later arrival must not rewrite an earlier stamp
+    /// the ledger already holds.
+    pub fn stamp_missing(&mut self, id: Option<&str>, foreground: Option<i64>) {
+        let key = id.unwrap_or("");
+        if !self.ledger.contains_key(key) {
+            self.ledger.insert(key.to_string(), foreground);
         }
     }
 }
@@ -891,6 +1054,155 @@ mod osc_tests {
         assert_eq!(
             bel_records, st_records,
             "BEL and ST terminate the same report: {bel_records:?} vs {st_records:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stamps_tests {
+    use super::*;
+
+    #[test]
+    fn stamps_expire_when_the_reporter_leaves_the_foreground() {
+        let mut stamps = Stamps::default();
+        stamps.stamp_missing(Some("job"), Some(400));
+        stamps.stamp_missing(None, Some(400));
+        let stale = stamps.stale(Some(500));
+        assert!(
+            stale.contains("job") && stale.contains(""),
+            "a later group in front makes both reporters stale: {stale:?}"
+        );
+        assert!(stamps.stale(Some(400)).is_empty(), "the same group stands");
+        assert_eq!(stamps.stale(None).len(), 2, "a dead shell expires all");
+        // Re-reporting by a later arrival must not rewrite the stamp.
+        stamps.stamp_missing(Some("job"), Some(400));
+        stamps.retain(&["other".to_string()]);
+        assert!(
+            stamps.held_by(Some("job")).is_none(),
+            "the ledger never outgrows the table: {:?}",
+            stamps.held_by(Some("job"))
+        );
+    }
+}
+
+/// Bug-21a-1: the pure tests drive `Table` directly with hand-made records
+/// and stamps; these drive the production path — bytes into
+/// `ShellScreen::feed`, then `ScreenCallbacks::unhandled_osc`, `parse` and
+/// `Table::apply` — and read back through `programs()`.
+#[cfg(test)]
+mod feed_tests {
+    use super::*;
+
+    fn ids(records: &[Record]) -> Vec<String> {
+        records.iter().filter_map(|r| r.id.clone()).collect()
+    }
+
+    #[test]
+    fn feed_clear_removes_the_subtree_and_clear_without_id_empties() {
+        let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+        for id in ["a", "a/child", "ab"] {
+            screen.feed(format!("\x1b]7501;state=idle:id={id}\x07").as_bytes());
+        }
+        assert_eq!(screen.programs().len(), 3, "the three records are in");
+        screen.feed(b"\x1b]7501;state=clear:id=a\x07");
+        let kept = ids(&screen.programs());
+        assert!(
+            !kept.contains(&"a".to_string()),
+            "clear on `a` removes `a` itself: {kept:?}"
+        );
+        assert!(
+            !kept.contains(&"a/child".to_string()),
+            "clear on `a` removes every record beneath it: {kept:?}"
+        );
+        assert!(
+            kept.contains(&"ab".to_string()),
+            "clear on `a` keeps the sibling `ab` (a different path, not beneath): {kept:?}"
+        );
+        screen.feed(b"\x1b]7501;state=clear\x07");
+        assert!(
+            screen.programs().is_empty(),
+            "clear without an id empties the table: {:?}",
+            screen.programs()
+        );
+    }
+
+    #[test]
+    fn feed_unknown_key_keeps_the_kind() {
+        let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+        screen.feed(b"\x1b]7501;state=blocked:kind=permission:future=1\x07");
+        let records = screen.programs();
+        assert_eq!(
+            records.first().and_then(|r| r.kind),
+            Some(Kind::Permission),
+            "an unknown key after `kind` must not erase it: {records:?}"
+        );
+        screen.feed(b"\x1b]7501;state=blocked:future=1:kind=auth\x07");
+        let records = screen.programs();
+        assert_eq!(
+            records.first().and_then(|r| r.kind),
+            Some(Kind::Auth),
+            "an unknown key before `kind` must not erase it: {records:?}"
+        );
+    }
+
+    #[test]
+    fn feed_evicts_the_least_recently_updated_at_the_cap() {
+        let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+        for i in 0..RECORDS_CAP {
+            screen.feed(format!("\x1b]7501;state=idle:id=f{i}\x07").as_bytes());
+        }
+        assert_eq!(screen.programs().len(), RECORDS_CAP, "the cap holds");
+        // Touch every record, latest touch first: `f255` was re-reported
+        // most recently... its re-report is the oldest of this batch of
+        // updates, `f0`'s the newest. The stamp source must order exactly
+        // this batch, not record identity.
+        for i in (0..RECORDS_CAP).rev() {
+            screen.feed(format!("\x1b]7501;state=idle:id=f{i}\x07").as_bytes());
+        }
+        screen.feed(b"\x1b]7501;state=idle:id=fnew\x07");
+        let kept = ids(&screen.programs());
+        assert_eq!(
+            kept.len(),
+            RECORDS_CAP,
+            "the cap still holds after the eviction: {kept:?}"
+        );
+        assert!(
+            !kept.contains(&"f255".to_string()),
+            "`f255`'s update is the oldest of the touch batch — it goes: {kept:?}"
+        );
+        assert!(
+            kept.contains(&"f0".to_string()),
+            "`f0` was the last report — the key-order tie-break of a constant \
+             stamp must not evict it: {kept:?}"
+        );
+    }
+
+    #[test]
+    fn feed_skips_an_uppercase_key_and_an_empty_pair() {
+        let mut screen = crate::shell::ShellScreen::new(4, 20, 0);
+        screen.feed(b"\x1b]7501;state=idle:id=up1:STATE=done\x07");
+        let records = screen.programs();
+        assert_eq!(records.len(), 1, "the report itself landed: {records:?}");
+        assert_eq!(
+            records[0].state,
+            State::Idle,
+            "an uppercase key is a malformed pair — skipped, never folded and applied: {records:?}"
+        );
+        screen.feed(b"\x1b]7501;state=done:id=ep1::app=ep\x07");
+        let records = screen.programs();
+        let ep1 = records
+            .iter()
+            .find(|r| r.id.as_deref() == Some("ep1"))
+            .expect("an empty pair must not drop the report");
+        assert_eq!(
+            ep1.state,
+            State::Done,
+            "an empty pair is skipped and the rest still applies"
+        );
+        assert_eq!(
+            ep1.app.as_deref(),
+            Some("ep"),
+            "the pair after the empty one applies"
         );
     }
 }

@@ -119,6 +119,7 @@ impl PtyBackend {
                         if looks_like_secret_prompt(&String::from_utf8_lossy(&chunk)) {
                             pump_this.awaiting_secret.store(true, Ordering::SeqCst);
                         }
+                        let mut reply = Vec::new();
                         {
                             let mut screen = pump_this.screen.lock().unwrap_or_log();
                             screen.feed(&chunk);
@@ -127,11 +128,31 @@ impl PtyBackend {
                             // host ever writes back for OSC 7501: taken after
                             // the screen lock is released (lock order below)
                             // and written straight to the shell's input.
-                            let reply = screen.take_reply();
-                            if !reply.is_empty() {
-                                drop(screen);
-                                let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);
+                            if screen.has_reply() {
+                                reply = screen.take_reply();
                             }
+                        }
+                        {
+                            let shell = pump_this.shell.lock().unwrap_or_log();
+                            // Stamp the report with whoever held the
+                            // terminal at its arrival (bug-21a-2): the
+                            // foreground group when a job was in front,
+                            // "the shell" when a builtin printed it before
+                            // the job's own group was forked. The read
+                            // decides lifetime from the stamps.
+                            if pump_this.has_unstamped() {
+                                let group = {
+                                    let shell_ref = &shell;
+                                    shell_ref
+                                        .current_foreground_pgid()
+                                        .filter(|&fg| Some(fg) != shell_ref.pid().map(i64::from))
+                                };
+                                let mut screen2 = pump_this.screen.lock().unwrap_or_log();
+                                screen2.stamp_reporters(group);
+                            }
+                        }
+                        if !reply.is_empty() {
+                            let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);
                         }
                         let log_res = pump_this
                             .log
@@ -251,15 +272,24 @@ impl ShellBackend for PtyBackend {
                     ShellState::Exited
                 }
             };
-            let holding = matches!(&alive, Ok(true))
-                && (shell.has_foreground_job() || shell.resumed_pgid_alive().is_some());
-            let mut programs = screen.programs();
-            if !holding {
-                // Lifetime (spec): working and blocked records die once the
-                // program that reported them no longer holds the terminal.
-                screen.expire_programs();
-                programs = screen.programs();
-            }
+            // Lifetime (spec, bug-21a-2): a `working`/`blocked` record dies
+            // when the program that reported it no longer holds the terminal
+            // — either because the shell is back at its own prompt, or
+            // because a different group is in front. Each report stamped
+            // the group that held the terminal at its arrival; the read
+            // compares those groups against who holds now.
+            //
+            // Lock order: the shell mutex is already dropped below — the
+            // stamp read takes no shell lock at all.
+            let held_now = match &alive {
+                Ok(true) => shell
+                    .current_foreground_pgid()
+                    .filter(|&fg| Some(fg) != shell.pid().map(i64::from)),
+                _ => None,
+            };
+
+            screen.expire_stamps(held_now);
+            let programs = screen.programs();
             (
                 state,
                 rows,
@@ -335,6 +365,12 @@ impl PtyBackend {
     /// The visible screen, exactly as `status()` reports from it.
     pub fn screen_contents(&self) -> String {
         self.screen.lock().unwrap_or_log().contents()
+    }
+
+    /// Whether the last feed carried a report the stamp ledger has not
+    /// covered yet — the pump takes the shell lock only when it did.
+    fn has_unstamped(&self) -> bool {
+        self.screen.lock().unwrap_or_log().fresh_stamp_ids()
     }
 }
 
