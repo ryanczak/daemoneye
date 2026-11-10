@@ -132,7 +132,13 @@ impl PtyBackend {
                         }
                         let mut reply = Vec::new();
                         {
+                            // The epoch is an atomic load, no lock: each
+                            // OSC 7501 report in this chunk stamps its own
+                            // id with the input line it arrived in, and no
+                            // other record's stamp moves (bug-21a-7).
+                            let epoch = pump_this.line_epoch.load(Ordering::SeqCst);
                             let mut screen = pump_this.screen.lock().unwrap_or_log();
+                            screen.set_epoch(epoch);
                             screen.feed(&chunk);
                             let _ = pump_this.out_tx.send(chunk.clone());
                             // The feature-query reply is the only byte this
@@ -142,25 +148,6 @@ impl PtyBackend {
                             if screen.has_reply() {
                                 reply = screen.take_reply();
                             }
-                        }
-                        {
-                            // Stamp the report with the input-line epoch of
-                            // its arrival (bug-21a-2, bug-21a-6): a
-                            // report survives its own line's later
-                            // commands (`printf 'working'; sleep 30`)
-                            // and drops once a newer line has been
-                            // entered — the reporter's line is over.
-                            // Every report re-stamps, so a second line's
-                            // report for a table the ledger already
-                            // knows stands on the second line's epoch.
-                            // The screen lock was released first (lock
-                            // order below); the epoch read takes no
-                            // shell lock.
-                            let epoch = pump_this
-                                .line_epoch
-                                .load(std::sync::atomic::Ordering::SeqCst);
-                            let mut screen2 = pump_this.screen.lock().unwrap_or_log();
-                            screen2.stamp_reporters(epoch);
                         }
                         if !reply.is_empty() {
                             let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);

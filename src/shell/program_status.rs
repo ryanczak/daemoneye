@@ -903,10 +903,13 @@ pub struct ScreenCallbacks {
     /// host is the only writer back for this protocol.
     pub reply: Vec<u8>,
     /// The report-stamp ledger: for each record id (the root record keyed
-    /// `""`), the foreground process group the terminal was held by when
-    /// that report arrived. Bug-21a-2: the lifetime check is "is the
-    /// reporter still in front", not "is anything in front".
+    /// `""`), the input-line epoch its latest report arrived in.
     pub stamps: Stamps,
+    /// The input-line epoch the bytes being fed arrived in, set by the host
+    /// before each feed. Each report stamps its own id with it, and only
+    /// its own id, so a record nobody re-reported keeps its stamp.
+    /// `None` (a screen with no host behind it) stamps nothing stale.
+    pub epoch: Option<u64>,
 }
 
 impl vt100::Callbacks for ScreenCallbacks {
@@ -941,6 +944,7 @@ impl vt100::Callbacks for ScreenCallbacks {
             }) => {
                 let updated = self.table.next_stamp();
                 if let Some((id, state, kind)) = reduce(state, kind, id) {
+                    let key = id.clone();
                     self.table.apply(
                         Record {
                             id,
@@ -954,6 +958,7 @@ impl vt100::Callbacks for ScreenCallbacks {
                         updated,
                     );
                     self.stamps.retain(&self.table.held_ids());
+                    self.stamps.stamp(key.as_deref(), self.epoch);
                 }
             }
             None => {}
@@ -1003,11 +1008,11 @@ impl Stamps {
             .collect()
     }
 
-    /// Stamp `id` with the epoch the report arrived in. Every report — new
-    /// or replacing — records the current epoch for its id (bug-21a-6): a
-    /// later report is always the newer fact about its id, so a re-report
-    /// must not keep an earlier stamp.
-    pub fn stamp_missing(&mut self, id: Option<&str>, epoch: Option<u64>) {
+    /// Stamp `id` with the epoch its report arrived in. Every report, new
+    /// or replacing, records its own epoch (bug-21a-6): a later report is
+    /// always the newer fact about its id. Only the reported id is stamped
+    /// (bug-21a-7): a record nobody re-reported keeps its stamp.
+    pub fn stamp(&mut self, id: Option<&str>, epoch: Option<u64>) {
         let key = id.unwrap_or("");
         self.ledger.insert(key.to_string(), epoch);
     }
@@ -1024,8 +1029,8 @@ mod re_stamp_tests {
     #[test]
     fn the_ledger_records_the_epoch_each_report_arrived_in() {
         let mut stamps = Stamps::default();
-        stamps.stamp_missing(Some("job"), Some(1));
-        stamps.stamp_missing(None, Some(1));
+        stamps.stamp(Some("job"), Some(1));
+        stamps.stamp(None, Some(1));
         // Line 1 drives the terminal: nothing is stale.
         assert!(stamps.stale(Some(1)).is_empty());
 
@@ -1035,8 +1040,8 @@ mod re_stamp_tests {
 
         // The same ids report again inside line 2: the new epoch rewrites
         // the stamp, and the records stand on line 2's line (bug-21a-6).
-        stamps.stamp_missing(Some("job"), Some(2));
-        stamps.stamp_missing(None, Some(2));
+        stamps.stamp(Some("job"), Some(2));
+        stamps.stamp(None, Some(2));
         assert!(
             stamps.stale(Some(2)).is_empty(),
             "a report re-stamps its id with its own arrival epoch: {:?}",
@@ -1056,7 +1061,7 @@ mod re_stamp_tests {
 
         // A stamp without a line epoch is never stale on its own.
         let mut bare = Stamps::default();
-        bare.stamp_missing(Some("plain"), None);
+        bare.stamp(Some("plain"), None);
         assert!(
             bare.stale(Some(7)).is_empty() && bare.stale(None).is_empty(),
             "a bare ledger entry (no epoch yet) must not decide lifetime"
@@ -1122,8 +1127,8 @@ mod stamps_tests {
     #[test]
     fn the_ledger_frames_one_input_line_per_report() {
         let mut stamps = Stamps::default();
-        stamps.stamp_missing(Some("job"), Some(1));
-        stamps.stamp_missing(None, Some(1));
+        stamps.stamp(Some("job"), Some(1));
+        stamps.stamp(None, Some(1));
         // The current line is still 1: everything stands.
         assert!(stamps.stale(Some(1)).is_empty());
         // A newer line entered: the reporters' line is over.

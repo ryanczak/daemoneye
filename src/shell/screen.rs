@@ -90,31 +90,17 @@ impl ShellScreen {
         !self.parser.callbacks().reply.is_empty()
     }
 
-    /// Stamp every held record with the input-line epoch of its arrival
-    /// (bug-21a-2, bug-21a-6): a report — new or replacing — records the
-    /// epoch that report arrived in, so it survives its own line's later
-    /// commands and drops when a newer line is entered. Runs after the
-    /// screen lock was released and retaken; the pump calls it on every
-    /// feed that carried a report, since a re-report re-stamps its id.
-    pub fn stamp_reporters(&mut self, epoch: u64) {
-        for id in self.parser.callbacks().table.held_ids() {
-            let key = if id.is_empty() {
-                None
-            } else {
-                Some(id.as_str())
-            };
-            self.parser
-                .callbacks_mut()
-                .stamps
-                .stamp_missing(key, Some(epoch));
-        }
+    /// Set the input-line epoch the next fed bytes arrived in. Each OSC
+    /// 7501 report in them stamps its own id with it (bug-21a-6, bug-21a-7).
+    pub fn set_epoch(&mut self, epoch: u64) {
+        self.parser.callbacks_mut().epoch = Some(epoch);
     }
 
-    /// Drop the `working` and `blocked` records the reporter no longer
-    /// holds. `still_holds` is the terminal's answer for one record id: the
-    /// foreground group the report was stamped with must still be the one
-    /// holding (Bug-21a-2 — "is the reporter still in front", not "is
-    /// anything in front"). `idle`, `done` and `error` records survive.
+    /// Drop the `working` and `blocked` records whose line is over.
+    /// `held_now` is the current input-line epoch while a job holds the
+    /// terminal, and `None` when none does: a record stamped with an older
+    /// epoch, or any stamped record with no job in front, goes. `idle`,
+    /// `done` and `error` records survive.
     pub fn expire_stamps(&mut self, held_now: Option<u64>) {
         let stale = self.parser.callbacks().stamps.stale(held_now);
         self.parser.callbacks_mut().table.expire_stale(&stale);

@@ -1424,81 +1424,39 @@ fn backend_status_carries_a_working_report_while_its_program_runs() {
     }
 }
 
+/// bug-21a-2 / bug-21a-7: A's line prints a `working` report and exits; B's
+/// line is entered with **no** `status` read in between and prints output
+/// before it sleeps. A read during B's sleep has no record from A's line:
+/// B's output must not re-stamp A's record into B's line. A `done` report
+/// on A's line is the positive control: it survives, so the reports
+/// really landed and the read really saw the table.
 #[test]
 fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal() {
     let dir = tempfile::tempdir().unwrap();
     let backend = spawn_backend(&dir);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    // Command A prints a `working` report, then holds the terminal with
-    // a short sleep — the pump's stamp places A inside its own
-    // input-line epoch, and the job's hold keeps the record observable
-    // across the status polls that look for it.
-    let encoded = crate::shell::program_status::encode_test("first");
-    let bytes = format!("printf '\\033]7501;state=working:id=ja:msg={encoded}\\007'; sleep 1\n")
-        .into_bytes();
-    rt.block_on(backend.input(&bytes)).expect("start job A");
-    // The report must land before anything else: poll for it while the
-    // sleep still holds, so no read can have expired it.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match rt.block_on(backend.status()) {
-            ShellResponse::Status { programs, .. }
-                if programs.iter().any(|r| r.id.as_deref() == Some("ja")) =>
-            {
-                break;
-            }
-            other => {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "job A's working report never reached the frame, last {other:?}"
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
+    rt.block_on(backend.input(
+        b"/bin/printf '\\033]7501;state=working:id=ja\\007'; /bin/printf '\\033]7501;state=done:id=jd\\007'\n",
+    ))
+    .expect("run line A");
+    // A fixed delay, not a status poll: a read here would expire A's record
+    // itself and hide the case this test pins.
+    std::thread::sleep(Duration::from_millis(1000));
+    rt.block_on(backend.input(b"echo hello-from-b; sleep 30\n"))
+        .expect("run line B");
+    std::thread::sleep(Duration::from_millis(1500));
+    match rt.block_on(backend.status()) {
+        ShellResponse::Status { programs, .. } => {
+            assert!(
+                programs.iter().any(|r| r.id.as_deref() == Some("jd")),
+                "the done report from A's line is the control and must survive: {programs:?}"
+            );
+            assert!(
+                !programs.iter().any(|r| r.id.as_deref() == Some("ja")),
+                "A's working record must not survive into B's line: {programs:?}"
+            );
         }
-    }
-    // A's sleep ends; the shell is back at its own prompt. No input has
-    // ended a line since A's line, so the epoch still names A's line:
-    // wait for Idle before entering B — what makes B's line entered *at
-    // the shell's own prompt*, the only input that advances the epoch
-    // (bug-21a-4).
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match rt.block_on(backend.status()) {
-            ShellResponse::Status {
-                state: ShellState::Idle,
-                ..
-            } => break,
-            ShellResponse::Status { state, .. } => {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "job A to release the terminal, last state {state:?}"
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            other => panic!("expected a Status frame, got {other:?}"),
-        }
-    }
-    // Command B is entered at the shell's own prompt, so the epoch
-    // advances: A's line reads as over and the next read drops A.
-    rt.block_on(backend.input(b"sleep 30\n"))
-        .expect("start job B");
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        match rt.block_on(backend.status()) {
-            ShellResponse::Status { programs, .. }
-                if !programs.iter().any(|r| r.id.as_deref() == Some("ja")) =>
-            {
-                break;
-            }
-            ShellResponse::Status { state, .. } => {
-                assert!(
-                    std::time::Instant::now() < deadline,
-                    "A's working record must drop once another program holds the terminal, last state {state:?}"
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            other => panic!("expected a Status frame, got {other:?}"),
-        }
+        other => panic!("expected a Status frame, got {other:?}"),
     }
     rt.block_on(backend.input(b"\x03")).expect("end job B");
 }
