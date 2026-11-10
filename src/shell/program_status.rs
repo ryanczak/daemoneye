@@ -962,11 +962,10 @@ impl vt100::Callbacks for ScreenCallbacks {
 }
 
 /// Bug-21a-2's ledger: the pure table holds only what the reports said, so
-/// the reporting fact — which process group held the terminal when each
-/// ephemeral report arrived — lives beside it. Keyed by record id, with the
-/// root record under `""`. `None` stamps the "the shell itself held the
-/// terminal" case, which is what a program that prints before it execs
-/// reports into.
+/// the reporting fact — the input-line epoch the terminal was in when each
+/// report arrived — lives beside it. Keyed by record id, with the root
+/// record under `""`. Bug-21a-5 framed the lifetime rule the epoch serves:
+/// a `working`/`blocked` record lives within its entered input line.
 #[derive(Debug, Default)]
 pub struct Stamps {
     ledger: std::collections::HashMap<String, Option<u64>>,
@@ -980,16 +979,18 @@ impl Stamps {
         self.ledger.retain(|key, _| ids.contains(key));
     }
 
-    /// The group the record named by `id` reported under, if any.
     /// The ids whose reporter's line is over: what the table drops on a
-    /// read. `held_now` is None when no job is in front (the shell's
-    /// prompt, or the shell exited) — every ephemeral report whose line
-    /// is over goes; `Some(current)` is the input-line epoch the terminal
-    /// is being driven by right now. A record whose epoch is older (a
-    /// newer `input` line has been entered) reads as "the reporter no
-    /// longer holds the terminal": its line ended. A record from the
-    /// current line survives — its reporter may be any later command of
-    /// the same line (`printf 'working'; sleep 30`).
+    /// read. `held_now = Some(current)` is the input-line epoch the shell
+    /// is reading a command line in right now — a record whose epoch is
+    /// older had a newer line entered at the prompt, so the reporter's
+    /// line is over. A record from the current line survives: its reporter
+    /// may be any later command of that line (`printf 'working'; sleep
+    /// 30`). `held_now = None` is "no line is driving the terminal": the
+    /// read happens between lines, so every epoch-stamped record's line is
+    /// over. bug-21a-5 rule 3: a read with a job in front drops the
+    /// `working`/`blocked` records from an older epoch — the job is not
+    /// the reporter, and a reporter still in front of its own line
+    /// survives because its stamp is the current epoch.
     pub fn stale(&self, held_now: Option<u64>) -> std::collections::HashSet<String> {
         self.ledger
             .iter()

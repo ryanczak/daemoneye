@@ -1297,6 +1297,28 @@ async fn serve_until_exit_returns_when_the_shell_exits() {
 /// ST form — this one keeps the probe inside one argument.
 const QUERY: &[u8] = b"printf '\\033]7501;?\\007'\n";
 
+/// Wait until `status()` reports `Idle`, or panic at the deadline with
+/// the state actually seen.
+fn wait_idle(rt: &tokio::runtime::Runtime, backend: &Arc<PtyBackend>) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status {
+                state: ShellState::Idle,
+                ..
+            } => break,
+            ShellResponse::Status { state, .. } => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the shell to reach Idle, last state {state:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+}
+
 /// Wait until `status()` reports the record at `id` with `state`, or panic
 /// at the deadline with the frame actually seen.
 fn until_record(
@@ -1481,6 +1503,83 @@ fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal
     rt.block_on(backend.input(b"\x03")).expect("end job B");
 }
 
+/// bug-21a-5 DoD: a prompt that ends in none of the four glyph heuristic's
+/// characters (`PS1='❯ '`, starship's and fish's default) must still end a
+/// `working` record once its command exits. The carry, done-survives and
+/// drops pins from the earlier bugs stay green on the same rule: no screen
+/// content takes part in record lifetime, so the prompt's last glyph is
+/// irrelevant — what ends the record is "no job in front" at the read.
+#[test]
+fn backend_status_drops_a_working_report_at_a_prompt_without_a_glyph() {
+    // bug-21a-5 DoD: the record lifetime decision must not depend on what
+    // the screen's last line looks like. This command line prints a
+    // `working` report, echoes `progress 50%` (ends in `%`, the shape the
+    // old glyph heuristic dropped a record on) and then blocks on `sleep`.
+    // While the sleep holds the terminal, a read keeps the record; once the
+    // command exits — no job in front — a read drops it. The prompt never
+    // enters the decision, so `PS1` is left whatever bash's default is.
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let encoded = crate::shell::program_status::encode_test("gone");
+    let bytes = format!(
+        "printf '\\033]7501;state=working:id=noglyph:msg={encoded}\\007'; echo 'progress 50%'; sleep 30\n",
+    )
+    .into_bytes();
+    rt.block_on(backend.input(&bytes))
+        .expect("print the working report and the percent line");
+    until_record(
+        &rt,
+        &backend,
+        Some("noglyph"),
+        crate::shell::program_status::State::Working,
+        None,
+    );
+    rt.block_on(backend.input(b"\x03\n")).expect("end the job");
+    wait_idle(&rt, &backend);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. } if programs.is_empty() => break,
+            ShellResponse::Status { ref programs, .. } => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the working record to drop once its command exited (bug-21a-5: \
+                     no screen content takes part in record lifetime), last {programs:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn backend_status_keeps_a_working_report_while_its_program_prints_a_percent() {
+    // bug-21a-5 DoD: the not-early case. A program reports `working` and
+    // then prints `progress 50%` — a line ending in `%`, the shape the old
+    // glyph heuristic used to end its own record with. The record must
+    // survive every read while the program still holds the terminal.
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let encoded = crate::shell::program_status::encode_test("pct-job");
+    let bytes = format!(
+        "printf '\\033]7501;state=working:id=pct:msg={encoded}\\007'; echo 'progress 50%'; sleep 30\n",
+    )
+    .into_bytes();
+    rt.block_on(backend.input(&bytes))
+        .expect("print the report and the percent line");
+    until_record(
+        &rt,
+        &backend,
+        Some("pct"),
+        crate::shell::program_status::State::Working,
+        None,
+    );
+    // It hangs up with the shell on drop.
+}
+
 #[test]
 fn backend_status_keeps_a_done_report_after_its_program_exits() {
     let dir = tempfile::tempdir().unwrap();
@@ -1587,11 +1686,13 @@ fn status_frame_without_programs_deserializes_empty() {
     }
 }
 
-/// bug-21a-4's own pin: input that goes *to a running program* ends no
-/// record. One command line prints a `working` report, then reads a line
-/// from stdin, then sleeps; while the program waits the test sends text
-/// with `input()` — a line end that is **not** entered at the shell's own
-/// prompt — and a `status` during the sleep must still carry the record.
+/// bug-21a-5's shape of bug-21a-4's pin: input that goes *to a running
+/// program* ends no record. The program is an **external** reader
+/// (`head -n 1`), not the `read` builtin — which runs in the shell's own
+/// process group and cannot be told from input at the prompt. One command
+/// line prints a `working` report, then reads a line through `head`, then
+/// sleeps; while it waits the test sends keystrokes, a paste and a full
+/// line, and a `status` during the sleep must still carry the record.
 #[test]
 fn backend_status_keeps_a_working_report_while_input_goes_to_its_program() {
     let dir = tempfile::tempdir().unwrap();
@@ -1599,7 +1700,8 @@ fn backend_status_keeps_a_working_report_while_input_goes_to_its_program() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let encoded = crate::shell::program_status::encode_test("awaited");
     let bytes = format!(
-        "printf '\\033]7501;state=working:id=inp4:msg={encoded}\\007'; read -r line; sleep 30\n",
+        "printf '\\033]7501;state=working:id=inp4:msg={encoded}\\007'; \
+         head -n 1 >/dev/null; sleep 30\n",
     )
     .into_bytes();
     rt.block_on(backend.input(&bytes))

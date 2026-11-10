@@ -59,25 +59,6 @@ fn looks_like_secret_prompt(chunk: &str) -> bool {
     NEEDLES.iter().any(|n| lower.contains(n))
 }
 
-/// True when the screen's last non-empty visible line is a fresh shell
-/// prompt: its last printable mark is one of the common prompt glyphs and
-/// the cursor sits at the end of that row, so the line the shell itself
-/// is reading is the empty prompt line — not an echoed command and not a
-/// program mid-render.
-fn looks_like_prompt(contents: &str) -> bool {
-    let last = contents
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("");
-    let trimmed = last.trim();
-    let mark_ok = trimmed.ends_with('$')
-        || trimmed.ends_with('%')
-        || trimmed.ends_with('#')
-        || trimmed.ends_with('>');
-    mark_ok && trimmed.len() > 1
-}
-
 /// True when `bytes` end a secret-entry state: a real newline or carriage
 /// return submits the answer, and a Ctrl-C (the give-up write, 0x03) cancels
 /// the prompt outright — either way the shell is no longer at the prompt, so
@@ -171,28 +152,16 @@ impl PtyBackend {
                             // reporter's line is over. The screen lock was
                             // released first (lock order below); the
                             // epoch read takes no shell lock.
-                            if pump_this.has_unstamped() {
-                                let epoch = pump_this
-                                    .line_epoch
-                                    .load(std::sync::atomic::Ordering::SeqCst);
-                                let mut screen2 = pump_this.screen.lock().unwrap_or_log();
+                            let epoch = pump_this
+                                .line_epoch
+                                .load(std::sync::atomic::Ordering::SeqCst);
+                            let mut screen2 = pump_this.screen.lock().unwrap_or_log();
+                            if screen2.fresh_stamp_ids() {
                                 screen2.stamp_reporters(epoch);
                             }
                         }
                         if !reply.is_empty() {
                             let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);
-                        }
-                        // The epoch advances when the pump sees the
-                        // shell's prompt return: bash prints its prompt
-                        // exactly once per command line, and a program
-                        // that reads the tty (a `read` builtin) prints
-                        // nothing. Keystrokes, pastes and a line a
-                        // running program consumed advance nothing —
-                        // bug-21a-4's rule, tty-observable.
-                        if looks_like_prompt(&pump_this.screen.lock().unwrap_or_log().contents()) {
-                            pump_this
-                                .line_epoch
-                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
                         let log_res = pump_this
                             .log
@@ -226,6 +195,23 @@ impl PtyBackend {
 #[async_trait]
 impl ShellBackend for PtyBackend {
     async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        let no_job = {
+            let shell = self.shell.lock().unwrap_or_log();
+            !shell.has_foreground_job() && shell.resumed_pgid_alive().is_none()
+        };
+        // The epoch advances only for a command line entered at the shell's
+        // own prompt (bug-21a-5): the bytes carry a line end (`\r` or
+        // `\n`) **and** no job holds the terminal — "no job" the same check
+        // `status()` uses. Input to a running program (keystrokes, a paste,
+        // a line a `read`-ing program or an external reader like `head`
+        // consumed) is not that shape and never advances it. Known and
+        // accepted: input to a bash builtin that reads the terminal
+        // (`read`) can't be told from input at the prompt, so it starts a
+        // new epoch; programs that report OSC 7501 are external processes,
+        // so this is not the case the feature serves.
+        if PtyBackend::epoch_advances(bytes, no_job) {
+            self.line_epoch.fetch_add(1, Ordering::SeqCst);
+        }
         self.shell
             .lock()
             .unwrap_or_log()
@@ -313,19 +299,22 @@ impl ShellBackend for PtyBackend {
                 }
             };
             // Lifetime (the spec's "the program that reported it no
-            // longer holds the terminal", framed as input lines): a read
-            // drops a `working`/`blocked` record whose epoch is older
-            // than the epoch the shell is now reading input in. The epoch
-            // advances when the pump sees the shell's prompt return — the
-            // shell prints it exactly at the end of each command line —
-            // never for keystrokes, pastes or a line a running program
-            // consumed (bug-21a-4).
+            // longer holds the terminal", framed as input lines, bug-21a-5
+            // rules 2–4): a read drops every `working`/`blocked` record
+            // from an older epoch — a newer line was entered at the shell's
+            // own prompt, so the reporter's line is over. With no job in
+            // front the read is between lines: `None` drops every
+            // epoch-stamped record. No screen content takes part in the
+            // lifetime decision.
             //
             // Lock order: the shell mutex is still held below — the stamp
             // read takes no shell lock at all.
-            screen.expire_stamps(Some(
-                self.line_epoch.load(std::sync::atomic::Ordering::SeqCst),
-            ));
+            let held_now = if shell.has_foreground_job() || shell.resumed_pgid_alive().is_some() {
+                Some(self.line_epoch.load(std::sync::atomic::Ordering::SeqCst))
+            } else {
+                None
+            };
+            screen.expire_stamps(held_now);
             let programs = screen.programs();
             (
                 state,
@@ -404,10 +393,18 @@ impl PtyBackend {
         self.screen.lock().unwrap_or_log().contents()
     }
 
-    /// Whether the last feed carried a report the stamp ledger has not
-    /// covered yet — the pump takes the shell lock only when it did.
-    fn has_unstamped(&self) -> bool {
-        self.screen.lock().unwrap_or_log().fresh_stamp_ids()
+    /// The input-line epoch advances only for a command line entered at
+    /// the shell's own prompt (bug-21a-5): the bytes carry a line end
+    /// (`\r` or `\n`) **and** no job holds the terminal — "no job" the
+    /// same check `status()` uses, the foreground group and the live
+    /// resumed group. Input to a running program (`read`, keystrokes, a
+    /// paste) is not this shape and never advances the epoch. Known and
+    /// accepted: an external reader (`head -n 1`) and a bash builtin that
+    /// reads the terminal hold the same group either way — an external
+    /// reader with a job in front is not at the prompt; with no job in
+    /// front, the epoch advances, which is the rule.
+    fn epoch_advances(bytes: &[u8], no_job: bool) -> bool {
+        no_job && (bytes.contains(&b'\r') || bytes.contains(&b'\n'))
     }
 }
 #[cfg(test)]
