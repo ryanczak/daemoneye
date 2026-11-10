@@ -59,6 +59,25 @@ fn looks_like_secret_prompt(chunk: &str) -> bool {
     NEEDLES.iter().any(|n| lower.contains(n))
 }
 
+/// True when the screen's last non-empty visible line is a fresh shell
+/// prompt: its last printable mark is one of the common prompt glyphs and
+/// the cursor sits at the end of that row, so the line the shell itself
+/// is reading is the empty prompt line — not an echoed command and not a
+/// program mid-render.
+fn looks_like_prompt(contents: &str) -> bool {
+    let last = contents
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("");
+    let trimmed = last.trim();
+    let mark_ok = trimmed.ends_with('$')
+        || trimmed.ends_with('%')
+        || trimmed.ends_with('#')
+        || trimmed.ends_with('>');
+    mark_ok && trimmed.len() > 1
+}
+
 /// True when `bytes` end a secret-entry state: a real newline or carriage
 /// return submits the answer, and a Ctrl-C (the give-up write, 0x03) cancels
 /// the prompt outright — either way the shell is no longer at the prompt, so
@@ -80,10 +99,15 @@ pub struct PtyBackend {
     awaiting_secret: AtomicBool,
     out_tx: broadcast::Sender<Vec<u8>>,
     started: Instant,
-    /// One up per entered line (`input`): the reporter-attribution epoch.
-    /// A report stamped inside one line survives that line's later
-    /// commands (`printf 'working'; sleep 30`), and drops once a newer
-    /// line has been entered — the reporting command's line is over.
+    /// One up per **command line entered at the shell's own prompt**:
+    /// the reporter-attribution epoch (bug-21a-2, bug-21a-4). A report
+    /// stamped inside one line survives that line's later commands
+    /// (`printf 'working'; sleep 30`) and drops once a newer line has
+    /// been entered — the reporting command's line is over. Input that
+    /// goes to a running program never advances it: a keystroke, a paste
+    /// or a `send_input` into a program that is still working is not a
+    /// new prompt, and the spec forbids dropping a `working` record on it
+    /// ("a terminal MUST NOT require re-sending to keep a record").
     line_epoch: std::sync::atomic::AtomicU64,
 }
 
@@ -158,6 +182,18 @@ impl PtyBackend {
                         if !reply.is_empty() {
                             let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);
                         }
+                        // The epoch advances when the pump sees the
+                        // shell's prompt return: bash prints its prompt
+                        // exactly once per command line, and a program
+                        // that reads the tty (a `read` builtin) prints
+                        // nothing. Keystrokes, pastes and a line a
+                        // running program consumed advance nothing —
+                        // bug-21a-4's rule, tty-observable.
+                        if looks_like_prompt(&pump_this.screen.lock().unwrap_or_log().contents()) {
+                            pump_this
+                                .line_epoch
+                                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
                         let log_res = pump_this
                             .log
                             .lock()
@@ -190,8 +226,6 @@ impl PtyBackend {
 #[async_trait]
 impl ShellBackend for PtyBackend {
     async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
-        self.line_epoch
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.shell
             .lock()
             .unwrap_or_log()
@@ -278,23 +312,20 @@ impl ShellBackend for PtyBackend {
                     ShellState::Exited
                 }
             };
-            // Lifetime (spec, bug-21a-2): a `working`/`blocked` record dies
-            // when the program that reported it no longer holds the terminal
-            // — either because the shell is back at its own prompt, or
-            // because a different group is in front. Each report stamped
-            // the group that held the terminal at its arrival; the read
-            // compares those groups against who holds now.
+            // Lifetime (the spec's "the program that reported it no
+            // longer holds the terminal", framed as input lines): a read
+            // drops a `working`/`blocked` record whose epoch is older
+            // than the epoch the shell is now reading input in. The epoch
+            // advances when the pump sees the shell's prompt return — the
+            // shell prints it exactly at the end of each command line —
+            // never for keystrokes, pastes or a line a running program
+            // consumed (bug-21a-4).
             //
-            // Lock order: the shell mutex is already dropped below — the
-            // stamp read takes no shell lock at all.
-            let held_now = match &alive {
-                Ok(true) => Some(self.foreground_job_epoch(
-                    shell.has_foreground_job() || shell.resumed_pgid_alive().is_some(),
-                )),
-                _ => None,
-            };
-
-            screen.expire_stamps(held_now);
+            // Lock order: the shell mutex is still held below — the stamp
+            // read takes no shell lock at all.
+            screen.expire_stamps(Some(
+                self.line_epoch.load(std::sync::atomic::Ordering::SeqCst),
+            ));
             let programs = screen.programs();
             (
                 state,
@@ -378,20 +409,7 @@ impl PtyBackend {
     fn has_unstamped(&self) -> bool {
         self.screen.lock().unwrap_or_log().fresh_stamp_ids()
     }
-
-    /// The input-line epoch that is driving the terminal right now:
-    /// `None` when no job is in front (the shell's prompt, or the shell
-    /// exited) — every ephemeral record whose line is over goes; `Some(`
-    /// the epoch) while a job the *current* line started is in front.
-    fn foreground_job_epoch(&self, has_job: bool) -> u64 {
-        if has_job {
-            self.line_epoch.load(std::sync::atomic::Ordering::SeqCst)
-        } else {
-            0
-        }
-    }
 }
-
 #[cfg(test)]
 #[path = "backend_tests.rs"]
 mod tests;

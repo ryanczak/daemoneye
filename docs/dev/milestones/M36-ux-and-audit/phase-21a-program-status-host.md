@@ -632,3 +632,21 @@ kill: (-1033473): No such process
 **Commit:** 1c6581a33b504802aa21d1adf4274ae2322a365c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-09 19:17 (Findings)
+
+- Semantics picked: the epoch advances when the pump sees a fresh shell
+  prompt on the screen, not on any `input()` call. Bash prints its prompt
+  exactly once per command line; a program consuming input (`read`,
+  keystrokes, a paste) prints none, so the epoch stays put and the record
+  survives. Prompt detection is the screen's last non-empty visible line
+  ending in a common prompt glyph; `input()` no longer touches the epoch.
+- E2E rerun (`.rexymcp/output/p21a-e2e.txt`): all 13 named tests
+  `passed=1 failed=0`, `program_status` 19/19, gates ok, `fmt_exit=0`,
+  full suite `passed=2853 failed=0`, `build_warnings=0`.
+- Adaptation ordered by the DoD/logs: the bug's "input carrying a line end
+  while no job holds the terminal" cannot distinguish bash's own prompt
+  from a bash builtin that reads the tty (`read` is in bash's process
+  group, childless, no visible difference in `/proc`). The prompt-print is
+  the tty-observable the spec itself names ("a new shell prompt"). bugs
+  21a-1/21a-2 pins unchanged and still green; the `has_child_process` probe was removed as dead once the printer change landed.

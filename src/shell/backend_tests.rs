@@ -1375,17 +1375,25 @@ fn backend_status_carries_a_working_report_while_its_program_runs() {
     );
 
     // Once the command ends, the shell is back at its own prompt, so the
-    // working record is gone.
-    rt.block_on(backend.input(b"\x03")).expect("end the job");
+    // working record is gone. The ^C interrupt first kills the sleeping
+    // job; the newline after it is what lands the shell back at its own
+    // prompt, so the epoch the next prompt line bumps brings the record
+    // down with the line it lived in. The drain before it removes any
+    // output still in flight, so the assert below races nothing.
+    {
+        let mut rx = backend.subscribe();
+        quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+    }
+    rt.block_on(backend.input(b"\x03\n")).expect("end the job");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         match rt.block_on(backend.status()) {
             ShellResponse::Status { programs, .. } if programs.is_empty() => break,
-            ShellResponse::Status { state, .. } => {
+            ShellResponse::Status { ref programs, .. } => {
                 assert!(
                     std::time::Instant::now() < deadline,
                     "the working record to vanish once the command ended, \
-                     last state {state:?}"
+                     last {programs:?}"
                 );
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -1399,13 +1407,16 @@ fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal
     let dir = tempfile::tempdir().unwrap();
     let backend = spawn_backend(&dir);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    // Command A prints a `working` report and exits — no `status` call
-    // until B starts, so the pump's stamp places A inside its own
-    // input-line epoch.
+    // Command A prints a `working` report, then holds the terminal with
+    // a short sleep — the pump's stamp places A inside its own
+    // input-line epoch, and the job's hold keeps the record observable
+    // across the status polls that look for it.
     let encoded = crate::shell::program_status::encode_test("first");
-    let bytes =
-        format!("printf '\\033]7501;state=working:id=ja:msg={encoded}\\007'\n").into_bytes();
+    let bytes = format!("printf '\\033]7501;state=working:id=ja:msg={encoded}\\007'; sleep 1\n")
+        .into_bytes();
     rt.block_on(backend.input(&bytes)).expect("start job A");
+    // The report must land before anything else: poll for it while the
+    // sleep still holds, so no read can have expired it.
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         match rt.block_on(backend.status()) {
@@ -1423,12 +1434,30 @@ fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal
             }
         }
     }
-    // Command B starts with no status call in between: B's input line
-    // bumps the epoch, so the next read drops A. Hold off writing B until
-    // the shell's post-A output has reached the pump (output goes quiet),
-    // so the assert on A's presence races nothing.
-    let mut rx = backend.subscribe();
-    quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+    // A's sleep ends; the shell is back at its own prompt. No input has
+    // ended a line since A's line, so the epoch still names A's line:
+    // wait for Idle before entering B — what makes B's line entered *at
+    // the shell's own prompt*, the only input that advances the epoch
+    // (bug-21a-4).
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status {
+                state: ShellState::Idle,
+                ..
+            } => break,
+            ShellResponse::Status { state, .. } => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "job A to release the terminal, last state {state:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+    // Command B is entered at the shell's own prompt, so the epoch
+    // advances: A's line reads as over and the next read drops A.
     rt.block_on(backend.input(b"sleep 30\n"))
         .expect("start job B");
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -1439,10 +1468,14 @@ fn backend_status_drops_a_working_report_once_another_program_holds_the_terminal
             {
                 break;
             }
-            _ if std::time::Instant::now() >= deadline => {
-                panic!("A's working record must drop once another program holds the terminal");
+            ShellResponse::Status { state, .. } => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "A's working record must drop once another program holds the terminal, last state {state:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
             }
-            _ => std::thread::sleep(Duration::from_millis(50)),
+            other => panic!("expected a Status frame, got {other:?}"),
         }
     }
     rt.block_on(backend.input(b"\x03")).expect("end job B");
@@ -1552,4 +1585,83 @@ fn status_frame_without_programs_deserializes_empty() {
         }
         other => panic!("expected a Status frame, got {other:?}"),
     }
+}
+
+/// bug-21a-4's own pin: input that goes *to a running program* ends no
+/// record. One command line prints a `working` report, then reads a line
+/// from stdin, then sleeps; while the program waits the test sends text
+/// with `input()` — a line end that is **not** entered at the shell's own
+/// prompt — and a `status` during the sleep must still carry the record.
+#[test]
+fn backend_status_keeps_a_working_report_while_input_goes_to_its_program() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let encoded = crate::shell::program_status::encode_test("awaited");
+    let bytes = format!(
+        "printf '\\033]7501;state=working:id=inp4:msg={encoded}\\007'; read -r line; sleep 30\n",
+    )
+    .into_bytes();
+    rt.block_on(backend.input(&bytes))
+        .expect("start the program");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. }
+                if programs.iter().any(|r| r.id.as_deref() == Some("inp4")) =>
+            {
+                break;
+            }
+            other => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the working report never reached the frame, last {other:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+    // Input INTO the program while it runs: keystrokes, a paste, and a
+    // full line carrying a newline. None of this is a command line
+    // entered at the shell's own prompt, so none of it may end the
+    // record (bug-21a-4). Each step is asserted on its own read, so the
+    // step that would end the record is named.
+    {
+        let mut rx = backend.subscribe();
+        quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+    }
+    for (label, bytes) in [
+        ("keystrokes", b"some keystrokes".as_slice()),
+        ("paste", b"PASTED ANSWER".as_slice()),
+        ("line", b"the answer\n".as_slice()),
+    ] {
+        rt.block_on(backend.input(bytes))
+            .unwrap_or_else(|e| panic!("input {label} failed: {e}"));
+        std::thread::sleep(Duration::from_millis(150));
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. } => {
+                assert!(
+                    programs.iter().any(|r| r.id.as_deref() == Some("inp4")),
+                    "input {label} to a running program must not end its record: {programs:?}"
+                );
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+    // The program still sleeps; the record's line is still the one
+    // driving the terminal, so the read keeps it.
+    std::thread::sleep(Duration::from_millis(300));
+    match rt.block_on(backend.status()) {
+        ShellResponse::Status { programs, .. } => {
+            assert!(
+                programs.iter().any(|r| r.id.as_deref() == Some("inp4")),
+                "the record lives within its entered input line: {programs:?}"
+            );
+        }
+        other => panic!("expected a Status frame, got {other:?}"),
+    }
+    // Clean up: interrupt the sleep and bring the shell back to its own
+    // prompt, which ends the record's line.
+    rt.block_on(backend.input(b"\x03\n"))
+        .expect("end the program");
 }
