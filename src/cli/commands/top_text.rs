@@ -300,9 +300,10 @@ pub fn short_owner(owner: &str) -> String {
 }
 
 /// The Shells section as text: one row per live shell — id, owner,
-/// foreground and last line — `daemon not running` when the daemon did not
-/// answer, `none` when it is up with no shells. Pure. The live screen in
-/// `top_tui.rs` draws the same body.
+/// foreground (or first program-status line, when the shell holds one) and
+/// last line — `daemon not running` when the daemon did not answer, `none`
+/// when it is up with no shells. A program line is cut to 40 characters,
+/// never wrapped. Pure. The live screen in `top_tui.rs` draws the same body.
 pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
     let rows = match panel {
         ShellsPanel::DaemonDown => return "daemon not running".to_string(),
@@ -311,13 +312,21 @@ pub(crate) fn shells_text(panel: &ShellsPanel) -> String {
     if rows.is_empty() {
         return "none".to_string();
     }
+    const PROGRAM_WIDTH: usize = 40;
     rows.iter()
         .map(|s| {
+            let foreground = match s.programs.first() {
+                Some(program) => {
+                    let cut: String = program.chars().take(PROGRAM_WIDTH).collect();
+                    cut
+                }
+                None => s.foreground.as_deref().unwrap_or("-").to_string(),
+            };
             format!(
                 "{} {} {} {}",
                 s.id,
                 short_owner(&s.owner),
-                s.foreground.as_deref().unwrap_or("-"),
+                foreground,
                 s.last_line.as_deref().unwrap_or("-")
             )
         })

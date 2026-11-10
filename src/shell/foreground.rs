@@ -357,11 +357,13 @@ mod tests {
                 cmd: "ssh zoidberg".into(),
                 started_unix: 1000,
             }),
+            last_programs: Vec::new(),
         };
         let sandboxed = ShellRecord {
             host: HostId::Local,
             sandbox: Some("sbx1".into()),
             in_flight: None,
+            last_programs: Vec::new(),
             id: named_host.id.clone(),
             owner: named_host.owner.clone(),
             started_unix: named_host.started_unix,
@@ -373,6 +375,7 @@ mod tests {
             host: HostId::Local,
             sandbox: None,
             in_flight: None,
+            last_programs: Vec::new(),
             id: named_host.id.clone(),
             owner: named_host.owner.clone(),
             started_unix: named_host.started_unix,

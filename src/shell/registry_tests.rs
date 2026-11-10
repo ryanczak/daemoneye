@@ -32,6 +32,7 @@ fn record(index: u32, owner: Owner) -> ShellRecord {
         exited_unix: None,
         last_foreground: None,
         in_flight: None,
+        last_programs: Vec::new(),
     }
 }
 

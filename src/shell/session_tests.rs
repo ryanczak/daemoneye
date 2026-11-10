@@ -173,6 +173,7 @@ async fn a_remote_shell_is_never_reused_for_a_local_command() {
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
     });
@@ -226,6 +227,7 @@ async fn session_replaces_a_shell_whose_host_is_dead() {
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
     });
@@ -279,6 +281,7 @@ async fn session_honours_the_per_owner_cap() {
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
         store.insert(
@@ -293,6 +296,7 @@ async fn session_honours_the_per_owner_cap() {
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
     });
@@ -364,6 +368,7 @@ async fn session_dedicated_shell_is_never_reused_by_shell_for_owner() {
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
     });
@@ -553,6 +558,7 @@ fn shell_marker_name_is_posix_inside_a_sandbox() {
         exited_unix: None,
         last_foreground: None,
         in_flight: None,
+        last_programs: Vec::new(),
     };
     let plain = ShellRecord {
         id: ShellId::from_index(10),
@@ -564,6 +570,7 @@ fn shell_marker_name_is_posix_inside_a_sandbox() {
         exited_unix: None,
         last_foreground: None,
         in_flight: None,
+        last_programs: Vec::new(),
     };
     with_fish_shell(|| {
         assert_eq!(

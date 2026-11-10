@@ -18,6 +18,17 @@ pub(super) async fn handle_shell_list<W>(tx: &mut W, reg: &ShellRegistry) -> Res
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
+    // The bounded live refresh first: ids collected under the lock, the
+    // probes run outside it, then the records' `last_programs` read inside
+    // the same acquisition that builds the rows.
+    let ids = with_shells(reg, |store| {
+        store
+            .values()
+            .map(|record| record.id.as_str().to_string())
+            .collect()
+    });
+    crate::daemon::executor::knowledge::refresh_programs(reg, ids).await;
+
     // Collected under the lock — no I/O in the closure, only field copies —
     // then the per-shell log reads happen outside it.
     let mut infos: Vec<ShellInfo> = with_shells(reg, |store| {
@@ -36,6 +47,11 @@ where
                     record.in_flight.as_ref(),
                 ),
                 last_line: None,
+                programs: record
+                    .last_programs
+                    .iter()
+                    .map(crate::daemon::executor::knowledge::program_line)
+                    .collect(),
             })
             .collect()
     });

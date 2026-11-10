@@ -61,6 +61,7 @@ fn row(
         host: crate::host::HostId::Local,
         started_unix,
         foreground,
+        programs: Vec::new(),
         dedicated,
         exited_unix,
     }
@@ -73,6 +74,7 @@ fn row_on(id: &str, owner_key: &str, host: crate::host::HostId, started_unix: u6
         host,
         started_unix,
         foreground: None,
+        programs: Vec::new(),
         dedicated: false,
         exited_unix: None,
     }
@@ -143,6 +145,7 @@ fn insert(reg: &ShellRegistry, index: u32, owner: Owner, started_unix: u64) {
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
     });
@@ -546,13 +549,13 @@ fn shells_only_context_without_shells_is_not_empty() {
     );
 }
 
-#[test]
-fn list_shells_defaults_to_the_callers_own_shells() {
+#[tokio::test]
+async fn list_shells_defaults_to_the_callers_own_shells() {
     let reg = ShellRegistry::default();
     insert(&reg, 3, Owner::Chat("a".into()), NOW - 100);
     insert(&reg, 4, Owner::Ghost("a".into()), NOW - 100);
     insert(&reg, 5, Owner::Chat("b".into()), NOW - 100);
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW);
+    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(out.contains("s3"), "chat a's own shell must appear: {out}");
     assert!(
         !out.contains("s4"),
@@ -561,13 +564,13 @@ fn list_shells_defaults_to_the_callers_own_shells() {
     assert!(!out.contains("s5"), "b's shell must not leak to a: {out}");
 }
 
-#[test]
-fn list_shells_all_scope_includes_other_owners() {
+#[tokio::test]
+async fn list_shells_all_scope_includes_other_owners() {
     let reg = ShellRegistry::default();
     insert(&reg, 3, Owner::Chat("a".into()), NOW - 100);
     insert(&reg, 5, Owner::Chat("b".into()), NOW - 100);
     insert(&reg, 9, Owner::Adopted, NOW - 100);
-    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("a".into()), NOW);
+    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("a".into()), NOW).await;
     assert!(out.contains("s3"), "own shell listed under all: {out}");
     assert!(out.contains("s5"), "another session's shell listed: {out}");
     assert!(
@@ -576,15 +579,16 @@ fn list_shells_all_scope_includes_other_owners() {
     );
 }
 
-#[test]
-fn list_shells_rejects_an_unknown_scope() {
+#[tokio::test]
+async fn list_shells_rejects_an_unknown_scope() {
     for bad in ["run", "session", ""] {
         let out = list_shells_in(
             &ShellRegistry::default(),
             Some(bad),
             &Owner::Chat("a".into()),
             NOW,
-        );
+        )
+        .await;
         assert!(
             out.starts_with("Error:") && out.contains(bad),
             "scope {bad:?} must be rejected with the value named: {out}"
@@ -596,15 +600,16 @@ fn list_shells_rejects_an_unknown_scope() {
     }
 }
 
-#[test]
-fn list_shells_scope_match_is_case_sensitive() {
+#[tokio::test]
+async fn list_shells_scope_match_is_case_sensitive() {
     for bad in ["MINE", "All", "ALL", "Mine"] {
         let out = list_shells_in(
             &ShellRegistry::default(),
             Some(bad),
             &Owner::Chat("a".into()),
             NOW,
-        );
+        )
+        .await;
         assert!(
             out.starts_with("Error:"),
             "{bad:?} is not an accepted alias — matching is case-sensitive: {out}"
@@ -612,21 +617,21 @@ fn list_shells_scope_match_is_case_sensitive() {
     }
 }
 
-#[test]
-fn list_shells_orders_numerically_not_lexicographically() {
+#[tokio::test]
+async fn list_shells_orders_numerically_not_lexicographically() {
     let reg = ShellRegistry::default();
     insert(&reg, 10, Owner::Chat("a".into()), NOW - 200);
     insert(&reg, 2, Owner::Chat("a".into()), NOW - 100);
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW);
+    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
     let s2 = out.find("  s2 ").expect("s2 must be listed");
     let s10 = out.find("  s10 ").expect("s10 must be listed");
     assert!(s2 < s10, "s2 must sort before s10, got: {out}");
 }
 
-#[test]
-fn list_shells_empty_registry_says_so() {
+#[tokio::test]
+async fn list_shells_empty_registry_says_so() {
     let reg = ShellRegistry::default();
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW);
+    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(
         out.starts_with("No shells") && out.ends_with("demand."),
         "an empty registry needs a sentence, not a bare header or empty string: {out}"
@@ -634,7 +639,7 @@ fn list_shells_empty_registry_says_so() {
 
     // Only *another* owner's shells present: `mine` is empty for this caller.
     insert(&reg, 7, Owner::Chat("b".into()), NOW - 100);
-    let out = list_shells_in(&reg, Some("mine"), &Owner::Chat("a".into()), NOW);
+    let out = list_shells_in(&reg, Some("mine"), &Owner::Chat("a".into()), NOW).await;
     assert!(
         out.contains("No shells"),
         "another owner's shells must not satisfy mine: {out}"
@@ -729,6 +734,90 @@ fn format_shell_rows_shows_the_observed_foreground() {
     assert!(
         out.contains("s4  owner:chat:a  age:10s\n"),
         "an unobserved shell renders nothing: {out}"
+    );
+}
+
+// ── OSC 7501 surfaces (M36 phase-21b) ───────────────────────────────────
+
+#[test]
+fn program_status_surface_format_rows_puts_the_program_before_the_foreground() {
+    // A record's own line renders before the screen-scraped foreground.
+    let mut with_program = row(
+        "s0",
+        "chat:a",
+        NOW - 10,
+        Some(Foreground::Program {
+            cmd: "claude".to_string(),
+            tui: true,
+        }),
+        false,
+        None,
+    );
+    with_program.programs = vec![crate::daemon::executor::knowledge::shell::program_line(
+        &crate::shell::program_status::Record {
+            id: None,
+            state: crate::shell::program_status::State::Blocked,
+            kind: Some(crate::shell::program_status::Kind::Permission),
+            progress: None,
+            app: Some("x".to_string()),
+            title: None,
+            msg: None,
+        },
+    )];
+    let out = format_shell_rows(&[with_program], None, NOW);
+    let line = out.lines().find(|l| l.contains("s0")).expect("the row");
+    let program = line
+        .find("Program x (blocked (permission))")
+        .expect("the program line");
+    let foreground = line
+        .find("(foreground: running claude (TUI))")
+        .expect("the foreground still shown");
+    assert!(
+        program < foreground,
+        "the program's own word comes before the screen-scraped one: {line}"
+    );
+
+    // A row with no records reads exactly as it does today.
+    let plain = row(
+        "s1",
+        "chat:a",
+        NOW - 10,
+        Some(Foreground::Program {
+            cmd: "claude".to_string(),
+            tui: true,
+        }),
+        false,
+        None,
+    );
+    let out = format_shell_rows(&[plain], None, NOW);
+    assert!(
+        out.contains("s1  owner:chat:a  age:10s [running claude (TUI)]"),
+        "no records, no change: {out}"
+    );
+}
+
+#[test]
+fn program_status_surface_list_shells_masks_the_message() {
+    let mut shell = row("s0", "chat:a", NOW - 10, None, false, None);
+    shell.programs = vec![crate::daemon::executor::knowledge::shell::program_line(
+        &crate::shell::program_status::Record {
+            id: None,
+            state: crate::shell::program_status::State::Blocked,
+            kind: Some(crate::shell::program_status::Kind::Auth),
+            progress: None,
+            app: Some("x".to_string()),
+            title: None,
+            msg: Some("key is sk-abc123def456ghi789jkl for the endpoint".to_string()),
+        },
+    )];
+    let out = format_shell_rows(&[shell], None, NOW);
+    assert!(
+        !out.contains("sk-abc123def456ghi789jkl"),
+        "a key in a record's msg never reaches the listing raw: {out}"
+    );
+    assert!(
+        out.contains("<REDACTED>") && out.contains("blocked (auth)"),
+        "the masked form replaces the key and the record still shows: {out}"
     );
 }
 
@@ -913,6 +1002,7 @@ fn a_named_host_is_shown() {
         host: host.clone(),
         started_unix: NOW - 30,
         foreground: None,
+        programs: Vec::new(),
         dedicated: false,
         exited_unix: None,
     }];

@@ -178,6 +178,45 @@ E2E
 Status flipped to `in-progress`; milestone README row matches. Executor:
 Claude Opus 4.5 (1M), headless (phase-21b-program-status-surfaces).
 
+### Update — 2026-11-10 (en route, findings)
+
+- Allowlist raises made, both named per the Authorizations: `tests/hygiene_allowlist.txt` — `fn …shell_watch.rs watch_shell_with` 159 → 184 (the program-check got its own helper; Behaviour 4's start-snapshot comparison is what grew the core) and a new `test …shell_observer_tests.rs 2116` (five live watch hosts plus the type-until-recorded helper, 9 tests).
+- The five live watch tests open their host through `open_shell_with` and take the shell id **from the sentence it returns**, then type into and watch that id — pinning against the literal `s41` id broke: another test's registry singleton handed back `s0`, so the record and the socket knew different shells.
+- `type_until_recorded` keys the wait on the OSC payload (`7501;state=…`) landing in the cast, not on the echoed typed text — the echo reaches the cast base64-escaped, so a `contains` on the typed line never fired.
+- Live watch tests give the watch a 3 s start grace and a 5 s timeout cap; with a 0 grace a poll that reads `Idle` before the report's frame races the whole point of the test. The spec's Gotcha (blocked line held by `sleep 30`) is followed as written.
+- E2E transcript at `.rexymcp/output/p21b-e2e.txt`, pasted verbatim below.
+
+### Update — 2026-11-10 (end-to-end verification)
+
+`.rexymcp/output/p21b-e2e.txt`, the § End-to-end verification block run
+once, redirected to it, pasted verbatim:
+
+```
+test cli::commands::top::tests::program_status_surface_top_shows_the_program_line_in_place_of_the_foreground ... ok
+test daemon::executor::knowledge::shell::tests::program_status_surface_format_rows_puts_the_program_before_the_foreground ... ok
+test cli::commands::top::tests::program_status_surface_top_cuts_a_long_program_line_never_wraps ... ok
+test daemon::executor::knowledge::shell::tests::program_status_surface_list_shells_masks_the_message ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_returns_on_done ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_ignores_a_record_already_blocked_at_the_start ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_keeps_waiting_through_a_working_report ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_returns_on_error ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_returns_on_blocked ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2776 filtered out; finished in 10.20s
+claude_md_mentions=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2867 failed=0
+```
+
+The five live watch tests above run against real in-process PTY bash
+hosts: the report is emitted by `/bin/printf` on the shell's own
+terminal (the blocked line held by `sleep 30`), not by a fake.
+
 <!-- entries appended below this line -->
 
 ### Notes for executor — 2026-11-10 (refined re-dispatch)

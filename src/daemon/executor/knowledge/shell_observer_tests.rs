@@ -640,7 +640,7 @@ async fn the_users_shell_is_visible_and_drivable_from_chat_only() {
     insert(&reg, 3, Owner::Chat("a".into()), NOW);
     insert(&reg, 7, Owner::User, NOW);
     insert(&reg, 8, Owner::Chat("b".into()), NOW);
-    let mine = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW);
+    let mine = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(mine.contains("s3") && mine.contains("s7"), "{mine}");
     assert!(
         !mine.contains("s8"),
@@ -1787,4 +1787,330 @@ fn format_screen_read_lists_program_records_masked() {
     screen.feed(b"plain");
     let empty = crate::daemon::executor::knowledge::shell::programs_of(None);
     assert!(empty.is_empty());
+}
+
+// ── OSC 7501 through watch_shell (M36 phase-21b) ────────────────────────
+
+const APPEND: std::time::Duration = Duration::from_secs(10);
+
+/// Type `cmd` into shell `id`'s PTY, then wait until the shell's cast holds
+/// the bytes — the same typed-then-drain shape the send-input fixtures use,
+/// so the report the command emits is really on the terminal before the
+/// observation begins.
+async fn program_status_surface_spawn_host(id: ShellId) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    let started: u64 = with_shells(crate::shell::registry(), |store| {
+        store.get(id.as_str()).map(|r| r.started_unix)
+    })
+    .unwrap_or_else(crate::shell::now_unix);
+    let cast = crate::shell::cast_path(id.as_str(), started);
+    std::fs::create_dir_all(crate::config::shell_logs_dir())
+        .context("creating the test cast dir")?;
+    let backend = crate::shell::PtyBackend::spawn(
+        "bash",
+        &[],
+        lifecycle_test_support::ROWS,
+        lifecycle_test_support::COLS,
+        100,
+        &cast,
+        0,
+    )
+    .context("spawning bash")?;
+    let lock =
+        crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+    let socket = crate::shell::socket_path(id.as_str());
+    let listener = crate::shell::bind(&socket)
+        .await
+        .context("binding the in-process host's socket")?;
+    tokio::spawn(async move {
+        let _ = crate::shell::serve(listener, backend).await;
+        drop(lock);
+    });
+    std::mem::forget(cast);
+    Ok(())
+}
+
+async fn type_until_recorded(id: &str, cmd: &str, reg: &ShellRegistry) {
+    let sock = crate::shell::socket_path(id);
+    let started = with_shells(reg, |store| store.get(id).map(|r| r.started_unix)).unwrap_or(0);
+    let cast = crate::shell::resolve_cast(id, started);
+    std::fs::create_dir_all(cast.parent().expect("the cast has a parent"))
+        .expect("creating the shell logs dir");
+    let open_error = std::fs::File::open(&cast).err().map(|e| e.to_string());
+    crate::shell::send_input(&sock, cmd.as_bytes(), Duration::from_secs(5))
+        .await
+        .expect("the shell accepts the input");
+    let want = match cmd.split(';').find(|p| p.contains("7501")) {
+        Some(marker) => marker.split('=').nth(2).unwrap_or("").to_string(),
+        None => cmd.trim_end().to_string(),
+    };
+    let deadline = std::time::Instant::now() + APPEND;
+    loop {
+        let tail: String = std::fs::File::open(&cast)
+            .map(|mut f| {
+                use std::io::Read as _;
+                let mut tail = String::new();
+                let _ = f.read_to_string(&mut tail);
+                tail
+            })
+            .unwrap_or_else(|_| open_error.clone().unwrap_or_default());
+        if tail.contains(&want) && tail.contains("7501") {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the cast never carried the typed line: wanted {want:?}, open error {open_error:?}, tail {tail:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+}
+
+#[tokio::test]
+async fn program_status_surface_watch_returns_on_blocked() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let _swap = open_shell_test_seam::swap_in(&reg);
+    let opened = open_shell_with(
+        &reg,
+        &Owner::Chat("watcher".into()),
+        crate::host::HostId::Local,
+        5,
+        Duration::from_millis(5000),
+        program_status_surface_spawn_host,
+    )
+    .await;
+    assert!(
+        opened.contains("Opened shell"),
+        "the precondition is a real, ready shell: {opened}"
+    );
+    let id = opened
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+        .expect("the success sentence names the id");
+    type_until_recorded(
+        &id,
+        "/bin/printf '\\033]7501;state=blocked:kind=permission:app=x\\007'; sleep 30\n",
+        &reg,
+    )
+    .await;
+    let out = watch_shell_with(
+        &reg,
+        &id,
+        None,
+        u64::MAX,
+        Duration::from_millis(50),
+        Duration::from_secs(3),
+    )
+    .await;
+    assert!(
+        out.contains("Program x (blocked (permission))"),
+        "the watch's result names the record: {out}"
+    );
+}
+
+#[tokio::test]
+async fn program_status_surface_watch_returns_on_done() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let _swap = open_shell_test_seam::swap_in(&reg);
+    let opened = open_shell_with(
+        &reg,
+        &Owner::Chat("watcher".into()),
+        crate::host::HostId::Local,
+        5,
+        Duration::from_millis(5000),
+        program_status_surface_spawn_host,
+    )
+    .await;
+    assert!(
+        opened.contains("Opened shell"),
+        "the precondition is a real, ready shell: {opened}"
+    );
+    let id = opened
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+        .expect("the success sentence names the id");
+    type_until_recorded(
+        &id,
+        "/bin/printf '\\033]7501;state=done:app=y\\007'\n",
+        &reg,
+    )
+    .await;
+    let out = watch_shell_with(
+        &reg,
+        &id,
+        None,
+        u64::MAX,
+        Duration::from_millis(50),
+        Duration::from_secs(3),
+    )
+    .await;
+    assert!(
+        out.contains("Program y (done)"),
+        "the watch's result names the record: {out}"
+    );
+}
+
+#[tokio::test]
+async fn program_status_surface_watch_returns_on_error() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let _swap = open_shell_test_seam::swap_in(&reg);
+    let opened = open_shell_with(
+        &reg,
+        &Owner::Chat("watcher".into()),
+        crate::host::HostId::Local,
+        5,
+        Duration::from_millis(5000),
+        program_status_surface_spawn_host,
+    )
+    .await;
+    assert!(
+        opened.contains("Opened shell"),
+        "the precondition is a real, ready shell: {opened}"
+    );
+    let id = opened
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+        .expect("the success sentence names the id");
+    type_until_recorded(
+        &id,
+        "/bin/printf '\\033]7501;state=error:app=z\\007'\n",
+        &reg,
+    )
+    .await;
+    let out = watch_shell_with(
+        &reg,
+        &id,
+        None,
+        u64::MAX,
+        Duration::from_millis(50),
+        Duration::from_secs(3),
+    )
+    .await;
+    assert!(
+        out.contains("Program z (error)"),
+        "the watch's result names the record: {out}"
+    );
+}
+
+#[tokio::test]
+async fn program_status_surface_watch_ignores_a_record_already_blocked_at_the_start() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let _swap = open_shell_test_seam::swap_in(&reg);
+    let opened = open_shell_with(
+        &reg,
+        &Owner::Chat("watcher".into()),
+        crate::host::HostId::Local,
+        5,
+        Duration::from_millis(5000),
+        program_status_surface_spawn_host,
+    )
+    .await;
+    assert!(
+        opened.contains("Opened shell"),
+        "the precondition is a real, ready shell: {opened}"
+    );
+    let id = opened
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+        .expect("the success sentence names the id");
+    type_until_recorded(
+        &id,
+        "/bin/printf '\\033]7501;state=blocked:kind=permission:app=x\\007'; sleep 30\n",
+        &reg,
+    )
+    .await;
+    //_prime::start
+    with_shells(&reg, |store| {
+        let record = store.get_mut(&id).expect("the record");
+        record.last_programs = vec![crate::shell::program_status::Record {
+            id: None,
+            state: crate::shell::program_status::State::Blocked,
+            kind: Some(crate::shell::program_status::Kind::Permission),
+            progress: None,
+            app: Some("x".to_string()),
+            title: None,
+            msg: None,
+        }];
+    });
+    let out = watch_shell_with(
+        &reg,
+        &id,
+        None,
+        5,
+        Duration::from_millis(50),
+        Duration::from_secs(2),
+    )
+    .await;
+    assert!(
+        out.contains("timed out"),
+        "a record blocked before the watch does not end it: {out}"
+    );
+    //prime::end
+}
+
+#[tokio::test]
+async fn program_status_surface_watch_keeps_waiting_through_a_working_report() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let _swap = open_shell_test_seam::swap_in(&reg);
+    let opened = open_shell_with(
+        &reg,
+        &Owner::Chat("watcher".into()),
+        crate::host::HostId::Local,
+        5,
+        Duration::from_millis(5000),
+        program_status_surface_spawn_host,
+    )
+    .await;
+    assert!(
+        opened.contains("Opened shell"),
+        "the precondition is a real, ready shell: {opened}"
+    );
+    let id = opened
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+        .expect("the success sentence names the id");
+    type_until_recorded(
+        &id,
+        "/bin/printf '\\033]7501;state=working:app=w\\007'; sleep 30\n",
+        &reg,
+    )
+    .await;
+    let out = watch_shell_with(
+        &reg,
+        &id,
+        None,
+        5,
+        Duration::from_millis(50),
+        Duration::from_secs(2),
+    )
+    .await;
+    assert!(
+        out.contains("timed out"),
+        "a `working` report never ends the watch: {out}"
+    );
 }

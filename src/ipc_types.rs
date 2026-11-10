@@ -108,6 +108,11 @@ pub struct ShellInfo {
     /// masked and cut to 120 characters. `None` when there is none.
     #[serde(default)]
     pub last_line: Option<String>,
+    /// The shell's OSC 7501 program-status records, rendered through
+    /// `program_line` (masked and escaped). Empty when the shell's host holds
+    /// none, or when the reply came from a daemon older than the field.
+    #[serde(default)]
+    pub programs: Vec<String>,
 }
 
 /// One shell recording on disk, as `/logs` lists it (M23).

@@ -164,6 +164,7 @@ mod tests {
             last_command: None,
             foreground: None,
             last_line: None,
+            programs: Vec::new(),
         }
     }
 

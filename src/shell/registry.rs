@@ -156,6 +156,10 @@ pub struct ShellRecord {
     /// transport shell's classification reads it (D3) because the local
     /// terminal cannot say anything there.
     pub in_flight: Option<InFlight>,
+    /// The OSC 7501 program-status records the shell host's last live
+    /// `Status` probe carried, as a bounded live refresh stored them.
+    /// Formatting reads only what is stored, never the socket.
+    pub last_programs: Vec<crate::shell::program_status::Record>,
 }
 
 /// A wrapped command the daemon has outstanding on a shell: what it is and
@@ -399,6 +403,7 @@ where
                 exited_unix: None,
                 last_foreground: None,
                 in_flight: None,
+                last_programs: Vec::new(),
             },
         );
         Ok(id)
@@ -584,6 +589,7 @@ pub fn adopt_at_startup(reg: &ShellRegistry, dir: &Path, logs: &Path) -> Vec<She
                     exited_unix: None,
                     last_foreground: None,
                     in_flight: None,
+                    last_programs: Vec::new(),
                 },
             );
         }

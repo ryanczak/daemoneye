@@ -289,14 +289,29 @@ pub(super) async fn watch_shell_with(
         Err(_) => 0,
     };
 
-    // 4. Poll until the pattern hits, the shell's command ends, or the
-    //    timeout elapses. The whole loop runs inside one `tokio::time::timeout`
-    //    like `await_agent_result`'s, so nothing here can run past the cap.
+    // 4. Poll until the pattern hits, a program reports a state that ends
+    //    the watch, the shell's command ends, or the timeout elapses. The
+    //    whole loop runs inside one `tokio::time::timeout` like
+    //    `await_agent_result`'s, so nothing here can run past the cap.
     let capped_secs = timeout_secs.min(WATCH_MAX_SECS);
     let deadline = tokio::time::Duration::from_secs(capped_secs);
     let started = std::time::Instant::now();
     let mut seen_running = false;
     let mut buf = String::new();
+    let sock = socket_path(shell);
+    // The program states the watch already saw at the start: a record in one
+    // of the three then is not news, and must not end the watch.
+    let initial_programs = with_shells(reg, |store| {
+        store
+            .get(shell)
+            .map(|r| r.last_programs.clone())
+            .unwrap_or_default()
+    });
+    let already_reported = |record: &crate::shell::program_status::Record| {
+        initial_programs
+            .iter()
+            .any(|r| r.id == record.id && r.state == record.state)
+    };
     let outcome = tokio::time::timeout(deadline, async {
         loop {
             let (raw, new_offset) =
@@ -311,6 +326,9 @@ pub(super) async fn watch_shell_with(
                 let matches = search_shell_buffer(&buf, r, 1);
                 let rendered = render_match(matches.first());
                 return WatchOutcome::Pattern(rendered);
+            }
+            if let Some(line) = program_check(&sock, &already_reported).await {
+                return WatchOutcome::Program(line);
             }
             if pattern.is_none() {
                 match crate::shell::status(&socket_path(shell), SIGNAL_TIMEOUT).await {
@@ -348,6 +366,13 @@ pub(super) async fn watch_shell_with(
                 pattern.unwrap_or_default(),
                 capped_secs,
                 rendered_match
+            )
+        }
+        Ok(WatchOutcome::Program(line)) => {
+            format!(
+                "watch_shell {shell}: a program reported this after {} s:\n{line}\n{}",
+                capped_secs,
+                tail_of(&buf, WATCH_TAIL_LINES)
             )
         }
         Ok(WatchOutcome::Finished) => {
@@ -416,6 +441,9 @@ enum WatchOutcome {
     /// The pattern matched; carries the match rendered with ±1 line of
     /// context, because rendering must happen where the regex already is.
     Pattern(String),
+    /// A program-status record's state became `blocked`, `done` or `error`;
+    /// carries the record's one rendered line.
+    Program(String),
     Finished,
     /// No command was running and none ever appeared within the grace.
     NothingRunning,
@@ -425,6 +453,33 @@ enum WatchOutcome {
     HostGone,
     /// A `status` round-trip failed — the socket is gone.
     Unreachable,
+}
+
+/// One poll's program-status look: read the host's records and return the
+/// line of the first record whose state `blocked`/`done`/`error` is new
+/// against `already_reported` (same id and state at the start of the watch).
+/// `None` when the host answers nothing relevant — including a host that
+/// does not answer at all, which keeps the poll's other arms in charge.
+/// Its own helper so `watch_shell_with` stays within its hygiene cap.
+async fn program_check(
+    sock: &std::path::Path,
+    already_reported: &impl Fn(&crate::shell::program_status::Record) -> bool,
+) -> Option<String> {
+    let programs = match crate::shell::status(sock, SIGNAL_TIMEOUT).await {
+        Ok(crate::shell::ShellResponse::Status { programs, .. }) => programs,
+        _ => return None,
+    };
+    programs
+        .iter()
+        .find(|record| {
+            matches!(
+                record.state,
+                crate::shell::program_status::State::Blocked
+                    | crate::shell::program_status::State::Done
+                    | crate::shell::program_status::State::Error
+            ) && !already_reported(record)
+        })
+        .map(program_line)
 }
 
 /// The one match rendered with its line and ±1 line of context, the shape

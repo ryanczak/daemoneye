@@ -179,7 +179,7 @@ async fn open_shell_on_a_named_host_records_the_host() {
         Some(crate::host::HostId::Named("web01".to_string())),
         "the record must carry the host open_shell_with was given"
     );
-    let listed = list_shells_in(&reg, None, &Owner::Chat("web".into()), NOW);
+    let listed = list_shells_in(&reg, None, &Owner::Chat("web".into()), NOW).await;
     assert!(
         listed.contains("host:web01"),
         "list_shells must render the host so the model sees where the shell is: {listed}"
@@ -205,7 +205,7 @@ async fn open_shell_without_a_host_records_the_local_host() {
         Some(crate::host::HostId::Local),
         "the no-host form must keep the local stamp"
     );
-    let listed = list_shells_in(&reg, None, &Owner::Chat("local".into()), NOW);
+    let listed = list_shells_in(&reg, None, &Owner::Chat("local".into()), NOW).await;
     assert!(
         !listed.contains("host:"),
         "an unhosted shell must render exactly as before hosts existed: {listed}"
@@ -407,7 +407,7 @@ async fn open_shell_on_pinky_end_to_end() {
         other => panic!("the record must name pinky, got {other:?}"),
     };
 
-    let listed = list_shells_in(&reg, None, &owner, NOW);
+    let listed = list_shells_in(&reg, None, &owner, NOW).await;
     assert!(
         listed.contains(&format!("host:{record_host}")),
         "list_shells must render the host: {listed}"

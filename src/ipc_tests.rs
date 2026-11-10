@@ -1022,6 +1022,7 @@ fn shell_ipc_messages_round_trip() {
         last_command: Some("echo hi".to_string()),
         foreground: None,
         last_line: None,
+        programs: Vec::new(),
     }];
     let resp = Response::ShellList {
         shells: shells.clone(),
@@ -1042,6 +1043,10 @@ fn shell_info_without_the_new_fields_still_parses() {
     let info: ShellInfo = serde_json::from_str(json).expect("an older daemon's row still parses");
     assert_eq!(info.foreground, None, "no foreground key defaults to None");
     assert_eq!(info.last_line, None, "no last_line key defaults to None");
+    assert!(
+        info.programs.is_empty(),
+        "a reply from an older daemon reads as empty programs"
+    );
 }
 
 #[test]

@@ -1581,11 +1581,13 @@ mod tests {
             last_command: Some("echo hi".to_string()),
             foreground: Some("running cargo test".to_string()),
             last_line: Some("100% done".to_string()),
+            programs: Vec::new(),
         };
         let row_without = crate::ipc::ShellInfo {
             id: "s2".to_string(),
             foreground: None,
             last_line: None,
+            programs: Vec::new(),
             ..row_with_facts.clone()
         };
         row_with_facts.id = "s1".to_string();
@@ -1598,6 +1600,69 @@ mod tests {
             text.contains("s2 chat:deadbeef - -"),
             "missing facts print as -: {text}"
         );
+    }
+
+    #[test]
+    fn program_status_surface_top_shows_the_program_line_in_place_of_the_foreground() {
+        let record = crate::shell::program_status::Record {
+            id: None,
+            state: crate::shell::program_status::State::Blocked,
+            kind: Some(crate::shell::program_status::Kind::Permission),
+            progress: None,
+            app: Some("x".to_string()),
+            title: None,
+            msg: None,
+        };
+        let line = crate::daemon::executor::knowledge::program_line(&record);
+        let row = crate::ipc::ShellInfo {
+            id: "s1".to_string(),
+            host: "local".to_string(),
+            owner: "chat:deadbeef".to_string(),
+            started_unix: 1_788_470_000,
+            dedicated: false,
+            exited_unix: None,
+            last_command: None,
+            foreground: Some("running cargo test".to_string()),
+            last_line: Some("100% done".to_string()),
+            programs: vec![line],
+        };
+        let text = shells_text(&ShellsPanel::Rows(vec![row]));
+        assert!(
+            text.contains("Program x (blocked (permission))"),
+            "the program's own word stands in the row: {text}"
+        );
+    }
+
+    #[test]
+    fn program_status_surface_top_cuts_a_long_program_line_never_wraps() {
+        let record = crate::shell::program_status::Record {
+            id: Some("a/very/long/id/path/segment".to_string()),
+            state: crate::shell::program_status::State::Working,
+            kind: None,
+            progress: None,
+            app: Some("w".to_string()),
+            title: Some("x".repeat(180)),
+            msg: None,
+        };
+        let row = crate::ipc::ShellInfo {
+            id: "s9".to_string(),
+            host: "local".to_string(),
+            owner: "chat:d".to_string(),
+            started_unix: 1_788_470_000,
+            dedicated: false,
+            exited_unix: None,
+            last_command: None,
+            foreground: None,
+            last_line: None,
+            programs: vec![crate::daemon::executor::knowledge::program_line(&record)],
+        };
+        let text = shells_text(&ShellsPanel::Rows(vec![row]));
+        for line in text.lines() {
+            assert!(
+                line.chars().count() <= 120,
+                "the row is cut to a bounded width, never wrapped: {line:?}"
+            );
+        }
     }
 
     // ── run detail text ──────────────────────────────────────────────────────

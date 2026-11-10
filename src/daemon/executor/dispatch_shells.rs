@@ -13,7 +13,7 @@ where
 {
     match call {
         PendingCall::ListShells { scope, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::list_shells(scope.as_deref(), &chat_owner(session_id)),
+            knowledge::list_shells(scope.as_deref(), &chat_owner(session_id)).await,
         )),
 
         PendingCall::ReadShell {

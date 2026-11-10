@@ -181,6 +181,7 @@ pub(super) fn shell(id: &str) -> crate::ipc::ShellInfo {
         last_command: None,
         foreground: None,
         last_line: None,
+        programs: Vec::new(),
     }
 }
 

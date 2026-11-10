@@ -18,6 +18,9 @@ pub(super) use memory::{
 };
 pub(crate) use shell::format_err_chain;
 pub(crate) use shell::reap_idle_shells;
+// The bounded OSC 7501 refresh and its one renderer, for the shell-list
+// callers outside this module tree (`daemon/server/shells.rs`'s `top`).
+pub(crate) use shell::{program_line, refresh_programs};
 // The top dashboard's Shells panel reads one recorded line of output through
 // the same cleaner the prompt block uses.
 pub(crate) use shell::visible_text;

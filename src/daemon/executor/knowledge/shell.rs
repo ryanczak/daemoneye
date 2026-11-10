@@ -8,7 +8,7 @@ use crate::config::shell_logs_dir;
 use crate::shell::{
     Foreground, MetaIndex, Owner, ShellId, ShellRecord, ShellRegistry, await_ready, cast_path,
     host_is_alive, meta_path_for, parse_cast_name, read_command_output, socket_path,
-    spawn_for_on_host, with_shells,
+    spawn_for_on_host, status, with_shells,
 };
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,9 @@ pub(super) struct ShellRow {
     /// The observed classification, not the timestamp: what holds the shell
     /// is what the listing shows, when it was seen is not.
     pub foreground: Option<Foreground>,
+    /// The shell host's OSC 7501 program-status records, as a live refresh
+    /// stored them, rendered through `program_line`.
+    pub programs: Vec<String>,
     pub dedicated: bool,
     pub exited_unix: Option<u64>,
 }
@@ -52,18 +55,46 @@ impl ShellIndex {
 /// `pub` rather than `pub(super)`: `knowledge/mod.rs` re-exports it for
 /// `executor` the way every sibling module's functions are re-exported, and a
 /// `pub(super)` item cannot be given wider visibility on re-export.
-pub fn list_shells(scope: Option<&str>, caller: &Owner) -> String {
-    list_shells_in(crate::shell::registry(), scope, caller, now_unix())
+pub async fn list_shells(scope: Option<&str>, caller: &Owner) -> String {
+    list_shells_in(crate::shell::registry(), scope, caller, now_unix()).await
 }
 
 /// The same listing against an injected registry, with the clock injected with
 /// it — the seam tests drive instead of the process-wide singleton.
-fn list_shells_in(
+pub(super) async fn list_shells_in(
     reg: &ShellRegistry,
     scope: Option<&str>,
     caller: &Owner,
     now_unix: u64,
 ) -> String {
+    let ids = match scope {
+        None | Some("mine") => {
+            let key = caller.key();
+            with_shells(reg, |store| {
+                store
+                    .values()
+                    .filter(|record| {
+                        record.owner.key() == key || matches!(record.owner, Owner::User)
+                    })
+                    .map(|record| record.id.as_str().to_string())
+                    .collect::<Vec<_>>()
+            })
+        }
+        Some("all") => with_shells(reg, |store| {
+            store
+                .values()
+                .map(|record| record.id.as_str().to_string())
+                .collect::<Vec<_>>()
+        }),
+        Some(other) => {
+            return format!(
+                "Error: unknown list_shells scope {other:?}. Accepted values: \
+                 \"mine\" (this session's shells and the user's, the default) or \"all\" (every \
+                 shell the daemon is running)."
+            );
+        }
+    };
+    refresh_programs(reg, ids).await;
     let rows = match resolve_scope(reg, scope, caller, "list_shells") {
         Ok(rows) => rows,
         Err(msg) => return msg,
@@ -102,6 +133,47 @@ fn resolve_scope(
     }
 }
 
+/// The live-refresh budget each shell host's `Status` probe gets. At most 1 s
+/// (the spec's bound): the probe is a socket round-trip against a host that is
+/// otherwise answering, not a program reacting.
+const PROGRAM_REFRESH_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Probe every live, unexited shell in `ids` once — all at once, each bounded
+/// by `PROGRAM_REFRESH_TIMEOUT` — and store the `Status` reply's `programs`
+/// on its record. Lock discipline: the ids and their sockets are collected
+/// under the lock, the probes run with no lock held, then a second
+/// acquisition stores each result. A host that does not answer in time, or
+/// answers with anything other than `Status`, keeps the records it had; the
+/// refresh is never an error.
+pub(crate) async fn refresh_programs(reg: &ShellRegistry, ids: Vec<String>) {
+    let targets: Vec<(String, std::path::PathBuf)> = with_shells(reg, |store| {
+        ids.iter()
+            .filter_map(|id| {
+                let record = store.get(id)?;
+                (record.exited_unix.is_none()).then(|| (id.clone(), socket_path(id)))
+            })
+            .collect()
+    });
+    if targets.is_empty() {
+        return;
+    }
+    let probes: Vec<(String, Vec<crate::shell::program_status::Record>)> =
+        futures_util::future::join_all(targets.iter().map(|(id, sock)| async {
+            let reply = status(sock, PROGRAM_REFRESH_TIMEOUT).await;
+            match reply {
+                Ok(crate::shell::ShellResponse::Status { programs, .. }) => (id.clone(), programs),
+                _ => (id.clone(), Vec::new()),
+            }
+        }))
+        .await;
+    with_shells(reg, |store| {
+        for (id, programs) in probes {
+            if let Some(record) = store.get_mut(&id) {
+                record.last_programs = programs;
+            }
+        }
+    });
+}
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -118,6 +190,11 @@ fn collect_row(record: &ShellRecord) -> ShellRow {
         host: record.host.clone(),
         started_unix: record.started_unix,
         foreground: record.last_foreground.as_ref().map(|(fg, _)| fg.clone()),
+        programs: record
+            .last_programs
+            .iter()
+            .map(program_line)
+            .collect::<Vec<String>>(),
         dedicated: record.dedicated,
         exited_unix: record.exited_unix,
     }
@@ -152,15 +229,28 @@ fn format_shell_rows(rows: &[ShellRow], scope: Option<&str>, now_unix: u64) -> S
         } else {
             String::new()
         };
-        let mut flags = String::new();
-        if let Some(fg) = row
-            .foreground
-            .as_ref()
-            .filter(|_| row.exited_unix.is_none())
-            .filter(|fg| matches!(fg, Foreground::Program { .. } | Foreground::Paused { .. }))
-        {
-            flags.push_str(&format!(" [{fg}]"));
-        }
+        let program_part: String = row
+            .programs
+            .iter()
+            .map(|program| format!("[{program}]"))
+            .collect::<Vec<_>>()
+            .join("");
+        let foreground_part = if row.programs.is_empty() {
+            row.foreground
+                .as_ref()
+                .filter(|_| row.exited_unix.is_none())
+                .filter(|fg| matches!(fg, Foreground::Program { .. } | Foreground::Paused { .. }))
+                .map(|fg| format!(" [{fg}]"))
+                .unwrap_or_default()
+        } else {
+            row.foreground
+                .as_ref()
+                .filter(|_| row.exited_unix.is_none())
+                .map(|fg| format!(" (foreground: {fg})"))
+                .unwrap_or_default()
+        };
+        let mut flags = program_part;
+        flags.push_str(&foreground_part);
         if row.dedicated {
             flags.push_str(" [dedicated]");
         }
@@ -258,10 +348,13 @@ fn format_shell_context(rows: &[ShellRow], owner_key: &str, now_unix: u64) -> St
                 String::new()
             };
             let mut flags = String::new();
+            for program in &row.programs {
+                flags.push_str(&format!(" [{program}]"));
+            }
             if let Some(fg) = row
                 .foreground
                 .as_ref()
-                .filter(|_| row.exited_unix.is_none())
+                .filter(|_| row.exited_unix.is_none() && row.programs.is_empty())
                 .filter(|fg| matches!(fg, Foreground::Program { .. } | Foreground::Paused { .. }))
             {
                 flags.push_str(&format!(" [{fg}]"));
