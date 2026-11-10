@@ -1,7 +1,7 @@
 # Bug 5 on phase-21a: record lifetime now depends on the last character on the screen
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (d705b455)
 **Filed:** 2026-11-10
 
 ## What's wrong
