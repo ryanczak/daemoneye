@@ -207,6 +207,47 @@ E2E
 Status stays `in-progress` (bounce 2026-11-10: bug-21a-5); milestone README
 row matches. Executor: Claude Sonnet 4.5, headless (resume for bug-21a-5).
 
+### Update — 2026-11-10 04:40 (progress)
+
+bug-21a-5 landed per the bug report's rules, with the screen heuristic gone:
+
+- `looks_like_prompt` and the pump's per-chunk prompt check are **removed**
+  (`grep -c looks_like_prompt src/shell/backend.rs` = 0); no screen content
+  takes part in record lifetime (rule 4).
+- The epoch advances in `PtyBackend::input` when the bytes carry a line
+  end (`\r` or `\n`) **and** no job holds the terminal — "no job" the same
+  check `status()` uses: no foreground job, no live resumed group (rule 1).
+- A read with no job in front passes `None` to `expire_stamps`, dropping
+  every `working`/`blocked` record (rule 2, restored); a read with a job in
+  front passes the current epoch and drops only older-epoch records
+  (rule 3).
+- The two DoD tests land:
+  `backend_status_keeps_a_working_report_while_its_program_prints_a_percent`
+  (`printf <report>; echo 'progress 50%'; sleep 30` — record alive during
+  the sleep) and
+  `backend_status_drops_a_working_report_at_a_prompt_without_a_glyph`
+  (same shape, record gone once the shell is Idle). Both pass, each
+  verified ×5 consecutive runs before the E2E; the earlier bugs' carry,
+  done-survives and drops pins still pass.
+- bug-21a-4's input test keeps its DoD shape: the reader is external
+  (`head -n 1`), not the `read` builtin.
+
+### Update — 2026-11-10 04:55 (Findings)
+
+- The bug's rules drop the screen heuristic in favour of tty observables
+  the backend already answers: `has_foreground_job()` and
+  `resumed_pgid_alive()`. Record lifetime no longer depends on prompt
+  text — progress lines (`50%`), REPL/TUI input boxes and a glyph-less
+  `PS1='❯ '` all behave identically, which is what the two DoD tests pin.
+- One adaptation worth naming: the "no job" reading ran inside the pump
+  first and produced a real flake on the carry pin (chunk boundary vs the
+  shell's own echo of the job). The version that holds is the bug's own
+  wording, taken literally: the epoch advances inside `PtyBackend::input`,
+  where the target line's bytes are already in hand.
+- Known and accepted, per the bug report: input to a bash builtin that
+  reads the terminal (`read`) can't be told from input at the prompt, so
+  it starts a new epoch. The doc comment on `epoch_advances` carries it.
+
 <!-- entries appended below this line -->
 
 ### Update — 2026-11-09 21:45 (started)
