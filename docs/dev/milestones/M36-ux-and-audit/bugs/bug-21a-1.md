@@ -1,7 +1,7 @@
 # Bug 1 on phase-21a: reports fed through the terminal reach the table wrong
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (e0b1dccd)
 **Filed:** 2026-11-09
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Bug 2 on phase-21a: a working record outlives its program when another one starts
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (1c6581a3) — rule superseded by bug-21a-4
 **Filed:** 2026-11-09
 
 ## What's wrong

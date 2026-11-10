@@ -1,7 +1,7 @@
 # Bug 3 on phase-21a: the sbx pass-through test can't fail
 
 **Severity:** minor
-**Status:** open
+**Status:** fixed (e0b1dccd)
 **Filed:** 2026-11-09
 
 ## What's wrong
