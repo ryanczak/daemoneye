@@ -1,7 +1,7 @@
 # Bug 7 on phase-21a: every output chunk re-stamps every record, so a stale working record survives into the next program
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (architect takeover, 2026-11-10)
 **Filed:** 2026-11-10
 
 ## What's wrong

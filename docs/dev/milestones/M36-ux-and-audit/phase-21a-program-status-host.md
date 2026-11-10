@@ -1,7 +1,7 @@
 # Phase 21a — program-status-host
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced 2026-11-10: bug-21a-7)
+**Status:** done
 **Drafted:** 2026-11-09
 **Depends on:** phase 20b
 **Estimated diff:** ~450 lines, half of it tests
@@ -1182,3 +1182,79 @@ kill: (-1313436): No such process
 **Commit:** e6aaec7a668552637fca3a9e88f16fd8c8b881e1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-10 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** Five refined bounces each traded one record-lifetime rule
+for another. Two of them were spec errors (bug-21a-2's racy rule,
+bug-21a-4's `read`-builtin test shape), and three were executor
+regressions in the same narrow area. The remaining fix was one mechanism
+and one test reshape, so another dispatch would cost more than the fix.
+
+### Update — 2026-11-10 (architect takeover: bug-21a-7)
+
+The pump stamped every held record after every chunk. Now the host sets
+the input-line epoch on the screen before each feed (`ShellScreen::set_epoch`),
+and `ScreenCallbacks::unhandled_osc` stamps only the id a report applied
+(`Stamps::stamp`). The separate stamp pass and `stamp_reporters` are gone.
+
+The drops test is back to bug-21a-2's shape. Line A prints a `working`
+report and a `done` report and exits. There is a fixed 1 s delay and no
+`status` read. Line B is `echo hello-from-b; sleep 30`. One read during
+B's sleep must have `jd` (the control) and must not have `ja`.
+
+**Mutation:** the production files at `8b004735`, with the new test:
+`A's working record must not survive into B's line: [Record { id: Some("ja"), state: Working, … }, Record { id: Some("jd"), state: Done, … }]`,
+`test result: FAILED. 0 passed; 1 failed`. With the fix it passes. The
+14 `backend_status_` tests passed three runs in a row.
+
+(end-to-end verification) `.rexymcp/output/p21a-e2e.txt`:
+
+```
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 2756 filtered out; finished in 0.09s
+backend_status_carries_a_working_report_while_its_program_runs passed=1 failed=0
+backend_status_keeps_a_done_report_after_its_program_exits passed=1 failed=0
+backend_answers_the_feature_query passed=1 failed=0
+screen_feed_writes_back_only_the_feature_query passed=1 failed=0
+status_frame_without_programs_deserializes_empty passed=1 failed=0
+sbx_status_passes_programs_through passed=1 failed=0
+format_screen_read_lists_program_records_masked passed=1 failed=0
+feed_clear_removes_the_subtree_and_clear_without_id_empties passed=1 failed=0
+feed_unknown_key_keeps_the_kind passed=1 failed=0
+feed_evicts_the_least_recently_updated_at_the_cap passed=1 failed=0
+feed_skips_an_uppercase_key_and_an_empty_pair passed=1 failed=0
+backend_status_drops_a_working_report_once_another_program_holds_the_terminal passed=1 failed=0
+backend_status_keeps_a_working_report_while_input_goes_to_its_program passed=1 failed=0
+backend_status_keeps_a_working_report_while_its_program_prints_a_percent passed=1 failed=0
+backend_status_drops_a_working_report_at_a_prompt_without_a_glyph passed=1 failed=0
+backend_status_keeps_a_working_report_when_its_program_runs_again passed=1 failed=0
+backend_status_keeps_a_working_report_after_its_record_expired_and_it_reports_again passed=1 failed=0
+base64_dep=1
+looks_like_prompt=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2858 failed=0
+```
+
+### Review verdict — 2026-11-10
+
+- **Verdict:** escalated
+- **Bounces:** 5 (bug-21a-1/2/3, bug-21a-4, bug-21a-5, bug-21a-6, bug-21a-7)
+- **Executor:** glm-5.3-flash, then Claude (direct) for bug-21a-7
+- **Scope deviations:** none in the final tree. Record lifetime is keyed on
+  input-line epochs advanced at the shell's own prompt, not the
+  foreground-group rule Behaviour 3 first named. A bash builtin that reads
+  the terminal starts a new epoch (documented in `PtyBackend::input`).
+- **Calibration:** two of the bounces were architect spec errors. A
+  lifetime rule was specified without checking that it could be observed
+  at the PTY (a builtin `printf` or `read` runs in the shell's own process
+  group), and a DoD test shape contradicted the rule it pinned. One more
+  occurrence makes it a trend: before pinning a process-state rule,
+  sketch its test against a real bash.
+
