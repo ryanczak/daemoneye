@@ -1,7 +1,7 @@
 # Phase 21b — program-status-surfaces
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-10: bug-21b-1, bug-21b-2)
 **Drafted:** 2026-11-10
 **Depends on:** phase 21a
 **Estimated diff:** ~450 lines, about half of it tests
@@ -133,6 +133,15 @@ runs them all:
       run. Today none exists.
 - [ ] `claude_md_mentions=1` or more: the CLAUDE.md `list_shells` row
       names program status. Today 0.
+- [ ] **bug-21b-1:** `program_status_surface_list_shells_shows_a_blocked_report_without_a_screen_read`,
+      `program_status_surface_list_shells_survives_a_host_that_does_not_answer`
+      and `program_status_surface_shell_info_from_an_older_daemon_reads_empty_programs`
+      exist and pass, and the end-to-end run prints them. Today none of
+      them exists. A host that doesn't answer keeps its stored records.
+- [ ] **bug-21b-2:** `…_watch_ignores_a_record_already_blocked_at_the_start`
+      writes nothing to `last_programs` and still times out. `watch_shell`
+      takes its baseline from the host at start. `prime_markers=0`.
+      Today 2.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok;
       `build_warnings=0`, clippy is clean, `fmt_exit=0`, `failed=0`.
 
@@ -141,6 +150,7 @@ runs them all:
 ```sh
 bash <<'E2E'
 cargo test --lib program_status_surface 2>&1 | grep -E '^test |^test result'
+grep -c 'prime::' src/daemon/executor/knowledge/shell_observer_tests.rs | sed 's/^/prime_markers=/'
 grep -E '^\| `list_shells`' CLAUDE.md | grep -c 'program status' | sed 's/^/claude_md_mentions=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker lock_invariant; do cargo test --test $t 2>&1 | grep -E '^test result'; done
