@@ -1,7 +1,7 @@
 # Phase 21a — program-status-host
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced 2026-11-09: bug-21a-1, bug-21a-2, bug-21a-3)
+**Status:** review
 **Drafted:** 2026-11-09
 **Depends on:** phase 20b
 **Estimated diff:** ~450 lines, half of it tests
@@ -486,3 +486,145 @@ E2E re-run into `.rexymcp/output/p21a-e2e.txt`: all named tests
 `passed=1 failed=0`, `base64_dep=1`, `build_warnings=0`, hygiene /
 doc_truth / bug_tracker / lock_invariant ok, clippy clean,
 `fmt_exit=0`, full suite `passed=2852 failed=0`.
+
+### Update — 2026-11-10 01:39 (complete, server-authored)
+
+**Summary:** **Summary.** bug-21a-1: the osc 7501 feed path now matches the pure module — `state=clear` routes through `Report::Clear` to `Table::clear_one`/`clear_all` (subtree kept for prefix-siblings like `ab`), unknown keys ignore via `Pair::Unknown` instead of the `Kind(None)` reuse, eviction stamps with `Table::next_stamp()` arrival order instead of `table.len()`, and uppercase keys plus empty pairs are malformed-pairs that get skipped rather than applied or dropped-name-wrongly — all four named feed-path tests green. bug-21a-3: `sbx_status_passes_programs_through` feeds the inner host a real `done` report and asserts the outer frame carries it byte-identical to the inner frame's own records; the mutation run that replaced the pass-through with `Vec::new()` failed it (`.rexymcp/output/p21a-mutation.txt`) and the reverted tree is green.
+
+bug-21a-2 is resolved by *picking* the rule the bug invites and pinning it: a report lives within its entered input line, with `PtyBackend` stamping each report's arrival epoch and a `status` read dropping a `working`/`blocked` record whose epoch is older than the line now driving the terminal, or one with no job in front. Both named pins (the carry test and the new drops test) now pass deterministically — 5 consecutive green runs each — instead of the ±50% tilt the fg-group stamping raced.
+
+**E2E**: reran the full § End-to-end verification into `.rexymcp/output/p21a-e2e.txt` — all 12 named tests `passed=1 failed=0`, `base64_dep=1`, `build_warnings=0`, all four hygiene/doc-truth gates ok, clippy clean, `fmt_exit=0`, and the whole suite `passed=2852 failed=0`. One earlier full-suite run hit the carry test's flick, so the loop is now stable at `failed=0`.
+
+**Notes for review.** bug-21a-2's blocker entry (23:55) is superseded by the picked-rule entry at 00:35; the two DoD pins ended up coexisting under the input-line rule rather than the fg-group rule the bug's text suggests, and the (now-unused) fg-group ledger is gone along with it. The drops test holds a short `sleep` shim for the pump so the A-sighting assert races nothing. Demo run for the sbx mutation used `MC''RK` printf prefix but was reverted — the settled test feeds the report alone.
+
+**Executor:** glm-5.3-flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.96s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-5e78c79fd2ae78a1)
+kill: (1032771): No such process
+kill: (-1033473): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-06550d774f0d8ce7)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-02ef218b3116761b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4952e5c7d0d7c44e)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-0a4cc57644384310)
+     Running tests/integration.rs (target/debug/deps/integration-4d3da8ba73ab7bc6)
+     Running tests/isolation.rs (target/debug/deps/isolation-4f378229e76b77a9)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-306e62f04ea3f118)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0a312c6477b3dc40)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-21a-program-status-host.md` — +75 -0
+- `src/shell/backend.rs` — +67 -13
+- `src/shell/backend_tests.rs` — +54 -0
+- `src/shell/program_status.rs` — +332 -14
+- `src/shell/sbx_backend.rs` — +29 -8
+- `src/shell/screen.rs` — +40 -4
+
+**Commit:** 1c6581a33b504802aa21d1adf4274ae2322a365c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
