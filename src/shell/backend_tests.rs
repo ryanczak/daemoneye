@@ -1767,3 +1767,107 @@ fn backend_status_keeps_a_working_report_while_input_goes_to_its_program() {
     rt.block_on(backend.input(b"\x03\n"))
         .expect("end the program");
 }
+
+/// bug-21a-6 DoD, the reviewer's reproduction: line 1 reports `working`
+/// then `done` on the root record; after the shell is back at its own
+/// prompt, line 2 reports `working` again and sleeps. A `status` during
+/// the sleep must carry the `working` record — the re-report re-stamps its
+/// id with the epoch it arrived in, instead of keeping the first stamp.
+#[test]
+fn backend_status_keeps_a_working_report_when_its_program_runs_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    // Line 1: working then done, both on the root record. The typed echo
+    // cannot carry the report, so the state the frame shows is the
+    // program's own word.
+    let done = crate::shell::program_status::encode_test("finished");
+    let bytes = format!(
+        "printf '\\033]7501;state=working\\007'; \
+         printf '\\033]7501;state=done:msg={done}\\007'\n",
+    )
+    .into_bytes();
+    rt.block_on(backend.input(&bytes))
+        .expect("run the first line");
+    {
+        let mut rx = backend.subscribe();
+        quiet(&mut rx, std::time::Instant::now() + Duration::from_secs(10));
+    }
+    until_record(
+        &rt,
+        &backend,
+        None,
+        crate::shell::program_status::State::Done,
+        Some(1),
+    );
+    wait_idle(&rt, &backend);
+    // Line 2, entered at the shell's own prompt: the same root id reports
+    // `working` again and keeps running.
+    rt.block_on(backend.input(b"printf '\\033]7501;state=working\\007'; sleep 30\n"))
+        .expect("run the second line");
+    until_record(
+        &rt,
+        &backend,
+        None,
+        crate::shell::program_status::State::Working,
+        Some(1),
+    );
+    rt.block_on(backend.input(b"\x03\n"))
+        .expect("end the sleep");
+}
+
+/// bug-21a-6 DoD, the expiry shape: a `working` record's line ends, the
+/// record is dropped at a read, and the same id reports `working` again
+/// in a new line whose program sleeps — the leftover ledger entry from the
+/// first arrival must not pin the old epoch onto the new report.
+#[test]
+fn backend_status_keeps_a_working_report_after_its_record_expired_and_it_reports_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    // Line 1: report working, then hold the terminal briefly so the
+    // record is observable, then exit — the line ends, so a read at the
+    // prompt drops the record and the ledger holds id `again` at epoch 1.
+    let encoded = crate::shell::program_status::encode_test("expired");
+    let bytes =
+        format!("printf '\\033]7501;state=working:id=again:msg={encoded}\\007'; sleep 1\n",)
+            .into_bytes();
+    rt.block_on(backend.input(&bytes))
+        .expect("report working and end the line");
+    until_record(
+        &rt,
+        &backend,
+        Some("again"),
+        crate::shell::program_status::State::Working,
+        None,
+    );
+    wait_idle(&rt, &backend);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        match rt.block_on(backend.status()) {
+            ShellResponse::Status { programs, .. } if programs.is_empty() => break,
+            ShellResponse::Status { ref programs, .. } => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "line 1's working record to drop once its line ended, last {programs:?}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            other => panic!("expected a Status frame, got {other:?}"),
+        }
+    }
+    // Line 2 at the prompt: the same id reports `working` and sleeps. The
+    // stamp must be line 2's epoch, not line 1's, or the read below drops
+    // the record while the sleep still holds the terminal.
+    rt.block_on(backend.input(b"printf '\\033]7501;state=working:id=again\\007'; sleep 30\n"))
+        .expect("re-report working in a new line");
+    until_record(
+        &rt,
+        &backend,
+        Some("again"),
+        crate::shell::program_status::State::Working,
+        Some(1),
+    );
+    rt.block_on(backend.input(b"\x03\n"))
+        .expect("end the sleep");
+}

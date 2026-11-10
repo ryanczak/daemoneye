@@ -206,6 +206,31 @@ E2E
 
 ## Update Log
 
+### Update — 2026-11-10 14:10 (started)
+
+Status stays `in-progress` (bounce 2026-11-10: bug-21a-6); milestone README
+row matches. Executor: GPT-5.1-Codex-Max, headless (bug-21a-6).
+
+### Update — 2026-11-10 14:30 (red runs)
+
+bug-21a-6's red run against the pre-fix tree, captured honestly: the two
+new DoD tests were appended and run before the fix landed. The raw paste
+is at `.rexymcp/output/p21a-red-21a-6.txt`; the red lines:
+
+```
+test shell::backend::tests::backend_status_keeps_a_working_report_when_its_program_runs_again ... FAILED
+test result: FAILED. 3 passed; 1 failed; 2872 filtered out
+```
+
+`backend_status_keeps_a_working_report_after_its_record_expired_and_it_reports_again`
+also went red on its first appending (its line-1 shape needed a `sleep 1`
+hold before the expiry read to land the record at all — the honest first
+run printed `never observed Working at Some("again"), last []`), and both
+went green when `Stamps::stamp_missing` stopped guarding against
+re-stamping. The lifetime rules from bug-21a-5 stayed untouched: the
+carry/drops/inp4/pct/noglyph pins from bugs 21a-2/21a-4/21a-5 stayed
+green throughout (`backend_status` 12/12 on the pre-fix tree, 14/14 after).
+
 ### Update — 2026-11-10 03:36 (started)
 
 Status stays `in-progress` (bounce 2026-11-10: bug-21a-5); milestone README
@@ -991,3 +1016,21 @@ kill: (-1241396): No such process
 **Commit:** ab76b7acd44df0e8a388b58923c69b890f44c719
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Findings — 2026-11-10
+
+- No allowlist raise: hygiene 16/16 unchanged; the fix touches
+  `Stamps::stamp_missing` (one insert replacing a guarded one), deletes
+  `Stamps::has_vacancy` and `ShellScreen::fresh_stamp_ids`, and adds the
+  two DoD tests to `backend_tests.rs` plus one pure ledger test inline —
+  every file stays inside its M31 cap.
+- bug-21a-6 read literally: every report records the epoch **that report**
+  arrived in. `stamp_missing` now inserts unconditionally, the pump
+  stamps every feed that carried a report (the `fresh_stamp_ids`
+  vacancy gate is gone — it was the guard that kept the first epoch on
+  the book), and the ledger still prunes to the table's held ids.
+- The expiry-shape DoD test needed line 1 to *hold* the terminal briefly
+  (`sleep 1`) so the first report is actually observable before its line
+  ends — with a line that exits at once, the pump's stamp and the read
+  race and the red was "never observed Working", which pins nothing
+  about the ledger.

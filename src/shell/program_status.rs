@@ -1003,20 +1003,71 @@ impl Stamps {
             .collect()
     }
 
-    /// Whether any of `ids` has no group recorded yet: the feed carried a
-    /// report the stamp write still has to cover.
-    pub fn has_vacancy(&self, ids: &[String]) -> bool {
-        ids.iter().any(|id| !self.ledger.contains_key(id))
-    }
-
-    /// Stamp `id`, but only where it has no group yet — never backwards:
-    /// a re-report by a later arrival must not rewrite an earlier stamp
-    /// the ledger already holds.
+    /// Stamp `id` with the epoch the report arrived in. Every report — new
+    /// or replacing — records the current epoch for its id (bug-21a-6): a
+    /// later report is always the newer fact about its id, so a re-report
+    /// must not keep an earlier stamp.
     pub fn stamp_missing(&mut self, id: Option<&str>, epoch: Option<u64>) {
         let key = id.unwrap_or("");
-        if !self.ledger.contains_key(key) {
-            self.ledger.insert(key.to_string(), epoch);
-        }
+        self.ledger.insert(key.to_string(), epoch);
+    }
+}
+
+/// bug-21a-6, the pure half of the fix: every report records the epoch
+/// **that report** arrived in, so a re-report by a later line re-stamps
+/// its id and the record stands on the newer line instead of keeping the
+/// first report's epoch.
+#[cfg(test)]
+mod re_stamp_tests {
+    use super::*;
+
+    #[test]
+    fn the_ledger_records_the_epoch_each_report_arrived_in() {
+        let mut stamps = Stamps::default();
+        stamps.stamp_missing(Some("job"), Some(1));
+        stamps.stamp_missing(None, Some(1));
+        // Line 1 drives the terminal: nothing is stale.
+        assert!(stamps.stale(Some(1)).is_empty());
+
+        // Line 2 is entered at the prompt: the reporters' line is over.
+        assert!(stamps.stale(Some(2)).contains("job"));
+        assert!(stamps.stale(Some(2)).contains(""));
+
+        // The same ids report again inside line 2: the new epoch rewrites
+        // the stamp, and the records stand on line 2's line (bug-21a-6).
+        stamps.stamp_missing(Some("job"), Some(2));
+        stamps.stamp_missing(None, Some(2));
+        assert!(
+            stamps.stale(Some(2)).is_empty(),
+            "a report re-stamps its id with its own arrival epoch: {:?}",
+            stamps.stale(Some(2))
+        );
+
+        // Line 3: both reporters' line is over again.
+        let stale = stamps.stale(Some(3));
+        assert!(stale.contains("job") && stale.contains(""));
+
+        // At the prompt (no line driving), every epoch-stamped record goes.
+        assert_eq!(
+            stamps.stale(None).len(),
+            2,
+            "no line is driving: both records' lines are over"
+        );
+
+        // A stamp without a line epoch is never stale on its own.
+        let mut bare = Stamps::default();
+        bare.stamp_missing(Some("plain"), None);
+        assert!(
+            bare.stale(Some(7)).is_empty() && bare.stale(None).is_empty(),
+            "a bare ledger entry (no epoch yet) must not decide lifetime"
+        );
+
+        // The ledger never outgrows the table.
+        stamps.retain(&["other".to_string()]);
+        assert!(
+            stamps.ledger.is_empty(),
+            "the ledger never outgrows the table"
+        );
     }
 }
 

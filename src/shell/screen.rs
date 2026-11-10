@@ -90,18 +90,12 @@ impl ShellScreen {
         !self.parser.callbacks().reply.is_empty()
     }
 
-    /// Whether the last feed carried a report the ledger has no group for
-    /// yet — the ids a fresh stamp write must cover.
-    pub fn fresh_stamp_ids(&self) -> bool {
-        let cb = self.parser.callbacks();
-        cb.stamps.has_vacancy(&cb.table.held_ids())
-    }
-
-    /// Stamp every record the feed just deposited with the input-line
-    /// epoch of its arrival (bug-21a-2): a report survives its own line's
-    /// later commands and drops when a newer line is entered. Runs after
-    /// the screen lock was released and retaken; called only when
-    /// `fresh_stamp_ids` said the feed carried something unstamped.
+    /// Stamp every held record with the input-line epoch of its arrival
+    /// (bug-21a-2, bug-21a-6): a report — new or replacing — records the
+    /// epoch that report arrived in, so it survives its own line's later
+    /// commands and drops when a newer line is entered. Runs after the
+    /// screen lock was released and retaken; the pump calls it on every
+    /// feed that carried a report, since a re-report re-stamps its id.
     pub fn stamp_reporters(&mut self, epoch: u64) {
         for id in self.parser.callbacks().table.held_ids() {
             let key = if id.is_empty() {

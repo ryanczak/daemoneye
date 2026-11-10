@@ -145,20 +145,22 @@ impl PtyBackend {
                         }
                         {
                             // Stamp the report with the input-line epoch of
-                            // its arrival (bug-21a-2): a report survives
-                            // its own line's later commands
-                            // (`printf 'working'; sleep 30`) and drops
-                            // once a newer line has been entered — the
-                            // reporter's line is over. The screen lock was
-                            // released first (lock order below); the
-                            // epoch read takes no shell lock.
+                            // its arrival (bug-21a-2, bug-21a-6): a
+                            // report survives its own line's later
+                            // commands (`printf 'working'; sleep 30`)
+                            // and drops once a newer line has been
+                            // entered — the reporter's line is over.
+                            // Every report re-stamps, so a second line's
+                            // report for a table the ledger already
+                            // knows stands on the second line's epoch.
+                            // The screen lock was released first (lock
+                            // order below); the epoch read takes no
+                            // shell lock.
                             let epoch = pump_this
                                 .line_epoch
                                 .load(std::sync::atomic::Ordering::SeqCst);
                             let mut screen2 = pump_this.screen.lock().unwrap_or_log();
-                            if screen2.fresh_stamp_ids() {
-                                screen2.stamp_reporters(epoch);
-                            }
+                            screen2.stamp_reporters(epoch);
                         }
                         if !reply.is_empty() {
                             let _ = pump_this.shell.lock().unwrap_or_log().write_input(&reply);
