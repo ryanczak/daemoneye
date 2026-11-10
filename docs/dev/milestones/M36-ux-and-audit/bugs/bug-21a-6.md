@@ -1,7 +1,7 @@
 # Bug 6 on phase-21a: a re-report keeps its first stamp, so a program's second run loses its working record
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (e6aaec7a) — regressed bug-21a-2, see bug-21a-7
 **Filed:** 2026-11-10
 
 ## What's wrong

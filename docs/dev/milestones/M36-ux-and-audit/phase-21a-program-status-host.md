@@ -1,7 +1,7 @@
 # Phase 21a — program-status-host
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-10: bug-21a-7)
 **Drafted:** 2026-11-09
 **Depends on:** phase 20b
 **Estimated diff:** ~450 lines, half of it tests
@@ -163,6 +163,11 @@ visible).
       and `backend_status_keeps_a_working_report_after_its_record_expired_and_it_reports_again`
       pass, printed by the end-to-end loop with `passed=1` and `failed=0`.
       Today neither exists. Every report records the epoch it arrived in.
+- [ ] **bug-21a-7:** `backend_status_drops_a_working_report_once_another_program_holds_the_terminal`
+      has no `status` call between its two lines, and its second line
+      prints output before it sleeps. It passes, printed by the end-to-end
+      loop with `passed=1` and `failed=0`. It fails on the current tree once
+      it is reshaped. Only the ids a feed reported get stamped.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok;
       `build_warnings=0`, clippy is clean, `fmt_exit=0`, `failed=0`.
 
