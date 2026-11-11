@@ -454,3 +454,16 @@ kill: (-1444283): No such process
 **Commit:** 20bc33f5df718bc915d85ac2e0d8d33e5b878f70
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-11 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** Run e441c4b5 ended on an infrastructure fault: opencode
+returned `402 Payment Required` (insufficient balance). Its partial work is
+correct and stays on disk: both production fixes for bug-21b-1 and bug-21b-2,
+and the removal of the `prime` block. What's left is three tests. A resume
+carries that diff forward, and the guidance lists the exact remaining edits.
+The executor moves back to the local brain endpoint
+(`nvidia/GLM-5.3-Flash-FP4-Local`). Before the 402 the run had looped on one
+grep about 566 times. If the resume loops again with no edits, the architect
+takes over.
