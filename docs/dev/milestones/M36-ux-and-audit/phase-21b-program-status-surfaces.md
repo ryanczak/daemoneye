@@ -1,7 +1,7 @@
 # Phase 21b — program-status-surfaces
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review (bounced 2026-11-10: bug-21b-1, bug-21b-2 — both fixed, 2026-11-11)
+**Status:** done
 **Drafted:** 2026-11-10
 **Depends on:** phase 21a
 **Estimated diff:** ~450 lines, about half of it tests
@@ -567,3 +567,28 @@ test daemon::executor::knowledge::shell::tests::observers::program_status_surfac
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2787 filtered out; finished in 1.00s
 ```
+
+### Review verdict — 2026-11-11
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. The review bounce filed bug-21b-1 (three Test plan tests
+  missing; a silent host wiped its stored records) and bug-21b-2 (the
+  `watch_shell` baseline came from the registry, and the test hand-primed
+  it). Before that, a 1000-turn search loop was escalated to a refined
+  re-dispatch. The fix run hit a 402 backend fault and was resumed on the
+  local brain endpoint.
+- **Executor:** glm-5.3-flash (opencode) for the implementation and the
+  first fix run; nvidia/GLM-5.3-Flash-FP4-Local (brain) for the resume.
+- **Scope deviations:** `watch_result` was extracted from `watch_shell_with`,
+  which removes the function's hygiene allowlist entry. The observer test
+  file's entry rose from 2116 to 2233 lines (named in Findings). A stray
+  `DBG` `println!` was removed from `server/shells_tests.rs`.
+- **Calibration:** One test helper fact belongs in future specs.
+  `type_until_recorded` returns once the cast holds the echoed command line,
+  which can be before the line runs. A test that must observe a record the
+  way the host holds it waits on the host's `Status`
+  (`wait_until_host_reports`).
+- **Reviewer re-run:** all gates green; `passed=2870 failed=0`. The 12
+  `program_status_surface` tests pass, `prime_markers=0`, and the pasted
+  mutation evidence was accepted.
+
