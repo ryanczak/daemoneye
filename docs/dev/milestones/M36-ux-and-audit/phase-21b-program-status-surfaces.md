@@ -1,7 +1,7 @@
 # Phase 21b — program-status-surfaces
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced 2026-11-10: bug-21b-1, bug-21b-2)
+**Status:** review (bounced 2026-11-10: bug-21b-1, bug-21b-2 — both fixed, 2026-11-11)
 **Drafted:** 2026-11-10
 **Depends on:** phase 21a
 **Estimated diff:** ~450 lines, about half of it tests
@@ -225,6 +225,42 @@ passed=2867 failed=0
 
 The five live watch tests above run against real in-process PTY bash
 hosts: the report is emitted by `/bin/printf` on the shell's own
+terminal (the blocked line held by `sleep 30`), not by a fake.
+
+### Update — 2026-11-11 11:25 (end-to-end verification)
+
+`.rexymcp/output/p21b-e2e.txt`, the § End-to-end verification block run
+once, redirected to it, pasted verbatim:
+
+```
+test cli::commands::top::tests::program_status_surface_top_shows_the_program_line_in_place_of_the_foreground ... ok
+test daemon::executor::knowledge::shell::tests::program_status_surface_format_rows_puts_the_program_before_the_foreground ... ok
+test ipc::tests::program_status_surface_shell_info_from_an_older_daemon_reads_empty_programs ... ok
+test daemon::executor::knowledge::shell::tests::program_status_surface_list_shells_masks_the_message ... ok
+test cli::commands::top::tests::program_status_surface_top_cuts_a_long_program_line_never_wraps ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_returns_on_blocked ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_ignores_a_record_already_blocked_at_the_start ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_list_shells_shows_a_blocked_report_without_a_screen_read ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_returns_on_done ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_list_shells_survives_a_host_that_does_not_answer ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_keeps_waiting_through_a_working_report ... ok
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_watch_returns_on_error ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 2776 filtered out; finished in 11.27s
+prime_markers=0
+claude_md_mentions=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.98s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2870 failed=0
+```
+
+All twelve `program_status_surface_*` tests print above, including the
+three the bounce named. The seven live ones run against real in-process
+PTY bash hosts: the report is emitted by `/bin/printf` on the shell's own
 terminal (the blocked line held by `sleep 30`), not by a fake.
 
 <!-- entries appended below this line -->
@@ -467,3 +503,67 @@ The executor moves back to the local brain endpoint
 (`nvidia/GLM-5.3-Flash-FP4-Local`). Before the 402 the run had looped on one
 grep about 566 times. If the resume loops again with no edits, the architect
 takes over.
+
+### Update — 2026-11-11 11:15 (resumed, findings)
+
+**Findings:**
+- Allowlist changed twice, both named per the Authorizations: the
+  `fn …shell_watch.rs watch_shell_with` entry is **removed** — the result
+  sentence moved into its own `watch_result` helper, bringing the function
+  to 111 lines, inside the cap — and `test …shell_observer_tests.rs` raised
+  2116 → 2233 (the three resumed tests joined the file).
+- The `wait_until_host_reports` helper is what makes the resumed tests
+  deterministic: `type_until_recorded` returns on the cast, which carries
+  the **echoed typed line** (plain ASCII, containing `7501`) *before* the
+  line has executed, so a cast-keyed wait races the report. A test that
+  must observe the record as the host holds it (bug-21b-2's watch, the
+  blocked listing) polls the host's `Status` instead.
+- The silent-host test's mutation check ran: storing `Some(Vec::new())` on
+  a non-`Status` reply makes it fail ("the stored record survived the
+  silent probe"), the committed `None` arm passes. Both runs in the phase
+  doc's Update Log.
+
+### Update — 2026-11-11 11:20 (mutation check)
+
+`refresh_programs`' non-`Status` arm temporarily changed back to
+`Some(Vec::new())` (storing an empty list over a silent host's records) and
+the silent-host test run again — it fails, naming the lost record. Reverted
+to `None` (keep what was stored) and the same test passes. Both runs
+verbatim, each redirected to its file and pasted:
+
+`.rexymcp/output/mutation-fail.txt` — mutated (`Some(Vec::new())`):
+
+```
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.41s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-5e78c79fd2ae78a1)
+
+running 1 test
+
+thread 'daemon::executor::knowledge::shell::tests::observers::program_status_surface_list_shells_survives_a_host_that_does_not_answer' (1605437) panicked at src/daemon/executor/knowledge/shell_observer_tests.rs:2227:5:
+the stored record survived the silent probe: 1 shell (scope "all"):
+  s0  owner:chat:a  age:0s
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_list_shells_survives_a_host_that_does_not_answer ... FAILED
+
+failures:
+
+failures:
+    daemon::executor::knowledge::shell::tests::observers::program_status_surface_list_shells_survives_a_host_that_does_not_answer
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2787 filtered out; finished in 1.01s
+```
+
+`.rexymcp/output/mutation-pass.txt` — reverted (`None`):
+
+```
+   Compiling daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 16.91s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-5e78c79fd2ae78a1)
+
+running 1 test
+test daemon::executor::knowledge::shell::tests::observers::program_status_surface_list_shells_survives_a_host_that_does_not_answer ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2787 filtered out; finished in 1.00s
+```

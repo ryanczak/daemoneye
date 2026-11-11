@@ -307,12 +307,6 @@ fn shell_log_read_matches_each_command_to_its_own_start_across_many_commands() {
 
     let log = read_shell_log(&dir, "s9-7", LOG_READ_CAP).unwrap();
     assert_eq!(log.commands.len(), 300, "every record read");
-    for (k, c) in log.commands.iter().take(6).enumerate() {
-        println!(
-            "DBG k={k} event={} data={:?}",
-            c.event, log.events[c.event].data
-        );
-    }
     // Each record's window is the events its own body covers — from the
     // line its `first_byte` opens to the line its `end_byte` closes — so a
     // mark must land inside it or not at all.

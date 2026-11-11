@@ -299,14 +299,16 @@ pub(super) async fn watch_shell_with(
     let mut seen_running = false;
     let mut buf = String::new();
     let sock = socket_path(shell);
-    // The program states the watch already saw at the start: a record in one
-    // of the three then is not news, and must not end the watch.
-    let initial_programs = with_shells(reg, |store| {
-        store
-            .get(shell)
-            .map(|r| r.last_programs.clone())
-            .unwrap_or_default()
-    });
+    // The watch's baseline comes from the **host**, read once at the start
+    // with the same probe `program_check` uses — not from the registry's
+    // `last_programs`, which is whatever the last `list_shells`/`top`
+    // refresh happened to store and is empty when neither has run. A record
+    // already in one of the three states then is not news, and must not end
+    // the watch.
+    let initial_programs = match crate::shell::status(&sock, SIGNAL_TIMEOUT).await {
+        Ok(crate::shell::ShellResponse::Status { programs, .. }) => programs,
+        _ => Vec::new(),
+    };
     let already_reported = |record: &crate::shell::program_status::Record| {
         initial_programs
             .iter()
@@ -357,6 +359,20 @@ pub(super) async fn watch_shell_with(
     })
     .await;
 
+    watch_result(shell, pattern, capped_secs, &buf, outcome)
+}
+
+/// The result sentence for a watch's `WatchOutcome`, written once so
+/// `watch_shell_with` stays within its hygiene cap. `shell` names the shell,
+/// `capped_secs` the cap the watch ran under, `buf` the output seen,
+/// `pattern` the pattern it matched.
+fn watch_result(
+    shell: &str,
+    pattern: Option<&str>,
+    capped_secs: u64,
+    buf: &str,
+    outcome: Result<WatchOutcome, tokio::time::error::Elapsed>,
+) -> String {
     let body = match outcome {
         Ok(WatchOutcome::Pattern(rendered_match)) => {
             format!(
@@ -372,14 +388,14 @@ pub(super) async fn watch_shell_with(
             format!(
                 "watch_shell {shell}: a program reported this after {} s:\n{line}\n{}",
                 capped_secs,
-                tail_of(&buf, WATCH_TAIL_LINES)
+                tail_of(buf, WATCH_TAIL_LINES)
             )
         }
         Ok(WatchOutcome::Finished) => {
             format!(
                 "watch_shell {shell}: the command running in it finished after {} s.\n{}",
                 capped_secs,
-                tail_of(&buf, WATCH_TAIL_LINES)
+                tail_of(buf, WATCH_TAIL_LINES)
             )
         }
         Ok(WatchOutcome::NothingRunning) => format!(
@@ -394,11 +410,11 @@ pub(super) async fn watch_shell_with(
             "watch_shell {shell}: its job is stopped (SUSPENDED), so it will not \
              finish on its own. The tool returns now rather than burn the {} s.\n{}",
             capped_secs,
-            tail_of(&buf, WATCH_TAIL_LINES)
+            tail_of(buf, WATCH_TAIL_LINES)
         ),
         Ok(WatchOutcome::Exited) => format!(
             "watch_shell {shell}: the shell itself ended while watching.\n{}",
-            tail_of(&buf, WATCH_TAIL_LINES)
+            tail_of(buf, WATCH_TAIL_LINES)
         ),
         Ok(WatchOutcome::HostGone) => format!(
             "watch_shell {shell}: its host is gone.{}\n{}",
@@ -407,7 +423,7 @@ pub(super) async fn watch_shell_with(
             } else {
                 " The tail of what it had written:".to_string()
             },
-            tail_of(&buf, WATCH_TAIL_LINES)
+            tail_of(buf, WATCH_TAIL_LINES)
         ),
         Ok(WatchOutcome::Unreachable) => format!(
             "watch_shell {shell}: the shell is unreachable — its socket exists in \
@@ -427,7 +443,7 @@ pub(super) async fn watch_shell_with(
                 format!(
                     "watch_shell {shell}: timed out after {capped_secs} s without the \
                      pattern matching. What it saw:\n{}",
-                    tail_of(&buf, WATCH_TAIL_LINES)
+                    tail_of(buf, WATCH_TAIL_LINES)
                 )
             }
         }

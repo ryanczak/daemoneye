@@ -1797,7 +1797,7 @@ const APPEND: std::time::Duration = Duration::from_secs(10);
 /// the bytes — the same typed-then-drain shape the send-input fixtures use,
 /// so the report the command emits is really on the terminal before the
 /// observation begins.
-async fn program_status_surface_spawn_host(id: ShellId) -> anyhow::Result<()> {
+pub(super) async fn program_status_surface_spawn_host(id: ShellId) -> anyhow::Result<()> {
     use anyhow::Context as _;
     let started: u64 = with_shells(crate::shell::registry(), |store| {
         store.get(id.as_str()).map(|r| r.started_unix)
@@ -1831,7 +1831,7 @@ async fn program_status_surface_spawn_host(id: ShellId) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn type_until_recorded(id: &str, cmd: &str, reg: &ShellRegistry) {
+pub(super) async fn type_until_recorded(id: &str, cmd: &str, reg: &ShellRegistry) {
     let sock = crate::shell::socket_path(id);
     let started = with_shells(reg, |store| store.get(id).map(|r| r.started_unix)).unwrap_or(0);
     let cast = crate::shell::resolve_cast(id, started);
@@ -1861,6 +1861,33 @@ async fn type_until_recorded(id: &str, cmd: &str, reg: &ShellRegistry) {
         assert!(
             std::time::Instant::now() < deadline,
             "the cast never carried the typed line: wanted {want:?}, open error {open_error:?}, tail {tail:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+}
+
+/// Wait until the host's own `Status` frame carries the named program line —
+/// the report has *landed*, not merely been typed. `type_until_recorded`
+/// returns on the cast, which carries the echoed command line (plain ASCII,
+/// containing `7501`) before the line has executed, so a caller that must
+/// observe the record **as the host holds it** polls the host instead. The
+/// echo keys no record; only the executed `/bin/printf` reports one.
+pub(super) async fn wait_until_host_reports(id: &str, want: &str, _reg: &ShellRegistry) {
+    let sock = crate::shell::socket_path(id);
+    let deadline = std::time::Instant::now() + APPEND;
+    loop {
+        let landed = match crate::shell::status(&sock, Duration::from_secs(2)).await {
+            Ok(crate::shell::ShellResponse::Status { programs, .. }) => {
+                programs.iter().any(|record| program_line(record) == want)
+            }
+            _ => false,
+        };
+        if landed {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the host never reported {want:?}"
         );
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
@@ -2039,19 +2066,7 @@ async fn program_status_surface_watch_ignores_a_record_already_blocked_at_the_st
         &reg,
     )
     .await;
-    //_prime::start
-    with_shells(&reg, |store| {
-        let record = store.get_mut(&id).expect("the record");
-        record.last_programs = vec![crate::shell::program_status::Record {
-            id: None,
-            state: crate::shell::program_status::State::Blocked,
-            kind: Some(crate::shell::program_status::Kind::Permission),
-            progress: None,
-            app: Some("x".to_string()),
-            title: None,
-            msg: None,
-        }];
-    });
+    wait_until_host_reports(&id, "Program x (blocked (permission))", &reg).await;
     let out = watch_shell_with(
         &reg,
         &id,
@@ -2065,7 +2080,6 @@ async fn program_status_surface_watch_ignores_a_record_already_blocked_at_the_st
         out.contains("timed out"),
         "a record blocked before the watch does not end it: {out}"
     );
-    //prime::end
 }
 
 #[tokio::test]
@@ -2113,4 +2127,106 @@ async fn program_status_surface_watch_keeps_waiting_through_a_working_report() {
         out.contains("timed out"),
         "a `working` report never ends the watch: {out}"
     );
+}
+
+#[tokio::test]
+async fn program_status_surface_list_shells_shows_a_blocked_report_without_a_screen_read() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let _swap = open_shell_test_seam::swap_in(&reg);
+    let opened = open_shell_with(
+        &reg,
+        &Owner::Chat("watcher".into()),
+        crate::host::HostId::Local,
+        5,
+        Duration::from_millis(5000),
+        program_status_surface_spawn_host,
+    )
+    .await;
+    assert!(
+        opened.contains("Opened shell"),
+        "the precondition is a real, ready shell: {opened}"
+    );
+    let id = opened
+        .split_whitespace()
+        .map(|w| {
+            w.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|w| w.starts_with('s') && w[1..].chars().all(|c| c.is_ascii_digit()))
+        .expect("the success sentence names the id");
+    type_until_recorded(
+        &id,
+        "/bin/printf '\\033]7501;state=blocked:kind=permission:app=x\\007'; sleep 30\n",
+        &reg,
+    )
+    .await;
+    wait_until_host_reports(&id, "Program x (blocked (permission))", &reg).await;
+    let out = list_shells_in(
+        &reg,
+        Some("all"),
+        &Owner::Chat("watcher".into()),
+        crate::shell::now_unix(),
+    )
+    .await;
+    let line = out.lines().find(|l| l.contains(&format!("{id} ")));
+    let line = line.expect("the shell is listed");
+    assert!(
+        line.contains("Program x (blocked (permission))"),
+        "the record's own line is on the shell's row: {line}"
+    );
+    assert!(
+        !out.contains("foreground"),
+        "the row carries no screen-scraped classification: no screen read ran: {out}"
+    );
+}
+
+#[tokio::test]
+async fn program_status_surface_list_shells_survives_a_host_that_does_not_answer() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let started = crate::shell::now_unix();
+    with_shells(&reg, |store| {
+        store.insert(
+            "s0".to_string(),
+            ShellRecord {
+                id: ShellId::from_index(0),
+                owner: Owner::Chat("a".into()),
+                host: crate::host::HostId::Local,
+                sandbox: None,
+                started_unix: started,
+                dedicated: false,
+                exited_unix: None,
+                last_foreground: None,
+                in_flight: None,
+                last_programs: vec![crate::shell::program_status::Record {
+                    id: None,
+                    state: crate::shell::program_status::State::Blocked,
+                    kind: Some(crate::shell::program_status::Kind::Permission),
+                    progress: None,
+                    app: Some("x".to_string()),
+                    title: None,
+                    msg: None,
+                }],
+            },
+        );
+    });
+    // A host that binds its socket and answers nothing: every probe into it
+    // times out rather than errors.
+    std::fs::create_dir_all(crate::config::shells_dir()).expect("creating the shells dir");
+    let listener = std::os::unix::net::UnixListener::bind(crate::shell::socket_path("s0"))
+        .expect("binding the silent host's socket");
+    let began = std::time::Instant::now();
+    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("a".into()), started).await;
+    let elapsed = began.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "a silent host costs the bound, not an error: {elapsed:?}"
+    );
+    assert!(out.contains("s0"), "the shell is still listed: {out}");
+    assert!(
+        out.contains("Program x (blocked (permission))"),
+        "the stored record survived the silent probe: {out}"
+    );
+    drop(listener);
 }

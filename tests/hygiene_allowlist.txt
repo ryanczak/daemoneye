@@ -25,7 +25,6 @@ fn src/daemon/context/background.rs run_compaction 184
 fn src/daemon/executor/file_ops/ops.rs run_create_with_spawn 164
 fn src/daemon/executor/file_ops/read.rs run_read_file 198
 fn src/daemon/executor/foreground.rs run_background 440
-fn src/daemon/executor/knowledge/shell_watch.rs watch_shell_with 184
 fn src/daemon/executor/mod.rs prompt_and_await_approval 210
 fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
@@ -48,6 +47,6 @@ fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 725
 fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 299
 fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 216
 test src/daemon/executor/file_ops/ops.rs 2344
-# M36 phase-21b — the OSC 7501 watch/listing tests (10 named in the plan) grew the file past the cap.
-test src/daemon/executor/knowledge/shell_observer_tests.rs 2116
+# M36 phase-21b — the OSC 7501 watch/listing tests (12 named in the plan) grew the file past the cap.
+test src/daemon/executor/knowledge/shell_observer_tests.rs 2233
 fn src/daemon/executor/file_ops/write.rs run_edit_file 151

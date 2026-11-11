@@ -1,7 +1,7 @@
 # Bug 2 on phase-21b: watch_shell's starting snapshot comes from the registry, not the host
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-21b resume, 2026-11-11)
 **Filed:** 2026-11-10
 
 ## What's wrong
@@ -34,8 +34,11 @@ and the test was primed to match the code.
 
 ## Definition of done
 
-- [ ] `…_watch_ignores_a_record_already_blocked_at_the_start` writes
+- [x] `…_watch_ignores_a_record_already_blocked_at_the_start` writes
       nothing to `last_programs` (the `prime` block and its marker comments
-      are gone). It times out. **Against the current `watch_shell_with`,
-      the unprimed test returns early on `blocked`.**
-- [ ] The other four `…_watch_…` tests still pass.
+      are gone). It times out. The watch's baseline is the host's own
+      `Status` reply, probed once at start; the test waits until the host
+      really holds the record (the cast's echoed typed line lands before
+      the line has executed, so a cast-keyed wait is not enough), then
+      starts the watch, which times out.
+- [x] The other four `…_watch_…` tests still pass.

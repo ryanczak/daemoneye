@@ -1049,6 +1049,20 @@ fn shell_info_without_the_new_fields_still_parses() {
     );
 }
 
+/// The programs field itself defaults, independently of the other two: a
+/// `top` against a daemon that predates phase-21b reads the row with no
+/// program lines rather than failing the frame.
+#[test]
+fn program_status_surface_shell_info_from_an_older_daemon_reads_empty_programs() {
+    let json = r#"{"id":"s3","host":"web01","owner":"chat:deadbeef","started_unix":1788470000,"dedicated":false,"exited_unix":null,"last_command":"echo hi","foreground":null,"last_line":null}"#;
+    let info: ShellInfo = serde_json::from_str(json).expect("a pre-21b daemon's row still parses");
+    assert!(
+        info.programs.is_empty(),
+        "no programs key reads as empty programs, got {:?}",
+        info.programs
+    );
+}
+
 #[test]
 fn shell_tail_messages_round_trip() {
     let req = Request::ShellTail {

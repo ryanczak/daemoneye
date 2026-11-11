@@ -157,23 +157,29 @@ pub(crate) async fn refresh_programs(reg: &ShellRegistry, ids: Vec<String>) {
     if targets.is_empty() {
         return;
     }
-    let probes: Vec<(String, Vec<crate::shell::program_status::Record>)> =
+    let probes: Vec<(String, Option<Vec<crate::shell::program_status::Record>>)> =
         futures_util::future::join_all(targets.iter().map(|(id, sock)| async {
             let reply = status(sock, PROGRAM_REFRESH_TIMEOUT).await;
             match reply {
-                Ok(crate::shell::ShellResponse::Status { programs, .. }) => (id.clone(), programs),
-                _ => (id.clone(), Vec::new()),
+                Ok(crate::shell::ShellResponse::Status { programs, .. }) => {
+                    (id.clone(), Some(programs))
+                }
+                // Behaviour 1: a host that does not answer, or answers with
+                // anything other than `Status`, keeps the records it had —
+                // the store step below skips a `None`.
+                _ => (id.clone(), None),
             }
         }))
         .await;
     with_shells(reg, |store| {
         for (id, programs) in probes {
-            if let Some(record) = store.get_mut(&id) {
+            if let (Some(record), Some(programs)) = (store.get_mut(&id), programs) {
                 record.last_programs = programs;
             }
         }
     });
 }
+
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

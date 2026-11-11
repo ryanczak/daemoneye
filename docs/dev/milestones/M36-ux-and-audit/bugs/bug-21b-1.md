@@ -1,7 +1,7 @@
 # Bug 1 on phase-21b: three Test plan tests are missing, and a silent host wipes stored records
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-21b resume, 2026-11-11)
 **Filed:** 2026-11-10
 
 ## What's wrong
@@ -38,7 +38,11 @@ match arm.
 
 ## Definition of done
 
-- [ ] The three named tests exist and pass. **Today none of them exists.**
-- [ ] `…_list_shells_survives_a_host_that_does_not_answer` stores a record
+- [x] The three named tests exist and pass. (2026-11-11 resume: all three
+      in `shell_observer_tests.rs` / `ipc_tests.rs`, printed by the phase's
+      end-to-end run.)
+- [x] `…_list_shells_survives_a_host_that_does_not_answer` stores a record
       on a shell whose host doesn't answer, calls `list_shells`, and still
-      sees the record. It fails against the current `refresh_programs`.
+      sees the record. The mutation check (storing `Some(Vec::new())` on a
+      non-`Status` reply) makes it fail; the committed code stores `None`
+      and keeps what was there.
