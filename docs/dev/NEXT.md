@@ -7,10 +7,11 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 21b — program-status-surfaces
-([`phase-21b-program-status-surfaces.md`](milestones/M36-ux-and-audit/phase-21b-program-status-surfaces.md)),
-drafted 2026-11-10 (decision 9, consume side, second half). Phases 01–21a
-are `done` (21a closed `escalated` after five bounces). Twenty-eight phases
+**Active phase:** phase 21c — program-status-emit
+([`phase-21c-program-status-emit.md`](milestones/M36-ux-and-audit/phase-21c-program-status-emit.md)),
+drafted 2026-11-11 (decision 9, emit side; the last planned phase). Phases
+01–21b are `done` (21a closed `escalated` after five bounces, 21b
+`approved_after_1`). Twenty-eight phases
 are planned in the README's table: 04 was split into 04a/04b and 21 added on
 2026-11-03, 05 was split into 05a/05b on 2026-11-04, 17 was split into
 17a/17b/17c on 2026-11-07, 20 into 20a/20b on 2026-11-08, and 21 into
