@@ -1,7 +1,7 @@
 # Phase 21c — program-status-emit
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-11
 **Depends on:** phase 21a (its parser checks the reports this phase writes)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -670,3 +670,27 @@ kill: (-1845361): No such process
 **Commit:** 4bac34f84dcf318467f143b19fc7e405a06e146a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-12
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. The review filed bug-21c-1 (the state reports only reached
+  a private buffer, never stdout, and the tests read that same buffer) and
+  bug-21c-2 (no `working` at send, and the early `?` returns skipped
+  `idle`). The fix run took 80 turns. Before that, the PE stopped the first
+  dispatch at 446 turns with no edits (read paralysis), and it was escalated
+  to a refined re-dispatch with a symbol map and edit order.
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (brain).
+- **Scope deviations:** the hygiene allowlist rose twice, both named:
+  `ask_with_session_ratatui` 725 → 746 and `run_chat_ratatui` 537 → 544.
+- **Calibration:** A test that reads only the unit's own buffer can pass
+  while the production sink gets nothing. When a spec says "an injected
+  writer", the Test plan needs a test that reads from the writer the test
+  holds. This is the first occurrence.
+- **Reviewer re-run:** every gate green, `passed=2882 failed=0`. The 12
+  `program_status_emit` tests pass, `cfg_test_branches=0`, `idle_guard=1`,
+  `working_at_send=1`.
+- **Live clause:** a real approval prompt read as `blocked` from a
+  7501-aware terminal. It stays with the architect for the milestone close,
+  as the End-to-end section says.
+
