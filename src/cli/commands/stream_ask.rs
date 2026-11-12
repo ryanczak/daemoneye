@@ -74,6 +74,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
     let (rx, mut tx) = stream.into_split();
     let mut rx = BufReader::new(rx);
 
+    // OSC 7501 (M36 21c): from the moment the turn is sent the terminal
+    // reads `working` — before the first token, which may be tens of seconds
+    // away on a large context (bug-21c-2). Every return below reports `idle`
+    // through the guard: done, error, cancelled, an early `?` alike.
+    status.working();
+    let _idle_guard = status.idle_on_drop();
+
     let chat_pane = std::env::var("TMUX_PANE").ok();
     let tmux_pane = target_pane
         .map(|s| s.to_string())
@@ -180,7 +187,6 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 break;
             }
             StreamOutcome::Error(e) => {
-                status.idle();
                 return Err(anyhow::anyhow!("Connection error: {}", e));
             }
             StreamOutcome::Deadline => {
@@ -198,7 +204,6 @@ pub(in super::super) async fn ask_with_session_ratatui(
                          daemon may still be running — check `daemoneye status`."
                     )
                 };
-                status.idle();
                 return Err(anyhow::anyhow!("Connection error: {}", msg));
             }
             StreamOutcome::Tick => {
@@ -774,10 +779,6 @@ pub(in super::super) async fn ask_with_session_ratatui(
 
     // Turn completed normally — reset interrupt state for next turn.
     interrupt_state.reset();
-
-    // OSC 7501 (M36 21c): the turn ended on any path — done, error,
-    // cancelled — so the terminal reads `idle` again the moment it does.
-    status.idle();
 
     Ok(())
 }

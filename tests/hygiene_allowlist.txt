@@ -43,7 +43,7 @@ fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321
 fn src/tmux/cache.rs SessionCache::refresh 171
 fn src/webhook/process.rs maybe_analyze_alert 240
 file src/cli/commands/stream_prompts.rs 810
-fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 745
+fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 746
 fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 299
 fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 216
 test src/daemon/executor/file_ops/ops.rs 2344

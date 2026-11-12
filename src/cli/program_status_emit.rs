@@ -1,12 +1,13 @@
 //! OSC 7501 program-status emit (M36 phase 21c): the chat client reports its
 //! own state to the user's terminal.
 //!
-//! One report per state change, only to a terminal, only over stdout, only
-//! the root record (`app=daemoneye`, no id, no `msg`, no `title`) so nothing
-//! from the conversation reaches the terminal. Inside tmux every report rides
-//! the passthrough envelope, and the client turns `allow-passthrough` on for
-//! its own pane for its lifetime, unsetting it at exit. The clear-at-exit
-//! duty hangs off `restore_terminal`, so the panic path clears too.
+//! One report per state change, only to a terminal, only over the injected
+//! writer (stdout for real, a buffer in tests), only the root record
+//! (`app=daemoneye`, no id, no `msg`, no `title`) so nothing from the
+//! conversation reaches the terminal. Inside tmux every report rides the
+//! passthrough envelope, and the client turns `allow-passthrough` on for its
+//! own pane for its lifetime, unsetting it at exit. The clear-at-exit duty
+//! hangs off `restore_terminal`, so the panic path clears too.
 
 use std::cell::RefCell;
 use std::io::{IsTerminal, Write};
@@ -122,22 +123,19 @@ pub fn frame_kind(frame: &crate::ipc::Response) -> Option<crate::shell::program_
     }
 }
 
-/// The writer and per-report state, behind a `RefCell` so the turn-end guard
-/// can hold a shared borrow while the turn reports through `&self`.
+/// The per-report state behind a `RefCell` so the turn-end guard can hold a
+/// shared borrow while the turn reports through `&self`.
 struct Inner {
-    out: Vec<u8>,
     last: Option<String>,
     reported: bool,
 }
 
-/// Whether `report` also writes each frame to the real stdout: true in
-/// production, false in tests, where the buffer is the only surface.
-const TO_STDOUT: bool = cfg!(not(test));
-
-/// The chat client's status emitter. A report is written only when the state
-/// changed (Behaviour 2), only to a terminal (Behaviour 6), and never fails
-/// the turn — a write error is ignored.
+/// The chat client's status emitter. Every report goes to the one writer the
+/// emitter was built over (bug-21c-1). A report is written only when the
+/// state changed (Behaviour 2), only to a terminal (Behaviour 6), and never
+/// fails the turn — a write error is ignored.
 pub struct Emitter {
+    writer: RefCell<Box<dyn Write + Send>>,
     inner: RefCell<Inner>,
     tmux: bool,
     terminal: bool,
@@ -146,23 +144,18 @@ pub struct Emitter {
 impl Emitter {
     /// An emitter over an injected writer. `terminal` gates every write
     /// (Behaviour 6); `tmux` picks the framing (Behaviour 5). Tests inject a
-    /// buffer; production goes through [`Emitter::for_stdout`].
-    pub fn new(terminal: bool, tmux: bool) -> Self {
+    /// buffer they hold; production goes through [`Emitter::for_stdout`],
+    /// which injects stdout.
+    pub fn new(writer: Box<dyn Write + Send>, terminal: bool, tmux: bool) -> Self {
         Self {
+            writer: RefCell::new(writer),
             inner: RefCell::new(Inner {
-                out: Vec::new(),
                 last: None,
                 reported: false,
             }),
             tmux,
             terminal,
         }
-    }
-
-    /// Everything written so far, for the tests.
-    #[cfg(test)]
-    pub fn written(&self) -> Vec<u8> {
-        self.inner.borrow().out.clone()
     }
 
     /// The production emitter: stdout, gated on stdout being a terminal and
@@ -175,7 +168,7 @@ impl Emitter {
         if terminal && in_tmux {
             arm_pane_option();
         }
-        Self::new(terminal, in_tmux)
+        Self::new(Box::new(std::io::stdout()), terminal, in_tmux)
     }
 
     /// The turn was sent: `working` (Behaviour 1).
@@ -207,10 +200,7 @@ impl Emitter {
                     frame_kind(msg).unwrap_or(crate::shell::program_status::Kind::Permission);
                 self.blocked(kind);
             }
-            Some(state) => {
-                let _ = state;
-                self.working();
-            }
+            Some(_) => self.working(),
             None => {}
         }
     }
@@ -229,7 +219,7 @@ impl Emitter {
 
     /// A guard that reports `idle` when dropped: the turn ends on any path —
     /// done, error, cancelled — and the terminal must read `idle` again the
-    /// moment it does, not only on the success path.
+    /// moment it does, not only on the success path (bug-21c-2).
     pub fn idle_on_drop(&self) -> IdleOnDrop<'_> {
         IdleOnDrop { emitter: self }
     }
@@ -243,26 +233,19 @@ impl Emitter {
             if inner.last.as_deref() == Some(pairs) {
                 return;
             }
-            let bytes = framed(pairs, self.tmux);
-            let _ = inner.out.write_all(&bytes);
-            let _ = inner.out.flush();
             inner.last = Some(pairs.to_string());
             inner.reported = true;
-            bytes
+            framed(pairs, self.tmux)
         };
-        let _ = bytes;
+        let _ = self.writer.borrow_mut().write_all(&bytes);
+        let _ = self.writer.borrow_mut().flush();
         REPORTED.store(true, Ordering::SeqCst);
         TMUX_FRAMING.store(self.tmux, Ordering::SeqCst);
     }
 
     fn write(&self, bytes: &[u8]) {
-        let mut inner = self.inner.borrow_mut();
-        let _ = inner.out.write_all(bytes);
-        if TO_STDOUT {
-            let mut stdout = std::io::stdout();
-            let _ = stdout.write_all(bytes);
-            let _ = stdout.flush();
-        }
+        let _ = self.writer.borrow_mut().write_all(bytes);
+        let _ = self.writer.borrow_mut().flush();
     }
 }
 
@@ -273,7 +256,12 @@ pub struct IdleOnDrop<'a> {
 
 impl Drop for IdleOnDrop<'_> {
     fn drop(&mut self) {
-        self.emitter.idle();
+        // Only when the turn changed something: a turn that failed before its
+        // first report leaves the terminal exactly as it was — the same rule
+        // `finish` applies to `clear` (Behaviour 3).
+        if self.emitter.inner.borrow().last.is_some() {
+            self.emitter.idle();
+        }
     }
 }
 

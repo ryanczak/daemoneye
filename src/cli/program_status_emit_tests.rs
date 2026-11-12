@@ -4,6 +4,41 @@
 
 use super::*;
 use crate::shell::program_status::{Kind, State};
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+
+// ── The writer the test holds ────────────────────────────────────────────────
+
+/// A writer the test keeps a handle to: every report the emitter writes lands
+/// here and is read back through `snapshot()` — from the writer the test
+/// holds, not from anything the emitter keeps (bug-21c-1).
+#[derive(Clone, Default)]
+struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+impl SharedBuf {
+    fn snapshot(&self) -> Vec<u8> {
+        self.0.lock().expect("test writer lock").clone()
+    }
+}
+
+impl Write for SharedBuf {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("test writer lock")
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn emitter(terminal: bool, tmux: bool) -> (Emitter, SharedBuf) {
+    let held = SharedBuf::default();
+    let emit = Emitter::new(Box::new(held.clone()), terminal, tmux);
+    (emit, held)
+}
 
 // ── Round trip through the host parser ───────────────────────────────────────
 
@@ -262,16 +297,47 @@ fn program_status_emit_tmux_pane_option_set_and_unset_live() {
     );
 }
 
+// ── Reports reach the injected writer (bug-21c-1) ────────────────────────────
+
+#[test]
+fn program_status_emit_reports_reach_the_injected_writer() {
+    let (emit, held) = emitter(true, false);
+    emit.working();
+    emit.blocked(Kind::Permission);
+    emit.idle();
+    let text = String::from_utf8_lossy(&held.snapshot()).to_string();
+    let reports: Vec<&str> = text.split("\x1b]7501;").skip(1).collect();
+    assert_eq!(
+        reports.len(),
+        3,
+        "three state changes, three reports on the writer the test holds: {text:?}"
+    );
+    assert_eq!(
+        reports[0].trim_end_matches('\x07'),
+        "state=working:app=daemoneye",
+        "first report: {text:?}"
+    );
+    assert_eq!(
+        reports[1].trim_end_matches('\x07'),
+        "state=blocked:kind=permission:app=daemoneye",
+        "second report: {text:?}"
+    );
+    assert_eq!(
+        reports[2].trim_end_matches('\x07'),
+        "state=idle:app=daemoneye",
+        "third report: {text:?}"
+    );
+}
+
 // ── No repeats ───────────────────────────────────────────────────────────────
 
 #[test]
 fn program_status_emit_repeats_write_nothing() {
-    let emit = Emitter::new(true, false);
+    let (emit, held) = emitter(true, false);
     emit.working();
     emit.working();
     emit.working();
-    let out = emit.written();
-    let text = String::from_utf8_lossy(&out).to_string();
+    let text = String::from_utf8_lossy(&held.snapshot()).to_string();
     assert_eq!(
         text.matches("\x1b]7501;").count(),
         1,
@@ -284,41 +350,40 @@ fn program_status_emit_repeats_write_nothing() {
 #[test]
 fn program_status_emit_clear_only_after_a_report() {
     // One that reported writes exactly one `clear` on finish.
-    let emit = Emitter::new(true, false);
+    let (emit, held) = emitter(true, false);
     emit.working();
-    let before = emit.written().len();
     emit.finish();
-    let out = emit.written();
-    let tail = String::from_utf8_lossy(&out[before..]).to_string();
+    let text = String::from_utf8_lossy(&held.snapshot()).to_string();
+    let reports: Vec<&str> = text.split("\x1b]7501;").skip(1).collect();
     assert_eq!(
-        tail.matches("\x1b]7501;").count(),
-        1,
-        "finish writes exactly one clear: {tail:?}"
+        reports.len(),
+        2,
+        "working plus the exit clear, and nothing else: {text:?}"
     );
     assert!(
-        tail.contains("state=clear"),
-        "it is the clear report: {tail:?}"
+        reports[1].contains("state=clear"),
+        "the second report is the clear: {text:?}"
     );
 
     // A silent emitter writes nothing on finish.
-    let emit = Emitter::new(true, false);
+    let (emit, held) = emitter(true, false);
     emit.finish();
     assert!(
-        emit.written().is_empty(),
+        held.snapshot().is_empty(),
         "never reported: finish writes nothing: {:?}",
-        emit.written()
+        held.snapshot()
     );
 
     // Finish twice writes one clear in total.
-    let emit = Emitter::new(true, false);
+    let (emit, held) = emitter(true, false);
     emit.working();
     emit.finish();
-    let after_first = emit.written().len();
     emit.finish();
+    let text = String::from_utf8_lossy(&held.snapshot()).to_string();
     assert_eq!(
-        emit.written().len(),
-        after_first,
-        "a second finish writes nothing"
+        text.matches("\x1b]7501;").count(),
+        2,
+        "a second finish writes nothing: {text:?}"
     );
 }
 
@@ -463,14 +528,13 @@ fn program_status_emit_frame_mapping() {
 
 #[test]
 fn program_status_emit_reply_returns_to_working() {
-    let emit = Emitter::new(true, false);
+    let (emit, held) = emitter(true, false);
     emit.blocked(Kind::Permission);
     emit.reply();
     // A repeat of the same blocked state after the reply writes again: the
     // emitter is at working, so blocked is a change.
     emit.blocked(Kind::Permission);
-    let out = emit.written();
-    let text = String::from_utf8_lossy(&out).to_string();
+    let text = String::from_utf8_lossy(&held.snapshot()).to_string();
     let first = text
         .find("state=blocked")
         .expect("the blocked report is there");
@@ -492,18 +556,49 @@ fn program_status_emit_reply_returns_to_working() {
 
 #[test]
 fn program_status_emit_not_a_terminal_writes_nothing() {
-    // A writer that answers `is_terminal() == false` stands in for a pipe:
-    // the same `Emitter` construction with `terminal = false` suppresses
-    // every report, which is the gate the real emitter applies from
-    // `std::io::stdout().is_terminal()`.
-    let emit = Emitter::new(false, false);
+    // `terminal = false` is the gate the real emitter applies from
+    // `std::io::stdout().is_terminal()`: a pipe gets no reports at all.
+    let (emit, held) = emitter(false, false);
     emit.working();
     emit.blocked(Kind::Auth);
     emit.idle();
     emit.finish();
     assert!(
-        emit.written().is_empty(),
+        held.snapshot().is_empty(),
         "a non-terminal target gets no reports at all: {:?}",
-        emit.written()
+        held.snapshot()
+    );
+}
+
+// ── idle on drop (bug-21c-2) ─────────────────────────────────────────────────
+
+#[test]
+fn program_status_emit_idle_on_drop_reports_idle() {
+    let (emit, held) = emitter(true, false);
+    emit.working();
+    {
+        let _guard = emit.idle_on_drop();
+        // The guard is alive: the emitter is still working.
+        assert!(
+            String::from_utf8_lossy(&held.snapshot()).contains("state=working"),
+            "the turn in flight reads working: {:?}",
+            held.snapshot()
+        );
+    }
+    let text = String::from_utf8_lossy(&held.snapshot()).to_string();
+    assert!(
+        text.ends_with("state=idle:app=daemoneye\x07"),
+        "dropping the guard after working leaves the last report idle: {text:?}"
+    );
+    // A guard dropped without a report writes nothing: clear only what was
+    // set, and idle-on-drop is no exception.
+    let (emit, held) = emitter(true, false);
+    {
+        let _guard = emit.idle_on_drop();
+    }
+    assert!(
+        held.snapshot().is_empty(),
+        "no report yet: the dropped guard writes nothing: {:?}",
+        held.snapshot()
     );
 }

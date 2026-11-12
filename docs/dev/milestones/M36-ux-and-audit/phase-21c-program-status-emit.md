@@ -492,3 +492,43 @@ kill: (-1780510): No such process
 **Commit:** ea29feebe8308c10f7c1c8c18d04835a45cde90b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-12 16:39 (started, bounce fix)
+
+Status already `in-progress` (the bounce flipped it back); milestone README row
+matches. Executor: GLM (glm-5.3-flash), headless (phase-21c-program-status-emit,
+bounce fix for bug-21c-1 and bug-21c-2).
+
+### Update — 2026-11-12 16:50 (bounce fix)
+
+Both bugs fixed in the emitter and its wiring, no new file, no dependency:
+
+- **bug-21c-1 (reports never reach the terminal):** `Emitter` now takes the
+  writer in its constructor — `Emitter::new(Box<dyn Write + Send>, terminal,
+  tmux)` — and every `report`/`write`/`finish` goes through it; the private
+  `Vec` and the `TO_STDOUT`/`cfg!(not(test))` flag are gone
+  (`cfg_test_branches=0`). The tests hold a `SharedBuf` handle and read the
+  reports back from *that*, not from `written()`.
+- **bug-21c-2 (no `working` at send, `?` skips `idle`):** `stream_ask.rs`
+  calls `status.working()` right after the connection splits, before the
+  request is sent, and holds `let _idle_guard = status.idle_on_drop()` for
+  the rest of the turn — so every return (done, error, deadline, interrupt,
+  and every `?`) reports `idle`. The hand-placed `status.idle()` calls the
+  guard makes redundant (the two `StreamOutcome` error arms and the final
+  return) are removed. `idle_guard=1`, `working_at_send=1`.
+
+The guard reports `idle` only when the turn changed something (the same rule
+`finish` applies to `clear`), pinned by the second half of
+`program_status_emit_idle_on_drop_reports_idle`. One allowlist raise, per the
+Authorizations: `ask_with_session_ratatui` 745 → 746 (the two-line turn-start
+block). `run_chat_ratatui` unchanged.
+
+### Findings — 2026-11-12 (bounce fix)
+
+- Allowlist raised once: `fn src/cli/commands/stream_ask.rs
+  ask_with_session_ratatui` 745 → 746 — the turn-start `status.working()` +
+  `idle_on_drop()` guard lines. No code was split to fit.
+- The e2e gate's `idle_guard`/`working_at_send` grep counts are 1 each, from
+  the one guard and the one send-time call; the nine `status.reply()` calls
+  after each prompt send are unchanged from the first run.
+- No `TODO`/`FIXME` introduced; no dependency added; no `unsafe`.
