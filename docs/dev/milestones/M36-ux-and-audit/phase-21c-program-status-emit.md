@@ -1,7 +1,7 @@
 # Phase 21c — program-status-emit
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-12: bug-21c-1, bug-21c-2)
 **Drafted:** 2026-11-11
 **Depends on:** phase 21a (its parser checks the reports this phase writes)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -151,6 +151,12 @@ Every test name starts `program_status_emit_`:
       Today 0.
 - [ ] `tmux_calls=2`: `src/tmux/session.rs` has both pane-option calls.
       Today 0.
+- [ ] **bug-21c-1:** `program_status_emit_reports_reach_the_injected_writer`
+      passes, reading the reports back from the writer the test holds.
+      `cfg_test_branches=0`. Today 1, and no constructor takes a writer.
+- [ ] **bug-21c-2:** `idle_guard>=1` and `working_at_send>=1` in
+      `stream_ask.rs`, and `program_status_emit_idle_on_drop_reports_idle`
+      passes. Today 0 and 0.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok.
       `build_warnings=0`, clippy is clean, `fmt_exit=0`, `failed=0`.
 
@@ -161,6 +167,9 @@ bash <<'E2E'
 cargo test --lib program_status_emit 2>&1 | grep -E '^test |^test result'
 grep -c 'allow-passthrough' README.md | sed 's/^/readme_mentions=/'
 grep -c '"allow-passthrough"' src/tmux/session.rs | sed 's/^/tmux_calls=/'
+grep -c 'cfg!(not(test))' src/cli/program_status_emit.rs | sed 's/^/cfg_test_branches=/'
+grep -c 'idle_on_drop' src/cli/commands/stream_ask.rs | sed 's/^/idle_guard=/'
+grep -c 'status.working()' src/cli/commands/stream_ask.rs | sed 's/^/working_at_send=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker lock_invariant; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
