@@ -39,6 +39,9 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     // A one-shot ask has no next turn: a throwaway typeahead keeps the keys
     // from being dropped mid-turn without anywhere to submit them.
     let mut typeahead = Typeahead::default();
+    // The OSC 7501 emitter: stdout, gated on being a terminal and `$TMUX`
+    // (M36 21c). Its clear rides the renderer's terminal-restore guard.
+    let emit_status = crate::cli::program_status_emit::Emitter::for_stdout();
 
     ask_with_session_ratatui(
         QueryArgs {
@@ -65,6 +68,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
             stdin: &stdin,
             transcript: &mut transcript,
             typeahead: &mut typeahead,
+            status: &emit_status,
         },
     )
     .await

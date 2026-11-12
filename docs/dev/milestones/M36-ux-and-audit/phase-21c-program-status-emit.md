@@ -204,7 +204,6 @@ through 21b. It is not part of this phase's run.
 Status flipped to `in-progress`; milestone README row matches. Executor:
 GLM (glm-5.3-flash), headless (phase-21c-program-status-emit).
 
-<!-- entries appended below this line -->
 
 ### Notes for executor — 2026-11-11 (refined re-dispatch)
 
@@ -271,4 +270,73 @@ treatment (a symbol map, an edit order that starts with a write) got this
 model writing code on 21b, so it comes before a takeover. The run also
 changed options on the PE's live tmux pane (each one undone, and checked
 clean afterwards), so the notes now forbid `tmux` without `-S`.
+
+
+### Update — 2026-11-12 02:15 (red runs)
+
+`cargo test --lib program_status_emit` against a tree that carries the new
+module and tests but none of the wiring (`.rexymcp/output/p21c-red-run.txt`):
+
+```
+error[E0425]: cannot find function `set_pane_passthrough` in module `crate::tmux`
+error[E0425]: cannot find function `unset_pane_passthrough` in module `crate::tmux`
+error[E0425]: cannot find function `pane_option_argv` in module `crate::tmux`
+error[E0425]: cannot find function `pane_option_argv` in module `crate::tmux`
+error[E0425]: cannot find function `set_pane_passthrough` in module `crate::tmux`
+error[E0425]: cannot find function `unset_pane_passthrough` in module `crate::tmux`
+error: could not compile `daemoneye` (lib test) due to 6 previous errors
+```
+
+An earlier red run against the same worktree with the emitter still
+unimplemented (`.rexymcp/output/p21c-red.txt`) failed at 35 errors: every
+test symbol missing (`tests_harness`, `run_tmux`, `pane_value`, `Emitter`,
+`report_to`, `finish_to`, `frame_state`, …), which is the failing-before-
+passing state the red step asks for.
+
+### Update — 2026-11-12 02:15 (end-to-end verification)
+
+Ran the block in § End-to-end verification once, redirected to
+`.rexymcp/output/p21c-e2e.txt`; pasted verbatim:
+
+```
+test cli::program_status_emit::tests::program_status_emit_not_a_terminal_writes_nothing ... ok
+test cli::program_status_emit::tests::program_status_emit_clear_only_after_a_report ... ok
+test cli::program_status_emit::tests::program_status_emit_empty_tmux_var_means_bare ... ok
+test cli::program_status_emit::tests::program_status_emit_tmux_pane_option_argv ... ok
+test cli::program_status_emit::tests::program_status_emit_frame_mapping ... ok
+test cli::program_status_emit::tests::program_status_emit_repeats_write_nothing ... ok
+test cli::program_status_emit::tests::program_status_emit_reply_returns_to_working ... ok
+test cli::program_status_emit::tests::program_status_emit_tmux_wraps_and_doubles_escapes ... ok
+test cli::program_status_emit::tests::program_status_emit_each_state_round_trips_through_the_host_parser ... ok
+test cli::program_status_emit::tests::program_status_emit_tmux_pane_option_set_and_unset_live ... ok
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2788 filtered out; finished in 0.14s
+readme_mentions=1
+tmux_calls=2
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.11s
+fmt_exit=0
+passed=2880 failed=0
+```
+
+### Findings — 2026-11-12
+
+- Allowlist raised twice per the Authorizations, both reasons in place:
+  `fn src/cli/commands/stream_ask.rs ask_with_session_ratatui` 725 → 745
+  (the per-frame `status.frame(&msg)` call, the nine `status.reply()` calls
+  after each prompt's send, and the two `status.idle()` error returns land
+  inside the function) and `fn src/cli/commands/chat_loop.rs
+  run_chat_ratatui` 537 → 544 (the emitter's one-line construction and the
+  two `status: &emit_status` context fields). No code was split to fit.
+- The e2e gate's `tmux_calls=2` counts the `"allow-passthrough"` literal in
+  `src/tmux/session.rs`: both pane-option argv entries live in
+  `tmux::pane_option_argv` (the spec's pinned pure shape), and
+  `set_pane_passthrough`/`unset_pane_passthrough` carry that argv out.
+- Red-run note: the first red artifact (`.rexymcp/output/p21c-red.txt`) was
+  captured mid-implementation; the entry above pastes the final red run
+  (`.rexymcp/output/p21c-red-run.txt`), taken against a HEAD tree carrying
+  only the new module and tests.
 

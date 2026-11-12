@@ -385,6 +385,60 @@ pub fn session_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Set the pane-local `allow-passthrough` option, or unset it when `on` is
+/// `false`. `socket` targets a private server (tests); `None` uses the
+/// ambient one. A pane value shadows the window's and the global's, so this
+/// touches exactly one pane and leaves both other scopes untouched — the
+/// chat client's emit side turns passthrough on for its own pane for its
+/// lifetime and unsets it at exit (M36 phase 21c). Returns whether the call
+/// succeeded; a failure is advisory, not fatal, for the caller.
+pub fn set_pane_passthrough(pane: &str, socket: Option<&std::path::Path>, on: bool) -> bool {
+    let (start, exit) = pane_option_argv(Some(pane));
+    let mut cmd = Command::new("tmux");
+    if let Some(sock) = socket {
+        cmd.arg("-S").arg(sock);
+    }
+    cmd.args(if on { &start } else { &exit });
+    crate::process::bounded_output(&mut cmd)
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Unset the pane-local `allow-passthrough` option: the exit call. A pane
+/// value that is not set stays not set; the window's and the global value
+/// are never touched. See [`set_pane_passthrough`].
+pub fn unset_pane_passthrough(pane: &str, socket: Option<&std::path::Path>) -> bool {
+    set_pane_passthrough(pane, socket, false)
+}
+
+/// The argv the client's emit side passes for its two pane-option calls,
+/// without the `tmux` binary: the start call `set -p -t <pane>
+/// allow-passthrough on` and the exit call `set -pu -t <pane>
+/// allow-passthrough`. `None` when `$TMUX_PANE` is absent — no call at all.
+/// Pure, so the argv shape is pinned without a tmux server (M36 phase 21c).
+pub fn pane_option_argv(pane: Option<&str>) -> (Vec<String>, Vec<String>) {
+    let Some(pane) = pane else {
+        return (Vec::new(), Vec::new());
+    };
+    (
+        vec![
+            "set".into(),
+            "-p".into(),
+            "-t".into(),
+            pane.into(),
+            "allow-passthrough".into(),
+            "on".into(),
+        ],
+        vec![
+            "set".into(),
+            "-pu".into(),
+            "-t".into(),
+            pane.into(),
+            "allow-passthrough".into(),
+        ],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -112,6 +112,10 @@ pub(super) struct RatatuiQueryCtx<'a> {
     /// Where this turn's typed text accumulates (M32 #18); the caller reads
     /// it again after the turn to submit or pre-fill.
     pub(super) typeahead: &'a mut Typeahead,
+    /// The OSC 7501 emitter the turn reports its state through (M36 21c).
+    /// Shared for the client's lifetime; `ask_with_session_ratatui` only
+    /// drives it.
+    pub(super) status: &'a crate::cli::program_status_emit::Emitter,
 }
 
 #[path = "stream_ask.rs"]

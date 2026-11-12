@@ -41,6 +41,11 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     // consumed at the top of the loop as the next query.
     let mut queued_message: Option<String> = None;
 
+    // The OSC 7501 emitter (M36 21c): stdout, gated on being a terminal and
+    // `$TMUX`. Created once for the loop; its clear rides the renderer's
+    // terminal-restore guard, and inside tmux the pane option is unset there.
+    let emit_status = crate::cli::program_status_emit::Emitter::for_stdout();
+
     // Wait for tmux client attachment. Only meaningful inside tmux — outside
     // there is no client to attach, and waiting would hang chat forever.
     if tmux_session.is_some() {
@@ -140,6 +145,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 stdin,
                 transcript: &mut transcript,
                 typeahead: &mut typeahead,
+                status: &emit_status,
             },
         )
         .await
@@ -507,6 +513,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     stdin,
                     transcript: &mut transcript,
                     typeahead: &mut typeahead,
+                    status: &emit_status,
                 },
             )
             .await

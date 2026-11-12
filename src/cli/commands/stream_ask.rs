@@ -67,6 +67,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
         stdin,
         transcript,
         typeahead,
+        status,
     } = ctx;
 
     let stream = connect().await?;
@@ -179,6 +180,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 break;
             }
             StreamOutcome::Error(e) => {
+                status.idle();
                 return Err(anyhow::anyhow!("Connection error: {}", e));
             }
             StreamOutcome::Deadline => {
@@ -196,6 +198,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                          daemon may still be running — check `daemoneye status`."
                     )
                 };
+                status.idle();
                 return Err(anyhow::anyhow!("Connection error: {}", msg));
             }
             StreamOutcome::Tick => {
@@ -282,6 +285,10 @@ pub(in super::super) async fn ask_with_session_ratatui(
         last_msg_at = std::time::Instant::now();
 
         // Handle the message
+
+        // OSC 7501 (M36 21c): the state this frame asks for, only when it
+        // changed. A keepalive and every other silent frame write nothing.
+        status.frame(&msg);
 
         match msg {
             Response::KeepAlive => {
@@ -404,6 +411,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     },
                 )
                 .await?;
+                status.reply();
             }
             Response::CredentialPrompt { id, prompt } => {
                 let hint = approval.hint();
@@ -419,6 +427,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 );
                 let credential = prompt_credential_ratatui(renderer, stdin, &sb, &prompt).await;
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
+                status.reply();
             }
             Response::PaneSelectPrompt { id, panes } => {
                 let hint = approval.hint();
@@ -434,6 +443,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 );
                 let pane_id = prompt_pane_select_ratatui(renderer, stdin, &sb, &panes).await;
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
+                status.reply();
             }
             Response::ScriptDeletePrompt {
                 id,
@@ -470,6 +480,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 )
                 .await;
                 send_request(&mut tx, Request::ScriptDeleteResponse { id, approved }).await?;
+                status.reply();
             }
             Response::ScriptWritePrompt {
                 id,
@@ -515,6 +526,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 )
                 .await;
                 send_request(&mut tx, Request::ScriptWriteResponse { id, approved }).await?;
+                status.reply();
             }
             Response::ScheduleWritePrompt {
                 id,
@@ -538,6 +550,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 )
                 .await;
                 send_request(&mut tx, Request::ScheduleWriteResponse { id, approved }).await?;
+                status.reply();
             }
             Response::RunbookWritePrompt {
                 id,
@@ -572,6 +585,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 )
                 .await;
                 send_request(&mut tx, Request::RunbookWriteResponse { id, approved }).await?;
+                status.reply();
             }
             Response::RunbookDeletePrompt {
                 id,
@@ -613,6 +627,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 )
                 .await;
                 send_request(&mut tx, Request::RunbookDeleteResponse { id, approved }).await?;
+                status.reply();
             }
             Response::EditFilePrompt {
                 id,
@@ -658,6 +673,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     },
                 )
                 .await?;
+                status.reply();
             }
             // Silent tool calls and results — accumulate for minimal display.
             Response::ToolStarted { tool, summary, .. } => {
@@ -758,6 +774,10 @@ pub(in super::super) async fn ask_with_session_ratatui(
 
     // Turn completed normally — reset interrupt state for next turn.
     interrupt_state.reset();
+
+    // OSC 7501 (M36 21c): the turn ended on any path — done, error,
+    // cancelled — so the terminal reads `idle` again the moment it does.
+    status.idle();
 
     Ok(())
 }

@@ -24,6 +24,11 @@ pub fn panic_hook_restores(renderer_live: bool) -> bool {
 pub fn restore_terminal() {
     use crossterm::event::{DisableBracketedPaste, DisableFocusChange};
     use crossterm::execute;
+    // The chat client's OSC 7501 exit duty: `clear` only if this process
+    // reported, the pane option unset only if it set one (M36 phase 21c).
+    // Before the mode restores, so the clear lands on the screen the client
+    // was drawing on.
+    crate::cli::program_status_emit::exit_clear();
     let _ = execute!(std::io::stdout(), DisableFocusChange, DisableBracketedPaste);
     let _ = ratatui::try_restore();
 }

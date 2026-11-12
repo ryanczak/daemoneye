@@ -8,6 +8,7 @@ pub mod input;
 pub mod local_cmds;
 pub mod markdown;
 pub mod palette;
+pub mod program_status_emit;
 pub mod render;
 pub mod render_ratatui;
 pub mod status;
