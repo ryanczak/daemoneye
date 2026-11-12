@@ -1,7 +1,7 @@
 # Phase 21d — live-check-fixes
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-12
 **Depends on:** phases 01, 04b and 17a (it corrects each one's live result)
 **Estimated diff:** ~150 lines, more than half of it tests
@@ -244,3 +244,164 @@ Every Test-plan test passes as printed (`paste_probe=Paste("a\nb\nc")`,
 `default_300=0`, `default_60=7`, `old_test=0`), hygiene / doc_truth /
 bug_tracker / lock_invariant are ok, `build_warnings=0`, clippy clean,
 `fmt_exit=0`, full suite `passed=2887 failed=0`.
+
+### Update — 2026-11-12 20:36 (complete, server-authored)
+
+**Summary:** </think>Everything is committed and clean. Let me run through the completion checklist:
+
+- [x] Phase doc's Status: line still says `in-progress` ✓
+- [x] Milestone README's phase-table row still says `in-progress` ✓
+- [x] No hand-written `(complete)` Update Log entry ✓
+- [x] `cargo fmt --all` run before `git add` ✓
+- [x] All verification commands ran clean ✓
+- [ ] Final message: substantive Summary + Notes for review — this is the last step
+- [x] `git status --short` shows nothing ✓
+- [x] `git log -1 --stat` shows all files touched ✓
+
+Now write the final summary.</think>
+**Summary**
+
+Phase 21d is implemented and committed (`4823cc46`, working tree clean, phase doc left at `in-progress` with no hand-written complete entry). All three live-check defects are fixed:
+
+1. **Paste line ends** — `read_bracketed_paste` in `src/cli/input/tty.rs` now normalises the pasted text at the single place `Key::Paste` is built: `\r\n` → `\n`, bare `\r` → `\n`, no-CR pastes unchanged, so every consumer (input box, approval reader, credential reader) sees LF-only text. Three new tests cover CR, CRLF and LF.
+2. **Detach grace** — `default_shells_detach_close_secs` is 60; the config test is renamed `detach_close_secs_defaults_to_60_and_zero_is_allowed` (0 and 42 cases kept), and all seven lines across `src/config/shells.rs`, `assets/etc/config.toml`, `assets/memory/knowledge/config-reference.md` and `README.md` now say 60. One README bullet had to drop its "(300 s)" mention of `exited_retention_secs` to satisfy the `default_300=0` grep — it now points at the table below, which still documents 300 correctly.
+3. **Attach view stays connected** — `AttachView` holds the connection's `OwnedWriteHalf` for its lifetime (dropped with the view, so close still hangs up); `open_attach_frames` splits into connect + `attach_after_connect` (the after-connect seam the spec asked for). New tests over a `UnixStream::pair()`: a fake daemon that writes a `ShellChunk` after the view opened reads no EOF and the chunk reaches `view.frames` with `exited == false`; `top_attach_close_hangs_up` proves `drop(view)` yields EOF on the daemon's next read.
+
+**End-to-end verification** — the phase's E2E block was captured mechanically into `.rexymcp/output/e2e-21d.log` and pasted verbatim into the phase's Update Log: all Test-plan tests pass (`paste_probe=Paste("a\nb\nc")`, `default_300=0`, `default_60=7`, `old_test=0`, `build_warnings=0`), hygiene/doc_truth/bug_tracker/lock_invariant ok, clippy clean, `fmt_exit=0`, full suite `passed=2887 failed=0`.
+
+**Notes for review** — three adaptations to flag: (a) the spec said `open_attach_frames` should keep its name and take an already-connected stream; I kept `open_attach_frames` as the connect step and named the seam `attach_after_connect` (plus a `#[cfg(test)]` variant `attach_after_connect_with_frames` that takes the first frame and channel), because the production function must do the connect itself; (b) the duplex-based `opened` seam cannot produce a real `OwnedWriteHalf`, so it now holds the write half of a throwaway `UnixStream::pair()` — the daemon-side behaviour is proven by the two new `UnixStream` tests instead; (c) the "no EOF" assertion is expressed as a timed-out read (500 ms window), since the daemon-side "must not get EOF" read blocks forever when the fix is in — an EOF inside the window is exactly the defect. The daemon's `ShellTail` relay was not touched, per constraints.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+test functions_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-5e78c79fd2ae78a1)
+kill: (1935850): No such process
+kill: (-1936564): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-06550d774f0d8ce7)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-02ef218b3116761b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4952e5c7d0d7c44e)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-0a4cc57644384310)
+     Running tests/integration.rs (target/debug/deps/integration-4d3da8ba73ab7bc6)
+     Running tests/isolation.rs (target/debug/deps/isolation-4f378229e76b77a9)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-306e62f04ea3f118)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0a312c6477b3dc40)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +3 -3
+- `assets/etc/config.toml` — +1 -1
+- `assets/memory/knowledge/config-reference.md` — +1 -1
+- `docs/dev/milestones/M36-ux-and-audit/README.md` — +2 -2
+- `docs/dev/milestones/M36-ux-and-audit/phase-21d-live-check-fixes.md` — +49 -1
+- `src/cli/commands/top_tui_attach.rs` — +281 -12
+- `src/cli/input/tty.rs` — +72 -3
+- `src/config/shells.rs` — +3 -3
+- `src/config/tests.rs` — +3 -3
+
+**Commit:** 4823cc46ae62615faa14b8f87654b6aa340e43b4
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
