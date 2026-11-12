@@ -25,8 +25,8 @@ pub struct AttachBox {
 }
 
 /// The open attach view. `tail` holds the shell's grid and the `/tail`
-/// viewer's state; `closed` is the forwarding task's abort handle, dropped
-/// or aborted when the view closes.
+/// viewer's state; `task` is the forwarding task, aborted when the view
+/// closes.
 pub struct AttachView {
     /// The `/tail` model over the shell's stream; its `id` names the shell.
     pub tail: TailModel,
@@ -37,8 +37,26 @@ pub struct AttachView {
     /// The connection's write half, held so the daemon's relay never reads
     /// the client hanging up while the view is open. Dropping the view
     /// drops it with the rest, and the daemon sees the hang-up then.
-    #[allow(dead_code)]
     pub write: tokio::net::unix::OwnedWriteHalf,
+}
+
+impl Drop for AttachView {
+    fn drop(&mut self) {
+        self.task.abort();
+        // The daemon's relay ends when the client's write side reaches EOF.
+        // `poll_shutdown` is that shutdown, straight to the syscall (it never
+        // pends on a Unix socket); the half's own Drop would do the same
+        // below, so an error here only names a write side that is already
+        // gone.
+        use std::pin::Pin;
+        use std::task::{Context, Poll, Waker};
+        use tokio::io::AsyncWrite;
+
+        let mut cx = Context::from_waker(Waker::noop());
+        if let Poll::Ready(Err(e)) = AsyncWrite::poll_shutdown(Pin::new(&mut self.write), &mut cx) {
+            log::debug!("shutting the attach view's write side down: {e}");
+        }
+    }
 }
 
 impl AttachView {
@@ -162,47 +180,6 @@ pub(crate) async fn forward_frames<R>(
         }
     }
 }
-/// The after-connect work with the first frame and the channel supplied, so
-/// a test drives `attach_after_connect` over a `UnixStream` pair: the
-/// request is sent, the test's `first` becomes the model, the forwarding
-/// task runs on the test's channel, and the write half comes back for the
-/// view to hold. Not test-only logic — the same steps
-/// [`attach_after_connect`] runs, with its frame source injected.
-#[cfg(test)]
-async fn attach_after_connect_with_frames(
-    stream: tokio::net::UnixStream,
-    id: &str,
-    first: Response,
-    frame_tx: tokio::sync::mpsc::UnboundedSender<Response>,
-    frame_rx: tokio::sync::mpsc::UnboundedReceiver<Response>,
-) -> Result<
-    (
-        TailModel,
-        tokio::sync::mpsc::UnboundedReceiver<Response>,
-        tokio::task::JoinHandle<()>,
-        tokio::net::unix::OwnedWriteHalf,
-    ),
-    String,
-> {
-    use tokio::io::AsyncBufReadExt;
-
-    let (rx, mut tx) = stream.into_split();
-    crate::cli::commands::ipc_client::send_request(
-        &mut tx,
-        crate::ipc::Request::ShellTail {
-            id: id.to_string(),
-            follow: true,
-        },
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    let model = crate::cli::tail::open_tail(id, first)?;
-    let task = tokio::spawn(forward_frames(
-        tokio::io::BufReader::new(rx).lines(),
-        frame_tx,
-    ));
-    Ok((model, frame_rx, task, tx))
-}
 
 /// Translate one crossterm key event to a `cli::input::Key`, as the tail
 /// viewer's key table expects. `None` for everything the tail view ignores
@@ -284,18 +261,47 @@ mod tests {
         )
     }
 
-    /// A view over `first`'s frame driven through a real
-    /// [`tokio::net::UnixStream`] pair, with `attach_after_connect` doing
-    /// the after-connect work — the same function production uses. `peer`
-    /// is the daemon's end: it reads the request line, writes frames, and
-    /// reads again to see whether the client is still connected.
+    /// Drive the production opener over a `UnixStream` pair: the fake
+    /// daemon (a spawned task on the pair's other end) reads the request
+    /// line and writes the first frame the opener reads, concurrent with
+    /// [`super::attach_after_connect`]. Both tests build their view through
+    /// it, so what they run is what production runs. Returns the view and
+    /// the fake daemon's end; the fake daemon's every read is bounded by
+    /// `tokio::time::timeout`.
     async fn opened_unix(id: &str, first: Response) -> (AttachView, tokio::net::UnixStream) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
         let (client, peer) = tokio::net::UnixStream::pair().expect("a UnixStream pair");
-        let (frame_tx, frame_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (tail, frames, task, write) =
-            super::attach_after_connect_with_frames(client, id, first, frame_tx, frame_rx)
+        let daemon = tokio::spawn(async move {
+            let mut peer = tokio::io::BufReader::new(peer);
+            let mut line = String::new();
+            let n =
+                tokio::time::timeout(std::time::Duration::from_secs(5), peer.read_line(&mut line))
+                    .await
+                    .expect("the request line arrives within 5 s")
+                    .expect("reading the request line succeeds");
+            assert!(
+                line.contains("ShellTail"),
+                "the opener sent {line:?}, not a ShellTail request"
+            );
+            assert_eq!(
+                n,
+                line.len(),
+                "the request line's read length {n} does not match the line"
+            );
+            let frame = serde_json::to_string(&first).expect("the first frame serializes");
+            peer.write_all(format!("{frame}\n").as_bytes())
                 .await
-                .expect("the after-connect work succeeds on a connected pair");
+                .expect("writing the first frame succeeds");
+            peer.flush().await.expect("flushing the first frame");
+            peer.into_inner()
+        });
+        let (tail, frames, task, write) = super::attach_after_connect(client, id)
+            .await
+            .expect("the after-connect work succeeds on a connected pair");
+        let peer = daemon
+            .await
+            .expect("the fake daemon task finishes without panicking");
         (
             AttachView {
                 tail,
@@ -590,50 +596,15 @@ mod tests {
         )
         .await;
         let mut peer = tokio::io::BufReader::new(peer);
-        // The fake daemon's first read: the request line.
-        let mut request = String::new();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            peer.read_line(&mut request),
-        )
-        .await
-        .expect("the request line arrives")
-        .expect("reading the request line succeeds");
+        // The opener read the first frame into the model, so nothing the
+        // fake daemon wrote is pending on the channel.
         assert!(
-            request.contains("ShellTail"),
-            "the after-connect work sent the ShellTail request: {request:?}"
+            view.frames.try_recv().is_err(),
+            "the opener's first frame went to the model, not the channel"
         );
-        // The fake daemon's first write: the screen frame the model opens
-        // from. (The real daemon sends it right after the request; here the
-        // opener's first read already consumed a frame, so this one is the
-        // frame the forward task relays.)
-        let screen = serde_json::to_string(&Response::ShellChunk {
-            bytes: b"one\n".to_vec(),
-        })
-        .unwrap();
-        peer.write_all(format!("{screen}\n").as_bytes())
-            .await
-            .unwrap();
-        peer.flush().await.unwrap();
-        // The frame the view already holds: `open_tail` took the opener's
-        // first read, so drain the forwarding task's copy of it.
-        let mut drained = String::new();
-        while drained.is_empty() {
-            match tokio::time::timeout(std::time::Duration::from_millis(500), view.frames.recv())
-                .await
-            {
-                Ok(Some(f)) => {
-                    if let Response::ShellChunk { bytes } = &f {
-                        drained.push_str(&String::from_utf8_lossy(bytes));
-                    }
-                }
-                Ok(None) => panic!("the relay ended before the second frame"),
-                Err(_) => panic!("timed out waiting for the forwarded frame"),
-            }
-        }
         assert!(
-            drained.contains("one"),
-            "the first frame reached the view: {drained:?}"
+            view.tail.screen().contents().contains("first"),
+            "the first frame opened the model"
         );
         // The fake daemon reads again and must NOT get EOF: the view is
         // still connected. This is the defect the phase fixes — before it,
@@ -688,9 +659,9 @@ mod tests {
 
     #[tokio::test]
     async fn top_attach_close_hangs_up() {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        use tokio::io::AsyncBufReadExt;
 
-        let (mut view, peer) = opened_unix(
+        let (view, peer) = opened_unix(
             "s3",
             Response::ShellScreen {
                 bytes: b"first".to_vec(),
@@ -700,33 +671,6 @@ mod tests {
         )
         .await;
         let mut peer = tokio::io::BufReader::new(peer);
-        // Drain the request line and the relayed first frame, so the later
-        // read is the one that must see EOF.
-        let mut request = String::new();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            peer.read_line(&mut request),
-        )
-        .await
-        .expect("the request line arrives")
-        .expect("reading the request line succeeds");
-        let screen = serde_json::to_string(&Response::ShellChunk {
-            bytes: b"one\n".to_vec(),
-        })
-        .unwrap();
-        peer.write_all(format!("{screen}\n").as_bytes())
-            .await
-            .unwrap();
-        peer.flush().await.unwrap();
-        for _ in 0..50 {
-            match tokio::time::timeout(std::time::Duration::from_millis(100), view.frames.recv())
-                .await
-            {
-                Ok(Some(_)) => break,
-                Ok(None) => panic!("the relay ended before the first frame arrived"),
-                Err(_) => continue,
-            }
-        }
         // The user closes the view: the write half drops with it, and the
         // daemon reads that as the client hanging up.
         drop(view);

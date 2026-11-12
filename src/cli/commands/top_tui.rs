@@ -616,10 +616,11 @@ impl TopModel {
             return;
         };
         let page = self.heights.shells.max(1);
-        if !attach_key(&mut view.view, key, page)
-            && let Some(boxed) = self.attach.take()
-        {
-            boxed.view.task.abort();
+        if !attach_key(&mut view.view, key, page) {
+            // Dropping the box closes the view: its `Drop` aborts the
+            // forwarding task and shuts the connection's write side down,
+            // which the daemon reads as the client hanging up.
+            self.attach = None;
         }
         self.clamp_offsets();
     }
