@@ -214,3 +214,130 @@ config so the shell-state surfaces it extends have settled.
   reasons in the ledger); opening `etc/prompts/sre.toml` or any other
   `~/.daemoneye/` path to `edit_file`; a reload of what is fixed at startup
   (socket, webhook bind, sandbox, shell substrate).
+
+## Retrospective — 2026-11-12
+
+**Outcome:** all 28 phases are `done`. The audit ledger has no `critical` or
+`major` row left at `act:`: all 20 now read `fixed: M36 phase-NN, <test>`.
+The live check passed most exit criteria but **failed two**, listed below,
+so the milestone is not closed and 2.8.0 is not cut until the PE decides
+them.
+
+| Phase | Verdict | Note |
+|---|---|---|
+| 01 input-box-paste | approved_first_try | |
+| 02 status-bar | approved_after_1 | |
+| 03 approvals-categories | approved_after_1 | |
+| 04a shells-select | approved_first_try | |
+| 04b top-attach | approved_after_1 | |
+| 05a panel-wrap | approved_first_try | Claude executor run |
+| 05b markdown-wrap | approved_first_try | Claude executor run |
+| 06 approval-diff | approved_first_try | Claude executor run |
+| 07 approval-input | approved_after_1 | |
+| 08 char-boundary-panics | approved_after_1 | |
+| 09 terminal-restore | approved_after_1 | |
+| 10 secrets | approved_after_1 | |
+| 11 sse-utf8 | approved_first_try | |
+| 12 mid-turn-messages | approved_after_2 | |
+| 13 ghost-slot-and-sudo | approved_after_1 | |
+| 14 read-file-bounds | escalated | takeover |
+| 15 shell-client-scan | approved_after_1 | |
+| 16 background-index | escalated | 500-turn read loop, twice |
+| 17a detach-close | approved_after_1 | |
+| 17b owner-sidecar | approved_first_try | |
+| 17c idle-reap | approved_after_1 | its run killed the session (kill loop) |
+| 18 perf-tail | escalated | read loop on the bounce |
+| 19 config-reload | approved_after_1 | |
+| 20a self-config | approved_after_1 | |
+| 20b config-reference | approved_after_1 | |
+| 21a program-status-host | escalated | |
+| 21b program-status-surfaces | approved_after_1 | 1000-turn read loop, then a symbol-map re-dispatch |
+| 21c program-status-emit | approved_after_1 | 446-turn read loop, then a symbol-map re-dispatch |
+
+Totals: 8 first try, 15 after one bounce, 1 after two, 4 escalated.
+
+**Behaviour shipped:**
+- The input box, `/approvals` categories, the status bar, and `top` attach.
+- Approval panels wrap by display width.
+- A typed redirect at the approval prompt, and a bracketed paste as the credential.
+- The terminal is restored on every exit.
+- Secrets are masked in more places, and SSE parsing is UTF-8 safe.
+- A message that lands mid-turn survives.
+- Chat shells close after the detach grace, and an adopted shell keeps its
+  owner.
+- Idle shells are reaped.
+- `daemoneye reload`, and AI-maintained config with a parse guard and the
+  `config-reference` memory.
+- OSC 7501 program status: the host parses it, `list_shells`, `top` and
+  `watch_shell` read it, and the chat client emits it, arming
+  `allow-passthrough` on its own tmux pane only.
+
+**Live check (pinky, throwaway HOME, private tmux, brain endpoint):**
+
+Passed:
+- The status bar shows `turn N · ctx 16k/500k (3%)`.
+- `/approvals` lists all eight categories plus the always-asked list.
+  `/approvals files off` makes the next `edit_file` prompt.
+- `top`: Enter on a shell row attaches, and `q` returns.
+- The 80-column approval panel shows the whole 36-character CJK command,
+  wrapped.
+- Typing `abort` at the prompt denies the call and becomes the next user turn.
+- `ask hi` with no daemon exits 1 and leaves the tty `icanon echo`.
+- A `[Background Task Completed]` that landed mid-turn is in history.
+  `read_shell` on the `wait: false` shell returned `BGDONE-42`.
+- After a restart the `/shell` shell is listed as `user`, not `adopted`.
+- Config edit: the edit prompt says it cannot be session-approved, the
+  `api_key` never reaches the session log, and after approval
+  `daemoneye status` shows `100 / 150`. The result carries the reload
+  report. A `[broken` edit is refused, naming the TOML error, and the file's
+  md5 is unchanged.
+- OSC 7501, consume side: a `wait: false` program emitting `blocked` shows
+  as `Program probe (blocked (question))` in `top --once` and in live `top`.
+- OSC 7501, emit side: during an approval the outer terminal received
+  `working → blocked:kind=permission → working → idle`, then `clear` at
+  exit. `allow-passthrough` was `on` for the chat pane only (window unset,
+  global `off`) and unset at exit.
+
+**Failed (exit criteria):**
+1. **Three-line paste.** A paste with LF line ends arrives as three lines.
+   A paste with **CR** line ends (what `tmux paste-buffer` and most terminal
+   emulators send) shows as one joined line and reaches the model as
+   `delta one\recho two\rfoxtrot three`. `read_bracketed_paste` and
+   `insert_str` keep the CRs as they are.
+2. **Shells gone within a minute of chat exit.** The detach grace defaults
+   to 300 s (`detach_close_secs`). That number came from the architect's
+   phase-17a spec, which departed from this criterion. With a 30 s grace
+   the chat's shell closed on time. The `wait: false` dedicated shell is
+   excluded by design and stays until the reaper.
+
+**Other defects seen (not exit criteria):**
+- `top`'s attach status line says `exited` for a shell whose `sleep 90` is
+  still running.
+- The live `top` panel title read `3 Shells` above four rows.
+- A closed chat shell stays listed at `shell prompt` until `reap_exited`
+  stamps it.
+- Committed AI prose at 80 columns broke words mid-word (`take` / `s`).
+
+**Not exercised live:** a bracketed paste at a real sudo credential prompt
+(unit-tested in phase-07). `watch_shell` returning on the blocked report
+(integration-tested in 21b). The chat client running inside a DaemonEye
+shell and seen as `blocked` by `top`; both halves passed separately.
+
+**Harness incident:** the model edited the **real**
+`~/.daemoneye/etc/config.toml`, not the throwaway one. It knew the real
+path from the host context, and the `~/.daemoneye/` guard resolves through
+the daemon's HOME. Two lines changed (`[limits]` uncommented, cap 150). They
+were restored at once and verified identical. Later harness prompts must
+name the throwaway path explicitly.
+
+**Lessons:**
+- glm read paralysis recurred five times (16, 18, 21a, 21b, 21c). A symbol
+  map, an edit order whose first step is a write, and "first edit within
+  15 turns" fixed it both times it was tried. This is a fold candidate for
+  WORKFLOW.md's phase-doc template; it needs PE sign-off.
+- Specs that touch tmux must forbid the default server. The 21c run set a
+  pane option on the PE's live session.
+- A test of an injected writer must read the writer the test holds
+  (bug-21c-1). One occurrence; not folded.
+- A spec default must be checked against the milestone's exit criteria
+  before dispatch (failure 2).
