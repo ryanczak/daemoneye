@@ -1,7 +1,7 @@
 # Phase 21d — live-check-fixes
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-12, bug-21d-1)
 **Drafted:** 2026-11-12
 **Depends on:** phases 01, 04b and 17a (it corrects each one's live result)
 **Estimated diff:** ~150 lines, more than half of it tests
@@ -144,6 +144,9 @@ New tests, each named so `cargo test <name>` runs it alone:
 - [ ] `default_60=7`: the same seven lines say 60. Today 0.
 - [ ] `detach_close_secs_defaults_to_300_and_zero_is_allowed` no longer
       exists (`old_test=0`). Today 1.
+- [ ] **bug-21d-1:** `with_frames=0`, `allow_attrs=0`, `seam_calls>=3`
+      (today 2, 1, 2), and both new attach tests build their view through
+      `attach_after_connect`, with the fake daemon writing the first frame.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok.
       `build_warnings=0`, clippy is clean, `fmt_exit=0`, `failed=0`.
 
@@ -159,6 +162,9 @@ F="src/config/shells.rs assets/etc/config.toml assets/memory/knowledge/config-re
 grep -hE -A3 'detach_close_secs|detach-close grace' $F | grep -cE '\b300\b' | sed 's/^/default_300=/'
 grep -hE -A3 'detach_close_secs|detach-close grace' $F | grep -cE '\b60\b' | sed 's/^/default_60=/'
 grep -rc 'detach_close_secs_defaults_to_300' src | grep -v ':0' | wc -l | sed 's/^/old_test=/'
+grep -c 'attach_after_connect_with_frames' src/cli/commands/top_tui_attach.rs | sed 's/^/with_frames=/'
+grep -c '#\[allow' src/cli/commands/top_tui_attach.rs | sed 's/^/allow_attrs=/'
+grep -c 'attach_after_connect(' src/cli/commands/top_tui_attach.rs | sed 's/^/seam_calls=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker lock_invariant; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
@@ -405,3 +411,46 @@ kill: (-1936564): No such process
 **Commit:** 4823cc46ae62615faa14b8f87654b6aa340e43b4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-12 (bounced)
+
+- **Verdict:** bounced
+- **Bugs filed:** [bug-21d-1](bugs/bug-21d-1.md) (major)
+- **What passed:** the paste normalisation and its three tests, the
+  60 s default at all seven sites, `AttachView` holding the write half, the
+  README retention sentence, and all four gates (`passed=2887 failed=0`).
+  None of that is to be redone.
+- **What failed:** the two new attach tests drive a `#[cfg(test)]` copy of
+  the opener instead of `attach_after_connect`, and `AttachView.write`
+  carries `#[allow(dead_code)]`.
+
+### Notes for executor — 2026-11-12 (bounce)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything listed under "What passed" above is approved.
+Don't touch `tty.rs`, the config files, the docs, or the README.
+
+There is exactly one file to edit: `src/cli/commands/top_tui_attach.rs`.
+Three edits:
+
+1. Delete `attach_after_connect_with_frames`.
+2. Rewrite the `opened_unix` helper so it drives `attach_after_connect`
+   itself over a `UnixStream::pair()`. The fake daemon reads the request
+   line and writes the `ShellScreen` first frame, concurrently with the
+   opener (`tokio::join!` or a spawned task), and every read is bounded by
+   `tokio::time::timeout`. Then adjust the two tests to the helper. The
+   "drain the forwarding task's copy" step goes away, because the first
+   frame is now read by the opener, not relayed.
+3. Remove `#[allow(dead_code)]` and keep the build warning-free without
+   any lint attribute.
+
+**Your first edit lands within your first 15 turns.** Never run `tmux`.
+
+**Finish condition:** the e2e prints `with_frames=0`, `allow_attrs=0`,
+`seam_calls=3` or more, `build_warnings=0`, and `passed=2887`. **2887, not
+2888**: this fix adds no test. Before reporting, mutation-check it: make
+`attach_after_connect` drop its write half (for example return a fresh
+`UnixStream::pair()` half instead of `tx`). Confirm that
+`top_attach_a_frame_after_open_reaches_the_view` fails, revert, and paste
+both runs' `test result:` lines into the Update Log.
+
