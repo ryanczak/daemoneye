@@ -1,7 +1,7 @@
 # Bug 1 on phase-21c: state reports never reach the terminal
 
 **Severity:** blocker
-**Status:** open
+**Status:** fixed (phase-21c re-dispatch, 2026-11-12)
 **Filed:** 2026-11-12
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Bug 2 on phase-21c: `working` doesn't start when the turn is sent, and an error return skips `idle`
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-21c re-dispatch, 2026-11-12)
 **Filed:** 2026-11-12
 
 ## What's wrong

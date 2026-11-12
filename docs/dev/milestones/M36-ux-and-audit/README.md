@@ -190,6 +190,7 @@ config so the shell-state surfaces it extends have settled.
 | 21a | program-status-host ([phase-21a-program-status-host.md](phase-21a-program-status-host.md)) — shell hosts parse OSC 7501 reports into per-shell records (grammar, limits, lifetime, security), answer only the feature query, carry the records on `Status`; `read_shell_screen`'s header shows them masked (split 21a/21b/21c on 2026-11-09) | decision 9 | done |
 | 21b | program-status-surfaces ([phase-21b-program-status-surfaces.md](phase-21b-program-status-surfaces.md)) — `list_shells`, `ShellInfo` and `top`'s Shells panel show each shell's program status from a bounded live refresh; `watch_shell` returns on a `blocked`/`done`/`error` report; the program's word outranks the screen-scraped state | decision 9 | done        |
 | 21c | program-status-emit ([phase-21c-program-status-emit.md](phase-21c-program-status-emit.md)) — the chat client reports `working` / `blocked:kind=permission\|auth\|question` / `idle` / `clear` to its terminal, only on change, only to a tty; inside tmux the report rides the passthrough envelope and the client sets `allow-passthrough on` for its own pane, unset again at exit (PE, 2026-11-11) | decision 9 | done        |
+| 21d | live-check-fixes ([phase-21d-live-check-fixes.md](phase-21d-live-check-fixes.md)) — the three exit criteria the 2026-11-12 live check failed: CR line ends in a bracketed paste become LF, `[shells] detach_close_secs` defaults to 60, and `top`'s attach view keeps its connection's write half so the daemon keeps relaying (PE, 2026-11-12) | exit criteria 1, 7 | todo        |
 
 ## Notes
 
@@ -217,11 +218,11 @@ config so the shell-state surfaces it extends have settled.
 
 ## Retrospective — 2026-11-12
 
-**Outcome:** all 28 phases are `done`. The audit ledger has no `critical` or
-`major` row left at `act:`: all 20 now read `fixed: M36 phase-NN, <test>`.
-The live check passed most exit criteria but **failed two**, listed below,
-so the milestone is not closed and 2.8.0 is not cut until the PE decides
-them.
+**Outcome:** all 28 planned phases are `done`. The audit ledger has no
+`critical` or `major` row left at `act:`: all 20 now read `fixed: M36
+phase-NN, <test>`. The live check passed most exit criteria but **failed
+three**, listed below. The PE chose a fix phase, 21d, over accepting them
+(2026-11-12); the milestone closes after 21d and a re-check of the three.
 
 | Phase | Verdict | Note |
 |---|---|---|
@@ -278,7 +279,6 @@ Passed:
 - The status bar shows `turn N · ctx 16k/500k (3%)`.
 - `/approvals` lists all eight categories plus the always-asked list.
   `/approvals files off` makes the next `edit_file` prompt.
-- `top`: Enter on a shell row attaches, and `q` returns.
 - The 80-column approval panel shows the whole 36-character CJK command,
   wrapped.
 - Typing `abort` at the prompt denies the call and becomes the next user turn.
@@ -309,11 +309,17 @@ Passed:
    phase-17a spec, which departed from this criterion. With a 30 s grace
    the chat's shell closed on time. The `wait: false` dedicated shell is
    excluded by design and stays until the reaper.
+3. **`top` attach updating live.** Enter on a shell row opened the view and
+   `q` returned, but the status line read `exited` at once on a shell whose
+   `sleep 90` was still running, and the screen never updated. Found on
+   reading after the check: `open_attach_frames` drops the connection's
+   write half when it returns, the daemon's relay reads that as the client
+   hanging up and stops, and the stream's end marks the model exited.
+   `/tail` keeps its write half and does not have the defect. The 04b test
+   drives `forward_frames` over a duplex, which never sees the dropped
+   half, so it passed.
 
 **Other defects seen (not exit criteria):**
-- `top`'s attach status line says `exited` for a shell whose `sleep 90` is
-  still running.
-- The live `top` panel title read `3 Shells` above four rows.
 - A closed chat shell stays listed at `shell prompt` until `reap_exited`
   stamps it.
 - Committed AI prose at 80 columns broke words mid-word (`take` / `s`).
@@ -341,3 +347,7 @@ name the throwaway path explicitly.
   (bug-21c-1). One occurrence; not folded.
 - A spec default must be checked against the milestone's exit criteria
   before dispatch (failure 2).
+- A stream test over a `duplex` cannot see a dropped socket half. A test of
+  a connection's lifetime needs a real socket pair (failure 3).
+- The architect read the live `top` panel title `3 Shells` as a count; it
+  is the panel's hotkey number. Read the code before filing a defect.
