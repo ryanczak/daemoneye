@@ -454,3 +454,76 @@ Three edits:
 `top_attach_a_frame_after_open_reaches_the_view` fails, revert, and paste
 both runs' `test result:` lines into the Update Log.
 
+### Update — 2026-11-12 15:35 (started, executor GLM on the bug-21d-1 bounce)
+
+Resumed on the bounce. Only `src/cli/commands/top_tui_attach.rs` (and the close
+path it authorized in `top_tui.rs`) touched: `attach_after_connect_with_frames`
+deleted, `opened_unix` now drives `attach_after_connect` itself over a
+`UnixStream::pair()` with the fake daemon writing the first frame, and
+`#[allow(dead_code)]` removed — `AttachView`'s `Drop` now aborts the forwarding
+task and shuts the write half down explicitly, so the field is read by
+production code and the close contract is code, not a lint suppression.
+
+### Update — 2026-11-12 15:41 (end-to-end verification, bug-21d-1 rework)
+
+Ran the phase's E2E block mechanically after the rework, redirecting all output
+to `.rexymcp/output/e2e-21d-rework.log` and pasting it below verbatim:
+
+```
+test cli::input::tty::tests::read_key_bracketed_paste_cr_line_ends_become_lf ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_multiline ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_single_line ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_lf_is_unchanged ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_crlf_line_ends_become_lf ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_no_enter_mid_paste ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2799 filtered out; finished in 0.00s
+test config::tests::detach_close_secs_defaults_to_60_and_zero_is_allowed ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2804 filtered out; finished in 0.00s
+test cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it ... ok
+test cli::commands::top_tui::attach::tests::top_attach_enter_on_the_first_shell_opens_it ... ok
+test cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell ... ok
+test cli::commands::top_tui::attach::tests::top_attach_close_hangs_up ... ok
+test cli::commands::top_tui::attach::tests::top_attach_keys_close_on_q_esc_ctrl_o_and_ctrl_c_quits_top ... ok
+test cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels ... ok
+test cli::commands::top_tui::attach::tests::top_attach_footer_names_enter_attach_and_the_open_error ... ok
+test cli::commands::top_tui::attach::tests::top_attach_stream_end_marks_exited_and_keeps_the_view ... ok
+test cli::commands::top_tui::attach::tests::top_attach_a_frame_after_open_reaches_the_view ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2796 filtered out; finished in 0.50s
+paste_probe=Paste("a\nb\nc")
+default_300=0
+default_60=7
+old_test=0
+with_frames=0
+allow_attrs=0
+seam_calls=3
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.18s
+fmt_exit=0
+passed=2887 failed=0
+```
+
+`with_frames=0`, `allow_attrs=0`, `seam_calls=3`, `build_warnings=0`,
+`passed=2887` (not 2888 — the rework adds no test). All bug-21d-1 finish
+conditions are met.
+
+### Update — 2026-11-12 15:45 (mutation check, bug-21d-1)
+
+Made `attach_after_connect` return a fresh `UnixStream::pair()` half instead of
+`tx` (the real connection's write half dropped inside the function). Ran the
+mutation, reverted, ran the clean tree. Both runs' `test result:` lines:
+
+```
+MUTATED:  test cli::commands::top_tui::attach::tests::top_attach_a_frame_after_open_reaches_the_view ... FAILED
+MUTATED:  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2804 filtered out; finished in 0.00s
+          (panicked: "the daemon read Ok(Ok(0)) with the view still open — Ok(0) is
+          EOF, the write half was dropped (the defect)")
+REVERTED: test cli::commands::top_tui::attach::tests::top_attach_a_frame_after_open_reaches_the_view ... ok
+REVERTED: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2804 filtered out; finished in 0.50s
+```
+
+The test catches the mutation: with the half not the connection's, the fake
+daemon reads EOF right after the first frame, exactly the defect.
