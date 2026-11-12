@@ -204,7 +204,7 @@ restart to land. Everything else swaps into the running config on reload.
 |---|---|---|---|---|
 | `shells.max_per_owner` | integer | ≥ 0 (0 = unlimited) | 5 | reload |
 | `shells.exited_retention_secs` | integer | ≥ 0 | 300 | reload |
-| `shells.detach_close_secs` | integer | ≥ 0 (0 = never close) | 300 | reload |
+| `shells.detach_close_secs` | integer | ≥ 0 (0 = never close) | 60 | reload |
 | `shells.idle_reap_secs` | integer | ≥ 0 (0 = never reap) | 3600 | reload |
 | `shells.log_retention_days` | integer | ≥ 0 (0 = keep forever) | 7 | reload |
 | `shells.scrollback_lines` | integer | ≥ 0 | 5000 | reload |

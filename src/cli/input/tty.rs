@@ -353,7 +353,10 @@ async fn read_sgr_mouse(stdin: &AsyncStdin) -> Option<Key> {
 }
 
 /// Read a bracketed paste: bytes between `ESC[200~` (already consumed) and `ESC[201~`.
-/// Returns the pasted text as a String.
+/// Returns the pasted text as a String, with every line end converted to LF
+/// (`\r\n` → `\n`, a bare `\r` → `\n`): most terminal emulators and
+/// `tmux paste-buffer` send CR line ends, and the editor's multiline paste
+/// splits on `\n` only, so an unnormalised CR paste arrives as one joined line.
 async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
     use tokio::time::{Duration, timeout};
     let mut paste_buf = Vec::new();
@@ -372,7 +375,7 @@ async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
                             && b4 == Ok(Some(b'1'))
                             && b5 == Ok(Some(b'~'))
                         {
-                            return String::from_utf8_lossy(&paste_buf).to_string();
+                            return normalise_paste_line_ends(&String::from_utf8_lossy(&paste_buf));
                         }
                         // Not the end sequence — push ESC and whatever we read back
                         paste_buf.push(0x1b);
@@ -400,10 +403,27 @@ async fn read_bracketed_paste(stdin: &AsyncStdin) -> String {
             }
             _ => {
                 // Timeout — return what we have
-                return String::from_utf8_lossy(&paste_buf).to_string();
+                return normalise_paste_line_ends(&String::from_utf8_lossy(&paste_buf));
             }
         }
     }
+}
+
+/// `\r\n` and a bare `\r` become `\n`; a paste with no CR is unchanged.
+fn normalise_paste_line_ends(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            out.push('\n');
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -596,6 +616,55 @@ mod tests {
             matches!(&key, Some(Key::Paste(s)) if s == "a\nb"),
             "paste with embedded newline should yield single Paste, got: {:?}",
             key
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_bracketed_paste_cr_line_ends_become_lf() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // ESC[200~ a\rb\rc ESC[201~ — what tmux paste-buffer sends.
+        let payload: Vec<u8> = vec![
+            0x1b, b'[', b'2', b'0', b'0', b'~', b'a', b'\r', b'b', b'\r', b'c', 0x1b, b'[', b'2',
+            b'0', b'1', b'~',
+        ];
+        write_bytes(&write_file, &payload).await;
+        let key = read_key_bounded(&stdin).await;
+        println!("paste_probe={key:?}");
+        assert!(
+            matches!(&key, Some(Key::Paste(s)) if s == "a\nb\nc"),
+            "a CR paste should arrive with LF line ends, got: {key:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_bracketed_paste_crlf_line_ends_become_lf() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // ESC[200~ a\r\nb\r\n ESC[201~ — one LF per line end, no doubled newline.
+        let payload: Vec<u8> = vec![
+            0x1b, b'[', b'2', b'0', b'0', b'~', b'a', b'\r', b'\n', b'b', b'\r', b'\n', 0x1b, b'[',
+            b'2', b'0', b'1', b'~',
+        ];
+        write_bytes(&write_file, &payload).await;
+        let key = read_key_bounded(&stdin).await;
+        assert!(
+            matches!(&key, Some(Key::Paste(s)) if s == "a\nb\n"),
+            "a CRLF paste should arrive with one LF per line end, got: {key:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_key_bracketed_paste_lf_is_unchanged() {
+        let (stdin, write_file) = make_pipe_stdin();
+        // ESC[200~ a\nb ESC[201~ — a paste with no CR is unchanged.
+        let payload: Vec<u8> = vec![
+            0x1b, b'[', b'2', b'0', b'0', b'~', b'a', b'\n', b'b', 0x1b, b'[', b'2', b'0', b'1',
+            b'~',
+        ];
+        write_bytes(&write_file, &payload).await;
+        let key = read_key_bounded(&stdin).await;
+        assert!(
+            matches!(&key, Some(Key::Paste(s)) if s == "a\nb"),
+            "an LF paste should be unchanged, got: {key:?}"
         );
     }
 

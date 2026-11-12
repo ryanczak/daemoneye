@@ -19,7 +19,7 @@ pub struct ShellsConfig {
     /// Seconds a chat session's non-dedicated shells survive its last
     /// presence detach. The daemon closes them when the window passes with
     /// no presence for the session. `0` = never close on detach.
-    /// Default: 300 seconds.
+    /// Default: 60 seconds.
     #[serde(default = "default_shells_detach_close_secs")]
     pub detach_close_secs: u64,
     /// Seconds a shell's recording must have been silent — no bytes added to
@@ -54,9 +54,9 @@ fn default_shells_exited_retention_secs() -> u64 {
     300
 }
 
-/// Default detach-close grace (300 s = 5 min).
+/// Default detach-close grace (60 s = 1 min).
 fn default_shells_detach_close_secs() -> u64 {
-    300
+    60
 }
 
 /// Default idle-reap limit (3600 s = 1 h). 0 = never reap.

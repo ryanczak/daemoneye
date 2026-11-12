@@ -280,7 +280,7 @@ Every command the agent runs, in chat, in a ghost, or in a scheduled job, goes t
 - **Shells outlive the daemon.** Each shell is hosted by a detached `daemoneye shell-host` process, so a daemon restart adopts its running shells instead of killing them. A shell's owner (which chat session or ghost run holds it) and its host survive the restart through an owner sidecar beside the lock file, so the maintenance sweeps keep working across restarts.
 - **Real exit codes.** A marker protocol wraps each command, so the agent gets the command's actual exit status, never a guess. The wrapper runs the command in a brace group, so a heredoc terminator (`python3 - <<'EOF' … EOF`) or a trailing comment can no longer swallow the marker and hang the shell with every later command typed into it.
 - **Everything is recorded.** Each shell is logged byte for byte as asciicast v2 under `~/.daemoneye/var/log/shells/`, with a per-command index. The agent reads it with `read_shell`, `find_in_shells` and the `history` tools. You replay it with `/logs` and `/log <id>`. All output is masked before the model sees it.
-- **Idle shells are reaped.** The maintenance tick closes a chat session's shells after `[shells] detach_close_secs` (300 s) with no re-attach, and closes a shell idle at its prompt past `[shells] idle_reap_secs` (3600 s) — a silent long-running command is never killed, and `/shell` shells, dedicated shells and other sessions' shells are never touched. Exited shells are reaped from the registry after `[shells] exited_retention_secs` (300 s).
+- **Idle shells are reaped.** The maintenance tick closes a chat session's shells after `[shells] detach_close_secs` (60 s) with no re-attach, and closes a shell idle at its prompt past `[shells] idle_reap_secs` (3600 s) — a silent long-running command is never killed, and `/shell` shells, dedicated shells and other sessions' shells are never touched. Exited shells leave the registry after their own retention below.
 - **The reader is honest about lag.** A shell reader scans and offers only output that is new since the last read; a subscriber that falls behind is reported as lagged rather than silently dropped, and the reader's meta index is saved atomically so a corrupt read can never reset it.
 - **Follow and join.** `/shells` lists the live shells, and `/tail <id>` follows one. `/agents` attaches to a running ghost: pause it (`Ctrl+P` stops the job itself, inside a sandbox too), resume it, interrupt it, or type into it. `/shell [host]` opens a shell of your own.
 - **Remote hosts.** Declare `[hosts.<name>]` once, and `open_shell`, `run_terminal_command`, `read_file` and `edit_file` accept `host: "<name>"`. The connection runs in a local PTY shell using your own keys and agent, through one SSH ControlMaster per host. Nothing is installed on the remote host, and a command there never starts a tmux server. `/hosts` lists the configured hosts.
@@ -1034,7 +1034,7 @@ values are checked at daemon startup; see the lifecycle table in
 |---|---|---|---|
 | `max_per_owner` | integer | `5` | Maximum concurrent shells one owner (a chat session, a ghost) may hold. `0` = unlimited. |
 | `exited_retention_secs` | integer | `300` | How long an exited shell's registry record stays listed before it is reaped. `0` = reap a dead shell on the pass after its host is first seen dead. The `.cast` log has a separate, day-based retention below. |
-| `detach_close_secs` | integer | `300` | Seconds a chat session's shells survive after its last connection detaches; when the window passes with no re-attach, its non-dedicated shells are closed (a `dedicated` shell, a `/shell` shell and other sessions' shells are never touched). `0` = never close on detach. |
+| `detach_close_secs` | integer | `60` | Seconds a chat session's shells survive after its last connection detaches; when the window passes with no re-attach, its non-dedicated shells are closed (a `dedicated` shell, a `/shell` shell and other sessions' shells are never touched). `0` = never close on detach. |
 | `idle_reap_secs` | integer | `3600` | Seconds a shell's recording may sit silent (no bytes added to its `.cast`) before the maintenance tick's hourly pass closes it — when it is not a `/shell` shell, has no command in flight, its chat session (if any) is absent and a foreground probe still reads it at a prompt (so a silent long-running command is never killed). `0` = never reap. |
 | `log_retention_days` | integer | `7` | Days to keep `var/log/shells/*.cast` (and their `.meta.json` sidecars). `0` = keep forever. A shell still in the registry is never swept, however old its log. |
 | `scrollback_lines` | integer | `5000` | Rows of scrollback the screen model retains per shell. |
@@ -1045,7 +1045,7 @@ values are checked at daemon startup; see the lifecycle table in
 [shells]
 max_per_owner        = 5
 exited_retention_secs = 300
-detach_close_secs    = 300
+detach_close_secs    = 60
 idle_reap_secs       = 3600
 log_retention_days   = 7
 scrollback_lines     = 5000

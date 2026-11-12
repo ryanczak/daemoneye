@@ -1,7 +1,7 @@
 # Phase 21d — live-check-fixes
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-12
 **Depends on:** phases 01, 04b and 17a (it corrects each one's live result)
 **Estimated diff:** ~150 lines, more than half of it tests
@@ -196,3 +196,51 @@ not by this run.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-11-12 19:39 (started, executor claude-sonnet-4-5-20250929)
+
+Status flipped to in-progress. Reading the four touched files, then implementing the
+three fixes and their tests per the Spec.
+
+### Update — 2026-11-12 19:52 (end-to-end verification)
+
+Ran the phase's E2E block mechanically, redirecting all output to
+`.rexymcp/output/e2e-21d.log` and pasting it below verbatim:
+
+```
+test cli::input::tty::tests::read_key_bracketed_paste_multiline ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_single_line ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_no_enter_mid_paste ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_crlf_line_ends_become_lf ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_cr_line_ends_become_lf ... ok
+test cli::input::tty::tests::read_key_bracketed_paste_lf_is_unchanged ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2799 filtered out; finished in 0.00s
+test config::tests::detach_close_secs_defaults_to_60_and_zero_is_allowed ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2804 filtered out; finished in 0.00s
+test cli::commands::top_tui::attach::tests::top_attach_enter_on_the_first_shell_opens_it ... ok
+test cli::commands::top_tui::attach::tests::top_attach_open_error_leaves_the_panels_and_names_it ... ok
+test cli::commands::top_tui::attach::tests::top_attach_enter_or_a_opens_only_on_a_selected_shell ... ok
+test cli::commands::top_tui::attach::tests::top_attach_close_hangs_up ... ok
+test cli::commands::top_tui::attach::tests::top_attach_keys_close_on_q_esc_ctrl_o_and_ctrl_c_quits_top ... ok
+test cli::commands::top_tui::attach::tests::top_attach_view_draws_the_shell_and_close_restores_the_panels ... ok
+test cli::commands::top_tui::attach::tests::top_attach_footer_names_enter_attach_and_the_open_error ... ok
+test cli::commands::top_tui::attach::tests::top_attach_stream_end_marks_exited_and_keeps_the_view ... ok
+test cli::commands::top_tui::attach::tests::top_attach_a_frame_after_open_reaches_the_view ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2796 filtered out; finished in 0.50s
+paste_probe=Paste("a\nb\nc")
+default_300=0
+default_60=7
+old_test=0
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.03s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+fmt_exit=0
+passed=2887 failed=0
+```
+
+Every Test-plan test passes as printed (`paste_probe=Paste("a\nb\nc")`,
+`default_300=0`, `default_60=7`, `old_test=0`), hygiene / doc_truth /
+bug_tracker / lock_invariant are ok, `build_warnings=0`, clippy clean,
+`fmt_exit=0`, full suite `passed=2887 failed=0`.

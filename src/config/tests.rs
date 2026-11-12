@@ -1012,11 +1012,11 @@ fn shells_config_defaults() {
 }
 
 #[test]
-fn detach_close_secs_defaults_to_300_and_zero_is_allowed() {
+fn detach_close_secs_defaults_to_60_and_zero_is_allowed() {
     let no_shells_table: Config = toml::from_str("[models.default]\n").unwrap();
     assert_eq!(
-        no_shells_table.shells.detach_close_secs, 300,
-        "a config with no [shells] table defaults detach_close_secs to 300"
+        no_shells_table.shells.detach_close_secs, 60,
+        "a config with no [shells] table defaults detach_close_secs to 60"
     );
     let zero: Config = toml::from_str("[shells]\ndetach_close_secs = 0\n").unwrap();
     assert_eq!(
