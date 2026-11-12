@@ -1,7 +1,7 @@
 # Bug 1 on phase-21d: the attach tests drive a test-only copy of the opener, and an `#[allow(dead_code)]` hides the held write half
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-21d rework, 2026-11-12)
 **Filed:** 2026-11-12
 
 ## What's wrong

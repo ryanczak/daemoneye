@@ -1,7 +1,7 @@
 # Phase 21d — live-check-fixes
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-12
 **Depends on:** phases 01, 04b and 17a (it corrects each one's live result)
 **Estimated diff:** ~150 lines, more than half of it tests
@@ -714,3 +714,28 @@ kill: (-2009625): No such process
 **Commit:** bcf834e00171da92724c5559b98a9f487c7d7bb5
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-12
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-21d-1](bugs/bug-21d-1.md): the attach tests drove a
+  `#[cfg(test)]` copy of the opener, and `#[allow(dead_code)]` hid the held
+  write half)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (first run 364 turns, the
+  rework 274)
+- **Scope deviations:**
+  - `src/cli/commands/top_tui.rs` closes the view by dropping it
+    (`self.attach = None`). That file's authorization covered it.
+  - `impl Drop for AttachView` aborts the task and shuts the write side
+    down. The explicit `poll_shutdown` repeats what the half's own drop does,
+    but it makes the close contract code, gives one close path, and is
+    accepted.
+- **Re-check:** gates green (`passed=2887 failed=0`, `build_warnings=0`,
+  clippy clean, fmt clean). `with_frames=0`, `allow_attrs=0`,
+  `seam_calls=3`. The mutation evidence shows a failing run when the opener
+  hands back a half that is not the connection's.
+- **Calibration:** none new. "A test of an injected writer must read the
+  writer the test holds" (21c) recurred in a new shape: a seam the spec
+  names must be the seam the tests drive. This is the second occurrence,
+  queued for the fold discussion at the milestone close.
+
