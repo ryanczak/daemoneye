@@ -1,7 +1,7 @@
 # Phase 21c — program-status-emit
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-11
 **Depends on:** phase 21a (its parser checks the reports this phase writes)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -199,4 +199,76 @@ through 21b. It is not part of this phase's run.
 
 ## Update Log
 
+### Update — 2026-11-11 20:03 (started)
+
+Status flipped to `in-progress`; milestone README row matches. Executor:
+GLM (glm-5.3-flash), headless (phase-21c-program-status-emit).
+
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-11 (refined re-dispatch)
+
+The first run was stopped by the PE after 446 turns. It **changed no source
+file**: 289 `grep` calls, 71 `sed -n` reads, and 21 `tmux` commands. Every
+symbol you need is in the map below. **Read those files and write.**
+
+**Rules for this run:**
+
+- Your **first edit lands within your first 15 turns**. It is step 1 of the
+  edit order: create `src/cli/program_status_emit.rs`.
+- **Never run `tmux` without `-S <socket>`.** This machine's default tmux
+  server is the PE's live session, and the first run changed options on its
+  pane `%0`. Every tmux command you run, by hand or in a test, names a
+  private socket under a temp dir.
+- Grep only for a symbol named in this doc or one you saw in a file you
+  read. Run `cargo build` after every edit, and
+  `cargo test --lib program_status_emit` after every test you add.
+
+**Symbol map** (all of these exist today):
+
+| What | Where |
+|---|---|
+| The 21a consumer for the round-trip test | `crate::shell::screen::ShellScreen::new(rows, cols, scrollback)`, `.feed(&[u8])`, `.programs()`, which returns `Vec<crate::shell::program_status::Record>` (fields `id`, `state`, `kind`, `app`, …) |
+| State and kind enums to reuse | `crate::shell::program_status::{State, Kind}` |
+| A tmux call | `crate::process::bounded_output(&mut std::process::Command)` in `src/process.rs`. `client_supports_rgb` in `src/tmux/session.rs` is the shape |
+| `$TMUX` and empty-means-absent | `detect_from_env` in `src/cli/palette.rs` |
+| Is stdout a terminal | `std::io::IsTerminal`, used in `src/cli/commands/top.rs` |
+| The exit path every renderer shares | `restore_terminal()` in `src/cli/terminal_guard.rs`. `TerminalGuard::arm(restore_terminal)` is in `RatatuiRendererStdout::new` (`src/cli/render_ratatui.rs`), and the panic hook calls it too. It is a plain `fn()`, so the clear goes through process-wide state in the new module, which `restore_terminal` calls |
+| The turn | `ask_with_session_ratatui` in `src/cli/commands/stream_ask.rs`, one `Response::…` arm per frame (`ToolCallPrompt`, `CredentialPrompt`, `PaneSelectPrompt`, `EditFilePrompt`, the script/runbook/schedule prompts, `Token`, `ToolStarted`, `ToolResult`, `KeepAlive`, `Error`, `Ok`) |
+| The turn's context | `RatatuiQueryCtx` in `src/cli/commands/stream.rs`, built in `ask.rs` and twice in `chat_loop.rs` |
+| A private tmux server in a test | `tmux -S <tempdir>/sock new-session -d -s t`, then target the pane as `t:0.0`, and `tmux -S <sock> kill-server` at the end. Read the window value with `show -wv -t t:0 allow-passthrough` |
+
+**Edit order.** Each step ends at a green `cargo build`.
+
+1. Create `src/cli/program_status_emit.rs` and register it in `src/cli/mod.rs`.
+   It holds the pure parts:
+   - the payload for a state,
+   - the bare frame,
+   - the tmux frame,
+   - the mapping from a `&Response` to a state change,
+   - the two pane-option argv builders.
+2. Add the emitter, which writes through an injected writer and keeps the
+   last state and whether it has reported. Then add the process-wide hook
+   that `restore_terminal` calls to write `clear` and unset the pane option.
+3. Add the two tmux calls to `src/tmux/session.rs`, taking an optional
+   socket path so the live test can point them at its private server.
+4. Wire it: add a `RatatuiQueryCtx` field and its three builders. In
+   `ask_with_session_ratatui`, set the state from each frame through the
+   mapping, and set `working` after each prompt's reply is sent. Set `idle`
+   at every return.
+5. Write the tests (each named `program_status_emit_…`), then the README
+   paragraph, then the end-to-end block.
+
+The red-runs step may record the first compile failure of the new tests.
+It doesn't need to come before step 1.
+
+### Update — 2026-11-11 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** The first run was read paralysis: the PE stopped it at 446
+turns with no source edit. No spec contradiction surfaced. The 21b
+treatment (a symbol map, an edit order that starts with a write) got this
+model writing code on 21b, so it comes before a takeover. The run also
+changed options on the PE's live tmux pane (each one undone, and checked
+clean afterwards), so the notes now forbid `tmux` without `-S`.
+
