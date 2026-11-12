@@ -1,7 +1,7 @@
 # Phase 21d — live-check-fixes
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** in-progress (bounced 2026-11-12, bug-21d-1)
+**Status:** review
 **Drafted:** 2026-11-12
 **Depends on:** phases 01, 04b and 17a (it corrects each one's live result)
 **Estimated diff:** ~150 lines, more than half of it tests
@@ -527,3 +527,190 @@ REVERTED: test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2804 filte
 
 The test catches the mutation: with the half not the connection's, the fake
 daemon reads EOF right after the first frame, exactly the defect.
+
+### Update — 2026-11-12 23:38 (complete, server-authored)
+
+**Summary:** </think>Everything is done. Let me verify the completion checklist:
+
+- [x] Phase doc's Status: still `in-progress` ✓
+- [x] Milestone README's phase-table row still `in-progress` ✓ (I didn't touch the README — it says in-progress from before; let me double check I didn't need to change it... the README's phase table row for 21d says "in-progress" which matches the phase doc. ✓)
+- [x] No hand-written `(complete)` entry ✓
+- [x] cargo fmt --all run before git add ✓
+- [x] All verification commands ran clean ✓
+- [x] Final message = Summary + Notes for review (this one)
+- [x] git status --short clean ✓
+- [x] git log -1 --stat shows both commits ✓
+
+Now write the final summary.</think>
+All done — the working tree is clean, both commits are in (`dd2f2fcf` code, `bcf834e0` the Update Log evidence), and the phase doc still reads `in-progress` with no hand-written `(complete)` entry.
+
+**Summary**
+
+The bug-21d-1 rework is complete, touching only the one file the bounce authorized plus the close path it pre-authorized in `top_tui.rs`. All three of the reviewer's edits are in: `attach_after_connect_with_frames` is deleted; `opened_unix` now drives `attach_after_connect` itself over a `UnixStream::pair()`, with the fake daemon as a spawned task on the pair's other end that reads the request line (asserting it is a `ShellTail`), writes the `ShellScreen` first frame the opener reads, and bounds every read with `tokio::time::timeout` — the "drain the forwarding task's copy" step is gone because the opener consumes the first frame into the model; and `#[allow(dead_code)]` is removed with the build warning-free. The e2e prints `with_frames=0`, `allow_attrs=0`, `seam_calls=3`, `build_warnings=0`, `fmt_exit=0`, `passed=2887` (not 2888 — the rework adds no test), and the paste/config evidence is unchanged (`paste_probe=Paste("a\nb\nc")`, `default_300=0`, `default_60=7`, `old_test=0`). The mutation check was run both ways and pasted into the Update Log: with `attach_after_connect` returning a fresh pair's half instead of `tx`, `top_attach_a_frame_after_open_reaches_the_view` fails with "the daemon read Ok(Ok(0)) with the view still open — Ok(0) is EOF, the write half was dropped (the defect)"; reverted, it passes.
+
+**Notes for review** — one design decision to flag. Making `write` warning-free without `#[allow]` required production code to read the field, and I chose `impl Drop for AttachView`: the drop aborts the forwarding task and shuts the write half down via `AsyncWrite::poll_shutdown` with `Waker::noop()` (the same `shutdown(fd, SHUT_WR)` syscall the half's own Drop runs, and it never pends on a Unix socket; a `Poll::Ready(Err)` is logged at debug, since it only names a write side already gone). That makes the close contract code rather than a side effect of a field falling out of scope, and it let `top_tui.rs`'s `attach_key` drop its explicit `task.abort()` in favour of `self.attach = None` — so the pinned `drop(view)`-hangs-up test now exercises exactly the path production closes through, and there is one close path, not two. `Waker::noop`/`Context::from_waker` are stable on the repo's 1.97 toolchain and I verified the approach against a scratch `UnixStream` pair before committing to it. If you'd rather the read live in an explicit `close(&mut self)` called from `attach_key` instead of `Drop`, that's a small follow-up move; the behaviour is identical. The drop-time abort also slightly improves `top`'s exit path: a view left open when `top` quits now aborts its forwarding task immediately instead of letting it run until the runtime tears down.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+fmt_exit=0 (cargo fmt --all --check — no output)
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.73s
+build_warnings=0
+
+LINT
+    Checking daemoneye v2.7.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.73s
+
+TEST
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s   (hygiene)
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s   (doc_truth)
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s    (bug_tracker)
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s    (lock_invariant)
+passed=2887 failed=0
+```
+
+**Files changed:**
+
+- `src/cli/commands/top_tui.rs` — +5 -4
+- `src/cli/commands/top_tui_attach.rs` — +68 -124
+- `docs/dev/milestones/M36-ux-and-audit/phase-21d-live-check-fixes.md` — +73 (Update Log entries)
+
+**Commit:** dd2f2fcf (code), bcf834e0 (Update Log evidence)
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ ok
+test exempt_files_exist ... ok
+test test_files_fit_the_cap ... ok
+test production_files_fit_the_cap ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.99s
+
+
+running 34 tests
+test daemon_ping_status_loop ... ignored
+test cancel_request_roundtrip ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_unrankable_severity_passes_gate ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_no_severity_passes_gate ... ok
+
+test result: ok. 32 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-5e78c79fd2ae78a1)
+kill: (2008910): No such process
+kill: (-2009625): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-06550d774f0d8ce7)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-02ef218b3116761b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4952e5c7d0d7c44e)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-0a4cc57644384310)
+     Running tests/integration.rs (target/debug/deps/integration-4d3da8ba73ab7bc6)
+     Running tests/isolation.rs (target/debug/deps/isolation-4f378229e76b77a9)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-306e62f04ea3f118)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-0a312c6477b3dc40)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M36-ux-and-audit/phase-21d-live-check-fixes.md` — +73 -0
+- `src/cli/commands/top_tui.rs` — +5 -4
+- `src/cli/commands/top_tui_attach.rs` — +67 -123
+
+**Commit:** bcf834e00171da92724c5559b98a9f487c7d7bb5
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
