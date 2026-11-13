@@ -647,6 +647,62 @@ async fn list_shells_empty_registry_says_so() {
     assert!(!out.contains("s7"));
 }
 
+/// M36 phase-21e: a stamped-exited shell is never listed, under `mine` or
+/// `all` — an observed close stamps it, and the reaper's own stamps hide the
+/// same way. The formatter's `[exited]` rendering is untouched; this is the
+/// row collection's filter.
+#[tokio::test]
+async fn list_shells_omits_exited_shells() {
+    let reg = ShellRegistry::default();
+    insert(&reg, 1, Owner::Chat("a".into()), NOW - 100);
+    insert(&reg, 2, Owner::Chat("a".into()), NOW - 100);
+    with_shells(&reg, |store| {
+        store.get_mut("s2").unwrap().exited_unix = Some(NOW - 5);
+    });
+
+    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
+    assert!(out.contains("s1"), "the live shell lists under mine: {out}");
+    assert!(
+        !out.contains("s2"),
+        "an exited shell must not list under mine: {out}"
+    );
+    assert!(
+        out.contains("1 shell"),
+        "the count names only the live shell: {out}"
+    );
+
+    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("b".into()), NOW).await;
+    assert!(out.contains("s1"), "the live shell lists under all: {out}");
+    assert!(
+        !out.contains("s2"),
+        "an exited shell must not list under all: {out}"
+    );
+    assert!(
+        !out.contains("[exited]"),
+        "no exited row survives to the formatter: {out}"
+    );
+}
+
+/// M36 phase-21e: the listing keeps working on a registry of nothing but
+/// exited shells — the sentence the model reads is `list_shells`'s
+/// nothing-live answer, not a formatter artefact.
+#[tokio::test]
+async fn list_shells_of_only_exited_shells_says_so() {
+    let reg = ShellRegistry::default();
+    insert(&reg, 2, Owner::Chat("a".into()), NOW - 100);
+    with_shells(&reg, |store| {
+        store.get_mut("s2").unwrap().exited_unix = Some(NOW - 5);
+    });
+    for scope in [None, Some("all")] {
+        let out = list_shells_in(&reg, scope, &Owner::Chat("a".into()), NOW).await;
+        assert!(
+            out.starts_with("No shells"),
+            "only exited shells is a no-shell answer, scope {scope:?}: {out}"
+        );
+        assert!(!out.contains("s2"), "the exited id is hidden: {out}");
+    }
+}
+
 #[test]
 fn formatter_marks_flags_and_exits_without_the_registry() {
     let rows = vec![

@@ -625,6 +625,149 @@ async fn close_shell_ends_the_callers_shell() {
     );
 }
 
+/// M36 phase-21e: an observed close — the one that reports "Closed shell",
+/// the host gone — stamps the record `exited_unix` at once, exactly as
+/// `reap_exited` would have up to an hour later. The record stays, so
+/// `read_shell` on the id keeps working until the reaper removes it.
+#[tokio::test]
+async fn close_shell_stamps_the_record_exited_once_the_host_is_gone() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let id = spawn_for_on_host(
+        &reg,
+        Owner::Chat("stamper".into()),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the shell spawns");
+    assert!(
+        host_is_alive(&crate::shell::lock_path(id.as_str())),
+        "the precondition is a live host holding its lock"
+    );
+    let exited_before = with_shells(&reg, |store| {
+        store.get(id.as_str()).and_then(|r| r.exited_unix)
+    });
+    assert_eq!(
+        exited_before, None,
+        "the precondition is an unstamped record"
+    );
+
+    let out = close_shell_with(
+        &reg,
+        id.as_str(),
+        &Owner::Chat("stamper".into()),
+        Duration::from_millis(3000),
+    )
+    .await;
+    assert!(
+        out.contains("Closed shell"),
+        "the close must reach the observed-gone branch for this test to pin \
+             anything: {out}"
+    );
+    assert!(
+        !host_is_alive(&crate::shell::lock_path(id.as_str())),
+        "the observed close means the host really is gone: {out}"
+    );
+
+    // Stamp + never remove: the record is marked, not deleted.
+    let (stamped, still_there) = with_shells(&reg, |store| {
+        (
+            store.get(id.as_str()).and_then(|r| r.exited_unix),
+            store.contains_key(id.as_str()),
+        )
+    });
+    assert!(still_there, "the record must survive the close");
+    assert!(
+        stamped.is_some(),
+        "an observed close must stamp exited_unix: {out}"
+    );
+    assert!(
+        crate::shell::now_unix() >= stamped.unwrap_or(0),
+        "the stamp is a unix second, not something else: {stamped:?}"
+    );
+}
+
+/// M36 phase-21e's no-stamp rule: a close that cannot see the host gone —
+/// the "still holding its lock" branch — leaves `exited_unix` unset. A
+/// shell whose host may still be alive is never marked exited.
+#[tokio::test]
+async fn close_shell_does_not_stamp_a_lingering_host() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let id = spawn_for_on_host(
+        &reg,
+        Owner::Chat("lingerer".into()),
+        5,
+        crate::host::HostId::Local,
+        false,
+        lingering_host_spawn,
+    )
+    .await
+    .expect("the shell spawns");
+
+    let out = close_shell_with(
+        &reg,
+        id.as_str(),
+        &Owner::Chat("lingerer".into()),
+        Duration::from_millis(3000),
+    )
+    .await;
+    assert!(
+        out.contains("Sent") && out.contains("still"),
+        "the precondition is the lingering branch, not a seen closure: {out}"
+    );
+    assert!(
+        host_is_alive(&crate::shell::lock_path(id.as_str())),
+        "the precondition is a host still holding its lock: {out}"
+    );
+
+    let (stamped, still_there) = with_shells(&reg, |store| {
+        (
+            store.get(id.as_str()).and_then(|r| r.exited_unix),
+            store.contains_key(id.as_str()),
+        )
+    });
+    assert!(still_there, "the record must survive the close");
+    assert_eq!(
+        stamped, None,
+        "a lingering host is never stamped exited: {out}"
+    );
+}
+
+/// A host whose `serve` task survives the close: `PtyBackend::close` hangs
+/// the PTY up, and this fixture's backend takes no exit watch, so the
+/// process keeps holding its lock across the whole 1.5 s observation
+/// window — the shape `closed_by_observed_end` must **not** stamp.
+async fn lingering_host_spawn(id: ShellId) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir().context("tempdir for cast")?;
+    let cast = dir.path().join(format!("{}.cast", id.as_str()));
+    let backend = crate::shell::PtyBackend::spawn(
+        "sh",
+        &["-c".to_string(), "sleep 1000".to_string()],
+        TEST_ROWS,
+        TEST_COLS,
+        100,
+        &cast,
+        0,
+    )
+    .context("spawning sh -c 'sleep 1000'")?;
+    let lock =
+        crate::daemon::instance::InstanceLock::acquire(&crate::shell::lock_path(id.as_str()))
+            .context("holding the per-id instance lock")?;
+    let socket = socket_path(id.as_str());
+    let listener = bind(&socket).await.context("binding the host's socket")?;
+    // `serve`, not `serve_until_exit`: no exit watch ends this task, so the
+    // lock stays held however long the test waits — a host that ignores the
+    // hangup.
+    tokio::spawn(serve(listener, std::sync::Arc::clone(&backend)));
+    std::mem::forget(lock);
+    std::mem::forget(dir);
+    Ok(())
+}
+
 #[tokio::test]
 async fn close_shell_refuses_another_owners_shell() {
     let (_home, _dir) = crate::test_home();
@@ -851,6 +994,72 @@ async fn last_detach_closes_the_sessions_shells_after_the_grace() {
     assert!(
         !host_is_alive(&crate::shell::lock_path(id_b.as_str())),
         "shell b's host is gone after the grace with no presence"
+    );
+}
+
+/// M36 phase-21e's detach-grace analogue of the stamp rule: a shell the
+/// grace's close saw die is stamped `exited_unix` at once, so `list_shells`
+/// stops showing it — and a `dedicated` shell the grace never touches is
+/// not stamped. The record stays either way.
+#[tokio::test]
+async fn last_detach_marks_the_closed_shells_exited() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let owner = Owner::Chat("detach-4".into());
+    let plain_id = spawn_for_on_host(
+        &reg,
+        owner.clone(),
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the session's plain shell spawns");
+    let dedicated_id = spawn_for_on_host(
+        &reg,
+        owner.clone(),
+        5,
+        crate::host::HostId::Local,
+        true,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the session's dedicated shell spawns");
+    assert!(
+        host_is_alive(&crate::shell::lock_path(plain_id.as_str()))
+            && host_is_alive(&crate::shell::lock_path(dedicated_id.as_str())),
+        "the precondition is two live hosts"
+    );
+
+    let closed = close_after_detach(&reg, "detach-4", Duration::from_millis(100)).await;
+    assert_eq!(
+        closed,
+        vec![plain_id.as_str().to_string()],
+        "the grace closes exactly the session's non-dedicated shell: {closed:?}"
+    );
+
+    let (plain_stamped, dedicated_stamped) = with_shells(&reg, |store| {
+        (
+            store.get(plain_id.as_str()).and_then(|r| r.exited_unix),
+            store.get(dedicated_id.as_str()).and_then(|r| r.exited_unix),
+        )
+    });
+    assert!(
+        plain_stamped.is_some(),
+        "the closed shell must be stamped exited: {closed:?}"
+    );
+    assert!(
+        with_shells(&reg, |store| store.contains_key(plain_id.as_str())),
+        "the stamp never removes the record"
+    );
+    assert_eq!(
+        dedicated_stamped, None,
+        "a dedicated shell the grace never touched is not stamped exited"
+    );
+    assert!(
+        host_is_alive(&crate::shell::lock_path(dedicated_id.as_str())),
+        "the dedicated shell's host is still alive"
     );
 }
 

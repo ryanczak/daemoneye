@@ -116,9 +116,18 @@ pub fn disk_panels(config_cap: f64) -> DiskPanels {
 /// Ask the daemon for its live PTY shells. One read-only `Request::ShellList`,
 /// nothing written. A daemon that answers anything other than a shell list is
 /// as good as a daemon that is not running: the panel says so either way.
+/// Rows stamped `exited_unix` are dropped here, where the panel's rows are
+/// built (M36 phase-21e): what the panel draws is what selection and
+/// Enter-attach index into, so the panel never shows or attaches an exited
+/// shell. The daemon's own `/shells` still shows them.
 pub async fn shells_panel() -> ShellsPanel {
     match super::ipc_client::request_once(crate::ipc::Request::ShellList).await {
-        Ok(crate::ipc::Response::ShellList { shells }) => ShellsPanel::Rows(shells),
+        Ok(crate::ipc::Response::ShellList { shells }) => ShellsPanel::Rows(
+            shells
+                .into_iter()
+                .filter(|shell| shell.exited_unix.is_none())
+                .collect(),
+        ),
         _ => ShellsPanel::DaemonDown,
     }
 }
@@ -223,5 +232,54 @@ pub fn fingerprint() -> TopFingerprint {
         runs_newest_mtime_s,
         segment_len,
         segment_mtime_s,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::ipc::ShellInfo;
+
+    /// A `ShellInfo` row: id, and an exit stamp only when `exited`.
+    fn shell_row(id: &str, exited: bool) -> ShellInfo {
+        ShellInfo {
+            id: id.to_string(),
+            host: "local".to_string(),
+            owner: "chat:deadbeef".to_string(),
+            started_unix: 0,
+            dedicated: false,
+            exited_unix: exited.then_some(42),
+            last_command: None,
+            foreground: None,
+            last_line: None,
+            programs: Vec::new(),
+        }
+    }
+
+    /// The panel-row filter, lifted from `shells_panel`'s match arm: the
+    /// same predicate over the daemon's rows, without the IPC client in
+    /// the way. The production call site is that one `.filter`.
+    fn panel_rows(shells: Vec<ShellInfo>) -> Vec<ShellInfo> {
+        shells
+            .into_iter()
+            .filter(|shell| shell.exited_unix.is_none())
+            .collect()
+    }
+
+    #[test]
+    fn shells_panel_omits_exited_rows() {
+        let rows = panel_rows(vec![shell_row("s1", false), shell_row("s2", true)]);
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            ["s1"],
+            "the exited row is dropped where the panel's rows are built"
+        );
+        let panel = ShellsPanel::Rows(rows);
+        let text = crate::cli::commands::top::shells_text(&panel);
+        assert!(
+            text.contains("s1 ") && !text.contains("s2 "),
+            "the drawn text names only the live shell: {text:?}"
+        );
     }
 }

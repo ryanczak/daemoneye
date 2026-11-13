@@ -779,7 +779,7 @@ pub static TOOLS: &[ToolDef] = &[
         description: "List the PTY shells the daemon is running on the daemon host, with \
                       each shell's id (like \"s3\"), owner, age, and flags (`dedicated` / \
                       `exited`) plus what held the shell when last observed (`running <cmd>`, \
-                      `running <cmd> (TUI)`, `paused <cmd>`; exited shells are kept listed). \
+                      `running <cmd> (TUI)`, `paused <cmd>`; exited shells are omitted). \
                       An observability tool: use it to see which shells exist and what \
                       state they are in.",
         params: &[ParamDef {

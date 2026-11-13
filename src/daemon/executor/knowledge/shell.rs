@@ -67,6 +67,10 @@ pub(super) async fn list_shells_in(
     caller: &Owner,
     now_unix: u64,
 ) -> String {
+    // Every scope arm filters `exited_unix` here, at the collection: a
+    // stamped-exited shell is never listed (M36 phase-21e). The stamp is
+    // either `reap_exited`'s or an observed close's; `refresh_programs`
+    // skips the same records, so a dead host is never probed either.
     let ids = match scope {
         None | Some("mine") => {
             let key = caller.key();
@@ -76,6 +80,7 @@ pub(super) async fn list_shells_in(
                     .filter(|record| {
                         record.owner.key() == key || matches!(record.owner, Owner::User)
                     })
+                    .filter(|record| record.exited_unix.is_none())
                     .map(|record| record.id.as_str().to_string())
                     .collect::<Vec<_>>()
             })
@@ -83,6 +88,7 @@ pub(super) async fn list_shells_in(
         Some("all") => with_shells(reg, |store| {
             store
                 .values()
+                .filter(|record| record.exited_unix.is_none())
                 .map(|record| record.id.as_str().to_string())
                 .collect::<Vec<_>>()
         }),
@@ -119,11 +125,16 @@ fn resolve_scope(
             store
                 .values()
                 .filter(|record| record.owner.key() == key || matches!(record.owner, Owner::User))
+                .filter(|record| record.exited_unix.is_none())
                 .map(collect_row)
                 .collect::<Vec<_>>()
         })),
         Some("all") => Ok(with_shells(reg, |store| {
-            store.values().map(collect_row).collect::<Vec<_>>()
+            store
+                .values()
+                .filter(|record| record.exited_unix.is_none())
+                .map(collect_row)
+                .collect::<Vec<_>>()
         })),
         Some(other) => Err(format!(
             "Error: unknown {tool} scope {other:?}. Accepted values: \

@@ -1,7 +1,7 @@
 # Phase 21e — closed-shell-listing
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-12
 **Depends on:** phase 21d (the 60 s grace)
 **Estimated diff:** ~150 lines, most of it tests
@@ -184,3 +184,49 @@ exit) at milestone close.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-13 00:24 (started, executor claude-sonnet-4-5-20250929)
+
+Status flipped to in-progress. Reading `shell_life.rs`, `registry.rs`, `shell.rs`,
+`top_load.rs` and the two test modules, then implementing the stamp-and-hide per
+the Spec's edit order.
+
+### Update — 2026-11-13 00:45 (end-to-end verification)
+
+Ran the phase's E2E block mechanically, redirecting all output to
+`.rexymcp/output/e2e-21e.log` and pasting it below verbatim:
+
+```
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_does_not_stamp_a_lingering_host ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_refuses_another_owners_shell ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_stamps_the_record_exited_once_the_host_is_gone ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_unknown_id_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_ends_the_callers_shell ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2806 filtered out; finished in 1.75s
+test daemon::executor::knowledge::shell::tests::lifecycle::last_detach_closes_the_sessions_shells_after_the_grace ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::last_detach_marks_the_closed_shells_exited ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2809 filtered out; finished in 0.37s
+test cli::commands::top::load::tests::shells_panel_omits_exited_rows ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_omits_exited_shells ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2809 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 2808 filtered out; finished in 0.37s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2802 filtered out; finished in 0.28s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2809 filtered out; finished in 0.00s
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.46s
+fmt_exit=0
+passed=2893 failed=0
+```
+
+All five Test-plan tests pass as printed (`close_shell_stamps_the_record_exited_once_the_host_is_gone`,
+`last_detach_marks_the_closed_shells_exited`, `list_shells_omits_exited_shells`,
+`shells_panel_omits_exited_rows`, `close_shell_does_not_stamp_a_lingering_host`);
+every `close_shell_*`, `detach_close*`, `last_detach*`, `reap_idle*` and
+`formatter_*` test still passes, including `close_shell_ends_the_callers_shell`'s
+"must not remove the record". Hygiene 16, doc_truth 19, bug_tracker 6,
+lock_invariant 2 — all ok. `build_warnings=0`, clippy clean, `fmt_exit=0`,
+full suite `passed=2893 failed=0`.

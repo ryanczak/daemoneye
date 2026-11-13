@@ -465,7 +465,7 @@ pub(crate) async fn close_shell_with(
     // The signal is one-way; what closes the shell is the host's PTY ending.
     // Give it a bounded moment and observe, rather than asserting either way.
     let lock = crate::shell::lock_path(shell);
-    closed_by_observed_end(shell, &lock).await
+    closed_by_observed_end(reg, shell, &lock).await
 }
 
 /// The observable outcome of one close: poll the lock up to 1.5s from now
@@ -473,17 +473,35 @@ pub(crate) async fn close_shell_with(
 /// exits (`serve_until_exit`), so a hung-up shell normally reads as gone well
 /// inside the window; one that has not, is reported as still finishing, and
 /// the tool's sentence never claims a closure it did not see.
-async fn closed_by_observed_end(shell: &str, lock: &std::path::Path) -> String {
+///
+/// A seen-gone close stamps the record exited at once (M36 phase-21e) — the
+/// same stamp `reap_exited` writes, up to an hour before its next pass — so
+/// `list_shells` and `top` stop listing the shell immediately. The record
+/// itself is never removed here: the reaper owns record lifetime, and
+/// `read_shell` on the id keeps working until it. A still-lingering host is
+/// never stamped: it may still be alive.
+async fn closed_by_observed_end(
+    reg: &ShellRegistry,
+    shell: &str,
+    lock: &std::path::Path,
+) -> String {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1500);
     loop {
         if !host_is_alive(lock) {
+            // One short acquisition after the observation — the probe and the
+            // poll run with no registry lock held.
+            with_shells(reg, |store| {
+                if let Some(record) = store.get_mut(shell) {
+                    record.exited_unix.get_or_insert(crate::shell::now_unix());
+                }
+            });
             return format!(
                 "Closed shell {shell}: its host is gone and the shell is no longer live."
             );
         }
         if std::time::Instant::now() >= deadline {
             return format!(
-                "Asked shell {shell} to close, but its host is still holding its \
+                "Sent TERM to shell {shell}, but its host is still holding its \
                  lock — the shell may still be finishing. list_shells still shows \
                  it; check again before assuming it is closed."
             );
