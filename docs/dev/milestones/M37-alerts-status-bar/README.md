@@ -138,7 +138,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 4 (phase 0
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
 | 01 | daemon-alert-state ([phase-01-daemon-alert-state.md](phase-01-daemon-alert-state.md)): the severity gate moves ahead of history injection and the chat-pane notice. A daemon-wide active-alert registry, the `AlertState` frame on the presence connection and at attach, and `Request::AlertList` | issue #3, decisions 2 and 4 | done |
-| 02a | chat-status-bar ([phase-02a-chat-status-bar.md](phase-02a-chat-status-bar.md)): the glyph-led bar of decision 3 on the client: the slot table and three dialects, `[chat] glyphs`, the tiers, the state slot shared with the OSC 7501 emitter, alert state from `AlertState` frames, the ticking ages; counters fed zero until 02b | decisions 3 and 4 | todo |
+| 02a | chat-status-bar ([phase-02a-chat-status-bar.md](phase-02a-chat-status-bar.md)): the glyph-led bar of decision 3 on the client: the slot table and three dialects, `[chat] glyphs`, the tiers, the state slot shared with the OSC 7501 emitter, alert state from `AlertState` frames, the ticking ages; counters fed zero until 02b | decisions 3 and 4 | in-progress |
 | 02b | session-counters: the daemon's `SessionCounters` push and `SessionInfo`'s per-turn output tokens; the client feeds them to the bar | decision 6 | todo |
 | 03 | top-alerts-panel: `top` loads `Request::AlertList` into an Alerts panel | decision 5 | todo |
 

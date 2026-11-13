@@ -1,7 +1,7 @@
 # Phase 02a — chat-status-bar
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-12
 **Depends on:** phase 01 (the `AlertState` frame)
 **Estimated diff:** ~550 lines, about half of it tests
@@ -225,3 +225,12 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-13 12:18 (progress)
+
+Started phase 02a. First write is `src/cli/status_bar.rs`: `GlyphSet` with the
+three dialect constants, `ChatState`, `StatusModel`, and a `status_bar_line`
+that reproduces today's content through the new model (registered in
+`src/cli/mod.rs`). Next: the eleven `StatusBarState` literals move to the
+model, then the decision-3 segments and tiers.
+
