@@ -4,7 +4,7 @@
 **Status:** todo
 **Drafted:** 2026-11-12
 **Depends on:** none
-**Estimated diff:** ~350 lines, about half of it tests
+**Estimated diff:** ~400 lines, about half of it tests
 **Tags:** language=rust, kind=fix, size=m
 
 ## Goal
@@ -26,8 +26,12 @@ This phase does two things:
    when `should_fire` is true, alongside `fire_notification`. Below the
    threshold, the alert reaches the event log (`webhook_alert`, unchanged),
    the `webhook_discarded` event (unchanged), and the active-alert registry
-   (behaviour 2), and nothing else. The gate's fail-open rule is unchanged:
-   an unrankable severity or threshold fires.
+   (behaviour 2), and nothing else. **The gate now fails closed on the
+   alert's side** (PE, 2026-11-12): an alert whose severity `severity_rank`
+   cannot rank is below threshold. An unrankable configured
+   `severity_threshold` behaves as `warning`, and `WebhookConfig`'s
+   validation warns about it at load, the way other config warnings are
+   issued.
 2. **Active-alert registry.** A new module `src/webhook/active.rs` holds a
    process-wide registry keyed by fingerprint, with a `_in` variant over an
    explicit map for tests, the way `presence_broadcast` /
@@ -39,8 +43,7 @@ This phase does two things:
    - **Expiry:** an entry not re-seen for `ACTIVE_ALERT_TTL_SECS` (6 h) is
      pruned whenever a snapshot is taken.
    - **Snapshot:** returns entries worst severity first, then the newest
-     `first_seen_unix` first. For ordering, an unrankable severity ranks as
-     warning, matching the gate's fail-open.
+     `first_seen_unix` first. An unrankable severity ranks below `info`.
    - **Ranking:** reuse `severity_rank`. Make it `pub(crate)` and call it
      from `active.rs`. Do not copy it.
    - **Where it runs:** `process_alert` records every alert that survives
@@ -117,7 +120,7 @@ registry over a fresh map:
 - `active_alerts_firing_inserts_and_refire_keeps_first_seen`
 - `active_alerts_resolved_removes_the_entry`
 - `active_alerts_snapshot_orders_worst_then_newest`
-- `active_alerts_unrankable_severity_ranks_as_warning`
+- `active_alerts_unrankable_severity_ranks_below_info`
 - `active_alerts_prune_entries_past_the_ttl`
 
 Integration tests in `tests/integration.rs`. For the history tests, a
@@ -130,6 +133,15 @@ Integration tests in `tests/integration.rs`. For the history tests, a
   `warning`, so the entry gains one `[Webhook Alert]` message.
 - `webhook_alert_below_threshold_is_recorded_active`: the `info` alert
   appears in the registry snapshot.
+- The two fail-open tests invert: `webhook_alert_no_severity_passes_gate`
+  becomes `webhook_alert_no_severity_is_below_threshold` and
+  `webhook_alert_unrankable_severity_passes_gate` becomes
+  `webhook_alert_unrankable_severity_is_below_threshold`. Each asserts a
+  `webhook_discarded` event with `reason: below_threshold` and no history
+  message. **Both must fail on today's tree.**
+- `webhook_unrankable_threshold_warns_and_acts_as_warning` (a unit test
+  beside `WebhookConfig`'s validation): the warning is issued, and a
+  `warning` alert fires while an `info` one does not.
 
 Server tests:
 - `alert_list_request_returns_the_snapshot`
@@ -142,10 +154,9 @@ Server tests:
 - [ ] Every test in the test plan passes.
 - [ ] `gate_first=1`: the injection call comes after `should_fire` in
       `process_alert` (command in the e2e block). Today it prints 0.
-- [ ] `webhook_alert_below_threshold_discarded`,
-      `webhook_alert_no_severity_passes_gate` and
-      `webhook_alert_unrankable_severity_passes_gate` still pass
-      (preservation).
+- [ ] `webhook_alert_below_threshold_discarded` still passes
+      (preservation), and `grep -c 'passes_gate' tests/integration.rs`
+      prints 0 (today 2).
 - [ ] `grep -c 'fn severity_rank' src/webhook/active.rs` prints 0: there
       is one ranking function, not a copy.
 - [ ] Mutation check, pasted in the Update Log: move the injection back
@@ -172,7 +183,8 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Authorizations
 
 - Create `src/webhook/active.rs`.
-- Edit the files in the symbol map, plus `assets/etc/config.toml`,
+- Edit the files in the symbol map, `src/config/types.rs`
+  (`WebhookConfig` validation), plus `assets/etc/config.toml`,
   `assets/memory/knowledge/config-reference.md`, `README.md` and
   `CLAUDE.md`, if `doc_truth` asks.
 - Change `PresenceConnection.push`'s type, and update its callers and
