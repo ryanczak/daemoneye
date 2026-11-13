@@ -543,3 +543,86 @@ exactly one new test. Mutation check: move the snapshot send back above
 `Ok`, confirm the new test fails, and revert. Paste both `test result:`
 lines.
 
+
+### Update — 2026-11-13 07:24 (progress)
+
+Resumed on bug-01-1. Exactly the bounce's three edits: (1) in
+`handle_chat_attach`'s held block the snapshot send now follows
+`send_response_split(tx, Response::Ok)`; (2) `presence_broadcast_in` wraps its
+text in `Response::SystemMsg` through `presence_broadcast_frame_in`, so no
+`pub` seam pushes raw text; (3) the `tests/integration.rs` allowlist comment
+names only the gate-order tests. Added `presence_attach_sends_ok_before_alert_state`
+beside the existing attach test (one new test — `passed=2911`). Next: mutation
+check evidence and the bug-01-1 e2e run.
+
+### Update — 2026-11-13 07:24 (end-to-end verification)
+
+bug-01-1's e2e block, run mechanically and redirected to a file:
+
+**Mutation check (frame order), pasted from the capture** — the snapshot send
+moved back above `Ok`, the new test fails on the mutated tree:
+
+```
+test presence_attach_sends_ok_before_alert_state ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 39 filtered out; finished in 0.01s
+```
+
+(red detail: `with no brief, `Ok` is the first attach frame: AlertState { …
+name: "OkFirstProbe" … }` — exactly bug-01-1's broken order, `AlertState`
+before `Ok`). The same mutation also turned
+`presence_attach_sends_alert_state_when_alerts_are_active` red (its frame-order
+loop now sees `AlertState` before `Ok` too); reverted, both green:
+
+```
+test presence_attach_sends_ok_before_alert_state ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.02s
+```
+
+**The phase-doc E2E block, pasted from the capture:**
+
+```
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 0.07s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2818 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2821 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2822 filtered out; finished in 0.00s
+gate_first=1
+ok_before_alerts=1
+raw_push=0
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2823 filtered out; finished in 0.00s
+build_warnings=0
+passed=2911 failed=0
+```
+
+(Line order: the four `cargo test` greps; the `gate_first` awk over
+`process_alert`; the `ok_before_alerts` awk over `chat_presence.rs`; the
+`raw_push` grep over `session.rs`; the targeted run of
+`presence_attach_sends_ok_before_alert_state` — under `--lib` it matches
+nothing, its real result line is `cargo test --test integration
+presence_attach_sends_ok_before_alert_state` → `ok. 1 passed` pasted above;
+the build-warning count after `touch src/main.rs`; the full `cargo test`
+tally.)
+
+**Preservation and count criteria, pasted:**
+
+```
+test webhook_alert_below_threshold_discarded ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out; finished in 0.01s
+```
+
+- `grep -c 'passes_gate' tests/integration.rs` → `0` (exit 1, no matches).
+- `grep -c 'fn severity_rank' src/webhook/active.rs` → `0` (exit 1, no
+  matches — one ranking function, in `process.rs`).
+- `grep -c 'conn.push.send(msg.to_string())' src/daemon/session.rs` → `0`
+  (exit 1, no matches — `presence_broadcast_in` now wraps in `SystemMsg` via
+  `presence_broadcast_frame_in`; its `broadcast_with_no_clients_is_a_noop`
+  test is unchanged and still green).
+- `tests/hygiene_allowlist.txt`: the `tests/integration.rs` entry moved to
+  2385 for the new test's lines, and its comment now names only the
+  gate-order tests (the stale "phase-02a will shrink it" claim is gone).
+
+fmt, build (0 warnings), clippy `-D warnings`, `cargo test` (`passed=2911
+failed=0`), hygiene, `doc_truth` (19) and `bug_tracker` (6) all green after
+the revert. One commit: `fix: attach sends Ok before the AlertState frame
+(bug-01-1)`; the working tree is clean and the phase doc remains
+`in-progress` for the server's completion tail.
