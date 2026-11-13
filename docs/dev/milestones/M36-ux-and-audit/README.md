@@ -5,7 +5,7 @@
 land, and every `critical` and `major` row of the 2026-11-01 codebase audit
 ([`FINDINGS.md`](FINDINGS.md)) is fixed with a test or closed with a reason.
 
-**Status:** closing — all phases done, live check passed; awaiting PE sign-off and the 2.8.0 release
+**Status:** done — released as 2.8.0 (2026-11-12)
 
 **Release:** 2.8.0
 

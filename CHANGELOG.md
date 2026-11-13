@@ -8,6 +8,50 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.8.0] — 2026-11-12 — M36 Chat UX and audit fixes
+
+The four chat and `top` improvements from `docs/design/2.7.0-UX-improvements.md`
+land. Every `critical` and `major` row of the 2026-11-01 codebase audit
+(`docs/dev/milestones/M36-ux-and-audit/FINDINGS.md`) is fixed with a test.
+The retrospective is in `docs/dev/milestones/M36-ux-and-audit/README.md`.
+
+- **Multi-line paste** — a paste into the input box arrives line for line,
+  with no border characters. CR and CRLF line ends become LF.
+- **`/approvals` covers every prompt kind** — commands, sudo, scripts,
+  runbooks, files, schedules, agents, deletes and per-host grants, each
+  `on|off`, plus `all on|off`. The list also names the kinds that are
+  always asked. Changes last for the chat session.
+- **Status bar** — `turn · context · model · session · up`, in readable
+  gray. Context turns amber at 75 % and red at 90 %.
+- **`top` attach** — Enter on a Shells row opens a live, read-only view
+  of that shell's screen; `q` returns. Exited shells are no longer listed.
+- **Approval prompt fixes** — on an 80-column pane the panel shows every
+  character of the command, wrapped by display width, with control
+  characters visible. `y` / `n` / `a` take effect on Enter, and anything
+  longer is a redirect, so typing `abort` denies the call. A pasted
+  credential is the credential and never leaks into the next input.
+- **Shell reclamation** — a chat's shells close 60 s after its client goes
+  away (`[shells] detach_close_secs`), and `list_shells` drops them at
+  once. `read_shell` still reads their recordings. A restart re-adopts a
+  surviving shell under its owner, and idle adopted shells are reaped.
+- **Ghost sudo tightens** — a sudo-bearing ghost command auto-approves
+  only as `[sudo] <approved script> [args]`, with sudo detected at any
+  command position.
+- **The daemon maintains its own `config.toml`** — `read_file` reads it
+  with secrets masked. `edit_file` edits it after an always-asked,
+  masked prompt; a result that does not parse is refused. `daemoneye
+  reload` swaps the runtime sections and names the keys that wait for a
+  restart. A seeded `config-reference` memory documents every key.
+- **OSC 7501 program status** — the daemon's shells parse program status
+  reports into `list_shells`, `read_shell_screen`, `watch_shell` and `top`.
+  The chat client reports `working` / `blocked` / `idle` to its own
+  terminal.
+- **`daemoneye ask` with no daemon** leaves the tty in cooked mode.
+- **Background completions** that land during a turn are kept in the
+  session's history.
+- **Dependencies** — `cargo update`, plus `base64` 0.23 and `rusqlite`
+  0.42.
+
 ## [2.7.0] — 2026-11-01 — M35 Findings closeout
 
 Every finding carried from M29, M31 and M32 is fixed with a test or closed
