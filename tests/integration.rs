@@ -794,6 +794,16 @@ fn webhook_alert_to_event_log() {
 }
 
 // ── M6 Phase 05: Severity-Gate Honesty ─────────────────────────────────────
+
+/// Remove the alert a webhook test recorded in the process-global registry.
+/// The registry is keyed by fingerprint and shared by every test in the
+/// binary; an entry left behind leaks into whichever test snapshots next —
+/// the attach test's empty-registry half ran after one of these and saw
+/// its alert.
+fn discard_test_alert(fingerprint: &str) {
+    daemoneye::webhook::active_alerts_resolved(fingerprint);
+}
+
 // M37 phase 01 moved the gate ahead of history injection and the chat-pane
 // notice; the tests below pin the new order and the fail-closed severity.
 
@@ -1033,6 +1043,8 @@ fn webhook_alert_below_threshold_is_recorded_active() {
         "the stamps are real unix seconds"
     );
 
+    discard_test_alert("test-fp-quiet");
+
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
         None => unsafe { std::env::remove_var("HOME") },
@@ -1120,6 +1132,7 @@ fn webhook_alert_no_severity_is_below_threshold() {
 
     // And nothing reached the session's history: the store holds one entry
     // (registered before process_alert) and it gained no message.
+    // (Registry cleanup happens at the end of the test.)
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
         store
             .get("no-sev-sess")
@@ -1130,6 +1143,8 @@ fn webhook_alert_no_severity_is_below_threshold() {
         count, 0,
         "a below-threshold alert injects nothing into history"
     );
+
+    discard_test_alert("test-fp-no-sev");
 
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -1225,6 +1240,8 @@ fn webhook_alert_unrankable_severity_is_below_threshold() {
         "a below-threshold alert injects nothing into history"
     );
 
+    discard_test_alert("test-fp-banana");
+
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
         None => unsafe { std::env::remove_var("HOME") },
@@ -1313,6 +1330,8 @@ fn webhook_alert_below_threshold_discarded() {
             .any(|a| a.name == "LowPriorityAlert" && a.severity == "info"),
         "a below-threshold alert is recorded active: {snapshot:?}"
     );
+
+    discard_test_alert("test-fp-low");
 
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
