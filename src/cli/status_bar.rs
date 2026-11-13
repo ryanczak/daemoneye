@@ -931,7 +931,9 @@ fn session_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
     vec![Part::new(vec![Span::styled(text, gray())], RANK_SESSION)]
 }
 
-/// The grant hint, flush right.
+/// The grant hint, flush right. The hint string carries its own `⚡` (or
+/// `A:` in ascii) — the glyph dialect's `grants` slot is the prefix the
+/// existing `SessionApproval::hint` already emits, so nothing is added here.
 fn hint_part(model: &StatusModel) -> Option<Part> {
     if model.approval_hint.is_empty() {
         return None;
