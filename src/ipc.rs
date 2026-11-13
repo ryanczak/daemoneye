@@ -249,6 +249,10 @@ pub enum Request {
     ChatAttach {
         session_id: String,
     },
+    /// The alerts the daemon currently holds as firing, worst first (M37
+    /// phase 01). The daemon answers with `Response::AlertState` over the
+    /// current snapshot.
+    AlertList,
     /// Re-read `~/.daemoneye/etc/config.toml`, swap what is safe to swap at
     /// runtime, and report the keys that changed. The daemon replies with
     /// `Response::Reloaded`, or `Response::Error` when the file is invalid —
@@ -501,6 +505,10 @@ pub enum Response {
     },
     /// The current list of runbooks in `~/.daemoneye/runbooks/`.
     RunbookList { runbooks: Vec<RunbookListItem> },
+    /// The alerts the daemon currently holds as firing, worst first (response
+    /// to `Request::AlertList`, M37 phase 01). Also pushed over the presence
+    /// connection whenever the active-alert record changes.
+    AlertState { alerts: Vec<AlertBadge> },
     /// The AI wants to perform a file operation; the client MUST show a colored
     /// diff and prompt the user for approval, then return `Request::EditFileResponse`.
     ///
@@ -739,6 +747,7 @@ impl Response {
             Response::RunbookWritePrompt { .. } => "RunbookWritePrompt",
             Response::RunbookDeletePrompt { .. } => "RunbookDeletePrompt",
             Response::RunbookList { .. } => "RunbookList",
+            Response::AlertState { .. } => "AlertState",
             Response::EditFilePrompt { .. } => "EditFilePrompt",
             Response::UsageUpdate { .. } => "UsageUpdate",
             Response::KeepAlive => "KeepAlive",
@@ -760,3 +769,55 @@ impl Response {
 #[cfg(test)]
 #[path = "ipc_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod alert_wire_tests {
+    use super::*;
+
+    fn roundtrip_req(req: &Request) -> Request {
+        let json = serde_json::to_string(req).expect("serialize");
+        serde_json::from_str(&json).expect("deserialize")
+    }
+
+    fn roundtrip_resp(resp: &Response) -> Response {
+        let json = serde_json::to_string(resp).expect("serialize");
+        serde_json::from_str(&json).expect("deserialize")
+    }
+
+    /// `AlertBadge` and the two new frames survive the wire exactly.
+    #[test]
+    fn alert_state_frames_round_trip() {
+        let badge = AlertBadge {
+            fingerprint: "fp-1".to_string(),
+            name: "HighCPU".to_string(),
+            severity: "critical".to_string(),
+            first_seen_unix: 1_764_000_000,
+            last_seen_unix: 1_764_000_600,
+        };
+        let resp = Response::AlertState {
+            alerts: vec![badge.clone()],
+        };
+        match roundtrip_resp(&resp) {
+            Response::AlertState { alerts } => {
+                assert_eq!(alerts, vec![badge], "every field survives the wire");
+            }
+            other => panic!("wrong variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn alert_list_request_round_trips() {
+        assert!(matches!(
+            roundtrip_req(&Request::AlertList),
+            Request::AlertList
+        ));
+    }
+
+    /// `AlertState`'s name on the wire is "AlertState" — the label the client
+    /// sees in "unexpected reply" messages.
+    #[test]
+    fn alert_state_names_itself_alert_state() {
+        let resp = Response::AlertState { alerts: Vec::new() };
+        assert_eq!(resp.kind(), "AlertState");
+    }
+}

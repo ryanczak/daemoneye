@@ -20,7 +20,7 @@ DaemonEye 1.x drove your tmux panes. 2.0 runs its own shells, reaches remote hos
 - **One run model.** A chat turn, a ghost, a scheduled job and a delegated agent are all *runs*. Each run has its own turn log, a structured result and a briefing. Cancel any run with `daemoneye stop <run-id>` or `/stop`. Resume a finished ghost with new instructions using `daemoneye run resume`.
 - **Watch and join your agents.** `/shells` and `/tail` follow any shell live. `/agents` attaches to a running ghost so you can pause it, resume it, interrupt it, or type into it. `/logs` and `/log` replay finished recordings. `/hosts` lists the configured hosts, and `/shell` opens a shell of your own.
 - **Shell tools for the AI.** New tools: `list_shells`, `read_shell`, `find_in_shells`, `open_shell`, `close_shell`, `watch_shell` and `send_input`. There is also a deferred `history` group, `list_shell_logs` and `read_shell_log`, for reading past shell recordings.
-- **Alerts reach every chat, live.** Webhook alerts, ghost lifecycle events and background completions are pushed to every connected chat and written to each session's history. A chat reconnects by itself after a daemon restart. `chat --resume` opens with a `[Catch-up]` brief of everything that happened while you were away.
+- **Alerts reach every chat, live.** Webhook alerts at or above `severity_threshold`, ghost lifecycle events and background completions are pushed to every connected chat and written to each session's history — a below-threshold alert never enters either (the threshold gates history and the chat notice as well as `on_alert` and AI analysis). The daemon also tracks which alerts are currently firing and tells an attaching chat about them. A chat reconnects by itself after a daemon restart. `chat --resume` opens with a `[Catch-up]` brief of everything that happened while you were away.
 - **Tool calls that correct themselves.** When the model sends a mistyped argument to a real tool, the error names the bad parameter and the model retries. Before, the call was silently dropped.
 - **`daemoneye doctor`.** Prints one line per readiness check: config, API key, shell, daemon, sandbox, hosts and tmux.
 
@@ -804,7 +804,8 @@ model    = "claude-sonnet-4-6"
 # bind_addr = "127.0.0.1"   # set to "0.0.0.0" to expose on all interfaces
 # secret = ""               # Bearer token; empty = no auth
 # auto_analyze = true
-# severity_threshold = "warning"   # "info" | "warning" | "critical"
+# severity_threshold = "warning"   # "info" | "warning" | "critical"; also
+#                                  # gates history injection and the chat notice
 # dedup_window_secs = 300
 ```
 
@@ -908,10 +909,12 @@ Seeds the approval state at the start of every session — for `daemoneye chat` 
 | `bind_addr` | string | `"127.0.0.1"` | IP address to bind the webhook listener. Set to `"0.0.0.0"` to expose on all interfaces — **only with `secret` set**: a non-loopback bind with an empty secret is refused and the daemon fails to start, because every webhook post can launch a ghost shell that runs arbitrary commands. |
 | `secret` | string | `""` | Bearer token for authentication. Empty = no auth. |
 | `auto_analyze` | bool | `true` | Run runbook-based AI analysis when a matching runbook exists. |
-| `severity_threshold` | string | `"warning"` | Minimum severity to trigger AI analysis and `on_alert`. One of `"info"`, `"warning"`, `"critical"`. |
+| `severity_threshold` | string | `"warning"` | Minimum severity for everything an alert does: AI analysis, `on_alert`, injecting the alert into every session's history, and the chat-pane notice. One of `"info"`, `"warning"`, `"critical"`. An alert whose severity is not one of these is treated as below threshold (fail closed); an unrankable threshold value behaves as `"warning"`, with a warning logged at load. |
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
 
 The listener also enforces a per-IP rate limit of 30 requests per 60-second window (a compile-time constant, not configurable). A bind failure at startup is fatal — it is treated as a duplicate-instance signal, not a transient error.
+
+Every alert the webhook accepts is recorded in the daemon's active-alert registry (keyed by fingerprint, entries expiring after 6 hours without a re-fire), including alerts below `severity_threshold` — only analysis, `on_alert`, history injection and the chat-pane notice are gated. The registry is visible to a chat client as an `AlertState` frame at attach and to `daemoneye top` in a later release.
 
 #### Prometheus Alertmanager integration
 

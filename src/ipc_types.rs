@@ -259,3 +259,18 @@ pub struct SessionSummary {
     pub message_count: usize,
     pub artifact_count: usize,
 }
+
+/// One alert the daemon currently holds as firing, as `AlertState` carries
+/// it to a chat client (M37 phase 01) and `top` will list it (phase 03).
+/// `fingerprint` is the registry key, the same string the webhook payload
+/// carried; the ages both phases display tick from the two unix stamps.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct AlertBadge {
+    pub fingerprint: String,
+    pub name: String,
+    pub severity: String,
+    /// Seconds since the UNIX epoch when this alert was first recorded firing.
+    pub first_seen_unix: u64,
+    /// Seconds since the UNIX epoch when this alert was last re-seen firing.
+    pub last_seen_unix: u64,
+}

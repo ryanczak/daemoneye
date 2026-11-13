@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::ai::Message;
+use crate::ipc::Response;
 use crate::util::UnpoisonExt;
 
 /// Metadata for a background tmux window spawned during a chat session.
@@ -260,9 +261,41 @@ pub fn presence_broadcast_in(
     pushed
 }
 
-/// Push `msg` to every live presence connection, across all sessions.
+/// Push `msg` to every live presence connection, across all sessions. The
+/// text rides the wire as a `SystemMsg` — the frame shape every existing
+/// client's parked task forwards.
 pub fn presence_broadcast(msg: &str) -> usize {
-    presence_broadcast_in(presence_map(), msg)
+    presence_broadcast_frame(&Response::SystemMsg(msg.to_string()))
+}
+
+/// Push one `Response` frame to every live presence connection, across all
+/// sessions — the seam [`presence_broadcast`] wraps, and the shape the
+/// hold loop writes as-is (M37 phase 01). `_in` over an explicit map for
+/// tests, the way [`presence_broadcast_in`] works.
+pub fn presence_broadcast_frame_in(
+    map: &Mutex<HashMap<String, Vec<PresenceConnection>>>,
+    frame: &Response,
+) -> usize {
+    let map = map.lock().unwrap_or_log();
+    let mut pushed = 0;
+    let Ok(line) = serde_json::to_string(frame) else {
+        return 0;
+    };
+    for conns in map.values() {
+        for conn in conns {
+            if conn.push.send(line.clone()).is_ok() {
+                pushed += 1;
+            } else {
+                log::debug!("chat presence push dropped: connection closed");
+            }
+        }
+    }
+    pushed
+}
+
+/// Push one `Response` frame to every live presence connection.
+pub fn presence_broadcast_frame(frame: &Response) -> usize {
+    presence_broadcast_frame_in(presence_map(), frame)
 }
 
 #[cfg(test)]

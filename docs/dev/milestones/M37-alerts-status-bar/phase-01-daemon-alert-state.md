@@ -1,7 +1,7 @@
 # Phase 01 — daemon-alert-state
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-12
 **Depends on:** none
 **Estimated diff:** ~400 lines, about half of it tests
@@ -199,3 +199,7 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-12 21:38 (progress)
+
+Started phase 01. Wrote `src/webhook/active.rs` with its five unit tests and registered it in `src/webhook/mod.rs` — the registry module is the phase's first write, per the edit order. Next: `AlertBadge`/`AlertState`/`AlertList` on the wire.

@@ -158,13 +158,11 @@ pub(in super::super) async fn ask_with_session_ratatui(
         // the pre-content silence at `PHASE1_SILENCE_TIMEOUT_SECS` (90 s — the
         // daemon signals liveness every 15 s, so 90 s of silence means it is
         // hung, not slow), phase 2 keeps the pre-existing 120 s deadline.
-        let (tick_interval, overall_timeout) = {
-            let budget = silence_budget(response_started);
-            (
-                std::time::Duration::from_millis(80),
-                Some(budget.saturating_sub(last_msg_at.elapsed())),
-            )
-        };
+        let budget = silence_budget(response_started);
+        let (tick_interval, overall_timeout) = (
+            std::time::Duration::from_millis(80),
+            Some(budget.saturating_sub(last_msg_at.elapsed())),
+        );
         let outcome = select_stream(
             stdin,
             &mut rx,
@@ -745,6 +743,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             | Response::ScriptList { .. }
             | Response::RunbookList { .. }
             | Response::DaemonStatus { .. }
+            | Response::AlertState { .. }
             | Response::ModelChanged { .. }
             | Response::ModelList { .. }
             | Response::PaneChanged { .. }

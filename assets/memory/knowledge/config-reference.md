@@ -84,7 +84,7 @@ restart to land. Everything else swaps into the running config on reload.
 | `webhook.port` | integer | 0–65535 | 9393 | restart |
 | `webhook.secret` | string | any (masked) | none | restart |
 | `webhook.auto_analyze` | boolean | true/false | true | restart |
-| `webhook.severity_threshold` | string | `info` / `warning` / `critical` | `warning` | restart |
+| `webhook.severity_threshold` | string | `info` / `warning` / `critical`; any other value behaves as `warning` (warned at load) | `warning` | restart |
 | `webhook.dedup_window_secs` | integer | ≥ 0 | 300 | restart |
 | `webhook.bind_addr` | string (IP) | any | `127.0.0.1` | restart |
 

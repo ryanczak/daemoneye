@@ -1202,3 +1202,69 @@ fn validate_hosts_stays_silent_on_clean_entries() {
         "a clean entry yields no problems"
     );
 }
+
+// ── M37 phase 01: the severity_threshold validator ──────────────────────────
+
+/// An unrankable `severity_threshold` produces exactly one warning naming the
+/// value and the fallback; the pure `warnings()` is what the test pins, and
+/// `validate()` is the caller that logs it.
+#[test]
+fn webhook_unrankable_threshold_warns_and_acts_as_warning() {
+    let cfg = WebhookConfig {
+        severity_threshold: "banana".to_string(),
+        ..WebhookConfig::default()
+    };
+    let warnings = cfg.warnings();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "an unrankable threshold warns exactly once: {warnings:?}"
+    );
+    assert!(
+        warnings[0].contains("banana"),
+        "the warning names the offending value: {warnings:#?}"
+    );
+    assert!(
+        warnings[0].contains("Treating it as \"warning\""),
+        "the warning names the fallback: {warnings:#?}"
+    );
+    cfg.validate(); // must not panic — the validate path is the same one warn rides
+
+    // And the gate the warning describes: a `warning` alert fires while an
+    // `info` one does not. `severity_rank` is the production gate's own table.
+    assert_eq!(
+        crate::webhook::active_severity_rank("warning"),
+        2,
+        "a warning alert's rank"
+    );
+    assert_eq!(
+        crate::webhook::active_severity_rank("info"),
+        1,
+        "an info alert's rank"
+    );
+    assert_eq!(
+        crate::webhook::active_severity_rank("banana"),
+        0,
+        "the unrankable value ranks below info, so it is below any threshold"
+    );
+}
+
+/// A valid threshold warns nothing, and the default never warns.
+#[test]
+fn webhook_valid_threshold_warns_nothing() {
+    for value in ["info", "warning", "critical", "INFO", "Warning"] {
+        let cfg = WebhookConfig {
+            severity_threshold: value.to_string(),
+            ..WebhookConfig::default()
+        };
+        assert!(
+            cfg.warnings().is_empty(),
+            "{value} is rankable and must not warn: {:?}",
+            cfg.warnings()
+        );
+    }
+    assert!(
+        WebhookConfig::default().warnings().is_empty(),
+        "the default threshold never warns"
+    );
+}

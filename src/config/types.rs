@@ -544,6 +544,36 @@ impl Default for WebhookConfig {
     }
 }
 
+impl WebhookConfig {
+    /// Every warning about this `[webhook]` section, in a stable order. Pure:
+    /// `validate()` is the caller that logs them — the same shape
+    /// `SandboxConfig::warnings` gives its section.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !self.severity_threshold.trim().is_empty()
+            && crate::webhook::active_severity_rank(&self.severity_threshold) == 0
+        {
+            out.push(format!(
+                "[webhook] severity_threshold = {:?} is invalid — supported values are \
+                 \"info\", \"warning\", \"critical\". Treating it as \"warning\".",
+                self.severity_threshold
+            ));
+        }
+        out
+    }
+
+    /// Warn about an unrankable `severity_threshold`. The gate treats it as
+    /// `warning` (fail closed on the alert's side, M37 phase 01), so the
+    /// misconfiguration is surfaced at load rather than silently doubling the
+    /// default. Never panics and never returns a value — the other config
+    /// validators' shape.
+    pub fn validate(&self) {
+        for w in self.warnings() {
+            log::warn!("{w}");
+        }
+    }
+}
+
 /// Runtime environment declaration — tells the AI how to calibrate caution,
 /// blast-radius assessment, and security posture.
 #[derive(Debug, Deserialize, Serialize, Clone)]

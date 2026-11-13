@@ -24,6 +24,23 @@ where
     Ok(())
 }
 
+/// Answer `Request::AlertList` with the current active-alert snapshot (M37
+/// phase 01). Worst severity first, TTL-pruned — the same ordering the
+/// presence pushes carry.
+pub async fn handle_alert_list<W>(tx: &mut W) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    send_response_split(
+        tx,
+        Response::AlertState {
+            alerts: crate::webhook::active_alerts_snapshot(),
+        },
+    )
+    .await?;
+    Ok(())
+}
+
 pub(super) async fn handle_shutdown<W>(tx: &mut W) -> Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,

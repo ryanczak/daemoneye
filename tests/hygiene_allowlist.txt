@@ -47,6 +47,9 @@ fn src/cli/commands/stream_ask.rs ask_with_session_ratatui 746
 fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 299
 fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 216
 test src/daemon/executor/file_ops/ops.rs 2344
+# M37 phase-01 — the gate-order tests (history + registry + fail-closed inversions)
+# grew the file past the cap; phase-02a's client work is expected to shrink it.
+test tests/integration.rs 2300
 # M36 phase-21b — the OSC 7501 watch/listing tests (12 named in the plan) grew the file past the cap.
 test src/daemon/executor/knowledge/shell_observer_tests.rs 2233
 fn src/daemon/executor/file_ops/write.rs run_edit_file 151

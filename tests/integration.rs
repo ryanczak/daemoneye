@@ -794,11 +794,258 @@ fn webhook_alert_to_event_log() {
 }
 
 // ── M6 Phase 05: Severity-Gate Honesty ─────────────────────────────────────
+// M37 phase 01 moved the gate ahead of history injection and the chat-pane
+// notice; the tests below pin the new order and the fail-closed severity.
 
-/// An alert with no severity label passes the gate under the default
-/// threshold ("warning"). This is the defect-1 regression test.
+/// An `info` alert under threshold `warning` is **not injected** into an
+/// existing session's history — the gate now runs before
+/// `inject_into_sessions`. Must fail on a tree where the injection still
+/// precedes the gate (the issue-#3 bug).
 #[test]
-fn webhook_alert_no_severity_passes_gate() {
+fn webhook_alert_below_threshold_is_not_injected() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "Heartbeat",
+                "severity": "info",
+                "instance": "web-04"
+            },
+            "annotations": {
+                "summary": "15-minute heartbeat"
+            },
+            "fingerprint": "test-fp-heartbeat"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let config = daemoneye::config::Config::default();
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    // One resident entry with an empty history: after `process_alert` it must
+    // still hold zero messages.
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "gate-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("gate-sess"),
+        );
+    });
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions: sessions.clone(),
+        cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store
+            .get("gate-sess")
+            .map(|e| e.messages.len())
+            .unwrap_or(usize::MAX)
+    });
+    assert_eq!(
+        count, 0,
+        "an info alert under threshold warning must not enter chat history"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// A `warning` alert at threshold `warning` **is injected**: the session's
+/// history gains exactly one `[Webhook Alert]` message.
+#[test]
+fn webhook_alert_at_threshold_is_injected() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "DiskFull",
+                "severity": "warning",
+                "instance": "web-04"
+            },
+            "annotations": {
+                "summary": "Disk /dev/sda1 at 97%"
+            },
+            "fingerprint": "test-fp-diskfull"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let config = daemoneye::config::Config::default();
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "at-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("at-sess"),
+        );
+    });
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions: sessions.clone(),
+        cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let (count, first_role, first_content) =
+        daemoneye::daemon::session::with_sessions(&sessions, |store| {
+            store.get("at-sess").map(|e| {
+                (
+                    e.messages.len(),
+                    e.messages.first().map(|m| m.role.clone()),
+                    e.messages.first().map(|m| m.content.clone()),
+                )
+            })
+        })
+        .unwrap_or((usize::MAX, None, None));
+    assert_eq!(
+        count, 1,
+        "a warning alert at threshold warning injects exactly one message"
+    );
+    assert_eq!(first_role.as_deref(), Some("user"));
+    assert!(
+        first_content
+            .as_deref()
+            .is_some_and(|c| c.starts_with("[Webhook Alert]")),
+        "the injected message carries the [Webhook Alert] prefix: {first_content:?}"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// A below-threshold alert is still recorded in the active-alert registry —
+/// the registry sits ahead of the gate, so phases 02/03 see `info` heartbeats
+/// too. Reuses the discarded-alert setup: after the gate the snapshot names
+/// the alert.
+#[test]
+fn webhook_alert_below_threshold_is_recorded_active() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "QuietHeartbeat",
+                "severity": "info",
+                "instance": "web-04"
+            },
+            "annotations": {
+                "summary": "Recorded but not injected"
+            },
+            "fingerprint": "test-fp-quiet"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let config = daemoneye::config::Config::default();
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions,
+        cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let snapshot = daemoneye::webhook::active_alerts_snapshot();
+    let quiet = snapshot
+        .iter()
+        .find(|a| a.name == "QuietHeartbeat")
+        .unwrap_or_else(|| panic!("the info alert is recorded active: {snapshot:?}"));
+    assert_eq!(quiet.severity, "info");
+    assert_eq!(quiet.fingerprint, "test-fp-quiet");
+    assert_eq!(
+        quiet.first_seen_unix, quiet.last_seen_unix,
+        "a first fire sets both stamps to the same clock read"
+    );
+    assert!(
+        quiet.first_seen_unix > 0,
+        "the stamps are real unix seconds"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// An alert with no severity label is below threshold under the fail-closed
+/// gate (M37 phase 01): the alert reaches the event log and the registry and
+/// is discarded with `reason: below_threshold` — nothing is injected into
+/// chat history. Inverts the pre-phase test, which asserted the old
+/// fail-open behaviour.
+#[test]
+fn webhook_alert_no_severity_is_below_threshold() {
     use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
 
     daemoneye::ai::filter::init_masking(&[]);
@@ -834,11 +1081,18 @@ fn webhook_alert_no_severity_passes_gate() {
 
     let config = daemoneye::config::Config::default();
     let sessions = daemoneye::daemon::session::SessionStore::default();
+    // One entry in the store: `process_alert` must inject nothing into it.
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "no-sev-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("no-sev-sess"),
+        );
+    });
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
     let state = std::sync::Arc::new(WebhookState {
         config,
-        sessions,
+        sessions: sessions.clone(),
         cache,
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -852,15 +1106,30 @@ fn webhook_alert_no_severity_passes_gate() {
         .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
-    // The alert should NOT have been discarded — no webhook_discarded event
+    // Fail closed: the discarded event carries `reason: below_threshold`.
     let path = daemoneye::config::current_event_segment_path();
     let content = fs::read_to_string(&path).expect("read event segment");
-    for line in content.lines() {
-        let v: serde_json::Value = serde_json::from_str(line).expect("parse line");
-        if v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded") {
-            panic!("Alert with no severity was discarded; event: {:?}", v);
-        }
-    }
+    let discarded: Option<serde_json::Value> = content.lines().find_map(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        (v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded")).then_some(v)
+    });
+    let discarded = discarded.expect("an alert with no severity is discarded, not fired");
+    assert_eq!(discarded["reason"], "below_threshold");
+    assert_eq!(discarded["alert_name"], "NoSeverityAlert");
+    assert_eq!(discarded["severity"], "");
+
+    // And nothing reached the session's history: the store holds one entry
+    // (registered before process_alert) and it gained no message.
+    let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store
+            .get("no-sev-sess")
+            .map(|e| e.messages.len())
+            .unwrap_or(usize::MAX)
+    });
+    assert_eq!(
+        count, 0,
+        "a below-threshold alert injects nothing into history"
+    );
 
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -868,9 +1137,11 @@ fn webhook_alert_no_severity_passes_gate() {
     }
 }
 
-/// An alert with severity "banana" (unrankable) also passes the gate.
+/// An alert with severity "banana" (unrankable) is below threshold under the
+/// fail-closed gate (M37 phase 01), exactly like an absent severity. Inverts
+/// the pre-phase test, which asserted the old fail-open behaviour.
 #[test]
-fn webhook_alert_unrankable_severity_passes_gate() {
+fn webhook_alert_unrankable_severity_is_below_threshold() {
     use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
 
     daemoneye::ai::filter::init_masking(&[]);
@@ -905,11 +1176,18 @@ fn webhook_alert_unrankable_severity_passes_gate() {
 
     let config = daemoneye::config::Config::default();
     let sessions = daemoneye::daemon::session::SessionStore::default();
+    // One entry in the store: `process_alert` must inject nothing into it.
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "unrankable-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("unrankable-sess"),
+        );
+    });
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
     let state = std::sync::Arc::new(WebhookState {
         config,
-        sessions,
+        sessions: sessions.clone(),
         cache,
         schedule_store,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -923,17 +1201,29 @@ fn webhook_alert_unrankable_severity_passes_gate() {
         .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
+    // Fail closed: the discarded event carries `reason: below_threshold`.
     let path = daemoneye::config::current_event_segment_path();
     let content = fs::read_to_string(&path).expect("read event segment");
-    for line in content.lines() {
-        let v: serde_json::Value = serde_json::from_str(line).expect("parse line");
-        if v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded") {
-            panic!(
-                "Alert with unrankable severity was discarded; event: {:?}",
-                v
-            );
-        }
-    }
+    let discarded: Option<serde_json::Value> = content.lines().find_map(|line| {
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        (v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded")).then_some(v)
+    });
+    let discarded = discarded.expect("an unrankable severity is discarded, not fired");
+    assert_eq!(discarded["reason"], "below_threshold");
+    assert_eq!(discarded["alert_name"], "BananaAlert");
+    assert_eq!(discarded["severity"], "banana");
+
+    // And nothing reached the session's history.
+    let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store
+            .get("unrankable-sess")
+            .map(|e| e.messages.len())
+            .unwrap_or(usize::MAX)
+    });
+    assert_eq!(
+        count, 0,
+        "a below-threshold alert injects nothing into history"
+    );
 
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -1014,13 +1304,157 @@ fn webhook_alert_below_threshold_discarded() {
     // pid is stamped by log_event, not by the caller
     assert!(discarded.get("pid").is_some());
 
+    // A below-threshold alert is still recorded in the active-alert registry
+    // (M37 phase 01): the snapshot names it.
+    let snapshot = daemoneye::webhook::active_alerts_snapshot();
+    assert!(
+        snapshot
+            .iter()
+            .any(|a| a.name == "LowPriorityAlert" && a.severity == "info"),
+        "a below-threshold alert is recorded active: {snapshot:?}"
+    );
+
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
         None => unsafe { std::env::remove_var("HOME") },
     }
 }
 
-// ── G1 Named Agents ──────────────────────────────────────────────────────────
+// ── M37 phase 01: server-side alert surfaces ────────────────────────────────
+
+/// `Request::AlertList` is answered with `Response::AlertState` over the
+/// current snapshot: the handler is `handle_alert_list` in
+/// `src/daemon/server/handlers.rs`, dispatched beside `Request::ShellList` in
+/// `handle_client`.
+#[tokio::test]
+async fn alert_list_request_returns_the_snapshot() {
+    let _lock = daemoneye::test_home_guard();
+    daemoneye::config::Config::ensure_dirs().ok();
+
+    let mut tx: Vec<u8> = Vec::new();
+    daemoneye::daemon::handle_alert_list(&mut tx)
+        .await
+        .expect("the handler writes one line");
+    let text = String::from_utf8(tx).expect("the frame is UTF-8");
+    let resp: Response = serde_json::from_str(
+        text.lines()
+            .next()
+            .expect("the handler wrote one response line"),
+    )
+    .expect("the response line parses");
+    match resp {
+        Response::AlertState { alerts } => {
+            // The process-global registry may hold entries from a concurrent
+            // test; the pinned shape is that the frame parses and every row
+            // is well-formed. The attach test pins the non-empty shape.
+            for a in &alerts {
+                assert!(!a.name.is_empty(), "every badge names its alert: {a:?}");
+            }
+        }
+        other => panic!("expected AlertState, got {other:?}"),
+    }
+}
+
+/// On `ChatAttach` the daemon sends one `AlertState` frame between the reply
+/// and `Ok` when the registry is non-empty — and nothing extra when it is
+/// empty. Drives the real `handle_chat_attach` over a duplex, as the M27
+/// presence tests do.
+#[tokio::test]
+async fn presence_attach_sends_alert_state_when_alerts_are_active() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let _lock = daemoneye::test_home_guard();
+    daemoneye::config::Config::ensure_dirs().ok();
+
+    // Empty registry → the attach reply is `Ok` alone (no brief, no
+    // AlertState). Each attach uses its own session id so concurrent tests
+    // cannot share it.
+    let sessions = daemoneye::daemon::session::SessionStore::new();
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let (server_r, server_w) = tokio::io::split(server);
+    let task = tokio::spawn(async move {
+        let mut rx = tokio::io::BufReader::new(server_r);
+        let mut tx = server_w;
+        daemoneye::daemon::handle_chat_attach(
+            sessions,
+            "m37-attach-empty".to_string(),
+            &mut rx,
+            &mut tx,
+        )
+        .await
+    });
+    let (client_r, mut client_w) = tokio::io::split(client);
+    let mut rx = tokio::io::BufReader::new(client_r);
+    let mut line = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
+        .await
+        .expect("the attach reply within 5 s")
+        .expect("the handler is writing");
+    let empty_reply: Response =
+        serde_json::from_str(line.trim()).expect("the empty-registry reply parses");
+    assert!(
+        matches!(empty_reply, Response::Ok),
+        "an empty registry sends no AlertState frame: {empty_reply:?}"
+    );
+    client_w.shutdown().await.unwrap();
+    task.await.unwrap().unwrap();
+
+    // Non-empty registry: record one alert, attach again, expect
+    // AlertState then Ok.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    daemoneye::webhook::active_alerts_firing("m37-attach-fp", "AttachProbe", "critical", now);
+    let sessions = daemoneye::daemon::session::SessionStore::new();
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let (server_r, server_w) = tokio::io::split(server);
+    let task = tokio::spawn(async move {
+        let mut rx = tokio::io::BufReader::new(server_r);
+        let mut tx = server_w;
+        daemoneye::daemon::handle_chat_attach(
+            sessions,
+            "m37-attach-live".to_string(),
+            &mut rx,
+            &mut tx,
+        )
+        .await
+    });
+    let (client_r, mut client_w) = tokio::io::split(client);
+    let mut rx = tokio::io::BufReader::new(client_r);
+    let mut alerts_seen = None;
+    loop {
+        let mut line = String::new();
+        tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
+            .await
+            .expect("an attach frame within 5 s")
+            .expect("the handler is writing");
+        let resp: Response = serde_json::from_str(line.trim()).expect("every attach frame parses");
+        match resp {
+            Response::AlertState { alerts } => {
+                alerts_seen = Some(alerts);
+            }
+            Response::Ok => break,
+            other => panic!("unexpected attach frame: {other:?}"),
+        }
+    }
+    let alerts = alerts_seen.expect("a non-empty registry sends AlertState before Ok");
+    assert!(
+        alerts
+            .iter()
+            .any(|a| a.name == "AttachProbe" && a.severity == "critical"),
+        "the recorded alert is in the attach frame: {alerts:?}"
+    );
+    client_w.shutdown().await.unwrap();
+    task.await.unwrap().unwrap();
+
+    // The test recorded into the process-global registry; drop its probe so
+    // later tests see an empty registry.
+    assert!(
+        daemoneye::webhook::active_alerts_resolved("m37-attach-fp"),
+        "the probe entry is removed"
+    );
+}
 
 // ── G1 Named Agents ──────────────────────────────────────────────────────────
 

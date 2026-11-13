@@ -48,7 +48,7 @@ pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Opt
 /// write — unregisters the connection exactly once, and a last-close stamps
 /// detach state on the entry (if it exists) so a later re-attach can be
 /// briefed. The step's result is returned last.
-pub(crate) async fn handle_chat_attach<R, W>(
+pub async fn handle_chat_attach<R, W>(
     sessions: SessionStore,
     session_id: String,
     rx: &mut R,
@@ -87,15 +87,22 @@ where
         if let Some(brief) = attach_brief_for(&sessions, &session_id) {
             send_response_split(tx, Response::SystemMsg(brief)).await?;
         }
+        // M37 phase 01: a chat attaching while alerts are already firing
+        // learns about them once, in the attach reply. An empty registry
+        // sends nothing — the client's bar has no alerts to show.
+        let snapshot = crate::webhook::active_alerts_snapshot();
+        if !snapshot.is_empty() {
+            send_response_split(tx, Response::AlertState { alerts: snapshot }).await?;
+        }
         send_response_split(tx, Response::Ok).await?;
 
         // Hold the connection for the client's lifetime. Any bytes the client
         // sends are read and discarded — the channel carries daemon→client
         // traffic; the client talks over its other connections. Pushes queued
-        // by `presence_broadcast` are written ahead of the reads, with the
-        // read parked until one arrives so a quiet connection costs nothing.
-        // EOF, a read error, or a failed write (reply or push) all end the
-        // hold.
+        // by `presence_broadcast_frame` are written ahead of the reads, with
+        // the read parked until one arrives so a quiet connection costs
+        // nothing. EOF, a read error, or a failed write (reply or push) all
+        // end the hold.
         let mut discarded = String::new();
         loop {
             let line = tokio::select! {
@@ -107,10 +114,13 @@ where
                     }
                     None
                 }
-                Some(msg) = push_rx.recv() => Some(msg),
+                Some(frame) = push_rx.recv() => Some(frame),
             };
-            let Some(msg) = line else { continue };
-            send_response_split(tx, Response::SystemMsg(msg)).await?;
+            let Some(frame) = line else { continue };
+            // Written as it arrived: `presence_broadcast_frame` queued a
+            // serialised `Response`, and the hold loop does not re-wrap it.
+            tx.write_all(frame.as_bytes()).await?;
+            tx.write_all(b"\n").await?;
             discarded.clear();
         }
     };
@@ -150,7 +160,8 @@ mod tests {
     use super::*;
     use crate::ai::Message;
     use crate::daemon::session::{
-        SessionEntry, presence_broadcast, presence_broadcast_in, presence_count,
+        SessionEntry, presence_broadcast, presence_broadcast_frame_in, presence_broadcast_in,
+        presence_count,
     };
     use std::collections::HashMap;
     use std::collections::HashSet;
@@ -403,6 +414,49 @@ mod tests {
             start.elapsed()
         );
         assert_eq!(pushed, 0, "delivered to nobody");
+    }
+
+    /// `presence_broadcast_frame` reaches every connection in the map with the
+    /// serialised `Response` — one frame, delivered to each `push` channel.
+    #[tokio::test]
+    async fn presence_broadcast_frame_reaches_every_connection() {
+        let map: Mutex<HashMap<String, Vec<PresenceConnection>>> = Mutex::new(HashMap::new());
+        let (tx1, mut rx1) = tokio::sync::mpsc::unbounded_channel();
+        let (tx2, mut rx2) = tokio::sync::mpsc::unbounded_channel();
+        map.lock().unwrap().insert(
+            "frame-sess".to_string(),
+            vec![
+                PresenceConnection { push: tx1 },
+                PresenceConnection { push: tx2 },
+            ],
+        );
+
+        let frame = Response::AlertState {
+            alerts: vec![crate::ipc::AlertBadge {
+                fingerprint: "fp-frame".to_string(),
+                name: "DiskFull".to_string(),
+                severity: "warning".to_string(),
+                first_seen_unix: 1_000,
+                last_seen_unix: 2_000,
+            }],
+        };
+        let pushed = presence_broadcast_frame_in(&map, &frame);
+        assert_eq!(pushed, 2, "both connections got the frame");
+
+        let got1 = rx1.recv().await.expect("connection 1's push");
+        let got2 = rx2.recv().await.expect("connection 2's push");
+        for (which, got) in [("conn 1", got1), ("conn 2", got2)] {
+            let parsed: Response = serde_json::from_str(&got)
+                .unwrap_or_else(|e| panic!("{which} received a parseable frame: {e}"));
+            match parsed {
+                Response::AlertState { alerts } => {
+                    assert_eq!(alerts.len(), 1, "{which} carries one badge");
+                    assert_eq!(alerts[0].name, "DiskFull");
+                    assert_eq!(alerts[0].last_seen_unix, 2_000);
+                }
+                other => panic!("{which} received the AlertState frame, got {other:?}"),
+            }
+        }
     }
 
     #[tokio::test]

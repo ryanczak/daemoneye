@@ -125,9 +125,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     startup_config.sandbox.validate();
 
     startup_config.execution.validate();
-
-    // Warn about host entries that will not resolve; a typo'd host must not
-    // stop the daemon.
+    // Warn about an unrankable webhook severity_threshold (behaves as
+    // "warning", M37 phase 01) and any host that will not resolve.
+    startup_config.webhook.validate();
     for warn in startup_config.validate_hosts() {
         log::warn!("{warn}");
     }

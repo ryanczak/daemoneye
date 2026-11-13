@@ -208,7 +208,13 @@ prompt = "sre"
 # port = 9393
 # secret = ""            # Bearer token; empty = no auth (allowed loopback only)
 # auto_analyze = true
-# severity_threshold = "warning"   # "info" | "warning" | "critical"
+# severity_threshold = "warning"   # "info" | "warning" | "critical". Gates
+#                                  # AI analysis, `on_alert`, history injection
+#                                  # and the chat-pane notice. An alert whose
+#                                  # severity is not one of the three values
+#                                  # is treated as below threshold; an
+#                                  # unrankable threshold behaves as "warning"
+#                                  # (warned about at load).
 # dedup_window_secs = 300
 # bind_addr = "127.0.0.1"          # non-loopback + empty secret -> daemon refuses to start
 # (per-IP rate limit: 30 req per 60 s window, constants in src/webhook/server.rs)

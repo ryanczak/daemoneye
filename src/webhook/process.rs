@@ -3,17 +3,25 @@ use std::sync::Arc;
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
 use crate::daemon::session::{
-    SessionStore, append_session_message, presence_broadcast, presence_session_ids, with_sessions,
+    SessionStore, append_session_message, presence_broadcast, presence_broadcast_frame,
+    presence_session_ids, with_sessions,
 };
 use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
 
-use super::*;
+use super::{
+    active_alerts_firing, active_alerts_resolved, active_alerts_snapshot, parse::InternalAlert,
+    server::WebhookState,
+};
 
 // ---------------------------------------------------------------------------
 // Severity ranking
 // ---------------------------------------------------------------------------
 
-fn severity_rank(s: &str) -> Option<u8> {
+/// Rank a severity string: 3 = critical, 2 = warning/warn, 1 =
+/// info/informational, `None` for anything else (unrankable). `pub(crate)`
+/// so the active-alert registry (`active.rs`) sorts with the same table
+/// rather than a copy of it.
+pub(crate) fn severity_rank(s: &str) -> Option<u8> {
     match s.to_lowercase().as_str() {
         "critical" => Some(3),
         "warning" | "warn" => Some(2),
@@ -34,6 +42,62 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+/// `now_secs` for sibling modules (`active.rs`'s snapshot): the same clock,
+/// re-exported rather than duplicated.
+pub(crate) fn now_secs_pub() -> u64 {
+    now_secs()
+}
+
+/// The dedup half of `process_alert`'s step 1 (M37 phase 01 extraction, for
+/// the function-length cap): clamp the window to 1–86400 s, discard a
+/// fingerprint seen inside the window, and cap the map at 10,000 entries by
+/// evicting the oldest. Returns `true` when the alert is a duplicate (the
+/// caller returns immediately).
+fn is_duplicate(
+    alert: &InternalAlert,
+    dedup: &std::sync::Mutex<std::collections::HashMap<String, u64>>,
+    window_cfg: u64,
+) -> bool {
+    // Clamp the window to a safe range: 1 s minimum (0 would disable dedup
+    // entirely), 86400 s maximum (prevents unbounded HashMap growth from a
+    // misconfigured very-long window keeping entries alive indefinitely).
+    let window = window_cfg.clamp(1, 86400);
+    let mut dedup = dedup.lock().unwrap_or_log();
+    let now = now_secs();
+    if let Some(&last_seen) = dedup.get(&alert.fingerprint)
+        && now.saturating_sub(last_seen) < window
+    {
+        log::debug!(
+            "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
+            alert.alert_name,
+            crate::util::truncate_chars(&alert.fingerprint, 16)
+        );
+        crate::daemon::utils::log_event(
+            "webhook_discarded",
+            serde_json::json!({
+                "reason": "duplicate",
+                "alert_name": alert.alert_name,
+                "fingerprint": crate::util::truncate_chars(&alert.fingerprint, 16),
+            }),
+        );
+        return true;
+    }
+    // Cap the dedup map to 10,000 entries. When the cap is reached, evict
+    // the oldest entry (smallest timestamp) to prevent unbounded growth
+    // from alert storms with high fingerprint cardinality.
+    const DEDUP_MAP_CAP: usize = 10_000;
+    if dedup.len() >= DEDUP_MAP_CAP
+        && let Some(oldest_key) = dedup
+            .iter()
+            .min_by_key(|&(_, &ts)| ts)
+            .map(|(k, _)| k.clone())
+    {
+        dedup.remove(&oldest_key);
+    }
+    dedup.insert(alert.fingerprint.clone(), now);
+    false
+}
+
 pub async fn process_alert(
     alert: InternalAlert,
     state: Arc<WebhookState>,
@@ -41,45 +105,9 @@ pub async fn process_alert(
     crate::daemon::stats::record_webhook();
     let cfg = &state.config.webhook;
 
-    // 1. Deduplication check.
-    {
-        // Clamp the window to a safe range: 1 s minimum (0 would disable dedup
-        // entirely), 86400 s maximum (prevents unbounded HashMap growth from a
-        // misconfigured very-long window keeping entries alive indefinitely).
-        let window = cfg.dedup_window_secs.clamp(1, 86400);
-        let mut dedup = state.dedup.lock().unwrap_or_log();
-        let now = now_secs();
-        if let Some(&last_seen) = dedup.get(&alert.fingerprint)
-            && now.saturating_sub(last_seen) < window
-        {
-            log::debug!(
-                "Webhook: suppressed duplicate alert '{}' (fingerprint: {})",
-                alert.alert_name,
-                crate::util::truncate_chars(&alert.fingerprint, 16)
-            );
-            crate::daemon::utils::log_event(
-                "webhook_discarded",
-                serde_json::json!({
-                    "reason": "duplicate",
-                    "alert_name": alert.alert_name,
-                    "fingerprint": crate::util::truncate_chars(&alert.fingerprint, 16),
-                }),
-            );
-            return None;
-        }
-        // Cap the dedup map to 10,000 entries. When the cap is reached, evict
-        // the oldest entry (smallest timestamp) to prevent unbounded growth
-        // from alert storms with high fingerprint cardinality.
-        const DEDUP_MAP_CAP: usize = 10_000;
-        if dedup.len() >= DEDUP_MAP_CAP
-            && let Some(oldest_key) = dedup
-                .iter()
-                .min_by_key(|&(_, &ts)| ts)
-                .map(|(k, _)| k.clone())
-        {
-            dedup.remove(&oldest_key);
-        }
-        dedup.insert(alert.fingerprint.clone(), now);
+    // 1. Deduplication check: a duplicate is discarded here.
+    if is_duplicate(&alert, &state.dedup, cfg.dedup_window_secs) {
+        return None;
     }
 
     // 2. Mask sensitive data in summary + description.
@@ -128,41 +156,39 @@ pub async fn process_alert(
         alert.source
     );
 
-    // 5. Inject into all active AI sessions (disk + in-memory).
-    let alert_msg = Message {
-        role: "user".to_string(),
-        content: format!("[Webhook Alert]\n{}", formatted),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    };
-    inject_into_sessions(&state.sessions, &alert_msg);
-
-    // 6. Notify chat panes via tmux display-message.
-    let first_line = formatted.lines().next().unwrap_or(&formatted).to_string();
-    let s = state.sessions.clone();
-    let line = first_line.clone();
-    let _ = crate::process::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
-        .await;
-
-    // 7. Severity gate: fire notification + optionally trigger AI analysis.
-    let threshold_rank = severity_rank(&cfg.severity_threshold);
+    // 5. Severity gate — before any injection or notice, so a below-threshold
+    //    alert never reaches chat history or the chat pane (M37 phase 01, the
+    //    issue-#3 fix). Fails closed on the alert's side: a severity
+    //    `severity_rank` cannot rank is below threshold. An unrankable
+    //    configured threshold behaves as `warning` (warned about at load).
+    let threshold_rank = severity_rank(&cfg.severity_threshold).unwrap_or(2);
     let alert_rank = severity_rank(&alert.severity);
-
-    let should_fire = match (alert_rank, threshold_rank) {
-        (None, _) => true, // unrankable severity → fail open
-        (_, None) => true, // unrankable threshold → fail open
-        (Some(a), Some(t)) => a >= t,
+    let should_fire = match alert_rank {
+        None => false,
+        Some(a) => a >= threshold_rank,
     };
 
-    if should_fire {
-        fire_notification(&alert.alert_name, &formatted, &state.config);
+    // 6. Record the alert in the active-alert registry, firing or resolved,
+    //    before the gate — a below-threshold alert is still active. When the
+    //    record changed the registry, broadcast the new snapshot to every
+    //    attached chat over the presence connection.
+    let record_changed = match alert.status {
+        crate::webhook::parse::AlertStatus::Firing => active_alerts_firing(
+            &alert.fingerprint,
+            &alert.alert_name,
+            &alert.severity,
+            now_secs(),
+        ),
+        crate::webhook::parse::AlertStatus::Resolved => active_alerts_resolved(&alert.fingerprint),
+    };
+    if record_changed {
+        let frame = crate::ipc::Response::AlertState {
+            alerts: active_alerts_snapshot(),
+        };
+        presence_broadcast_frame(&frame);
+    }
 
-        if cfg.auto_analyze {
-            return maybe_analyze_alert(&alert, &formatted, &state).await;
-        }
-        return None;
-    } else {
+    if !should_fire {
         log::warn!(
             "Webhook: alert '{}' discarded — severity '{}' below threshold '{}'",
             alert.alert_name,
@@ -178,6 +204,31 @@ pub async fn process_alert(
                 "threshold": cfg.severity_threshold,
             }),
         );
+        return None;
+    }
+
+    // 7. Inject into all active AI sessions (disk + in-memory).
+    let alert_msg = Message {
+        role: "user".to_string(),
+        content: format!("[Webhook Alert]\n{}", formatted),
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    };
+    inject_into_sessions(&state.sessions, &alert_msg);
+
+    // 8. Notify chat panes via tmux display-message.
+    let first_line = formatted.lines().next().unwrap_or(&formatted).to_string();
+    let s = state.sessions.clone();
+    let line = first_line.clone();
+    let _ = crate::process::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
+        .await;
+
+    // 9. Fire notification + optionally trigger AI analysis.
+    fire_notification(&alert.alert_name, &formatted, &state.config);
+
+    if cfg.auto_analyze {
+        return maybe_analyze_alert(&alert, &formatted, &state).await;
     }
     None
 }

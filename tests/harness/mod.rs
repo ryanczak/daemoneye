@@ -139,6 +139,9 @@ cache_write_cost_per_mtok = 3.75
 enabled = true
 port = {}
 bind_addr = "127.0.0.1"
+# The fail-closed severity gate (M37 phase 01) discards an alert whose
+# severity it cannot rank; the daemon-level tests post rankable payloads.
+severity_threshold = "info"
 "#,
             self.stub_base_url(),
             self.webhook_port

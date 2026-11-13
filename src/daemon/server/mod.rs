@@ -9,10 +9,11 @@ mod handlers;
 mod sessions;
 mod shells;
 
-// Re-exported for the webhook side's presence-push test (M27 phase 03b): the
-// test drives the real attach path over a duplex, not a fake.
-#[cfg(test)]
-pub(crate) use chat_presence::handle_chat_attach;
+// Re-exported for the webhook side's presence-push test (M27 phase 03b) and
+// the integration tests: they drive the real attach path over a duplex, not
+// a fake.
+pub use chat_presence::handle_chat_attach;
+pub use handlers::handle_alert_list;
 
 use ask::handle_ask;
 use handlers::*;
@@ -173,6 +174,7 @@ pub async fn handle_client(
         Request::Ping => {
             handle_ping(&mut tx).await?;
         }
+        Request::AlertList => handle_alert_list(&mut tx).await?,
         Request::ShellList => {
             shells::handle_shell_list(&mut tx, crate::shell::registry()).await?;
         }
@@ -302,8 +304,7 @@ pub async fn handle_client(
         }
 
         Request::ChatAttach { session_id } => {
-            chat_presence::handle_chat_attach(sessions.clone(), session_id, &mut rx, &mut tx)
-                .await?;
+            handle_chat_attach(sessions.clone(), session_id, &mut rx, &mut tx).await?;
             return Ok(());
         }
         Request::Ask {

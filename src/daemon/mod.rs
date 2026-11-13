@@ -111,6 +111,8 @@ pub fn is_targetable_pane(window_name: &str, pane_id: &str, chat_pane: Option<&s
 }
 
 pub use scheduled::run_scheduled_job;
+pub use server::handle_alert_list;
+pub use server::handle_chat_attach;
 pub use server::*;
 
 pub use session::*;

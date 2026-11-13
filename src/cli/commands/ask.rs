@@ -78,8 +78,7 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
 /// and auto-denies any tool calls or interactive prompts. No spinner, no decorations.
 /// Intended for scripting and piping.
 async fn run_ask_raw(query: String) -> Result<()> {
-    use std::io::Write;
-    use std::time::Duration;
+    use std::{io::Write as _, time::Duration};
 
     let tmux_session = crate::tmux::current_session_name();
     let tmux_pane = std::env::var("TMUX_PANE").ok();
@@ -218,6 +217,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::UsageUpdate { .. }
             | Response::SystemMsg(_)
             | Response::ToolResult { .. }
+            | Response::AlertState { .. }
             | Response::ScheduleList { .. }
             | Response::ScriptList { .. }
             | Response::RunbookList { .. }
