@@ -1,7 +1,7 @@
 # Bug 1 on phase-21e: the exited filter leaks into the prompt's shells block and `find_in_shells`, and `top`'s test re-implements the filter
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-21e rework, 2026-11-12)
 **Filed:** 2026-11-12
 
 ## What's wrong

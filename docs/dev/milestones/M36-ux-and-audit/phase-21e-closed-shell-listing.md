@@ -1,7 +1,7 @@
 # Phase 21e — closed-shell-listing
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-12
 **Depends on:** phase 21d (the 60 s grace)
 **Estimated diff:** ~150 lines, most of it tests
@@ -672,3 +672,28 @@ kill: (-2105900): No such process
 **Commit:** 97d28e71b2ed6bc17804c9b7bd5f4a6605eb2b09
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-12
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-21e-1](bugs/bug-21e-1.md): the exited filter sat in
+  `resolve_scope`, and `top`'s test copied the predicate)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local (first run 450 turns, the
+  rework short)
+- **Re-check:** gates green (`passed=2894 failed=0`, `build_warnings=0`,
+  clippy and fmt clean), `scope_filter=0`, `prod_panel_rows=1`. In
+  `.rexymcp/output/mutation-21e.log`, `shells_panel_omits_exited_rows` and
+  `shell_context_still_lists_exited_shells` each fail against their
+  mutation.
+- **Scope deviations:**
+  - The lingering-close sentence went back to "Sent TERM to shell …",
+    consistent with `close_shell_ends_the_callers_shell`.
+  - `defs.rs`'s `list_shells` description changed, because the doc-truth
+    gate ties it to the CLAUDE.md row.
+  - Nit, not bounced: the new `shell_context_still_lists_exited_shells` was
+    inserted under `list_shells_omits_exited_shells`'s doc comment, so that
+    test lost its comment and the new one carries both.
+- **Calibration:** "a test drives the production seam, never a copy"
+  recurred for the third time (21c, 21d, 21e). It is a fold candidate for
+  the milestone close.
+
