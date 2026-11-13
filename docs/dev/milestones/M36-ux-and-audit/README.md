@@ -398,7 +398,7 @@ not exercised live, which are covered by tests. The real `config.toml` is
 byte-identical afterwards, and no pane on the PE's tmux has
 `allow-passthrough` set.
 
-### Fold proposals (awaiting PE sign-off; nothing applied)
+### Fold proposals (PE signed off 2026-11-12: 1 and 2 folded, 3 held)
 
 1. **Anti-read-loop recipe** in WORKFLOW.md's phase-doc template. Five
    occurrences: 16, 18, 21a, 21b, 21c. A "Notes for executor" block with a

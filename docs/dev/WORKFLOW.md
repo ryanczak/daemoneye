@@ -2129,3 +2129,22 @@ patch turns the read phase into a write phase before the stall threshold.
 in M27 (phases 02, 04, 03b) preceded it. Phases written in this form after
 them (07a, 07b, 07d) landed first try, and 07e's one bounce was an
 architect spec error, not a stall.)*
+
+**Single-site phases and first dispatches too.** The read loop is not only a
+multi-site problem. Every first dispatch carries a **Notes for executor**
+block with:
+- a **symbol map**: every file and symbol the phase touches, stated to
+  exist today, so the executor greps nothing it was not given;
+- an **edit order** whose step 1 is a write and whose every step ends at a
+  green build;
+- the line "**your first edit lands within your first 15 turns**".
+
+The governor cannot see this loop. When the executor reads through `bash`
+(`grep`, `sed -n`, `git show`) instead of the read tools, the stall counter
+resets on nothing and the run burns its whole budget. 165, 446, 500 and
+1000 turns with zero files changed were all seen.
+
+*(Folded 2026-11-12 at the M36 close, on PE sign-off. Five read-loop
+budget burns in M36 (16, 18, 21a, 21b, 21c) preceded it. Every phase that
+carried the block (21b and 21c re-dispatched, 21d's bounce, 21e) made its
+first edit early.)*

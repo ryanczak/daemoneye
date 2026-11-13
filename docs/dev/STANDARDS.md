@@ -35,6 +35,12 @@ the phase's Update Log — never silently mark a phase done.
       a unit-test fake — and the actual output is quoted in the completion
       Update Log entry under "End-to-end verification." A green `cargo test`
       run that exercises a temp-directory-scoped fake is **not** by itself sufficient.
+- [ ] Every new test **calls the function production calls**. A test that
+      drives a `#[cfg(test)]` or test-module copy of production logic (a
+      duplicated predicate, a re-implemented opener, a private buffer standing
+      in for the real writer) is a fake test and fails this box, even when it
+      passes. If production code is hard to reach from a test, add a seam that
+      production also goes through. Don't copy the logic.
 - [ ] Every end-to-end transcript is **captured mechanically** — redirect the
       command's output to a file and paste that file's contents. A transcript
       that is retyped, paraphrased, summarised into prose, or assembled from more
@@ -172,6 +178,11 @@ comments above every function. Doc comments on public APIs are fine.
 - Tests are **deterministic**: no `sleep`, no real wall-clock time (inject a clock),
   no unseeded RNG. If a test can't be made deterministic, mark it as ignored
   and explain why in a comment on the test.
+- **A test calls the code it pins.** The seam a test drives is the one
+  production goes through: the same function, writer, or opener. A copy of
+  production logic in a test module is a fake test, because deleting the
+  production line leaves it green. Check by mutation: break the production
+  line and the test must fail.
 - **Inject subprocess / external-IO dependencies behind a trait seam.** Anything
   that would shell out or touch a real external process (a compiler/verifier, the
   final command set, the AI backend) goes behind an interface with a production impl and
