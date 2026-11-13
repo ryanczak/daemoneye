@@ -7,17 +7,11 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 21e — closed-shell-listing
-([`phase-21e-closed-shell-listing.md`](milestones/M36-ux-and-audit/phase-21e-closed-shell-listing.md)),
-drafted 2026-11-12. A shell closed by the detach grace or `close_shell`
-stayed listed as live until the hourly reap. The PE chose stamp + hide.
-Phases 01–21d are `done`. The retrospective and the post-21d re-check are
-written in the README. The close waits on 21e and a final live check of
-`list_shells` after a chat exits. Thirty phases are in the README's table:
-04 was split into 04a/04b and 21 added on 2026-11-03, 05 into 05a/05b on
-2026-11-04, 17 into 17a/17b/17c on 2026-11-07, 20 into 20a/20b on
-2026-11-08, 21 into 21a/21b/21c on 2026-11-09, and 21d and 21e were added
-at the close on 2026-11-12.
+**Active phase:** none. M36 is at its boundary. All 30 phases are
+`done` (21d and 21e were added at the close on 2026-11-12), and the final
+live check passed. The retrospective and two fold proposals are in the
+README. Next: PE sign-off, then the 2.8.0 release per REXYMCP.md §
+Versioning.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

@@ -5,7 +5,7 @@
 land, and every `critical` and `major` row of the 2026-11-01 codebase audit
 ([`FINDINGS.md`](FINDINGS.md)) is fixed with a test or closed with a reason.
 
-**Status:** in-progress
+**Status:** closing — all phases done, live check passed; awaiting PE sign-off and the 2.8.0 release
 
 **Release:** 2.8.0
 
@@ -219,7 +219,8 @@ config so the shell-state surfaces it extends have settled.
 
 ## Retrospective — 2026-11-12
 
-**Outcome:** all 28 planned phases are `done`. The audit ledger has no
+**Outcome:** all 30 phases are `done`: the 28 planned, plus 21d and 21e,
+which were added at the close. The audit ledger has no
 `critical` or `major` row left at `act:`: all 20 now read `fixed: M36
 phase-NN, <test>`. The live check passed most exit criteria but **failed
 three**, listed below. The PE chose a fix phase, 21d, over accepting them
@@ -256,8 +257,10 @@ third only half fixed, hence 21e (see "Re-check after 21d" below).
 | 21a program-status-host | escalated | |
 | 21b program-status-surfaces | approved_after_1 | 1000-turn read loop, then a symbol-map re-dispatch |
 | 21c program-status-emit | approved_after_1 | 446-turn read loop, then a symbol-map re-dispatch |
+| 21d live-check-fixes | approved_after_1 | added at the close: CR paste, 60 s grace, attach write half |
+| 21e closed-shell-listing | approved_after_1 | added at the close: stamp + hide (PE) |
 
-Totals: 8 first try, 15 after one bounce, 1 after two, 4 escalated.
+Totals over 30 phases: 8 first try, 17 after one bounce, 1 after two, 4 escalated.
 
 **Behaviour shipped:**
 - The input box, `/approvals` categories, the status bar, and `top` attach.
@@ -379,4 +382,38 @@ Lesson: a phase that fixes an exit criterion is checked against the
 criterion's own words (`gone from list_shells`), not against the defect
 first observed (`the grace is 300 s`). Second occurrence, after 17a's test
 checked the host and not the listing.
+
+### Final live check (2026-11-12, after 21e)
+
+Same harness (`/tmp/de36-live3`), defaults. A chat ran `echo FINALMARK` in
+`s0`, then `/exit`:
+- At 30 s and 58 s, `top` still listed `s0`. That is inside the grace.
+- At 60 s the daemon logged `closed shells ["s0"]`.
+- At 66 s, `top` showed `none`.
+- `list_shells` (scope `all`) from a new chat answered "No shells to show".
+- `read_shell s0` still returned `FINALMARK`.
+
+Every exit criterion now passes live, except the three listed earlier as
+not exercised live, which are covered by tests. The real `config.toml` is
+byte-identical afterwards, and no pane on the PE's tmux has
+`allow-passthrough` set.
+
+### Fold proposals (awaiting PE sign-off; nothing applied)
+
+1. **Anti-read-loop recipe** in WORKFLOW.md's phase-doc template. Five
+   occurrences: 16, 18, 21a, 21b, 21c. A "Notes for executor" block with a
+   symbol map (every symbol the phase touches, stated to exist), an edit
+   order whose step 1 is a write and each step ends at a green build, and
+   "first edit within 15 turns". Every phase that carried it this milestone
+   (21b, 21c re-dispatch, 21d bounce, 21e) made edits early.
+2. **Tests drive the production seam, never a copy.** Three occurrences:
+   - 21c: an emitter tested through its private buffer.
+   - 21d: a `#[cfg(test)]` opener.
+   - 21e: a test-module copy of the panel predicate.
+   Proposed: a STANDARDS.md § tests line, "a test calls the function
+   production calls; a test-only copy of production logic is a fake test",
+   and a matching review-checklist item.
+3. *(Held: two occurrences, a trend.)* Check a fix against the exit
+   criterion's own words, not the defect first observed. Seen in 17a and
+   21d.
 
