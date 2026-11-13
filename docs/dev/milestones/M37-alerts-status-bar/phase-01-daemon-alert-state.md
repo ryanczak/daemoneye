@@ -1,7 +1,7 @@
 # Phase 01 — daemon-alert-state
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-12
 **Depends on:** none
 **Estimated diff:** ~400 lines, about half of it tests
@@ -338,3 +338,156 @@ passed=2910 failed=0
 The allowlist row for `tests/integration.rs` moved to 2316 to follow the
 cleanup helper's lines. fmt, build (0 warnings), clippy `-D warnings` and
 `cargo test` all green after the fix.
+
+### Update — 2026-11-13 08:25 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 01 is complete. The severity gate now runs before history injection and the chat-pane notice in `process_alert`, failing closed on the alert's side (an unrankable severity is below threshold) with an unrankable configured threshold behaving as `warning` and warned about by the new `WebhookConfig::validate` at load. `src/webhook/active.rs` adds the process-global active-alert registry (`_in` seams over an explicit map, 6 h TTL constant, worst-then-newest snapshots reusing `process.rs`'s `severity_rank` — no copy), and `process_alert` records every dedup-surviving alert ahead of the gate, broadcasting an `AlertState` frame when the record changes. On the wire: `AlertBadge`, `Response::AlertState`, `Request::AlertList` (answered beside `ShellList`), `PresenceConnection.push` now carries a serialized `Response` with `presence_broadcast_frame`/`_in` added while `presence_broadcast(&str)` keeps its signature as a `SystemMsg` wrapper, the hold loop writes pushed frames as-is, and `ChatAttach` sends one `AlertState` only when the registry is non-empty. The client's parked presence task is untouched, per the spec.
+
+**Notes for review:**
+- The gate check caught one real defect after my first completion signal: the webhook integration tests leaked their registry entries into the process-global registry, so the attach test's empty-registry half saw `BananaAlert` from a concurrent test. Fixed with a `discard_test_alert` helper (an `active_alerts_resolved` call — the production seam) in all four recording tests; five consecutive green `cargo test --test integration` runs are pasted in the Update Log.
+- Adaptations worth knowing: `tests/isolation.rs`'s two ghost-pipeline tests pinned `severity_threshold = "info"` and a rankable `"info"` severity in their payloads (they exercise the analysis/ghost path, not the gate — under fail-closed they would otherwise be discarded), and `tests/harness/mod.rs`'s daemon-level test config sets `severity_threshold = "info"` for the same reason. The `webhook_alert_no_severity_passes_gate`/`unrankable_..._passes_gate` inversions, the red run on today's tree, and the gate-order mutation (injection moved above `should_fire` → test red → reverted) are all captured in the end-to-end Update Log entry. Hygiene caps held by extracting `is_duplicate` from `process_alert` (134 lines) and shaving one line each in `run_ask_raw`/`ask_with_session_ratatui`/`handle_client`; `tests/integration.rs` is allowlisted at 2316 with a comment saying phase-02a should shrink it.
+- E2E verification: all phase-doc commands green — `gate_first=1`, `build_warnings=0`, full suite `passed=2910 failed=0`; preservation test `webhook_alert_below_threshold_discarded` passes and both count greps (`passes_gate`, `fn severity_rank` in `active.rs`) print 0. Three commits: the fix (`64e8c791`), the test-leak fix (`ae0cab9a`), and the evidence/docs entries (`c3922636`, `fcacba07`); the working tree is clean and the phase doc remains `in-progress` for the server's completion tail.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+est g3_tool_policy_allow_merged_and_enforced ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test minimal_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (2425317): No such process
+kill: (-2425998): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +6 -3
+- `assets/etc/config.toml` — +7 -1
+- `assets/memory/knowledge/config-reference.md` — +1 -1
+- `docs/dev/milestones/M37-alerts-status-bar/README.md` — +1 -1
+- `docs/dev/milestones/M37-alerts-status-bar/phase-01-daemon-alert-state.md` — +140 -1
+- `src/cli/commands/ask.rs` — +2 -2
+- `src/cli/commands/stream_ask.rs` — +6 -7
+- `src/config/tests.rs` — +66 -0
+- `src/config/types.rs` — +30 -0
+- `src/daemon/mod.rs` — +2 -0
+- `src/daemon/server/chat_presence.rs` — +63 -9
+- `src/daemon/server/handlers.rs` — +17 -0
+- `src/daemon/server/mod.rs` — +7 -6
+- `src/daemon/session.rs` — +35 -2
+- `src/daemon/startup.rs` — +3 -3
+- `src/ipc.rs` — +61 -0
+- `src/ipc_types.rs` — +15 -0
+- `src/webhook/active.rs` — +266 -0
+- `src/webhook/mod.rs` — +5 -0
+- `src/webhook/process.rs` — +124 -73
+- `tests/harness/mod.rs` — +3 -0
+- `tests/hygiene_allowlist.txt` — +3 -0
+- `tests/integration.rs` — +477 -24
+- `tests/isolation.rs` — +16 -5
+
+**Commit:** fcacba07ce098ecf3cb5306c7d6b0c8b8211931d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
