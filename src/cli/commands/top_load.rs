@@ -122,14 +122,18 @@ pub fn disk_panels(config_cap: f64) -> DiskPanels {
 /// shell. The daemon's own `/shells` still shows them.
 pub async fn shells_panel() -> ShellsPanel {
     match super::ipc_client::request_once(crate::ipc::Request::ShellList).await {
-        Ok(crate::ipc::Response::ShellList { shells }) => ShellsPanel::Rows(
-            shells
-                .into_iter()
-                .filter(|shell| shell.exited_unix.is_none())
-                .collect(),
-        ),
+        Ok(crate::ipc::Response::ShellList { shells }) => ShellsPanel::Rows(panel_rows(shells)),
         _ => ShellsPanel::DaemonDown,
     }
+}
+
+/// The panel-row filter, the predicate the match arm above applies. A
+/// separate function so tests drive the production one rather than a copy.
+pub(crate) fn panel_rows(shells: Vec<crate::ipc::ShellInfo>) -> Vec<crate::ipc::ShellInfo> {
+    shells
+        .into_iter()
+        .filter(|shell| shell.exited_unix.is_none())
+        .collect()
 }
 
 /// Ask the daemon for the header facts: pid, uptime, provider and model. One
@@ -257,15 +261,9 @@ mod tests {
         }
     }
 
-    /// The panel-row filter, lifted from `shells_panel`'s match arm: the
-    /// same predicate over the daemon's rows, without the IPC client in
-    /// the way. The production call site is that one `.filter`.
-    fn panel_rows(shells: Vec<ShellInfo>) -> Vec<ShellInfo> {
-        shells
-            .into_iter()
-            .filter(|shell| shell.exited_unix.is_none())
-            .collect()
-    }
+    /// The panel-row filter under test is the production `panel_rows`
+    /// (brought in by `use super::*`), not a copy: a copy would pass while
+    /// the production arm drifted.
 
     #[test]
     fn shells_panel_omits_exited_rows() {

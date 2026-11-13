@@ -651,6 +651,32 @@ async fn list_shells_empty_registry_says_so() {
 /// `all` — an observed close stamps it, and the reaper's own stamps hide the
 /// same way. The formatter's `[exited]` rendering is untouched; this is the
 /// row collection's filter.
+/// M36 phase-21e (bug-21e-1): the prompt's ambient `[SHELLS]` block still
+/// lists exited shells — Behaviour 6 keeps it unchanged, so the exited filter
+/// must live in `list_shells`, not in the `resolve_scope` the block drives.
+#[tokio::test]
+async fn shell_context_still_lists_exited_shells() {
+    let reg = ShellRegistry::default();
+    insert(&reg, 1, Owner::Chat("a".into()), NOW - 100);
+    insert(&reg, 2, Owner::Chat("a".into()), NOW - 100);
+    with_shells(&reg, |store| {
+        store.get_mut("s2").unwrap().exited_unix = Some(NOW - 5);
+    });
+    let block = shell_context_block_in(&reg, &Owner::Chat("a".into()), NOW);
+    assert!(
+        block.contains("s1"),
+        "the live shell stays in the ambient block: {block}"
+    );
+    assert!(
+        block.contains("s2"),
+        "an exited shell stays in the ambient block, with [exited]: {block}"
+    );
+    assert!(
+        block.contains("[exited]"),
+        "the block's formatter still marks the exited shell: {block}"
+    );
+}
+
 #[tokio::test]
 async fn list_shells_omits_exited_shells() {
     let reg = ShellRegistry::default();

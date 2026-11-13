@@ -105,6 +105,13 @@ pub(super) async fn list_shells_in(
         Ok(rows) => rows,
         Err(msg) => return msg,
     };
+    // On the rows, not inside `resolve_scope`: the prompt's `[SHELLS]` block
+    // and `find_in_shells` drive the same `resolve_scope` and must still see
+    // exited records (Behaviour 6).
+    let rows = rows
+        .into_iter()
+        .filter(|row| row.exited_unix.is_none())
+        .collect::<Vec<_>>();
     format_shell_rows(&rows, scope, now_unix)
 }
 
@@ -121,20 +128,19 @@ fn resolve_scope(
 ) -> Result<Vec<ShellRow>, String> {
     let key = caller.key();
     match scope {
+        // The exited filter is NOT here (M36 phase-21e bug-21e-1):
+        // `shell_context_block_in` and `find_in_shells` share this match and
+        // must still see exited records; only `list_shells` hides them, on
+        // the rows it gets back.
         None | Some("mine") => Ok(with_shells(reg, |store| {
             store
                 .values()
                 .filter(|record| record.owner.key() == key || matches!(record.owner, Owner::User))
-                .filter(|record| record.exited_unix.is_none())
                 .map(collect_row)
                 .collect::<Vec<_>>()
         })),
         Some("all") => Ok(with_shells(reg, |store| {
-            store
-                .values()
-                .filter(|record| record.exited_unix.is_none())
-                .map(collect_row)
-                .collect::<Vec<_>>()
+            store.values().map(collect_row).collect::<Vec<_>>()
         })),
         Some(other) => Err(format!(
             "Error: unknown {tool} scope {other:?}. Accepted values: \
