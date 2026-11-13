@@ -203,3 +203,80 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ### Update — 2026-11-12 21:38 (progress)
 
 Started phase 01. Wrote `src/webhook/active.rs` with its five unit tests and registered it in `src/webhook/mod.rs` — the registry module is the phase's first write, per the edit order. Next: `AlertBadge`/`AlertState`/`AlertList` on the wire.
+
+### Update — 2026-11-13 00:02 (end-to-end verification)
+
+All commands run mechanically, output redirected to files and pasted below.
+
+**Red run on today's tree (before the fix), pasted from the capture:**
+
+```
+test webhook_alert_unrankable_severity_passes_gate ... FAILED
+test webhook_alert_no_severity_passes_gate ... FAILED
+test webhook_alert_to_event_log ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 30 filtered out; finished in 0.05s
+```
+
+(The two renamed tests fail on today's tree because the old fail-open gate
+fired the alerts the new tests assert are discarded; the red detail line:
+`Alert with no severity was discarded; event: … "reason": "below_threshold" …`.)
+
+**Mutation check (gate-order), pasted:** with the injection moved back above
+`should_fire`, `webhook_alert_below_threshold_is_not_injected` fails —
+
+```
+test webhook_alert_below_threshold_is_not_injected ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.03s
+```
+
+asserting `left: 1, right: 0` ("an info alert under threshold warning must
+not enter chat history"). Reverted; the same test is green again (below).
+
+**The phase-doc E2E block:**
+
+```
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.07s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2818 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2821 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2822 filtered out; finished in 0.00s
+gate_first=1
+build_warnings=0
+passed=2910 failed=0
+```
+
+(Line order: `cargo test --test integration webhook_alert`; `--lib
+active_alerts`; `--lib alert_state`; `--lib alert_list`; the gate_first awk
+over `process_alert`; the build-warning count after `touch src/main.rs`;
+the full `cargo test` tally.)
+
+**Preservation and count criteria, pasted:**
+
+```
+test webhook_alert_below_threshold_discarded ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.03s
+```
+
+- `grep -c 'passes_gate' tests/integration.rs` → `0` (exit 1, no matches —
+  today's tree had 2).
+- `grep -c 'fn severity_rank' src/webhook/active.rs` → `0` (exit 1, no
+  matches — one ranking function, in `process.rs`, `pub(crate)`, called from
+  `active.rs` as the spec requires).
+
+**Config-warning test, pasted:**
+
+```
+test config::tests::webhook_unrankable_threshold_warns_and_acts_as_warning ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2822 filtered out; finished in 0.00s
+```
+
+**Server tests, pasted:**
+
+```
+test daemon::server::chat_presence::tests::presence_broadcast_frame_reaches_every_connection ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2822 filtered out; finished in 0.00s
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.01s
+test alert_list_request_returns_the_snapshot ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.01s
+```
