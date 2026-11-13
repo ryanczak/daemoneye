@@ -48,9 +48,12 @@ until phase 02b feeds them, and hidden because they are zero.
      the turn started.
    - **alerts:** hidden when none are firing. Otherwise the glyph of the
      worst severity and the count of all firing; when room, the name and
-     age (`3m`, `2h`) of the newest alert of that severity. For 10 s after
-     a resolve removes the last alert of a fingerprint, the slot shows the
-     resolved glyph and that name instead.
+     age (`3m`, `2h`) of the newest alert of that severity. The worst
+     severity comes from `crate::webhook::active_severity_rank` (0 for an
+     unrankable severity); do not write a second ranking. For 10 s after an
+     `AlertState` frame drops a fingerprint the previous frame held, the
+     slot shows the resolved glyph and that alert's name instead (the model
+     diffs the two snapshots by `AlertBadge.fingerprint`).
    - **context:** the fill glyph for `prompt_tokens / context_window`
      (five steps: < 20 %, < 45 %, < 70 %, < 90 %, ≥ 90 %), then the
      percentage; amber ≥ 75 %, red ≥ 90 %. When room, the growth glyph and
@@ -124,7 +127,9 @@ until phase 02b feeds them, and hidden because they are zero.
   copies); `src/config/handle.rs`: `RESTART_ONLY_SECTIONS` and the reload
   report.
 - `src/cli/doctor.rs`: `run_doctor`.
-- `src/ipc_types.rs`: `AlertBadge` (from phase 01).
+- `src/ipc_types.rs`: `AlertBadge` (`fingerprint`, `name`, `severity`,
+  `first_seen_unix`, `last_seen_unix`).
+- `src/webhook/active.rs`: `active_severity_rank`.
 
 **Edit order.** Each step ends at a green `cargo build`:
 1. Write `src/cli/status_bar.rs`: `GlyphSet` and the three constants,
@@ -151,7 +156,8 @@ In `src/cli/status_bar.rs` (or a sibling `status_bar_tests.rs`), all pure:
   three dialects, a full model: measured width ≤ pane width)
 - `status_line_hides_zero_counters_and_shows_nonzero_ones`
 - `status_line_leads_with_the_worst_alert_and_counts_all`
-- `status_line_shows_the_resolve_flash_for_ten_seconds`
+- `status_line_shows_the_resolve_flash_for_ten_seconds` (two snapshots in,
+  the second missing a fingerprint; flash at +9 s, gone at +11 s)
 - `status_line_drops_tier_three_before_tier_two_before_the_hint`
 - `status_line_context_fill_steps_and_budget_colours`
 - `status_line_working_state_shows_elapsed_seconds`
