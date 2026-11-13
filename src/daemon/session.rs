@@ -232,10 +232,10 @@ pub fn presence_live(session_id: &str) -> bool {
     presence_count(session_id) > 0
 }
 
-/// Push `msg` to every connection in an explicit presence registry — the seam
-/// tests drive with a fresh map, since `CHAT_PRESENCE` is process-global and
-/// cargo runs tests in parallel. The global [`presence_broadcast`] calls this
-/// with [`presence_map`].
+/// Push `msg` to every connection in an explicit presence registry as a
+/// `SystemMsg` frame — the seam tests drive with a fresh map, since
+/// `CHAT_PRESENCE` is process-global and cargo runs tests in parallel. The
+/// global [`presence_broadcast`] calls this with [`presence_map`].
 ///
 /// Called from the webhook handler and the scheduler, so it must not await a
 /// slow client: each push is queued on a per-connection unbounded channel and
@@ -247,18 +247,7 @@ pub fn presence_broadcast_in(
     map: &Mutex<HashMap<String, Vec<PresenceConnection>>>,
     msg: &str,
 ) -> usize {
-    let map = map.lock().unwrap_or_log();
-    let mut pushed = 0;
-    for conns in map.values() {
-        for conn in conns {
-            if conn.push.send(msg.to_string()).is_ok() {
-                pushed += 1;
-            } else {
-                log::debug!("chat presence push dropped: connection closed");
-            }
-        }
-    }
-    pushed
+    presence_broadcast_frame_in(map, &Response::SystemMsg(msg.to_string()))
 }
 
 /// Push `msg` to every live presence connection, across all sessions. The

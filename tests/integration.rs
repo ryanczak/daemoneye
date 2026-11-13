@@ -1374,10 +1374,10 @@ async fn alert_list_request_returns_the_snapshot() {
     }
 }
 
-/// On `ChatAttach` the daemon sends one `AlertState` frame between the reply
-/// and `Ok` when the registry is non-empty — and nothing extra when it is
-/// empty. Drives the real `handle_chat_attach` over a duplex, as the M27
-/// presence tests do.
+/// On `ChatAttach` the daemon sends one `AlertState` frame after the reply's
+/// `Ok` when the registry is non-empty — and nothing extra when it is empty.
+/// Drives the real `handle_chat_attach` over a duplex, as the M27 presence
+/// tests do.
 #[tokio::test]
 async fn presence_attach_sends_alert_state_when_alerts_are_active() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -1418,8 +1418,9 @@ async fn presence_attach_sends_alert_state_when_alerts_are_active() {
     client_w.shutdown().await.unwrap();
     task.await.unwrap().unwrap();
 
-    // Non-empty registry: record one alert, attach again, expect
-    // AlertState then Ok.
+    // Non-empty registry: record one alert, attach again, expect `Ok` then
+    // AlertState — the client's attach parser accepts exactly brief-then-Ok,
+    // so anything else makes every attach while an alert fires fail.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -1441,8 +1442,8 @@ async fn presence_attach_sends_alert_state_when_alerts_are_active() {
     });
     let (client_r, mut client_w) = tokio::io::split(client);
     let mut rx = tokio::io::BufReader::new(client_r);
-    let mut alerts_seen = None;
-    loop {
+    let mut ok_seen = false;
+    let alerts = loop {
         let mut line = String::new();
         tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
             .await
@@ -1450,14 +1451,15 @@ async fn presence_attach_sends_alert_state_when_alerts_are_active() {
             .expect("the handler is writing");
         let resp: Response = serde_json::from_str(line.trim()).expect("every attach frame parses");
         match resp {
-            Response::AlertState { alerts } => {
-                alerts_seen = Some(alerts);
+            Response::AlertState { alerts } => break alerts,
+            Response::Ok => {
+                assert!(!ok_seen, "the attach reply's `Ok` is sent once");
+                ok_seen = true;
             }
-            Response::Ok => break,
             other => panic!("unexpected attach frame: {other:?}"),
         }
-    }
-    let alerts = alerts_seen.expect("a non-empty registry sends AlertState before Ok");
+    };
+    assert!(ok_seen, "`Ok` precedes the AlertState frame");
     assert!(
         alerts
             .iter()
@@ -1471,6 +1473,73 @@ async fn presence_attach_sends_alert_state_when_alerts_are_active() {
     // later tests see an empty registry.
     assert!(
         daemoneye::webhook::active_alerts_resolved("m37-attach-fp"),
+        "the probe entry is removed"
+    );
+}
+
+/// bug-01-1: the `AlertState` frame must come after the attach reply's `Ok`,
+/// not before it — the client's `attach` accepts exactly brief-then-`Ok`, so
+/// an `AlertState` first makes every chat attach fail while an alert fires.
+/// Reads the frames in order off the same harness the test above uses.
+#[tokio::test]
+async fn presence_attach_sends_ok_before_alert_state() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let _lock = daemoneye::test_home_guard();
+    daemoneye::config::Config::ensure_dirs().ok();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    daemoneye::webhook::active_alerts_firing("m37-ok-first-fp", "OkFirstProbe", "critical", now);
+
+    let sessions = daemoneye::daemon::session::SessionStore::new();
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let (server_r, server_w) = tokio::io::split(server);
+    let task = tokio::spawn(async move {
+        let mut rx = tokio::io::BufReader::new(server_r);
+        let mut tx = server_w;
+        daemoneye::daemon::handle_chat_attach(
+            sessions,
+            "m37-attach-ok-first".to_string(),
+            &mut rx,
+            &mut tx,
+        )
+        .await
+    });
+    let (client_r, mut client_w) = tokio::io::split(client);
+    let mut rx = tokio::io::BufReader::new(client_r);
+
+    // Frame order, as the client's parser reads them: the optional brief
+    // first (none here), then `Ok`, then `AlertState`.
+    let mut line = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
+        .await
+        .expect("the attach reply within 5 s")
+        .expect("the handler is writing");
+    let first: Response = serde_json::from_str(line.trim()).expect("the reply parses");
+    assert!(
+        matches!(first, Response::Ok),
+        "with no brief, `Ok` is the first attach frame: {first:?}"
+    );
+
+    line.clear();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
+        .await
+        .expect("the AlertState frame within 5 s")
+        .expect("the handler is writing");
+    let second: Response = serde_json::from_str(line.trim()).expect("the frame parses");
+    assert!(
+        matches!(second, Response::AlertState { .. }),
+        "`Ok` is followed by the AlertState frame, not another reply: {second:?}"
+    );
+
+    client_w.shutdown().await.unwrap();
+    task.await.unwrap().unwrap();
+
+    assert!(
+        daemoneye::webhook::active_alerts_resolved("m37-ok-first-fp"),
         "the probe entry is removed"
     );
 }

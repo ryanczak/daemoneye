@@ -87,14 +87,16 @@ where
         if let Some(brief) = attach_brief_for(&sessions, &session_id) {
             send_response_split(tx, Response::SystemMsg(brief)).await?;
         }
+        send_response_split(tx, Response::Ok).await?;
         // M37 phase 01: a chat attaching while alerts are already firing
-        // learns about them once, in the attach reply. An empty registry
-        // sends nothing — the client's bar has no alerts to show.
+        // learns about them once, after the attach reply's `Ok` — the client's
+        // attach parser accepts exactly brief-then-`Ok`, and its parked task
+        // forwards every later frame. An empty registry sends nothing: the
+        // client's bar has no alerts to show.
         let snapshot = crate::webhook::active_alerts_snapshot();
         if !snapshot.is_empty() {
             send_response_split(tx, Response::AlertState { alerts: snapshot }).await?;
         }
-        send_response_split(tx, Response::Ok).await?;
 
         // Hold the connection for the client's lifetime. Any bytes the client
         // sends are read and discarded — the channel carries daemon→client
