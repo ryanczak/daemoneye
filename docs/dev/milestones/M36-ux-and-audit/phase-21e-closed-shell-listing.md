@@ -197,6 +197,13 @@ Status flipped to in-progress. Reading `shell_life.rs`, `registry.rs`, `shell.rs
 `top_load.rs` and the two test modules, then implementing the stamp-and-hide per
 the Spec's edit order.
 
+### Update — 2026-11-13 03:47 (started, executor nvidia/GLM-5.3-Flash-FP4-Local — bounce re-run)
+
+Status stays `in-progress`. Picking up bug-21e-1 per the bounce notes: the
+exited filter moves out of `resolve_scope` onto `list_shells`'s rows, and the
+top panel's predicate becomes a production `panel_rows` the test drives.
+Both fixes landed; mutation checks and the e2e are recorded below.
+
 ### Update — 2026-11-13 00:45 (end-to-end verification)
 
 Ran the phase's E2E block mechanically, redirecting all output to
@@ -441,3 +448,72 @@ exactly one new test. Before reporting, mutation-check it:
 
 Paste each run's `test result:` lines into the Update Log.
 
+
+### Update — 2026-11-13 03:55 (bug-21e-1 fix, end-to-end verification)
+
+**bug-21e-1:** `scope_filter=0`, `prod_panel_rows=1`. The bounce's two edits
+landed as specified:
+
+1. `shell.rs` — the two `exited_unix.is_none()` filters are out of
+   `resolve_scope` (the `mine` arm and the `all` arm) and the filter now runs
+   on the rows `list_shells` gets back, above `format_shell_rows`. A comment
+   at the `match` names why it is not there (bug-21e-1).
+2. `top_load.rs` — the predicate is a production
+   `pub(crate) fn panel_rows(Vec<crate::ipc::ShellInfo>)` above `mod tests`;
+   `shells_panel`'s match arm calls it and the test module's copy is deleted,
+   so `shells_panel_omits_exited_rows` drives the production function.
+
+`shell_context_still_lists_exited_shells` added to `shell_tests.rs` (the
+`insert` helper, `NOW`, `shell_context_block_in`) — it failed against the
+bounce's `resolve_scope` filter and passes now. Exactly one new test:
+`passed=2894`, not 2893 and not 2895.
+
+**Mutation checks** (`.rexymcp/output/mutation-21e.log`):
+
+- Mutation 1 — production `panel_rows` filter → `.filter(|_shell| true)`:
+  `shells_panel_omits_exited_rows ... FAILED`, then reverted. The test bites.
+- Mutation 2 — one filter back into `resolve_scope`'s `mine` arm:
+  `shell_context_still_lists_exited_shells ... FAILED`, then reverted. The
+  test bites. (The revert's first `patch` attempt was refused by an
+  interactive prompt and left a `.rej`; the filter was removed with `patch`
+  through the file tools and the `.rej` deleted.)
+
+**E2E block**, run mechanically with output redirected to
+`.rexymcp/output/e2e-21e-bounce.log`, pasted verbatim:
+
+```
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_ends_the_callers_shell ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_does_not_stamp_a_lingering_host ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_unknown_id_is_an_error ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_stamps_the_record_exited_once_the_host_is_gone ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::close_shell_refuses_another_owners_shell ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2807 filtered out; finished in 1.71s
+test daemon::executor::knowledge::shell::tests::lifecycle::last_detach_marks_the_closed_shells_exited ... ok
+test daemon::executor::knowledge::shell::tests::lifecycle::last_detach_closes_the_sessions_shells_after_the_grace ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2810 filtered out; finished in 0.37s
+test cli::commands::top::load::tests::shells_panel_omits_exited_rows ... ok
+test daemon::executor::knowledge::shell::tests::list_shells_omits_exited_shells ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2810 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 2809 filtered out; finished in 0.37s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 2803 filtered out; finished in 0.28s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2810 filtered out; finished in 0.00s
+test daemon::executor::knowledge::shell::tests::shell_context_still_lists_exited_shells ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2811 filtered out; finished in 0.00s (x2)
+scope_filter=0
+prod_panel_rows=1
+build_warnings=0
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.29s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.47s
+fmt_exit=0
+passed=2894 failed=0
+```
+
+All five Test-plan tests pass as printed; every `close_shell_*`,
+`detach_close*`, `last_detach*`, `reap_idle*` and `formatter_*` test still
+passes, including `close_shell_ends_the_callers_shell`'s "must not remove the
+record". Hygiene 16, doc_truth 19, bug_tracker 6, lock_invariant 2 — all ok.
+`build_warnings=0`, clippy clean, `fmt_exit=0`, full suite `passed=2894
+failed=0`.
