@@ -1,7 +1,7 @@
 # Phase 01 — daemon-alert-state
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced 2026-11-13, bug-01-1)
 **Drafted:** 2026-11-12
 **Depends on:** none
 **Estimated diff:** ~400 lines, about half of it tests
@@ -162,6 +162,9 @@ Server tests:
 - [ ] Mutation check, pasted in the Update Log: move the injection back
       above the gate, confirm `webhook_alert_below_threshold_is_not_injected`
       fails, then revert.
+- [ ] **bug-01-1:** `presence_attach_sends_ok_before_alert_state`
+      passes, `ok_before_alerts=1`, `raw_push=0` (today 0 and 1), and
+      `passed=2911`.
 - [ ] fmt, build (0 warnings), clippy and `cargo test` are green. Hygiene,
       `doc_truth` and `bug_tracker` are ok.
 
@@ -176,6 +179,9 @@ cargo test --lib alert_state 2>&1 | grep -E '^test result'
 cargo test --lib alert_list 2>&1 | grep -E '^test result'
 awk '/^pub async fn process_alert/,/^}/' src/webhook/process.rs \
   | awk '/let should_fire/{g=NR} /inject_into_sessions\(&state.sessions, &alert_msg\)/{i=NR} END{print "gate_first=" (g && i>g ? 1 : 0)}'
+awk '/let held = async/,/send_response_split\(tx, Response::Ok\)/' src/daemon/server/chat_presence.rs | grep -c 'AlertState' | awk '{print "ok_before_alerts=" ($1==0 ? 1 : 0)}'
+grep -c 'conn.push.send(msg.to_string())' src/daemon/session.rs | sed 's/^/raw_push=/'
+cargo test --lib presence_attach_sends_ok_before_alert_state 2>&1 | grep -E '^test |^test result'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
 ```
@@ -491,3 +497,49 @@ kill: (-2425998): No such process
 **Commit:** fcacba07ce098ecf3cb5306c7d6b0c8b8211931d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-13 (bounced)
+
+- **Verdict:** bounced
+- **Bugs filed:** [bug-01-1](bugs/bug-01-1.md) (blocker)
+- **Approved, don't redo:**
+  - The gate order and the fail-closed rule (`gate_first=1`).
+  - The registry in `active.rs` and its tests, reusing `severity_rank`
+    without a copy.
+  - `WebhookConfig::warnings` / `validate` and their startup call.
+  - `AlertBadge`, `Response::AlertState`, `Request::AlertList` and its
+    handler.
+  - `presence_broadcast_frame` / `_in`.
+  - The inverted fail-open tests and the harness thresholds.
+  - The registry-leak fix in the integration tests, and the docs.
+  - All gates green at `passed=2910`.
+- **What failed:** while any alert is firing, chat attach fails, because
+  `AlertState` goes out before `Ok`. `presence_broadcast_in` still pushes
+  raw text.
+
+### Notes for executor — 2026-11-13 (bounce)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything under "Approved" stays as it is.
+
+Exactly these edits:
+1. `src/daemon/server/chat_presence.rs`: in the `ChatAttach` handler's
+   `held` block, move the snapshot send so it comes after
+   `send_response_split(tx, Response::Ok)`. Add
+   `presence_attach_sends_ok_before_alert_state` beside
+   `presence_attach_sends_alert_state_when_alerts_are_active`, reading the
+   frames in order off the same harness that test uses.
+2. `src/daemon/session.rs`: make `presence_broadcast_in(map, msg)` send
+   `Response::SystemMsg(msg)` through `presence_broadcast_frame_in`, or
+   delete it and point its one test at `presence_broadcast_frame_in`.
+3. `tests/hygiene_allowlist.txt`: reword the `tests/integration.rs`
+   comment to name only the gate-order tests.
+
+**Your first edit lands within your first 15 turns.** Never run `tmux`.
+
+**Finish condition:** `ok_before_alerts=1`, `raw_push=0`,
+`build_warnings=0` and `passed=2911`. **2911, not 2910 and not 2912**:
+exactly one new test. Mutation check: move the snapshot send back above
+`Ok`, confirm the new test fails, and revert. Paste both `test result:`
+lines.
+
