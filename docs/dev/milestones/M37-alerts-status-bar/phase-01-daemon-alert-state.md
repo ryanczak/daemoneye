@@ -1,7 +1,7 @@
 # Phase 01 — daemon-alert-state
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-12
 **Depends on:** none
 **Estimated diff:** ~400 lines, about half of it tests
@@ -786,3 +786,28 @@ kill: (-2506473): No such process
 **Commit:** 8bdfc3f26af2e6640fdc1c3734a295848a262110
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-13
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-01-1](bugs/bug-01-1.md): `AlertState` was sent
+  before `Ok`, breaking chat attach while an alert fires)
+- **Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+- **Re-check:** fmt, build (0 warnings), clippy and tests are green
+  (`passed=2911 failed=0`); `gate_first=1`, `ok_before_alerts=1`,
+  `raw_push=0`. `presence_attach_sends_ok_before_alert_state` drives the
+  real `handle_chat_attach`, and its mutation run (send moved back above
+  `Ok`) is pasted red.
+- **Scope deviations:**
+  - The push channel carries serialized `Response` lines (a `String`)
+    rather than `Response` values. The wire is the same, and the hold loop
+    writes the line as it is.
+  - `is_duplicate` was extracted from `process_alert` for the function cap.
+  - `now_secs_pub` re-exports the clock for `active.rs`.
+  - A new hygiene allowlist line, `tests/integration.rs 2385`, stating its
+    reason. This is acceptable per the PE's 2026-11-03 rule.
+- **Calibration:** the attach-order defect is the "test drives the real
+  seam" pattern from another angle: the first tests checked the server's
+  frames, but none against the order the client's parser accepts. Noted,
+  not folded.
+
