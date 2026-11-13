@@ -13,6 +13,7 @@ pub mod render;
 pub mod render_ratatui;
 pub mod status;
 pub mod status_bar;
+pub mod status_glyphs;
 pub mod tail;
 pub(crate) mod terminal_guard;
 pub mod transcript;

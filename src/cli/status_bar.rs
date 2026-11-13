@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use unicode_width::UnicodeWidthStr;
 
 use crate::cli::palette::Palette;
+use crate::cli::status_glyphs::{ASCII, EMOJI, GlyphSet, SYMBOLS};
 use crate::ipc::AlertBadge;
 use crate::webhook::active_severity_rank;
 
@@ -32,166 +32,6 @@ pub enum ChatState {
     /// The presence connection dropped; a reconnect is under way.
     Reconnecting,
 }
-
-/// A glyph dialect's slot table: one field per glyph the bar can lead a
-/// segment with. No glyph contains U+FE0F or U+FE0E.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GlyphSet {
-    pub idle: &'static str,
-    pub working: &'static str,
-    pub awaiting_approval: &'static str,
-    pub daemon_down: &'static str,
-    pub reconnecting: &'static str,
-    /// The elapsed mark beside a working state's seconds; empty in a dialect
-    /// that spells the seconds bare.
-    pub elapsed: &'static str,
-    pub alert_critical: &'static str,
-    pub alert_warning: &'static str,
-    pub alert_info: &'static str,
-    pub alert_unknown: &'static str,
-    /// The resolve flash shown for ten seconds after an alert leaves the
-    /// snapshot.
-    pub alert_resolved: &'static str,
-    pub context_empty: &'static str,
-    pub context_1: &'static str,
-    pub context_2: &'static str,
-    pub context_3: &'static str,
-    pub context_full: &'static str,
-    pub context_growth: &'static str,
-    pub cost: &'static str,
-    pub cost_untracked: &'static str,
-    pub cost_burn: &'static str,
-    pub turn: &'static str,
-    pub throughput_fast: &'static str,
-    pub throughput_slow: &'static str,
-    pub background: &'static str,
-    pub ghosts: &'static str,
-    pub tools: &'static str,
-    pub shells: &'static str,
-    pub vendor_anthropic: &'static str,
-    pub vendor_openai: &'static str,
-    pub vendor_gemini: &'static str,
-    /// The local (non-cloud) mark; a dialect without one shows the name bare.
-    pub vendor_local: &'static str,
-    pub session: &'static str,
-    /// The dirty mark beside a saved session's name.
-    pub session_dirty: &'static str,
-    pub grants: &'static str,
-}
-
-/// The emoji dialect: the default.
-pub static EMOJI: GlyphSet = GlyphSet {
-    idle: "💤",
-    working: "🧠",
-    awaiting_approval: "✋",
-    daemon_down: "💀",
-    reconnecting: "📡",
-    elapsed: "⏱",
-    alert_critical: "🔥",
-    alert_warning: "⚠",
-    alert_info: "ℹ",
-    alert_unknown: "❔",
-    alert_resolved: "🧯",
-    context_empty: "🌑",
-    context_1: "🌒",
-    context_2: "🌓",
-    context_3: "🌔",
-    context_full: "🌕",
-    context_growth: "📈",
-    cost: "💸",
-    cost_untracked: "❔",
-    cost_burn: "⛽",
-    turn: "↻",
-    throughput_fast: "🐇",
-    throughput_slow: "🐢",
-    background: "⏳",
-    ghosts: "👻",
-    tools: "🛠",
-    shells: "🐚",
-    vendor_anthropic: "⟡",
-    vendor_openai: "◎",
-    vendor_gemini: "♊",
-    vendor_local: "🦙",
-    session: "📌",
-    session_dirty: "✎",
-    grants: "⚡",
-};
-
-/// The symbols dialect.
-pub static SYMBOLS: GlyphSet = GlyphSet {
-    idle: "○",
-    working: "◐",
-    awaiting_approval: "⏸",
-    daemon_down: "✖",
-    reconnecting: "⟳",
-    elapsed: "⏱",
-    alert_critical: "●",
-    alert_warning: "●",
-    alert_info: "●",
-    alert_unknown: "●",
-    alert_resolved: "✓",
-    context_empty: "◔",
-    context_1: "◑",
-    context_2: "◕",
-    context_3: "●",
-    context_full: "●",
-    context_growth: "↗",
-    cost: "$",
-    cost_untracked: "?",
-    cost_burn: "$/h",
-    turn: "↻",
-    throughput_fast: "🐇",
-    throughput_slow: "🐢",
-    background: "⧖",
-    ghosts: "◆",
-    tools: "⚒",
-    shells: "⌨",
-    vendor_anthropic: "⟡",
-    vendor_openai: "◎",
-    vendor_gemini: "♊",
-    vendor_local: "",
-    session: "▣",
-    session_dirty: "✎",
-    grants: "⚡",
-};
-
-/// The ascii dialect, forced when the locale is not UTF-8.
-pub static ASCII: GlyphSet = GlyphSet {
-    idle: "-",
-    working: "*",
-    awaiting_approval: "?",
-    daemon_down: "X",
-    reconnecting: "~",
-    elapsed: "",
-    alert_critical: "!!",
-    alert_warning: "!",
-    alert_info: "i",
-    alert_unknown: "?",
-    alert_resolved: "✓",
-    context_empty: "ctx",
-    context_1: "ctx",
-    context_2: "ctx",
-    context_3: "ctx",
-    context_full: "ctx",
-    context_growth: "",
-    cost: "$",
-    cost_untracked: "?",
-    cost_burn: "$/h",
-    turn: "t",
-    throughput_fast: "t/s",
-    throughput_slow: "t/s",
-    background: "bg",
-    ghosts: "gh",
-    tools: "tl",
-    shells: "sh",
-    vendor_anthropic: "",
-    vendor_openai: "",
-    vendor_gemini: "",
-    vendor_local: "",
-    session: "@",
-    session_dirty: "*",
-    grants: "A:",
-};
 
 /// The dialect names `[chat] glyphs` accepts, in the order the load error
 /// names them.
@@ -426,52 +266,7 @@ impl StatusModel {
 
 // ── The line ─────────────────────────────────────────────────────────────────
 
-/// The separator between segments: ` · ` at ≥ 36 columns, a single space
-/// below.
-const WIDE_SEP: &str = " · ";
-const NARROW_SEP: &str = " ";
-const NARROW_BELOW: usize = 36;
-
-/// One rendered piece of the bar: its spans, its columns, and where it sits
-/// in the drop order. Ranks are unique; the lowest remaining rank drops
-/// first when the line does not fit.
-///
-/// Tier 3 (the velocities, the alert name and age, the session, the model)
-/// holds ranks 1–7, tier 2 (the counters) 8–11, the grant hint 12 — it drops
-/// after tier 2 and before tier 1 — and tier 1 (state, alerts, context, cost,
-/// turn) 13–17, the last resort on a very narrow pane.
-#[derive(Debug)]
-struct Part {
-    spans: Vec<Span<'static>>,
-    width: usize,
-    rank: u16,
-}
-
-impl Part {
-    fn new(spans: Vec<Span<'static>>, rank: u16) -> Self {
-        let width = spans.iter().map(Span::width).sum();
-        Part { spans, width, rank }
-    }
-}
-
-// Drop ranks, lowest drops first.
-const RANK_GROWTH: u16 = 1;
-const RANK_BURN: u16 = 2;
-const RANK_THROUGHPUT: u16 = 3;
-const RANK_ALERT_NAME: u16 = 4;
-const RANK_ALERT_AGE: u16 = 5;
-const RANK_SESSION: u16 = 6;
-const RANK_MODEL: u16 = 7;
-const RANK_SHELLS: u16 = 8;
-const RANK_TOOLS: u16 = 9;
-const RANK_GHOSTS: u16 = 10;
-const RANK_BACKGROUND: u16 = 11;
-const RANK_HINT: u16 = 12;
-const RANK_TURN: u16 = 13;
-const RANK_COST: u16 = 14;
-const RANK_CONTEXT: u16 = 15;
-const RANK_ALERTS: u16 = 16;
-const RANK_STATE: u16 = 17;
+// ── The line ─────────────────────────────────────────────────────────────────
 
 fn gray() -> Style {
     Style::default().fg(Color::Gray)
@@ -537,66 +332,6 @@ pub fn status_bar_line(
         }
     }
     join_slots(&slots, &mut hint, sep, width)
-}
-
-/// Do all the slots plus the hint fit `width` at `sep` between them?
-fn line_fits(slots: &[Vec<Part>], hint_width: Option<usize>, sep: &str, width: usize) -> bool {
-    let sep_w = UnicodeWidthStr::width(sep);
-    let mut used = 0usize;
-    let mut live_slots = 0usize;
-    for slot in slots {
-        if slot.is_empty() {
-            continue;
-        }
-        live_slots += 1;
-        used += slot.iter().map(|p| p.width).sum::<usize>() + slot.len().saturating_sub(1); // the spaces within the slot
-    }
-    if live_slots > 1 {
-        used += sep_w * (live_slots - 1);
-    }
-    if let Some(hint) = hint_width {
-        // Flush right with at least one space before it.
-        used += 1 + hint;
-    }
-    used <= width
-}
-
-/// Join the slots into one `Line`, the hint flush right when present.
-fn join_slots(
-    slots: &[Vec<Part>],
-    hint: &mut Option<Part>,
-    sep: &str,
-    width: usize,
-) -> Line<'static> {
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    let mut used = 0usize;
-    let mut live_slot = false;
-    for slot in slots {
-        if slot.is_empty() {
-            continue;
-        }
-        if live_slot {
-            spans.push(Span::styled(sep.to_string(), gray()));
-            used += UnicodeWidthStr::width(sep);
-        }
-        let mut live_part = false;
-        for part in slot {
-            if live_part {
-                spans.push(Span::styled(" ".to_string(), gray()));
-                used += 1;
-            }
-            spans.extend(part.spans.iter().cloned());
-            used += part.width;
-            live_part = true;
-        }
-        live_slot = true;
-    }
-    if let Some(h) = hint {
-        let gap = width.saturating_sub(used + h.width);
-        spans.push(Span::styled(" ".repeat(gap), gray()));
-        spans.extend(h.spans.iter().cloned());
-    }
-    Line::from(spans)
 }
 
 /// The state segment: the state glyph; while `Working`, the elapsed mark and
@@ -958,6 +693,15 @@ pub fn compact_tokens(n: u32) -> String {
         format!("{:.1}M", n as f64 / 1_000_000.0)
     }
 }
+
+#[path = "status_bar_fit.rs"]
+mod fit;
+use fit::{
+    NARROW_BELOW, NARROW_SEP, Part, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BACKGROUND,
+    RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GROWTH, RANK_HINT, RANK_MODEL,
+    RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_THROUGHPUT, RANK_TOOLS, RANK_TURN, WIDE_SEP,
+    join_slots, line_fits,
+};
 
 #[cfg(test)]
 #[path = "status_bar_tests.rs"]
