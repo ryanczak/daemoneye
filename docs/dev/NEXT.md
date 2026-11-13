@@ -1,17 +1,11 @@
 # NEXT
 
-**Active milestone:** M36 — Chat UX and audit fixes
-([`README.md`](milestones/M36-ux-and-audit/README.md)), scoped 2026-11-01,
-target `2.8.0`. Four PE items from `docs/design/2.7.0-UX-improvements.md`, a self-maintained `config.toml` with a daemon reload (decision 8),
-plus the 2026-11-01 codebase audit
-([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
-After M36: MCP surface (M37), then Knowledge (M38).
+**Active milestone:** M37 — Alerts out of history, onto the status bar and
+`top` ([`README.md`](milestones/M37-alerts-status-bar/README.md)). Scoped
+2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
+surface (M38), then Knowledge (M39).
 
-**Active phase:** none. M36 is at its boundary. All 30 phases are
-`done` (21d and 21e were added at the close on 2026-11-12), and the final
-live check passed. The retrospective and two fold proposals are in the
-README. Next: PE sign-off, then the 2.8.0 release per REXYMCP.md §
-Versioning.
+**Active phase:** [phase-01-daemon-alert-state](milestones/M37-alerts-status-bar/phase-01-daemon-alert-state.md).
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
