@@ -280,3 +280,61 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; fin
 test alert_list_request_returns_the_snapshot ... ok
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.01s
 ```
+
+### Update — 2026-11-13 00:21 (fix after the gate check)
+
+**What the gate check caught.** The full-suite re-run failed
+`presence_attach_sends_alert_state_when_alerts_are_active`'s empty-registry
+half: the `AlertState` frame it received carried `BananaAlert`
+(`test-fp-banana`), the fingerprint
+`webhook_alert_unrankable_severity_is_below_threshold` records. The
+active-alert registry is process-global and shared by every test in the
+binary, so any webhook test that records an entry and returns leaves it for
+whichever test snapshots next — a leak, not a gate bug.
+
+**The fix.** A `discard_test_alert(fingerprint)` helper in
+`tests/integration.rs` (one `active_alerts_resolved` call — the same seam
+`process_alert` uses to remove an entry) called by all four tests that
+record into the registry: `below_threshold_is_recorded_active`
+(`test-fp-quiet`), `no_severity_is_below_threshold` (`test-fp-no-sev`),
+`unrankable_severity_is_below_threshold` (`test-fp-banana`) and
+`below_threshold_discarded` (`test-fp-low`). The attach test itself already
+removed its own probe.
+
+**Re-runs, pasted:**
+
+```
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+```
+
+(five consecutive `cargo test --test integration` runs), the targeted
+re-runs —
+
+```
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 32 filtered out; finished in 0.07s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 38 filtered out; finished in 0.01s
+```
+
+(`webhook_alert`, `presence_attach`) — and the full suite:
+
+```
+test result: ok. 2813 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 139.79s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+test result: ok. 37 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.13s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+passed=2910 failed=0
+```
+
+The allowlist row for `tests/integration.rs` moved to 2316 to follow the
+cleanup helper's lines. fmt, build (0 warnings), clippy `-D warnings` and
+`cargo test` all green after the fix.
