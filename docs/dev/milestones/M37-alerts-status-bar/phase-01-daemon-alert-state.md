@@ -1,7 +1,7 @@
 # Phase 01 — daemon-alert-state
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced 2026-11-13, bug-01-1)
+**Status:** review
 **Drafted:** 2026-11-12
 **Depends on:** none
 **Estimated diff:** ~400 lines, about half of it tests
@@ -626,3 +626,163 @@ failed=0`), hygiene, `doc_truth` (19) and `bug_tracker` (6) all green after
 the revert. One commit: `fix: attach sends Ok before the AlertState frame
 (bug-01-1)`; the working tree is clean and the phase doc remains
 `in-progress` for the server's completion tail.
+
+### Update — 2026-11-13 15:28 (complete, server-authored)
+
+**Summary:** The tree is clean. Let me do the final checklist review:
+
+- [x] Phase doc's Status: still `in-progress` — yes, I never touched it (it was already in-progress from the bounce).
+- [x] Milestone README's phase-table row still says `in-progress` — untouched.
+- [x] No `(complete)` entry written by me — correct, only progress + e2e entries.
+- [x] `cargo fmt --all` run before staging — yes.
+- [x] All verification commands ran clean — `gate_first=1`, `ok_before_alerts=1`, `raw_push=0`, `build_warnings=0`, `passed=2911 failed=0`.
+- [x] Final message is a substantive Summary + Notes for review — writing now.
+- [x] `git status --short` shows nothing — confirmed.
+- [x] `git log -1 --stat` shows commits include every file.
+
+Wait — one detail. The finish condition says "exactly one new test: 2911, not 2910 and not 2912". `passed=2911 failed=0` ✓. And exactly one new test added: `presence_attach_sends_ok_before_alert_state` ✓.
+
+Also, I should double check the targeted e2e line: `cargo test --lib presence_attach_sends_ok_before_alert_state` matched 0 tests (since the test is in tests/integration.rs, not lib). The phase doc's e2e block lists that command, and its output line `test result: ok. 0 passed; 0 failed... 2823 filtered out` appears in my paste. I noted in the Update Log that the real result comes from the `--test integration` run. That's the honest handling — the command as written targets `--lib` but the test lives in the integration test binary. Hmm — wait, is that a spec-vs-reality divergence I should flag? The phase doc's e2e block says `cargo test --lib presence_attach_sends_ok_before_alert_state`. The test is in `tests/integration.rs`, so `--lib` filters it out. The acceptance criterion says "`presence_attach_sends_ok_before_alert_state` passes" — it does, via the integration binary. I adapted the verification (ran the correct target) and named it in the Update Log. That's a clean adaptation, worth noting in the final summary.
+
+One more check — the bug-01-1 "Definition of done" in the bug report:
+- `presence_attach_sends_ok_before_alert_state` passes ✓
+- `ok_before_alerts=1` ✓
+- `grep -c 'conn.push.send(msg.to_string())' src/daemon/session.rs` prints 0 ✓
+- allowlist comment names only gate-order tests ✓
+- `passed=2911` ✓
+
+All done. Final message time.Both commits are in and the tree is clean. Final checklist verified: phase doc still `in-progress`, no hand-written `(complete)` entry, fmt/build/clippy/test all green.
+
+**Summary:** Fixed bug-01-1 with exactly the bounce's three edits. (1) In `handle_chat_attach`'s held block, the `AlertState` snapshot send now comes after `send_response_split(tx, Response::Ok)`, so a chat attaching while any alert fires gets the frame order its parser accepts (brief-then-`Ok`, then pushes) instead of bailing out and running detached. (2) `presence_broadcast_in` now wraps its text in `Response::SystemMsg` through `presence_broadcast_frame_in` — no `pub` seam pushes raw text onto the frame-carrying push channel. (3) The `tests/integration.rs` allowlist comment names only the gate-order tests. Added exactly one new test, `presence_attach_sends_ok_before_alert_state`, reading frames in order off the same duplex harness the existing attach test uses.
+
+**Notes for review:**
+- Finish condition met and pasted in the Update Log: mutation check red (`presence_attach_sends_ok_before_alert_state ... FAILED`, detail showing `AlertState` as the first frame) then green after revert (`ok. 2 passed` for both attach tests), `gate_first=1`, `ok_before_alerts=1`, `raw_push=0`, `build_warnings=0`, full suite `passed=2911 failed=0`.
+- One e2e-block adaptation: the phase doc's `cargo test --lib presence_attach_sends_ok_before_alert_state` matches nothing because the test lives in the integration binary; the real result (`test result: ok. 1 passed`) comes from `cargo test --test integration presence_attach_sends_ok_before_alert_state` and is pasted alongside, with the `--lib` run's zero-match line kept in the capture for honesty.
+- The new test's ~69 lines pushed `tests/integration.rs` to 2385, so its allowlist row moved 2316 → 2385 (comment unchanged in meaning, per edit 3); the same full run also surfaced this, fixed before the final tally.
+- Two commits: `fix: attach sends Ok before the AlertState frame (bug-01-1)` (`0aeec00c`) and `docs: bug-01-1 fix evidence` (`8bdfc3f2`); `git status --short` is clean and the phase doc remains `in-progress` for the server's completion tail.
+
+**Executor:** nvidia/GLM-5.3-Flash-FP4-Local
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Checking daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.44s
+
+
+TEST
+ g3_tool_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g1_spawn_ghost_shell_with_agent_merge ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 38 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (2505757): No such process
+kill: (-2506473): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M37-alerts-status-bar/phase-01-daemon-alert-state.md` — +83 -0
+- `src/daemon/server/chat_presence.rs` — +5 -3
+- `src/daemon/session.rs` — +5 -16
+- `tests/hygiene_allowlist.txt` — +3 -3
+- `tests/integration.rs` — +82 -13
+
+**Commit:** 8bdfc3f26af2e6640fdc1c3734a295848a262110
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
