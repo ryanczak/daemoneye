@@ -1,7 +1,7 @@
 # Phase 21e — closed-shell-listing
 
 **Milestone:** M36 — Chat UX and audit fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-12, bug-21e-1)
 **Drafted:** 2026-11-12
 **Depends on:** phase 21d (the 60 s grace)
 **Estimated diff:** ~150 lines, most of it tests
@@ -136,6 +136,8 @@ The PE's decision (2026-11-12) is **stamp + hide**:
 - [ ] Every existing `close_shell_*`, `detach_close*`, `last_detach*`,
       `reap_idle*` and `formatter_*` test still passes. This includes
       `close_shell_ends_the_callers_shell`'s "must not remove the record".
+- [ ] **bug-21e-1:** `scope_filter=0`, `prod_panel_rows=1` (today 2 and 0),
+      `shell_context_still_lists_exited_shells` passes, and `passed=2894`.
 - [ ] Hygiene, `doc_truth`, `bug_tracker` and `lock_invariant` are ok.
       `build_warnings=0`, clippy is clean, `fmt_exit=0`, `failed=0`.
 
@@ -149,6 +151,10 @@ cargo test --lib omits_exited 2>&1 | grep -E '^test |^test result'
 cargo test --lib detach_close 2>&1 | grep -E '^test result'
 cargo test --lib reap_idle 2>&1 | grep -E '^test result'
 cargo test --lib formatter_ 2>&1 | grep -E '^test result'
+cargo test --lib shell_context_still_lists_exited_shells 2>&1 | grep -E '^test |^test result'
+cargo test --lib shells_panel_omits_exited_rows 2>&1 | grep -E '^test result'
+awk '/^fn resolve_scope/,/^}/' src/daemon/executor/knowledge/shell.rs | grep -c exited_unix | sed 's/^/scope_filter=/'
+awk '/^#\[cfg\(test\)\]/{exit} 1' src/cli/commands/top_load.rs | grep -c 'fn panel_rows' | sed 's/^/prod_panel_rows=/'
 touch src/main.rs && cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
 for t in hygiene doc_truth bug_tracker lock_invariant; do cargo test --test $t 2>&1 | grep -E '^test result'; done
 cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -1
@@ -380,3 +386,58 @@ kill: (-2066850): No such process
 **Commit:** 00fd2bb7fdb4386ffa62892c95b55dd3f912bdd6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-12 (bounced)
+
+- **Verdict:** bounced
+- **Bugs filed:** [bug-21e-1](bugs/bug-21e-1.md) (major)
+- **Approved, don't redo:**
+  - The stamp in `closed_by_observed_end`, and its two tests (stamp on a
+    seen close, no stamp on a lingering host).
+  - `last_detach_marks_the_closed_shells_exited`.
+  - `list_shells_omits_exited_shells` and
+    `list_shells_of_only_exited_shells_says_so`.
+  - The `top_load.rs` filter's placement.
+  - The "Sent TERM" wording. It is consistent with the existing
+    `close_shell_ends_the_callers_shell` expectation, which an earlier
+    refactor had drifted from.
+  - The doc rows and the `defs.rs` description.
+  - All gates green (`passed=2893`).
+- **What failed:**
+  - The exited filter sits in `resolve_scope`, so it also hides exited
+    shells from the prompt's `[SHELLS]` block (which Behaviour 6 keeps
+    unchanged) and from `find_in_shells`.
+  - `shells_panel_omits_exited_rows` tests a test-module copy of the
+    predicate.
+
+### Notes for executor — 2026-11-12 (bounce)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything under "Approved" above stays as it is.
+
+Two files to edit, two edits:
+
+1. `src/daemon/executor/knowledge/shell.rs`: move the two
+   `exited_unix.is_none()` filters out of `resolve_scope` and into
+   `list_shells`, on the rows it gets back from `resolve_scope` (the
+   id-collection filters at the top of `list_shells` stay). Then add
+   `shell_context_still_lists_exited_shells` to `shell_tests.rs`, using the
+   `insert` helper and `NOW` as `list_shells_omits_exited_shells` does,
+   calling `shell_context_block_in`.
+2. `src/cli/commands/top_load.rs`: lift the predicate into a production
+   `pub(crate) fn panel_rows(shells: Vec<ShellInfo>) -> Vec<ShellInfo>`
+   above `mod tests`. Have `shells_panel` call it and delete the test
+   module's copy, so the test calls the production one.
+
+**Your first edit lands within your first 15 turns.** Never run `tmux`.
+
+**Finish condition:** the e2e prints `scope_filter=0`, `prod_panel_rows=1`,
+`build_warnings=0` and `passed=2894`. **2894, not 2893 and not 2895**:
+exactly one new test. Before reporting, mutation-check it:
+- Delete `.filter(…)` from the production `panel_rows`, confirm
+  `shells_panel_omits_exited_rows` fails, and revert.
+- Put one filter back into `resolve_scope`, confirm
+  `shell_context_still_lists_exited_shells` fails, and revert.
+
+Paste each run's `test result:` lines into the Update Log.
+
