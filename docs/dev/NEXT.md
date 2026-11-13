@@ -7,16 +7,17 @@ plus the 2026-11-01 codebase audit
 ([`FINDINGS.md`](milestones/M36-ux-and-audit/FINDINGS.md), 28 findings).
 After M36: MCP surface (M37), then Knowledge (M38).
 
-**Active phase:** phase 21d — live-check-fixes
-([`phase-21d-live-check-fixes.md`](milestones/M36-ux-and-audit/phase-21d-live-check-fixes.md)),
-drafted 2026-11-12: the three exit criteria the milestone's live check
-failed (CR paste line ends, the 300 s detach grace, `top`'s attach view
-dropping its write half). Phases 01–21c are `done`; the retrospective is
-written in the README and the close waits on 21d plus a re-check of the
-three. Twenty-nine phases are in the README's table: 04 was split into
-04a/04b and 21 added on 2026-11-03, 05 into 05a/05b on 2026-11-04, 17 into
-17a/17b/17c on 2026-11-07, 20 into 20a/20b on 2026-11-08, 21 into
-21a/21b/21c on 2026-11-09, and 21d added at the close on 2026-11-12.
+**Active phase:** phase 21e — closed-shell-listing
+([`phase-21e-closed-shell-listing.md`](milestones/M36-ux-and-audit/phase-21e-closed-shell-listing.md)),
+drafted 2026-11-12. A shell closed by the detach grace or `close_shell`
+stayed listed as live until the hourly reap. The PE chose stamp + hide.
+Phases 01–21d are `done`. The retrospective and the post-21d re-check are
+written in the README. The close waits on 21e and a final live check of
+`list_shells` after a chat exits. Thirty phases are in the README's table:
+04 was split into 04a/04b and 21 added on 2026-11-03, 05 into 05a/05b on
+2026-11-04, 17 into 17a/17b/17c on 2026-11-07, 20 into 20a/20b on
+2026-11-08, 21 into 21a/21b/21c on 2026-11-09, and 21d and 21e were added
+at the close on 2026-11-12.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

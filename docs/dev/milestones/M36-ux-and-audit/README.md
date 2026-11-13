@@ -191,6 +191,7 @@ config so the shell-state surfaces it extends have settled.
 | 21b | program-status-surfaces ([phase-21b-program-status-surfaces.md](phase-21b-program-status-surfaces.md)) — `list_shells`, `ShellInfo` and `top`'s Shells panel show each shell's program status from a bounded live refresh; `watch_shell` returns on a `blocked`/`done`/`error` report; the program's word outranks the screen-scraped state | decision 9 | done        |
 | 21c | program-status-emit ([phase-21c-program-status-emit.md](phase-21c-program-status-emit.md)) — the chat client reports `working` / `blocked:kind=permission\|auth\|question` / `idle` / `clear` to its terminal, only on change, only to a tty; inside tmux the report rides the passthrough envelope and the client sets `allow-passthrough on` for its own pane, unset again at exit (PE, 2026-11-11) | decision 9 | done        |
 | 21d | live-check-fixes ([phase-21d-live-check-fixes.md](phase-21d-live-check-fixes.md)) — the three exit criteria the 2026-11-12 live check failed: CR line ends in a bracketed paste become LF, `[shells] detach_close_secs` defaults to 60, and `top`'s attach view keeps its connection's write half so the daemon keeps relaying (PE, 2026-11-12) | exit criteria 1, 7 | done        |
+| 21e | closed-shell-listing ([phase-21e-closed-shell-listing.md](phase-21e-closed-shell-listing.md)) — a close that sees the host gone stamps the record exited at once; `list_shells` and `top` omit exited rows, while the record stays for `read_shell` (PE: stamp + hide, 2026-11-12) | exit criterion 7 | todo        |
 
 ## Notes
 
@@ -222,7 +223,8 @@ config so the shell-state surfaces it extends have settled.
 `critical` or `major` row left at `act:`: all 20 now read `fixed: M36
 phase-NN, <test>`. The live check passed most exit criteria but **failed
 three**, listed below. The PE chose a fix phase, 21d, over accepting them
-(2026-11-12); the milestone closes after 21d and a re-check of the three.
+(2026-11-12). The re-check after 21d passed two of the three and found the
+third only half fixed, hence 21e (see "Re-check after 21d" below).
 
 | Phase | Verdict | Note |
 |---|---|---|
@@ -351,3 +353,30 @@ name the throwaway path explicitly.
   a connection's lifetime needs a real socket pair (failure 3).
 - The architect read the live `top` panel title `3 Shells` as a count; it
   is the panel's hotkey number. Read the code before filing a defect.
+
+### Re-check after 21d (2026-11-12)
+
+Same harness (`/tmp/de36-live2`), config left at defaults. Prompts named
+only the throwaway paths; the real `config.toml` was compared byte for byte
+afterwards and is unchanged.
+
+- **Paste, passed.** A `tmux paste-buffer -p` (CR line ends) of three lines
+  reached the model as `golf line one\nhotel line two\nindia line three`.
+- **`top` attach, passed.** Enter on a `wait: false` shell printing
+  `tick$i` once a second showed `following`. The screen moved from `tick14`
+  to `tick18` in four seconds, and `q` returned to the panels.
+- **Chat shells after exit, still failing.** At its default of 60 s the
+  grace closed the chat's shell on time (`stayed detached past its grace;
+  closed shells ["s1"]`, 60 s after the detach), and its host and socket
+  were gone. But `list_shells` (scope `all`, from a new chat) and `top` still
+  listed `s1` as live 90 s later. The registry learns a host died only from
+  `reap_exited`, which runs on the hourly maintenance pass. 21d's
+  out-of-scope note called this lingering "by design". It was not: it is
+  the criterion. Fixed in 21e, following the PE's decision (stamp + hide,
+  2026-11-12).
+
+Lesson: a phase that fixes an exit criterion is checked against the
+criterion's own words (`gone from list_shells`), not against the defect
+first observed (`the grace is 300 s`). Second occurrence, after 17a's test
+checked the host and not the listing.
+
