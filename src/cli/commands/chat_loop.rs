@@ -28,15 +28,31 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
     let mut held_presence = super::chat_presence::chat_loop_setup(parked_presence);
     let pushes = held_presence.pushes();
     let mut last_ctrl_c: Option<std::time::Instant> = None;
-    let mut daemon_up = false;
-    let mut prompt_tokens: u32 = 0;
-    let mut turn: usize = turn_seed;
-    let mut cost_usd: f64 = 0.0;
-    let mut has_untracked: bool = false;
     let mut transcript = crate::cli::transcript::Transcript::new();
     let config = Config::load().unwrap_or_default();
     let mut context_window = config.resolve_model(None).context_window();
     let mut model = config.resolve_model(None).model.clone();
+    // The status bar's one model (M37 02a): everything the bar reads lives
+    // here and every draw goes through it.
+    let glyphs = crate::cli::status_bar::glyph_set_for_locale(
+        config
+            .chat
+            .glyph_set()
+            .unwrap_or(&crate::cli::status_glyphs::EMOJI),
+        crate::cli::status_bar::locale_is_utf8(
+            std::env::var("LANG").ok().as_deref(),
+            std::env::var("LC_ALL").ok().as_deref(),
+            std::env::var("LC_CTYPE").ok().as_deref(),
+        ),
+    );
+    let mut sb = crate::cli::status_bar::StatusModel {
+        session_id: session_id.clone(),
+        model: model.clone(),
+        context_window,
+        turn: turn_seed,
+        glyphs,
+        ..Default::default()
+    };
     // Text typed during the last turn and submitted with Enter (M32 #18):
     // consumed at the top of the loop as the next query.
     let mut queued_message: Option<String> = None;
@@ -67,46 +83,16 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         }
     }
 
-    // Helper: re-draw the live region.
+    // Helper: re-draw the live region from the one status model.
     let redraw = |r: &mut RatatuiRendererStdout,
                   is: &InputState,
-                  sid: &str,
                   ap: &SessionApproval,
-                  mdl: &str,
-                  tn: usize,
-                  pt: u32,
-                  cw: u32,
-                  du: bool,
-                  cost: f64,
-                  hu: bool| {
-        let sb = StatusBarState {
-            session_id: sid,
-            approval_hint: &ap.hint(),
-            model: mdl,
-            turn: tn,
-            prompt_tokens: pt,
-            context_window: cw,
-            daemon_up: du,
-            tools_total: 0,
-            cost_usd: cost,
-            has_untracked: hu,
-        };
-        let _ = r.draw(is.current_line(), &sb);
+                  sb: &mut crate::cli::status_bar::StatusModel| {
+        sb.approval_hint = ap.hint();
+        let _ = r.draw(is.current_line(), sb);
     };
 
-    redraw(
-        &mut renderer,
-        input_state,
-        &session_id,
-        approval,
-        &model,
-        turn,
-        prompt_tokens,
-        context_window,
-        daemon_up,
-        0.0,
-        false,
-    );
+    redraw(&mut renderer, input_state, approval, &mut sb);
 
     let _ = renderer.commit_styled(&banner_lines(
         chat_width,
@@ -131,27 +117,20 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 session: tmux_session.as_deref(),
                 pane: target_pane.as_deref(),
             },
-            TokenCtx {
-                prompt_tokens: &mut prompt_tokens,
-                context_window,
-                turn,
-            },
             RatatuiQueryCtx {
                 chat_width: Some(cw),
-                session_cost: &mut cost_usd,
-                session_has_untracked: &mut has_untracked,
                 renderer: &mut renderer,
-                model: &model,
                 stdin,
                 transcript: &mut transcript,
                 typeahead: &mut typeahead,
                 status: &emit_status,
+                sb: &mut sb,
             },
         )
         .await
         {
             Ok(()) => {
-                daemon_up = true;
+                sb.set_daemon_up(true);
             }
             Err(e) => {
                 eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
@@ -162,19 +141,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         settle_typeahead(&typeahead, &mut queued_message, input_state);
     }
 
-    redraw(
-        &mut renderer,
-        input_state,
-        &session_id,
-        approval,
-        &model,
-        turn,
-        prompt_tokens,
-        context_window,
-        daemon_up,
-        0.0,
-        false,
-    );
+    redraw(&mut renderer, input_state, approval, &mut sb);
 
     // Help text for /help command.
     let help_text = HELP_TEXT;
@@ -194,15 +161,8 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 sigwinch,
                 renderer: &mut renderer,
                 chat_width: &mut chat_width,
-                session_id: &session_id,
                 approval,
-                model: &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
+                sb: &mut sb,
                 last_ctrl_c: &mut last_ctrl_c,
                 transcript: &transcript,
                 pushes,
@@ -226,19 +186,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         if query == "/help" || query == "help" || query == "?" || query == "/?" {
             let _ = renderer.commit(help_text);
             let _ = renderer.commit("\n");
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
+            redraw(&mut renderer, input_state, approval, &mut sb);
             continue;
         }
         if let Some(host) = shell_command(&query) {
@@ -265,19 +213,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     let _ = renderer.commit(&format!("  ✗ shell: {e}\n"));
                 }
             }
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
+            redraw(&mut renderer, input_state, approval, &mut sb);
             continue;
         }
         if let Some(id) = attach_target(&query) {
@@ -290,39 +226,15 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     }
                 }
                 None => {
-                    let hint = approval.hint();
-                    let status = StatusBarState {
-                        session_id: &session_id,
-                        approval_hint: &hint,
-                        model: &model,
-                        turn,
-                        prompt_tokens,
-                        context_window,
-                        daemon_up,
-                        tools_total: 0,
-                        cost_usd,
-                        has_untracked,
-                    };
+                    sb.approval_hint = approval.hint();
                     if let Err(e) =
-                        super::agents::run_agents(stdin, sigwinch, &mut renderer, &status).await
+                        super::agents::run_agents(stdin, sigwinch, &mut renderer, &sb).await
                     {
                         let _ = renderer.commit(&format!("  ✗ agents: {e}\n"));
                     }
                 }
             }
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
+            redraw(&mut renderer, input_state, approval, &mut sb);
             continue;
         }
         if let Some(id) = log_command(&query) {
@@ -338,19 +250,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     let _ = renderer.commit("  usage: /log <log id>  (see /logs)\n");
                 }
             }
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
+            redraw(&mut renderer, input_state, approval, &mut sb);
             continue;
         }
         if query == "/tail"
@@ -370,41 +270,20 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     let _ = renderer.commit("  usage: /tail <shell id>  (see /shells)\n");
                 }
             }
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
+            redraw(&mut renderer, input_state, approval, &mut sb);
             continue;
         }
         if query == "/clear" || query == "/new" {
             // Start a fresh conversation: new session id, reset counters.
             session_id = uuid::Uuid::new_v4().to_string();
-            prompt_tokens = 0;
-            cost_usd = 0.0;
-            has_untracked = false;
+            sb.prompt_tokens = 0;
+            sb.cost_usd = 0.0;
+            sb.has_untracked = false;
+            sb.previous_prompt_tokens = None;
+            sb.session_name = None;
+            sb.session_dirty = false;
             let _ = renderer.commit("  ✓ started a fresh session\n");
-            redraw(
-                &mut renderer,
-                input_state,
-                &session_id,
-                approval,
-                &model,
-                turn,
-                prompt_tokens,
-                context_window,
-                daemon_up,
-                cost_usd,
-                has_untracked,
-            );
+            redraw(&mut renderer, input_state, approval, &mut sb);
             continue;
         }
 
@@ -423,25 +302,14 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     current_prompt: &mut current_prompt,
                     target_pane: &mut target_pane,
                     transcript: &mut transcript,
+                    sb: &mut sb,
                 },
                 &query,
             )
             .await;
             match outcome {
                 slash::SlashOutcome::Handled => {
-                    redraw(
-                        &mut renderer,
-                        input_state,
-                        &session_id,
-                        approval,
-                        &model,
-                        turn,
-                        prompt_tokens,
-                        context_window,
-                        daemon_up,
-                        cost_usd,
-                        has_untracked,
-                    );
+                    redraw(&mut renderer, input_state, approval, &mut sb);
                     continue;
                 }
                 slash::SlashOutcome::NotACommand => {
@@ -449,19 +317,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     if slash::is_command_shaped(first) {
                         let _ =
                             renderer.commit(&format!("  ✗ unknown command: {first} (try /help)\n"));
-                        redraw(
-                            &mut renderer,
-                            input_state,
-                            &session_id,
-                            approval,
-                            &model,
-                            turn,
-                            prompt_tokens,
-                            context_window,
-                            daemon_up,
-                            cost_usd,
-                            has_untracked,
-                        );
+                        redraw(&mut renderer, input_state, approval, &mut sb);
                         continue;
                     }
                     // Prose starting with '/': fall through to the LLM.
@@ -472,10 +328,17 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         // Echo the user's words into scrollback so the transcript reads as a
         // conversation. Same element as tool output — one visual grammar for
         // everything committed above the live region.
-        turn += 1;
+        sb.turn += 1;
+        let now = std::time::Instant::now();
+        sb.state = crate::cli::status_bar::ChatState::Working;
+        sb.turn_started_at = Some(now);
+        sb.previous_prompt_tokens = Some(sb.prompt_tokens);
+        if sb.session_name.is_some() {
+            sb.session_dirty = true;
+        }
         if should_echo(&query) {
             let echo_body: Vec<String> = echo_body(&query);
-            let label = turn_budget_label(turn, prompt_tokens, context_window);
+            let label = turn_budget_label(sb.turn, sb.prompt_tokens, context_window);
             let _ = renderer.commit_panel_labeled(&user_host, &echo_body, false, Some(&label));
             transcript.push(crate::cli::transcript::Block::UserTurn {
                 label: user_host.clone(),
@@ -486,7 +349,6 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         // ── Send the user query ─────────────────────────────────────────
         {
             let cw = chat_width;
-            let mut prompt_tokens_copy = prompt_tokens;
             let mut typeahead = Typeahead::default();
             match ask_with_session_ratatui(
                 QueryArgs {
@@ -499,21 +361,14 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     session: tmux_session.as_deref(),
                     pane: target_pane.as_deref(),
                 },
-                TokenCtx {
-                    prompt_tokens: &mut prompt_tokens_copy,
-                    context_window,
-                    turn,
-                },
                 RatatuiQueryCtx {
                     chat_width: Some(cw),
-                    session_cost: &mut cost_usd,
-                    session_has_untracked: &mut has_untracked,
                     renderer: &mut renderer,
-                    model: &model,
                     stdin,
                     transcript: &mut transcript,
                     typeahead: &mut typeahead,
                     status: &emit_status,
+                    sb: &mut sb,
                 },
             )
             .await
@@ -523,24 +378,15 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     eprintln!("\x1b[31m✗\x1b[0m {}", e);
                 }
             }
-            prompt_tokens = prompt_tokens_copy;
 
             settle_typeahead(&typeahead, &mut queued_message, input_state);
-        }
+            // Turn finished: idle, and the last turn's duration feeds throughput.
+            sb.state = crate::cli::status_bar::ChatState::Idle;
+            sb.last_turn_duration = sb.turn_started_at.map(|t| t.elapsed());
+            sb.turn_started_at = None;
 
-        redraw(
-            &mut renderer,
-            input_state,
-            &session_id,
-            approval,
-            &model,
-            turn,
-            prompt_tokens,
-            context_window,
-            daemon_up,
-            cost_usd,
-            has_untracked,
-        );
+            redraw(&mut renderer, input_state, approval, &mut sb);
+        }
     }
 
     renderer.restore();
@@ -556,21 +402,14 @@ struct RatatuiInputCtx<'a> {
     sigwinch: &'a mut tokio::signal::unix::Signal,
     renderer: &'a mut RatatuiRendererStdout,
     chat_width: &'a mut usize,
-    session_id: &'a str,
     approval: &'a SessionApproval,
-    model: &'a str,
-    turn: usize,
-    prompt_tokens: u32,
-    context_window: u32,
-    daemon_up: bool,
-    cost_usd: f64,
-    has_untracked: bool,
+    sb: &'a mut crate::cli::status_bar::StatusModel,
     last_ctrl_c: &'a mut Option<std::time::Instant>,
     transcript: &'a crate::cli::transcript::Transcript,
     /// Pushes from the parked presence connection (M27 phase 03b). Rendered
     /// here — not in the background task — because the renderer owns the
     /// screen and only this loop may write to it.
-    pushes: &'a mut tokio::sync::mpsc::UnboundedReceiver<String>,
+    pushes: &'a mut super::chat_presence::PresenceReceiver,
 }
 
 async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Result<Option<String>> {
@@ -580,57 +419,47 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
         sigwinch,
         renderer,
         chat_width,
-        session_id,
         approval,
-        model,
-        turn,
-        prompt_tokens,
-        context_window,
-        daemon_up,
-        cost_usd,
-        has_untracked,
+        sb,
         last_ctrl_c,
         transcript,
         pushes,
     } = ctx;
     loop {
         tokio::select! {
-            Some(msg) = pushes.recv() => {
-                // An alert pushed over the presence connection. Rendered here,
+            Some(push) = pushes.recv() => {
+                // Pushes from the parked presence connection. Rendered here,
                 // by the loop that owns the renderer — never from the
                 // background task (a stray stdout write would corrupt the
                 // ratatui screen).
-                let _ = renderer.commit(&format!("\n⚙ {msg}\n"));
-                let sb = StatusBarState {
-                    session_id,
-                    approval_hint: &approval.hint(),
-                    model,
-                    turn,
-                    prompt_tokens,
-                    context_window,
-                    daemon_up,
-                    tools_total: 0,
-                    cost_usd,
-                    has_untracked,
-                };
-                let _ = renderer.draw(state.current_line(), &sb);
+                match push {
+                    super::chat_presence::PresencePush::Text(msg) => {
+                        let _ = renderer.commit(&format!("\n⚙ {msg}\n"));
+                        if msg.starts_with("daemon connection lost") {
+                            sb.state = crate::cli::status_bar::ChatState::Reconnecting;
+                        }
+                    }
+                    super::chat_presence::PresencePush::Alerts(alerts) => {
+                        sb.set_alerts(alerts, std::time::Instant::now());
+                    }
+                }
+                sb.approval_hint = approval.hint();
+                let _ = renderer.draw(state.current_line(), sb);
             }
             _ = sigwinch.recv() => {
                 *chat_width = terminal_width();
                 renderer.reanchor();
-                let sb = StatusBarState {
-                    session_id,
-                    approval_hint: &approval.hint(),
-                    model,
-                    turn,
-                    prompt_tokens,
-                    context_window,
-                    daemon_up,
-                    tools_total: 0,
-                    cost_usd,
-                    has_untracked,
-                };
-                let _ = renderer.draw(state.current_line(), &sb);
+                sb.approval_hint = approval.hint();
+                let _ = renderer.draw(state.current_line(), sb);
+            }
+            _ = tokio::time::sleep_until(
+                tokio::time::Instant::now() + std::time::Duration::from_secs(1),
+                ), if sb.is_time_based(std::time::Instant::now()) => {
+                // The bar carries something time-based (a running turn, a
+                // firing alert, a live resolve flash): redraw once a second.
+                // The arm's condition turns the timer off otherwise.
+                sb.approval_hint = approval.hint();
+                let _ = renderer.draw(state.current_line(), sb);
             }
             key = read_key(stdin) => {
                 let Some(key) = key else {
@@ -694,19 +523,8 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         // Returning to this tmux pane: re-pin the input box to the
                         // bottom in case the terminal was repainted while away.
                         renderer.reanchor();
-                        let sb = StatusBarState {
-                            session_id,
-                            approval_hint: &approval.hint(),
-                            model,
-                            turn,
-                            prompt_tokens,
-                            context_window,
-                            daemon_up,
-                            tools_total: 0,
-                            cost_usd,
-                            has_untracked,
-                        };
-                        let _ = renderer.draw(state.current_line(), &sb);
+                        sb.approval_hint = approval.hint();
+                        let _ = renderer.draw(state.current_line(), sb);
                     }
                     Key::FocusLost => {}
                     Key::Home => { state.current_line_mut().move_home(); }
@@ -729,35 +547,13 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         {
                             eprintln!("\x1b[31m✗\x1b[0m viewer: {}", e);
                         }
-                        let sb = StatusBarState {
-                            session_id,
-                            approval_hint: &approval.hint(),
-                            model,
-                            turn,
-                            prompt_tokens,
-                            context_window,
-                            daemon_up,
-                            tools_total: 0,
-                            cost_usd,
-                            has_untracked,
-                        };
-                        let _ = renderer.draw(state.current_line(), &sb);
+                        sb.approval_hint = approval.hint();
+                        let _ = renderer.draw(state.current_line(), sb);
                     }
                     _ => {}
                 }
-                let sb = StatusBarState {
-                    session_id,
-                    approval_hint: &approval.hint(),
-                    model,
-                    turn,
-                    prompt_tokens,
-                    context_window,
-                    daemon_up,
-                    tools_total: 0,
-                    cost_usd,
-                    has_untracked,
-                };
-                let _ = renderer.draw(state.current_line(), &sb);
+                sb.approval_hint = approval.hint();
+                let _ = renderer.draw(state.current_line(), sb);
             }
         }
     }

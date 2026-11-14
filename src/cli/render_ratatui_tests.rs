@@ -18,18 +18,7 @@ fn draw_picker_panel_shows_the_window_and_marks_the_selection() {
         VIEWPORT_ROWS,
         crate::cli::palette::ColorDepth::Xterm256,
     );
-    let status = StatusBarState {
-        session_id: "abcdef12",
-        approval_hint: "",
-        model: "m",
-        turn: 0,
-        prompt_tokens: 0,
-        context_window: 0,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    };
+    let status = default_status();
     let rows: Vec<String> = (0..5).map(|i| format!("s{i}  host:local")).collect();
     renderer
         .draw_picker_panel("agents · 4/5", &rows, 3, &status)
@@ -87,7 +76,6 @@ pub(super) fn test_renderer(
     .unwrap();
     RatatuiRenderer {
         terminal,
-        start_time: std::time::Instant::now(),
         palette: crate::cli::palette::Palette::for_depth(depth),
         origin_row: 0,
         inserted_rows: 0,
@@ -120,12 +108,8 @@ fn live_region_shows_input_text_and_status_bar() {
         .iter()
         .flat_map(|c| c.symbol().chars())
         .collect();
-    // Status bar should contain session id and model name.
-    assert!(
-        all_text.contains("session:abcdef12"),
-        "status bar should contain session id, got: {}",
-        all_text
-    );
+    // The status bar shows the model slot; a 60-column pane drops the
+    // tier-3 session slot, so only the model is pinned here.
     assert!(
         all_text.contains("test-model"),
         "status bar should contain model name, got: {}",
@@ -209,21 +193,6 @@ fn commit_renders_transcript_line_into_buffer() {
         buf_text,
         scroll_text,
     );
-}
-
-#[test]
-fn fmt_uptime_formats_seconds() {
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(42)), "42s");
-}
-
-#[test]
-fn fmt_uptime_formats_minutes() {
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(125)), "2m 5s");
-}
-
-#[test]
-fn fmt_uptime_formats_hours() {
-    assert_eq!(fmt_uptime(std::time::Duration::from_secs(3725)), "1h 2m");
 }
 
 #[test]
@@ -816,22 +785,6 @@ fn truncate_with_ellipsis_zero_max_is_empty() {
     assert_eq!(truncate_with_ellipsis("hello", 0), "");
 }
 
-#[test]
-fn short_session_marks_long_id() {
-    let result = short_session("abcdef12-3456-7890-abcd-ef1234567890");
-    assert!(result.ends_with('…'));
-    assert_eq!(result.chars().count(), 9); // 8 chars + ellipsis
-    assert!(result.starts_with("abcdef12"));
-}
-
-#[test]
-fn short_session_leaves_short_id_unchanged() {
-    assert_eq!(short_session("short"), "short");
-    assert_eq!(short_session("abcdef12"), "abcdef12");
-    assert!(!short_session("short").contains('…'));
-    assert!(!short_session("abcdef12").contains('…'));
-}
-
 /// A panel's border rows are as wide as the terminal even when the title
 /// or the bottom label holds double-width characters.
 #[test]
@@ -847,295 +800,27 @@ fn commit_panel_borders_fill_by_display_width() {
     assert_eq!(bottom.width(), 60, "bottom border: {bottom:?}");
 }
 
-/// Helper: make a default StatusBarState for tests.
-pub(super) fn default_status() -> StatusBarState<'static> {
-    StatusBarState {
-        session_id: "abcdef12-3456",
-        approval_hint: "cmds: auto",
-        model: "test-model",
-        turn: 0,
-        prompt_tokens: 0,
+/// Helper: make a default status model for tests.
+pub(super) fn default_status() -> crate::cli::status_bar::StatusModel {
+    crate::cli::status_bar::StatusModel {
+        session_name: Some("abcdef12-3456".to_string()),
+        approval_hint: "cmds: auto".to_string(),
+        model: "test-model".to_string(),
         context_window: 200_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
+        ..Default::default()
     }
 }
 
-/// Build the default test status bar state.
-pub(super) fn approval_test_status() -> StatusBarState<'static> {
-    StatusBarState {
-        session_id: "test-session",
-        approval_hint: "",
-        model: "test-model",
-        turn: 0,
-        prompt_tokens: 0,
+/// Build the default test status model.
+pub(super) fn approval_test_status() -> crate::cli::status_bar::StatusModel {
+    crate::cli::status_bar::StatusModel {
+        model: "test-model".to_string(),
         context_window: 200_000,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
+        ..Default::default()
     }
 }
 
 // ── Phase 02 (M36): the status bar's line builder ───────────────────────────
-
-/// A state for the status-bar line tests: session `9d46ede3-…`, model
-/// `glm-4.6`, 41 234 of 200 000 tokens, the approvals hint from the design.
-fn bar_status<'a>(
-    session_id: &'a str,
-    hint: &'a str,
-    turn: usize,
-    prompt_tokens: u32,
-    context_window: u32,
-) -> StatusBarState<'a> {
-    StatusBarState {
-        session_id,
-        approval_hint: hint,
-        model: "glm-4.6",
-        turn,
-        prompt_tokens,
-        context_window,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
-    }
-}
-
-fn bar_line(
-    turn: usize,
-    prompt_tokens: u32,
-    context_window: u32,
-    hint: &str,
-    width: u16,
-) -> ratatui::text::Line<'static> {
-    status_bar_line(
-        &bar_status(
-            "9d46ede3-a1b2-c3d4-e5f6-a7b8c9d0e1f2",
-            hint,
-            turn,
-            prompt_tokens,
-            context_window,
-        ),
-        std::time::Duration::from_secs(182),
-        &crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor),
-        width,
-    )
-}
-
-fn bar_text(line: &ratatui::text::Line<'_>) -> String {
-    line.spans.iter().flat_map(|s| s.content.chars()).collect()
-}
-
-#[test]
-fn status_bar_line_orders_turn_ctx_model_session_uptime() {
-    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 200);
-    let text = bar_text(&line);
-    for field in [
-        "turn 6",
-        "ctx 41k/200k (20%)",
-        "glm-4.6",
-        "session:9d46ede3…",
-        "up 3m 2s",
-    ] {
-        assert!(
-            text.contains(field),
-            "the bar must contain '{field}': {text:?}"
-        );
-    }
-    let t = &text;
-    let order = [
-        t.find("turn 6"),
-        t.find("ctx 41k/200k (20%)"),
-        t.find("glm-4.6"),
-        t.find("session:9d46ede3…"),
-        t.find("up 3m 2s"),
-    ];
-    let mut sorted = order;
-    sorted.sort();
-    assert_eq!(
-        order, sorted,
-        "the five fields appear left to right: {text:?}"
-    );
-    // The hint ends flush against the right edge of the given width.
-    assert_eq!(line.width(), 200, "the bar fills the width: {text:?}");
-    assert!(
-        text.ends_with("⚡approvals: all · Ctrl+C revokes"),
-        "the hint sits at the right edge: {text:?}"
-    );
-}
-
-#[test]
-fn status_bar_ctx_formats_tokens_compactly() {
-    let text_of = |p: u32, w: u32| {
-        let line = bar_line(1, p, w, "", 200);
-        bar_text(&line)
-    };
-    let t = text_of(950, 200_000);
-    assert!(t.contains("ctx 950/200k"), "below 1 000 as is: {t:?}");
-    let t = text_of(4_321, 200_000);
-    assert!(
-        t.contains("ctx 4.3k/200k"),
-        "below 10 000 with one decimal: {t:?}"
-    );
-    let t = text_of(41_234, 200_000);
-    assert!(
-        t.contains("ctx 41k/200k"),
-        "below 1 000 000 as whole thousands: {t:?}"
-    );
-    let t = text_of(200_000, 200_000);
-    assert!(
-        t.contains("ctx 200k/200k"),
-        "the window itself as whole thousands: {t:?}"
-    );
-    let t = text_of(1_048_576, 2_000_000);
-    assert!(
-        t.contains("ctx 1.0M/2.0M"),
-        "from 1 000 000 as millions with one decimal: {t:?}"
-    );
-    let t = text_of(0, 200_000);
-    assert!(t.contains("ctx — "), "no usage yet reads ctx —: {t:?}");
-    let t = text_of(41_234, 0);
-    assert!(
-        t.contains("ctx 41k ") && !t.contains('%'),
-        "an unknown window drops the window and the percentage: {t:?}"
-    );
-}
-
-#[test]
-fn status_bar_ctx_colours_at_75_and_90_percent() {
-    let ctx_span_color = |p: u32, w: u32| {
-        let line = bar_line(1, p, w, "", 200);
-        let idx = line
-            .spans
-            .iter()
-            .position(|s| s.content.contains("/200k"))
-            .expect("a span holds the context segment");
-        line.spans[idx].style.fg.unwrap()
-    };
-    assert_eq!(
-        ctx_span_color(148_000, 200_000),
-        ratatui::style::Color::Gray,
-        "74% stays gray"
-    );
-    assert_eq!(
-        ctx_span_color(150_000, 200_000),
-        crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor)
-            .yellow(),
-        "75% turns amber"
-    );
-    assert_eq!(
-        ctx_span_color(178_000, 200_000),
-        crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor)
-            .yellow(),
-        "89% stays amber"
-    );
-    assert_eq!(
-        ctx_span_color(180_000, 200_000),
-        crate::cli::palette::Palette::for_depth(crate::cli::palette::ColorDepth::Truecolor).red(),
-        "90% turns red"
-    );
-    // The rest of the bar stays gray at the thresholds.
-    let line = bar_line(1, 180_000, 200_000, "", 200);
-    for span in &line.spans {
-        if span.content.contains("/200k") {
-            continue;
-        }
-        assert_eq!(
-            span.style.fg,
-            Some(ratatui::style::Color::Gray),
-            "only the context segment colours: {span:?}"
-        );
-    }
-}
-
-#[test]
-fn status_bar_is_readable_gray_not_dim() {
-    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 200);
-    assert!(!line.spans.is_empty(), "the line has spans");
-    for span in &line.spans {
-        assert!(
-            !span
-                .style
-                .add_modifier
-                .contains(ratatui::style::Modifier::DIM),
-            "no span carries DIM: {span:?}"
-        );
-        assert_ne!(
-            span.style.fg,
-            Some(ratatui::style::Color::DarkGray),
-            "no span is DarkGray: {span:?}"
-        );
-    }
-}
-
-#[test]
-fn status_bar_drops_hint_before_clipping() {
-    // Width where only the left part fits: the hint is dropped whole, the
-    // left part intact.
-    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 70);
-    let text = bar_text(&line);
-    assert!(
-        !text.contains("approvals"),
-        "the hint is dropped before clipping: {text:?}"
-    );
-    assert!(
-        text.contains("up 3m 2s"),
-        "the left part survives intact: {text:?}"
-    );
-    assert!(
-        line.width() <= 70,
-        "the bar never exceeds the width: {text:?}"
-    );
-
-    // Narrower still: the line ends in `…` and stays within the width.
-    let line = bar_line(6, 41_234, 200_000, "⚡approvals: all · Ctrl+C revokes", 30);
-    let text = bar_text(&line);
-    assert!(
-        text.ends_with('…'),
-        "the clipped line ends in the ellipsis: {text:?}"
-    );
-    assert_eq!(line.width(), 30, "no line exceeds the width: {text:?}");
-}
-
-#[test]
-fn status_bar_fits_a_wide_hint_exactly() {
-    let hint = "⚡approvals: all · Ctrl+C revokes";
-    // The narrowest width where the left part and the hint fit with one
-    // space between them: the left part's display width, plus the hint's
-    // display width (the ⚡ alone is two columns), plus one.
-    let left = " turn 6 · ctx 41k/200k (20%) · glm-4.6 · session:9d46ede3… · up 3m 2s";
-    let boundary = Span::raw(left).width() + Span::raw(hint).width() + 1;
-
-    let line = bar_line(6, 41_234, 200_000, hint, boundary as u16);
-    assert_eq!(
-        line.width(),
-        boundary,
-        "at the boundary width the line fills it exactly: {line:?}"
-    );
-    assert!(
-        bar_text(&line).ends_with("revokes"),
-        "the hint's last character is on screen: {line:?}"
-    );
-
-    // One column narrower: the hint is dropped whole, the left part intact.
-    let line = bar_line(6, 41_234, 200_000, hint, boundary as u16 - 1);
-    let text = bar_text(&line);
-    assert!(
-        !text.contains("approvals"),
-        "one column narrower the hint is dropped: {text:?}"
-    );
-    assert!(
-        text.ends_with("up 3m 2s"),
-        "the left part survives intact: {text:?}"
-    );
-    assert!(
-        line.width() < boundary,
-        "no line exceeds the width: {line:?}"
-    );
-}
 
 #[test]
 fn status_bar_shows_turn_on_every_panel() {
@@ -1143,7 +828,7 @@ fn status_bar_shows_turn_on_every_panel() {
         let mut renderer = make_test_renderer();
         let mut input = InputLine::new();
         input.insert_str("typed");
-        let status = StatusBarState {
+        let status = crate::cli::status_bar::StatusModel {
             turn: 6,
             ..approval_test_status()
         };
@@ -1171,8 +856,8 @@ fn status_bar_shows_turn_on_every_panel() {
             .flat_map(|c| c.symbol().chars())
             .collect();
         assert!(
-            all_text.contains("turn 6"),
-            "draw path {draw} must put turn 6 on its status row: {all_text:?}"
+            all_text.contains("↻6") || all_text.contains("t6"),
+            "draw path {draw} must put the turn 6 on its status row: {all_text:?}"
         );
     }
 }
@@ -1313,4 +998,33 @@ fn approval_diff_long_line_wraps_at_commit() {
             "a row holds SGR text: {row:?}"
         );
     }
+}
+
+#[test]
+fn renderer_draws_the_status_bar_from_the_model() {
+    let mut renderer = make_test_renderer();
+    let input = InputLine::new();
+    let status = crate::cli::status_bar::StatusModel {
+        model: "test-model".to_string(),
+        turn: 3,
+        session_name: Some("incident-42".to_string()),
+        ..approval_test_status()
+    };
+    renderer.draw(&input, &status).unwrap();
+    let buf = renderer.terminal.backend().buffer();
+    let all_text: String = buf
+        .content
+        .iter()
+        .flat_map(|c| c.symbol().chars())
+        .collect();
+    // The bar is the model's glyph-led line: the turn segment shows.
+    assert!(
+        all_text.contains('↻') && all_text.contains('3'),
+        "the bar row shows the turn segment: {all_text:?}"
+    );
+    // The old bar's session id and uptime labels are gone.
+    assert!(
+        !all_text.contains("session:") && !all_text.contains("up "),
+        "no legacy session:/up labels: {all_text:?}"
+    );
 }

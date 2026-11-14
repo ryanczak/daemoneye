@@ -12,9 +12,7 @@ use super::chat_presence;
 use super::ipc_client::new_session_id;
 use super::pane::resolve_target_pane;
 use super::slash;
-use super::stream::{
-    AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, Typeahead, ask_with_session_ratatui,
-};
+use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, Typeahead, ask_with_session_ratatui};
 
 /// `/log` and its log id: `Some(Some(id))` for `/log <id>`, `Some(None)` for a
 /// bare `/log`, `None` for anything else — `/logs` included.
@@ -81,7 +79,6 @@ Up/Down navigate the input; at the top/bottom edge they recall history.
 ";
 
 pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
-    let start_time = std::time::Instant::now();
     // `--resume <id>` reuses the given id; a fresh chat mints one (M27 phase 03).
     let session_id = match resume_id.as_deref() {
         Some(id) => id.to_string(),
@@ -141,7 +138,7 @@ pub(super) async fn run_chat_inner(resume_id: Option<String>) -> Result<()> {
 
     // Ratatui path: create the inline-viewport renderer (enters raw mode
     // internally).
-    let mut renderer = match RatatuiRendererStdout::new(start_time) {
+    let mut renderer = match RatatuiRendererStdout::new() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to initialise ratatui renderer: {e}");

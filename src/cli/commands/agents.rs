@@ -113,7 +113,7 @@ pub(super) async fn run_agents(
     stdin: &crate::cli::input::AsyncStdin,
     sigwinch: &mut tokio::signal::unix::Signal,
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
 ) -> anyhow::Result<()> {
     use crate::ipc::{Request, Response};
 
@@ -126,7 +126,7 @@ pub(super) async fn run_agents(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let Some(mut picker) = AgentPicker::new(&shells, status.session_id, now) else {
+    let Some(mut picker) = AgentPicker::new(&shells, &status.session_id, now) else {
         let _ = renderer.commit("  no live shells to attach to (see /shells)\n");
         return Ok(());
     };

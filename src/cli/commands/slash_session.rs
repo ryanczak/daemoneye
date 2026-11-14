@@ -15,7 +15,7 @@ pub(super) async fn cmd_session(ctx: SlashCtx<'_>, rest: &str) {
         "save" => session_save(ctx, args).await,
         "load" | "resume" => session_load(ctx, args).await,
         "delete" | "rm" => session_delete(ctx.renderer, args).await,
-        "rename" | "mv" => session_rename(ctx.renderer, args).await,
+        "rename" | "mv" => session_rename(ctx, args).await,
         other => note(
             ctx.renderer,
             &format!("unknown: /session {other} (try list|save|load|delete|rename)"),
@@ -84,7 +84,11 @@ async fn session_save(ctx: SlashCtx<'_>, args: &str) {
     })
     .await
     {
-        Ok(Response::SessionSaved { name }) => note(r, &format!("✓ session saved as '{name}'")),
+        Ok(Response::SessionSaved { name }) => {
+            ctx.sb.session_name = Some(name.clone());
+            ctx.sb.session_dirty = false;
+            note(r, &format!("✓ session saved as '{name}'"));
+        }
         Ok(other) => render_error(r, other),
         Err(e) => note(r, &format!("✗ {e}")),
     }
@@ -116,6 +120,8 @@ async fn session_load(ctx: SlashCtx<'_>, args: &str) {
             banner,
             ..
         }) => {
+            ctx.sb.session_name = Some(name.clone());
+            ctx.sb.session_dirty = false;
             note(r, &format!("✓ loaded '{name}' ({message_count} messages)"));
             if !banner.is_empty() {
                 let _ = r.commit(&format!("{banner}\n"));
@@ -170,7 +176,8 @@ async fn session_delete(r: &mut RatatuiRendererStdout, name: &str) {
 }
 
 /// `/session rename <old> <new>`.
-async fn session_rename(r: &mut RatatuiRendererStdout, args: &str) {
+async fn session_rename(ctx: SlashCtx<'_>, args: &str) {
+    let r = ctx.renderer;
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() != 2 {
         note(r, "usage: /session rename <old> <new>");
@@ -182,7 +189,11 @@ async fn session_rename(r: &mut RatatuiRendererStdout, args: &str) {
     })
     .await
     {
-        Ok(Response::Ok) => note(r, &format!("✓ renamed '{}' → '{}'", parts[0], parts[1])),
+        Ok(Response::Ok) => {
+            ctx.sb.session_name = Some(parts[1].to_string());
+            ctx.sb.session_dirty = false;
+            note(r, &format!("✓ renamed '{}' → '{}'", parts[0], parts[1]));
+        }
         Ok(other) => render_error(r, other),
         Err(e) => note(r, &format!("✗ {e}")),
     }

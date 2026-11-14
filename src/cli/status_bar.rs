@@ -266,7 +266,6 @@ impl StatusModel {
 
 // ── The line ─────────────────────────────────────────────────────────────────
 
-
 fn gray() -> Style {
     Style::default().fg(Color::Gray)
 }

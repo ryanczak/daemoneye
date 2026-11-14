@@ -33,6 +33,9 @@ pub(super) struct SlashCtx<'a> {
     pub(super) current_prompt: &'a mut Option<String>,
     pub(super) target_pane: &'a mut Option<String>,
     pub(super) transcript: &'a mut crate::cli::transcript::Transcript,
+    /// The status-bar model the session commands keep informed (M37 02a): a
+    /// save or load names the session, a save clears its dirty mark.
+    pub(super) sb: &'a mut crate::cli::status_bar::StatusModel,
 }
 
 /// Whether `cmd` looks like a command token (`/word`) rather than a path or

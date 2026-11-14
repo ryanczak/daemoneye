@@ -3,34 +3,6 @@
 
 use super::*;
 
-/// The status bar each prompt in a turn draws over: the session's id, the
-/// session's model, the turn, approval hint, token count and cost. The
-/// daemon is shown as down while a prompt holds the live region.
-#[allow(clippy::too_many_arguments)] // 8 params: every field of the StatusBarState the prompt draws
-fn prompt_status<'a>(
-    session_id: &'a str,
-    hint: &'a str,
-    model: &'a str,
-    turn: usize,
-    prompt_tokens: u32,
-    context_window: u32,
-    cost_usd: f64,
-    has_untracked: bool,
-) -> crate::cli::render::StatusBarState<'a> {
-    crate::cli::render::StatusBarState {
-        session_id,
-        approval_hint: hint,
-        model,
-        turn,
-        prompt_tokens,
-        context_window,
-        daemon_up: false,
-        tools_total: 0,
-        cost_usd,
-        has_untracked,
-    }
-}
-
 /// Stream the AI response through the ratatui renderer.
 ///
 /// Before the first token, animates a spinner in the inline viewport.
@@ -41,7 +13,6 @@ pub(in super::super) async fn ask_with_session_ratatui(
     session_id: Option<&str>,
     approval: &mut SessionApproval,
     tmux: AskTmuxCtx<'_>,
-    tok: TokenCtx<'_>,
     ctx: RatatuiQueryCtx<'_>,
 ) -> Result<()> {
     let QueryArgs {
@@ -53,21 +24,15 @@ pub(in super::super) async fn ask_with_session_ratatui(
         session: tmux_session,
         pane: target_pane,
     } = tmux;
-    let TokenCtx {
-        prompt_tokens,
-        context_window,
-        turn,
-    } = tok;
     let RatatuiQueryCtx {
         chat_width,
-        session_cost,
-        session_has_untracked,
         renderer,
-        model,
         stdin,
         transcript,
         typeahead,
         status,
+        sb,
+        ..
     } = ctx;
 
     let stream = connect().await?;
@@ -214,24 +179,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 } else {
                     dot_period - pos + 1
                 };
-                let sb = StatusBarState {
-                    session_id: session_id.unwrap_or(""),
-                    approval_hint: &approval.hint(),
-                    model,
-                    turn,
-                    prompt_tokens: *prompt_tokens,
-                    context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: 0.0,
-                    has_untracked: false,
-                };
+                sb.approval_hint = approval.hint();
                 let _ = renderer.draw_spinner(
                     SPINNER[spin % SPINNER.len()],
                     verb,
                     dot_count,
                     typeahead.text(),
-                    &sb,
+                    sb,
                 );
                 spin = spin.wrapping_add(1);
                 continue;
@@ -260,19 +214,8 @@ pub(in super::super) async fn ask_with_session_ratatui(
             }
             StreamOutcome::Warn => {
                 // First interrupt press — show warning in live region.
-                let sb = StatusBarState {
-                    session_id: session_id.unwrap_or(""),
-                    approval_hint: &approval.hint(),
-                    model,
-                    turn,
-                    prompt_tokens: *prompt_tokens,
-                    context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: 0.0,
-                    has_untracked: false,
-                };
-                let _ = renderer.draw_spinner("⚡", "interrupt?", 0, typeahead.text(), &sb);
+                sb.approval_hint = approval.hint();
+                let _ = renderer.draw_spinner("⚡", "interrupt?", 0, typeahead.text(), sb);
                 continue;
             }
             StreamOutcome::Msg(_) => {
@@ -304,24 +247,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 } else {
                     dot_period - pos + 1
                 };
-                let sb = StatusBarState {
-                    session_id: session_id.unwrap_or(""),
-                    approval_hint: &approval.hint(),
-                    model,
-                    turn,
-                    prompt_tokens: *prompt_tokens,
-                    context_window,
-                    daemon_up: false,
-                    tools_total: 0,
-                    cost_usd: 0.0,
-                    has_untracked: false,
-                };
+                sb.approval_hint = approval.hint();
                 let _ = renderer.draw_spinner(
                     SPINNER[spin % SPINNER.len()],
                     verb,
                     dot_count,
                     typeahead.text(),
-                    &sb,
+                    sb,
                 );
                 spin = spin.wrapping_add(1);
                 continue;
@@ -360,11 +292,11 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 has_untracked_cost,
                 ..
             } => {
-                *session_cost = session_cost_usd;
-                *session_has_untracked = has_untracked_cost;
+                sb.cost_usd = session_cost_usd;
+                sb.has_untracked = has_untracked_cost;
             }
             Response::UsageUpdate { prompt_tokens: pt } => {
-                *prompt_tokens = pt;
+                sb.prompt_tokens = pt;
             }
             Response::SystemMsg(msg) => {
                 if !response_started {
@@ -382,21 +314,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 classification,
                 interactive,
             } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let (approved, user_message) = prompt_tool_call_ratatui(
                     renderer,
                     stdin,
-                    &sb,
+                    sb,
                     approval,
                     &command,
                     background,
@@ -417,34 +341,18 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 status.reply();
             }
             Response::CredentialPrompt { id, prompt } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
-                let credential = prompt_credential_ratatui(renderer, stdin, &sb, &prompt).await;
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
+                let credential = prompt_credential_ratatui(renderer, stdin, sb, &prompt).await;
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
                 status.reply();
             }
             Response::PaneSelectPrompt { id, panes } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
-                let pane_id = prompt_pane_select_ratatui(renderer, stdin, &sb, &panes).await;
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
+                let pane_id = prompt_pane_select_ratatui(renderer, stdin, sb, &panes).await;
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
                 status.reply();
             }
@@ -453,17 +361,9 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 script_name,
                 agent,
             } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let agent_name = agent_name_of(&script_name);
                 let kind_label = if agent { "agent" } else { "script" };
                 let delete_kind = if agent {
@@ -474,7 +374,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 let approved = prompt_delete_ratatui(
                     renderer,
                     stdin,
-                    &sb,
+                    sb,
                     approval,
                     delete_kind,
                     &script_name,
@@ -492,17 +392,9 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 existing_content,
                 agent,
             } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let kind = if agent { "agent" } else { "script" };
                 let prompt_kind = if agent {
                     super::approval::PromptKind::AgentWrite(&agent_name_of(&script_name))
@@ -512,7 +404,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
-                    &sb,
+                    sb,
                     approval,
                     &script_name,
                     &content,
@@ -537,19 +429,11 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 kind,
                 action,
             } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let approved = prompt_schedule_write_ratatui(
-                    renderer, stdin, &sb, approval, &name, &kind, &action,
+                    renderer, stdin, sb, approval, &name, &kind, &action,
                 )
                 .await;
                 send_request(&mut tx, Request::ScheduleWriteResponse { id, approved }).await?;
@@ -561,21 +445,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 content,
                 existing_content,
             } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let approved = prompt_write_ratatui(
                     renderer,
                     stdin,
-                    &sb,
+                    sb,
                     approval,
                     &runbook_name,
                     &content,
@@ -603,17 +479,9 @@ pub(in super::super) async fn ask_with_session_ratatui(
                         active_jobs.join(", ")
                     )
                 };
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let _ = renderer.commit(&format!(
                     "\n  ⚙ AI wants to delete runbook: {}{}",
                     runbook_name, job_info
@@ -621,7 +489,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 let approved = prompt_delete_ratatui(
                     renderer,
                     stdin,
-                    &sb,
+                    sb,
                     approval,
                     super::approval::PromptKind::RunbookDelete(&runbook_name),
                     &runbook_name,
@@ -642,21 +510,13 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 sudo,
                 always_asked,
             } => {
-                let hint = approval.hint();
-                let sb = prompt_status(
-                    session_id.unwrap_or(""),
-                    &hint,
-                    ctx.model,
-                    turn,
-                    *prompt_tokens,
-                    context_window,
-                    *session_cost,
-                    *session_has_untracked,
-                );
+                status.blocked(crate::shell::program_status::Kind::Permission);
+                sb.approval_hint = approval.hint();
+                sb.state = crate::cli::status_bar::ChatState::AwaitingApproval;
                 let (approved, user_message) = prompt_edit_file_ratatui(
                     renderer,
                     stdin,
-                    &sb,
+                    sb,
                     approval,
                     &path,
                     &operation,
@@ -780,24 +640,4 @@ pub(in super::super) async fn ask_with_session_ratatui(
     interrupt_state.reset();
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::prompt_status;
-
-    #[test]
-    fn prompt_status_names_the_session() {
-        let sb = prompt_status(
-            "0123456789abcdef",
-            "approve? y/n",
-            "claude-opus-4-6",
-            3,
-            1234,
-            200_000,
-            0.5,
-            false,
-        );
-        assert_eq!(sb.session_id, "0123456789abcdef");
-    }
 }

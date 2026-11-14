@@ -211,6 +211,15 @@ restart to land. Everything else swaps into the running config on reload.
 | `shells.rows` | integer | 10–200 (clamped) | 40 | reload |
 | `shells.cols` | integer | 40–500 (clamped) | 120 | reload |
 
+## `[chat]`
+
+| Key | Type | Range | Default | Takes effect |
+|---|---|---|---|---|
+| `chat.glyphs` | string | `emoji` / `symbols` / `ascii`; any other value is a load error (warned at load, behaves as `emoji`) | `emoji` | reload |
+
+The status bar's glyph dialect. When the locale (`LANG`, `LC_ALL`, `LC_CTYPE`)
+is not UTF-8 the bar speaks `ascii` whatever this says.
+
 ## `[budget]`
 
 | Key | Type | Range | Default | Takes effect |

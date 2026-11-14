@@ -13,6 +13,18 @@ use crate::ipc::Response;
 
 use super::ipc_client::{connect, recv, send_request};
 
+/// One push the parked presence task forwards to the chat loop: the text
+/// notices (connection lost, reconnected, the catch-up brief) and the
+/// daemon's alert snapshots (M37 02a).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PresencePush {
+    Text(String),
+    Alerts(Vec<crate::ipc::AlertBadge>),
+}
+
+/// The channel the parked task forwards [`PresencePush`]es onto.
+pub(crate) type PresenceReceiver = tokio::sync::mpsc::UnboundedReceiver<PresencePush>;
+
 /// The reply a `ChatAttach` gets: zero or one `Response::SystemMsg` (the
 /// catch-up brief) and then `Response::Ok`. Returns the brief, if any.
 ///
@@ -93,7 +105,7 @@ impl HeldPresence {
     {
         let (mut rx, mut tx) = (self.rx, self.tx);
         let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
-        let (push_tx, push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (push_tx, push_rx) = tokio::sync::mpsc::unbounded_channel::<PresencePush>();
         let task = tokio::spawn(async move {
             let mut discarded = String::new();
             'hold: loop {
@@ -106,13 +118,19 @@ impl HeldPresence {
                     if n == 0 {
                         // EOF: the daemon restart or dropped its end. Report
                         // it, then keep the chat alive by re-attaching.
-                        let _ = push_tx.send("daemon connection lost — reconnecting…".to_string());
+                        let _ = push_tx.send(PresencePush::Text(
+                            "daemon connection lost — reconnecting…".to_string(),
+                        ));
                         break;
                     }
-                    if let Ok(Response::SystemMsg(msg)) =
-                        serde_json::from_str::<Response>(discarded.trim())
-                    {
-                        let _ = push_tx.send(msg);
+                    match serde_json::from_str::<Response>(discarded.trim()) {
+                        Ok(Response::SystemMsg(msg)) => {
+                            let _ = push_tx.send(PresencePush::Text(msg));
+                        }
+                        Ok(Response::AlertState { alerts }) => {
+                            let _ = push_tx.send(PresencePush::Alerts(alerts));
+                        }
+                        _ => {}
                     }
                     discarded.clear();
                 }
@@ -134,9 +152,9 @@ impl HeldPresence {
                 let (next_rx, next_tx) = (held.rx, held.tx);
                 rx = next_rx;
                 tx = next_tx;
-                let _ = push_tx.send("reconnected".to_string());
+                let _ = push_tx.send(PresencePush::Text("reconnected".to_string()));
                 if let Some(brief) = brief {
-                    let _ = push_tx.send(brief);
+                    let _ = push_tx.send(PresencePush::Text(brief));
                 }
                 discarded.clear();
             }
@@ -166,14 +184,14 @@ impl HeldPresence {
 pub(crate) struct ParkedPresence {
     done_tx: Option<tokio::sync::oneshot::Sender<()>>,
     task: Option<tokio::task::JoinHandle<()>>,
-    pushes: tokio::sync::mpsc::UnboundedReceiver<String>,
+    pushes: PresenceReceiver,
 }
 
 impl ParkedPresence {
     /// The channel the parked task forwards pushed `SystemMsg`s onto, for the
     /// chat loop to select on. Borrowed, not taken: the hold must stay owned
     /// by `self` for the loop's lifetime, since dropping `self` ends it.
-    pub(crate) fn pushes(&mut self) -> &mut tokio::sync::mpsc::UnboundedReceiver<String> {
+    pub(crate) fn pushes(&mut self) -> &mut PresenceReceiver {
         &mut self.pushes
     }
 
@@ -181,7 +199,7 @@ impl ParkedPresence {
     /// attach, so the loop always selects on a real channel. Dropping it does
     /// nothing — there is no hold to end.
     pub(crate) fn detached() -> Self {
-        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (_tx, rx) = tokio::sync::mpsc::unbounded_channel::<PresencePush>();
         Self {
             done_tx: None,
             task: None,
@@ -261,13 +279,17 @@ mod tests {
         let first = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the first push within 5 s");
-        assert_eq!(first.as_deref(), Some("ALERT one"), "first push forwarded");
+        assert_eq!(
+            first.expect("a first push"),
+            PresencePush::Text("ALERT one".to_string()),
+            "first push forwarded"
+        );
         let second = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the second push within 5 s");
         assert_eq!(
-            second.as_deref(),
-            Some("ALERT two"),
+            second.expect("a second push"),
+            PresencePush::Text("ALERT two".to_string()),
             "the second push is forwarded too, not just the first"
         );
         assert!(
@@ -342,33 +364,39 @@ mod tests {
         let first = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the push on the first connection within 5 s");
-        assert_eq!(first.as_deref(), Some("ALERT gone"));
+        assert_eq!(
+            first.expect("a first push"),
+            PresencePush::Text("ALERT gone".to_string())
+        );
         let second = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the connection-lost push within 5 s");
         assert_eq!(
-            second.as_deref(),
-            Some("daemon connection lost — reconnecting…"),
+            second.expect("a second push"),
+            PresencePush::Text("daemon connection lost — reconnecting…".to_string()),
             "EOF is announced, not swallowed"
         );
         let third = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the reconnected push within 5 s");
-        assert_eq!(third.as_deref(), Some("reconnected"));
+        assert_eq!(
+            third.expect("a third push"),
+            PresencePush::Text("reconnected".to_string())
+        );
         let brief = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the brief within 5 s");
         assert_eq!(
-            brief.as_deref(),
-            Some("brief: caught up 3 events"),
+            brief.expect("a brief push"),
+            PresencePush::Text("brief: caught up 3 events".to_string()),
             "the catch-up brief the new attach returned is forwarded"
         );
         let fourth = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
             .await
             .expect("the push on the new connection within 5 s");
         assert_eq!(
-            fourth.as_deref(),
-            Some("ALERT on the new connection"),
+            fourth.expect("a fourth push"),
+            PresencePush::Text("ALERT on the new connection".to_string()),
             "pushes keep flowing on the reconnected hold"
         );
         assert!(
@@ -396,8 +424,8 @@ mod tests {
             .await
             .expect("the pushed SystemMsg within 5 s");
         assert_eq!(
-            msg.as_deref(),
-            Some("ALERT after setup"),
+            msg.expect("a pushed msg"),
+            PresencePush::Text("ALERT after setup".to_string()),
             "the push reaches the channel the loop selects on"
         );
     }
@@ -410,6 +438,33 @@ mod tests {
         assert!(
             !std::any::type_name::<HeldPresence>().is_empty(),
             "the type exists; only attach() can build it"
+        );
+    }
+
+    /// An `AlertState` frame the fake daemon pushes arrives on the channel as
+    /// `PresencePush::Alerts`, not as text — the slot the bar diffs.
+    #[tokio::test]
+    async fn parked_presence_forwards_alert_state_frames() {
+        let mut parked = park_with_daemon_held(vec![
+            "{\"AlertState\":{\"alerts\":[{\"fingerprint\":\"fp-1\",\"name\":\"HighCPU\",\"severity\":\"critical\",\"first_seen_unix\":1764000000,\"last_seen_unix\":1764000600}]}}\n"
+                .to_string(),
+        ])
+        .await;
+        let pushes = parked.pushes();
+        let push = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the alert frame within 5 s")
+            .expect("a push");
+        let PresencePush::Alerts(alerts) = push else {
+            panic!("an AlertState frame forwards as Alerts, got: {push:?}");
+        };
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].fingerprint, "fp-1");
+        assert_eq!(alerts[0].name, "HighCPU");
+        assert_eq!(alerts[0].severity, "critical");
+        assert!(
+            parked.holds_presence(),
+            "the guard is still live after the frame"
         );
     }
 

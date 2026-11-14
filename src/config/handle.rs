@@ -187,6 +187,7 @@ fn section_json(cfg: &Config, name: &str) -> Option<serde_json::Value> {
         "execution" => serde_json::to_value(&cfg.execution),
         "shells" => serde_json::to_value(&cfg.shells),
         "budget" => serde_json::to_value(&cfg.budget),
+        "chat" => serde_json::to_value(&cfg.chat),
         _ => return None,
     };
     value.ok()
@@ -231,6 +232,7 @@ const ALL_SECTIONS: &[&str] = &[
     "execution",
     "shells",
     "budget",
+    "chat",
 ];
 
 /// Flatten a JSON diff into `section.key` leaf paths. Two objects are walked

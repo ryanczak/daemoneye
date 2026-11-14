@@ -9,7 +9,6 @@ use tokio::io::BufReader;
 
 use crate::cli::input::*;
 use crate::cli::markdown::MarkdownRenderer;
-use crate::cli::render::*;
 use crate::ipc::{APPROVAL_TIMEOUT, Request, Response};
 
 use super::approval::SessionApproval;
@@ -93,20 +92,10 @@ pub(super) struct AskTmuxCtx<'a> {
     pub(super) pane: Option<&'a str>,
 }
 
-pub(super) struct TokenCtx<'a> {
-    pub(super) prompt_tokens: &'a mut u32,
-    pub(super) context_window: u32,
-    /// The chat's turn counter, for the status bar (`daemoneye ask` passes 1).
-    pub(super) turn: usize,
-}
-
 /// Context for the ratatui-path query function.
 pub(super) struct RatatuiQueryCtx<'a> {
     pub(super) chat_width: Option<usize>,
-    pub(super) session_cost: &'a mut f64,
-    pub(super) session_has_untracked: &'a mut bool,
     pub(super) renderer: &'a mut crate::cli::render_ratatui::RatatuiRendererStdout,
-    pub(super) model: &'a str,
     pub(super) stdin: &'a AsyncStdin,
     pub(super) transcript: &'a mut crate::cli::transcript::Transcript,
     /// Where this turn's typed text accumulates (M32 #18); the caller reads
@@ -116,6 +105,9 @@ pub(super) struct RatatuiQueryCtx<'a> {
     /// Shared for the client's lifetime; `ask_with_session_ratatui` only
     /// drives it.
     pub(super) status: &'a crate::cli::program_status_emit::Emitter,
+    /// The status-bar model this turn updates in place (M37 02a): the same
+    /// one the chat loop owns, so the bar stays coherent across the turn.
+    pub(super) sb: &'a mut crate::cli::status_bar::StatusModel,
 }
 
 #[path = "stream_ask.rs"]

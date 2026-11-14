@@ -96,6 +96,9 @@ pub struct DoctorInputs {
     pub tmux_present: bool,
     /// Whether `$TMUX` is set (inside a tmux session).
     pub inside_tmux: bool,
+    /// The status-bar glyph dialect the session actually speaks (M37 02a):
+    /// the configured one, ASCII when the locale is not UTF-8.
+    pub glyphs: String,
 }
 
 impl Default for DoctorInputs {
@@ -116,6 +119,7 @@ impl Default for DoctorInputs {
             ssh_present: false,
             tmux_present: false,
             inside_tmux: false,
+            glyphs: String::new(),
         }
     }
 }
@@ -139,7 +143,40 @@ pub fn evaluate(inputs: &DoctorInputs) -> Vec<Check> {
         sandbox_check(inputs),
         hosts_check(inputs),
         tmux_check(inputs),
+        glyphs_check(inputs),
     ]
+}
+
+/// The dialect the status bar speaks and a one-line sample of its glyphs, so
+/// the user sees what their terminal does with the set before they rely on
+/// it. Always an `Ok` row: a dialect choice is a preference, not a problem.
+fn glyphs_check(inputs: &DoctorInputs) -> Check {
+    Check::ok("status bar glyphs", inputs.glyphs.clone())
+}
+
+/// The dialect name and its glyph sample, `name · sample`, with the locale
+/// rule applied — the same set the chat bar would speak in this environment.
+fn glyph_report_line() -> String {
+    let utf8 = crate::cli::status_bar::locale_is_utf8(
+        std::env::var("LANG").ok().as_deref(),
+        std::env::var("LC_ALL").ok().as_deref(),
+        std::env::var("LC_CTYPE").ok().as_deref(),
+    );
+    let configured = crate::config::Config::load()
+        .ok()
+        .and_then(|cfg| cfg.chat.glyph_set().ok())
+        .unwrap_or(&crate::cli::status_glyphs::EMOJI);
+    let set = crate::cli::status_bar::glyph_set_for_locale(configured, utf8);
+    let forced = if utf8 {
+        String::new()
+    } else {
+        " (locale is not UTF-8 — ASCII forced)".to_string()
+    };
+    format!(
+        "{}{forced} · {}",
+        crate::cli::status_bar::glyph_set_name(set),
+        crate::cli::status_bar::glyph_sample(set)
+    )
 }
 
 fn config_check(inputs: &DoctorInputs) -> Check {
@@ -301,6 +338,7 @@ pub async fn gather() -> DoctorInputs {
         ssh_present: binary_present("ssh"),
         tmux_present: binary_present("tmux"),
         inside_tmux: std::env::var("TMUX").is_ok_and(|v| !v.is_empty()),
+        glyphs: glyph_report_line(),
     };
 
     if inputs.sandbox_enabled {
@@ -451,6 +489,7 @@ mod tests {
             ssh_present: true,
             tmux_present: false,
             inside_tmux: false,
+            glyphs: "emoji".to_string(),
         }
     }
 
@@ -664,13 +703,20 @@ mod tests {
     }
 
     #[test]
-    fn doctor_orders_the_seven_checks() {
+    fn doctor_orders_the_checks() {
         let checks = evaluate(&inputs_base());
         let names: Vec<&str> = checks.iter().map(|c| c.name).collect();
         assert_eq!(
             names,
             vec![
-                "config", "api key", "shell", "daemon", "sandbox", "hosts", "tmux"
+                "config",
+                "api key",
+                "shell",
+                "daemon",
+                "sandbox",
+                "hosts",
+                "tmux",
+                "status bar glyphs"
             ],
             "the Spec's fixed order"
         );

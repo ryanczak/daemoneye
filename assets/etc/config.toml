@@ -408,6 +408,15 @@ prompt = "sre"
 # mailbox_retention_days  = 7   # delete agent mailbox results older than this
 #                               # (0 = keep forever; default: 7)
 
+# ── Chat ─────────────────────────────────────────────────────────────────────
+
+[chat]
+# The chat status bar's appearance.
+glyphs = "emoji"   # the bar's glyph dialect: "emoji" (default), "symbols"
+                   # or "ascii". Any other value is a load error. When the
+                   # locale is not UTF-8 the bar speaks "ascii" whatever
+                   # this says.
+
 # ── Hosts ────────────────────────────────────────────────────────────────────
 
 # [hosts.web01]

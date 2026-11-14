@@ -14,9 +14,7 @@ use crate::ipc::{Request, Response};
 
 use super::approval::SessionApproval;
 use super::ipc_client::{connect, recv, send_request};
-use super::stream::{
-    AskTmuxCtx, QueryArgs, RatatuiQueryCtx, TokenCtx, Typeahead, ask_with_session_ratatui,
-};
+use super::stream::{AskTmuxCtx, QueryArgs, RatatuiQueryCtx, Typeahead, ask_with_session_ratatui};
 
 pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     if raw {
@@ -27,14 +25,13 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     let ask_config = Config::load().unwrap_or_default();
     let mut approval = SessionApproval::from_config(&ask_config.approvals);
 
-    let mut renderer =
-        match crate::cli::render_ratatui::RatatuiRendererStdout::new(std::time::Instant::now()) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Failed to initialise ratatui renderer: {e}");
-                return Err(e.into());
-            }
-        };
+    let mut renderer = match crate::cli::render_ratatui::RatatuiRendererStdout::new() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Failed to initialise ratatui renderer: {e}");
+            return Err(e.into());
+        }
+    };
     let mut transcript = crate::cli::transcript::Transcript::new();
     // A one-shot ask has no next turn: a throwaway typeahead keeps the keys
     // from being dropped mid-turn without anywhere to submit them.
@@ -54,21 +51,14 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
             session: crate::tmux::current_session_name().as_deref(),
             pane: None,
         },
-        TokenCtx {
-            prompt_tokens: &mut 0,
-            context_window: 0,
-            turn: 1,
-        },
         RatatuiQueryCtx {
             chat_width: Some(terminal_width()),
-            session_cost: &mut 0.0,
-            session_has_untracked: &mut false,
             renderer: &mut renderer,
-            model: &ask_config.resolve_model(None).model,
             stdin: &stdin,
             transcript: &mut transcript,
             typeahead: &mut typeahead,
             status: &emit_status,
+            sb: &mut Default::default(),
         },
     )
     .await

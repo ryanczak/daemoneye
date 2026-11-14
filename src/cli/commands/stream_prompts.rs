@@ -157,7 +157,7 @@ async fn read_approval_input(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
     prompt_text: &str,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     deadline: tokio::time::Instant,
 ) -> Option<String> {
     read_approval_input_with(renderer, stdin, deadline, false, |r, line| {
@@ -173,7 +173,7 @@ async fn read_approval_input_panel(
     stdin: &AsyncStdin,
     title: &str,
     session_label: &str,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     deadline: tokio::time::Instant,
 ) -> Option<String> {
     read_approval_input_with(renderer, stdin, deadline, false, |r, line| {
@@ -335,7 +335,7 @@ fn commit_declined(
 async fn prompt_with_session_approve_view(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     prompt_text: &str,
     view: &crate::cli::diff::DiffView,
 ) -> (bool, bool, Option<String>) {
@@ -365,7 +365,7 @@ async fn prompt_with_session_approve_view(
 pub(super) async fn prompt_tool_call_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     approval: &mut super::approval::SessionApproval,
     command: &str,
     background: bool,
@@ -524,7 +524,7 @@ pub(super) async fn read_credential_with(
 pub(super) async fn prompt_credential_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     prompt: &str,
 ) -> String {
     let _ = renderer.commit(&format!("\n⚠ {}\n", prompt));
@@ -552,7 +552,7 @@ pub(super) async fn prompt_credential_ratatui(
 pub(super) async fn prompt_pane_select_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     panes: &[crate::ipc::PaneInfo],
 ) -> String {
     let _ = renderer.commit("\n  ⚙ Which pane should receive this command?\n");
@@ -581,7 +581,7 @@ pub(super) async fn prompt_pane_select_ratatui(
 pub(super) async fn prompt_yes_no_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     info: &str,
     prompt_text: &str,
 ) -> bool {
@@ -598,7 +598,7 @@ pub(super) async fn prompt_yes_no_ratatui(
 pub(super) async fn prompt_write_ratatui<FInsert>(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     approval: &mut super::approval::SessionApproval,
     name: &str,
     content: &str,
@@ -650,7 +650,7 @@ where
 pub(super) async fn prompt_delete_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     approval: &mut super::approval::SessionApproval,
     kind: super::approval::PromptKind<'_>,
     name: &str,
@@ -687,7 +687,7 @@ pub(super) fn agent_name_of(script_name: &str) -> String {
 pub(super) async fn prompt_schedule_write_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     approval: &mut super::approval::SessionApproval,
     name: &str,
     kind: &str,
@@ -735,7 +735,7 @@ pub(super) fn edit_file_grants_session(
 pub(super) async fn prompt_edit_file_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
-    status: &crate::cli::render::StatusBarState<'_>,
+    status: &crate::cli::status_bar::StatusModel,
     approval: &mut super::approval::SessionApproval,
     path: &str,
     operation: &str,

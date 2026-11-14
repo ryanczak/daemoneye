@@ -158,22 +158,3 @@ pub fn wrap_line(line: Line<'static>, width: usize) -> Vec<Line<'static>> {
     }
     rows
 }
-
-/// The status-bar fields passed as a single reference to every rendering function.
-pub struct StatusBarState<'a> {
-    pub session_id: &'a str,
-    pub approval_hint: &'a str,
-    pub model: &'a str,
-    /// The chat's turn counter: 0 before the first turn, the resumed count
-    /// after `--resume`.
-    pub turn: usize,
-    pub prompt_tokens: u32,
-    pub context_window: u32,
-    pub daemon_up: bool,
-    /// Session-cumulative count of silent tool calls (incremented on ToolStarted).
-    pub tools_total: u32,
-    /// Cumulative cost of this session in USD.
-    pub cost_usd: f64,
-    /// Whether any AI call in this session had Unknown pricing.
-    pub has_untracked: bool,
-}

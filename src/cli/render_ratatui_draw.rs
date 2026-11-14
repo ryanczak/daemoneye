@@ -77,8 +77,7 @@ impl<B: Backend> RatatuiRenderer<B> {
     }
 
     /// Draw the live region: input box and status bar.
-    pub fn draw(&mut self, input: &InputLine, status: &StatusBarState<'_>) -> Result<(), B::Error> {
-        let start_time = self.start_time;
+    pub fn draw(&mut self, input: &InputLine, status: &StatusModel) -> Result<(), B::Error> {
         let palette = self.palette;
 
         let _completed = self.terminal.draw(|frame| {
@@ -97,15 +96,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             let (vis_row, vis_col) = input.cursor_visual_pos(content_width);
             let cursor_pos = Some((vis_col as u16, vis_row as u16));
 
-            render_live_region(
-                frame,
-                area,
-                &input_text,
-                status,
-                cursor_pos,
-                start_time,
-                &palette,
-            );
+            render_live_region(frame, area, &input_text, status, cursor_pos, &palette);
         })?;
         Ok(())
     }
@@ -120,9 +111,8 @@ impl<B: Backend> RatatuiRenderer<B> {
         verb: &str,
         dot_count: usize,
         typeahead_text: &str,
-        status: &StatusBarState<'_>,
+        status: &StatusModel,
     ) -> Result<(), B::Error> {
-        let start_time = self.start_time;
         let palette = self.palette;
 
         let blood_red = Style::default()
@@ -152,7 +142,6 @@ impl<B: Backend> RatatuiRenderer<B> {
                 spinner_line.clone(),
                 typeahead_text,
                 status,
-                start_time,
                 &palette,
             );
         })?;
@@ -168,24 +157,15 @@ impl<B: Backend> RatatuiRenderer<B> {
         &mut self,
         prompt: &str,
         input: &InputLine,
-        status: &StatusBarState<'_>,
+        status: &StatusModel,
     ) -> Result<(), B::Error> {
         let input_text = input.as_str();
-        let start_time = self.start_time;
         let palette = self.palette;
         let prompt_owned = prompt.to_string();
 
         let _completed = self.terminal.draw(|frame| {
             let area = frame.area();
-            render_prompt_region(
-                frame,
-                area,
-                &prompt_owned,
-                &input_text,
-                status,
-                start_time,
-                &palette,
-            );
+            render_prompt_region(frame, area, &prompt_owned, &input_text, status, &palette);
         })?;
         Ok(())
     }
@@ -200,7 +180,7 @@ impl<B: Backend> RatatuiRenderer<B> {
         title: &str,
         session_label: &str,
         input: &InputLine,
-        status: &StatusBarState<'_>,
+        status: &StatusModel,
     ) -> Result<(), B::Error> {
         let area = self.terminal.get_frame().area();
         if area.height < 6 {
@@ -209,7 +189,6 @@ impl<B: Backend> RatatuiRenderer<B> {
         }
 
         let input_text = input.as_str();
-        let start_time = self.start_time;
         let palette = self.palette;
         let title_owned = title.to_string();
         let session_label_owned = session_label.to_string();
@@ -236,7 +215,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             .block(panel);
             frame.render_widget(content, chunks[0]);
 
-            render_status_bar(frame, chunks[1], status, start_time, &palette);
+            render_status_bar(frame, chunks[1], status, &palette);
         })?;
 
         Ok(())
@@ -251,7 +230,7 @@ impl<B: Backend> RatatuiRenderer<B> {
         title: &str,
         detail: &str,
         input: &InputLine,
-        status: &StatusBarState<'_>,
+        status: &StatusModel,
     ) -> Result<(), B::Error> {
         let area = self.terminal.get_frame().area();
         if area.height < 6 {
@@ -260,7 +239,6 @@ impl<B: Backend> RatatuiRenderer<B> {
         }
 
         let input_text = input.as_str();
-        let start_time = self.start_time;
         let palette = self.palette;
         let title_owned = title.to_string();
         let detail_owned = detail.to_string();
@@ -292,7 +270,7 @@ impl<B: Backend> RatatuiRenderer<B> {
             .block(panel);
             frame.render_widget(content, chunks[0]);
 
-            render_status_bar(frame, chunks[1], status, start_time, &palette);
+            render_status_bar(frame, chunks[1], status, &palette);
         })?;
 
         Ok(())
@@ -307,7 +285,7 @@ impl<B: Backend> RatatuiRenderer<B> {
         title: &str,
         rows: &[String],
         selected: usize,
-        status: &StatusBarState<'_>,
+        status: &StatusModel,
     ) -> Result<(), B::Error> {
         let area = self.terminal.get_frame().area();
         if area.height < 6 {
@@ -319,7 +297,6 @@ impl<B: Backend> RatatuiRenderer<B> {
             );
         }
 
-        let start_time = self.start_time;
         let palette = self.palette;
         let title_owned = title.to_string();
 
@@ -359,7 +336,7 @@ impl<B: Backend> RatatuiRenderer<B> {
                 .collect();
             frame.render_widget(Paragraph::new(lines).block(panel), chunks[0]);
 
-            render_status_bar(frame, chunks[1], status, start_time, &palette);
+            render_status_bar(frame, chunks[1], status, &palette);
         })?;
 
         Ok(())

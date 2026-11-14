@@ -1,5 +1,5 @@
 use crate::cli::input::InputLine;
-use crate::cli::render::StatusBarState;
+use crate::cli::status_bar::StatusModel;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -202,7 +202,6 @@ fn scrolled_repaint_plan(content_top: u16, history_rows: u16, park: u16) -> (u16
 /// `TestBackend`.
 pub struct RatatuiRenderer<B: Backend> {
     terminal: Terminal<B>,
-    start_time: std::time::Instant,
     palette: crate::cli::palette::Palette,
     /// Viewport top row at construction — where committed content starts.
     origin_row: u16,
@@ -243,7 +242,7 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
     /// `set_raw_mode()` from `input.rs` before this — the two raw-mode
     /// paths conflict.  Call `restore()` on exit to leave the terminal
     /// in cooked mode.
-    pub fn new(start_time: std::time::Instant) -> std::io::Result<Self> {
+    pub fn new() -> std::io::Result<Self> {
         use crate::cli::terminal_guard::{TerminalGuard, install_panic_restore, restore_terminal};
         install_panic_restore();
         crossterm::terminal::enable_raw_mode()?;
@@ -269,7 +268,6 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
             .unwrap_or((0, 0));
         Ok(Self {
             terminal,
-            start_time,
             palette: crate::cli::palette::Palette::from_env(),
             origin_row,
             inserted_rows: 0,
@@ -422,9 +420,8 @@ fn render_live_region(
     frame: &mut ratatui::Frame,
     area: Rect,
     input_text: &ratatui::text::Text<'_>,
-    status: &StatusBarState<'_>,
+    status: &StatusModel,
     cursor_pos: Option<(u16, u16)>, // (col, row) within content area (before scroll)
-    start_time: std::time::Instant,
     palette: &crate::cli::palette::Palette,
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
@@ -464,7 +461,7 @@ fn render_live_region(
     }
 
     // ── Status bar ─────────────────────────────────────────────
-    render_status_bar(frame, chunks[1], status, start_time, palette);
+    render_status_bar(frame, chunks[1], status, palette);
 }
 
 /// The approval options line: bright-yellow key letters in blood-red
@@ -528,8 +525,7 @@ fn render_prompt_region(
     area: Rect,
     prompt: &str,
     input_text: &str,
-    status: &StatusBarState<'_>,
-    start_time: std::time::Instant,
+    status: &StatusModel,
     palette: &crate::cli::palette::Palette,
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
@@ -540,7 +536,7 @@ fn render_prompt_region(
             .split('\n')
             .map(|l| Line::from(Span::raw(l)))
             .collect();
-        render_live_region(frame, area, &it, status, None, start_time, palette);
+        render_live_region(frame, area, &it, status, None, palette);
         return;
     }
 
@@ -577,7 +573,7 @@ fn render_prompt_region(
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
-    render_status_bar(frame, chunks[1], status, start_time, palette);
+    render_status_bar(frame, chunks[1], status, palette);
 }
 
 /// Render the live region with a spinner message replacing the input box content.
@@ -588,8 +584,7 @@ fn render_spinner_region(
     area: Rect,
     spinner_line: Line<'static>,
     typeahead_text: &str,
-    status: &StatusBarState<'_>,
-    start_time: std::time::Instant,
+    status: &StatusModel,
     palette: &crate::cli::palette::Palette,
 ) {
     let (spinner_rect, body) = split_spinner_row(area);
@@ -604,12 +599,8 @@ fn render_spinner_region(
     frame.render_widget(input_para, chunks[0]);
 
     // ── Status bar ─────────────────────────────────────────────
-    render_status_bar(frame, chunks[1], status, start_time, palette);
+    render_status_bar(frame, chunks[1], status, palette);
 }
-
-/// Clip `s` to at most `max` display columns, marking truncation with a
-/// trailing '…'. Returns `s` unchanged when it already fits. The '…' counts
-/// toward `max`, so a truncated result is at most `max` columns wide (one
 /// column is dropped rather than splitting a wide glyph — a `…`-headed
 /// remainder is never clearer than a shorter kept prefix).
 /// The rows `[start, end)` a picker of `len` rows shows in `height` lines:
@@ -637,6 +628,9 @@ fn truncate_with_ellipsis(s: &str, max: usize) -> String {
 /// The longest prefix of `s` whose display width is at most `max` columns. A
 /// grapheme wider than the remaining budget is not split; the prefix ends
 /// before it.
+/// The longest prefix of `s` whose display width is at most `max` columns. A
+/// grapheme wider than the remaining budget is not split; the prefix ends
+/// before it.
 fn take_width(s: &str, max: usize) -> String {
     let mut kept = String::new();
     let mut used = 0usize;
@@ -651,124 +645,20 @@ fn take_width(s: &str, max: usize) -> String {
     kept
 }
 
-/// Abbreviate a session id for the status bar: the first 8 chars followed by '…'
-/// when longer, otherwise the id unchanged.
-fn short_session(id: &str) -> String {
-    if id.chars().count() <= 8 {
-        id.to_string()
-    } else {
-        let head: String = id.chars().take(8).collect();
-        format!("{head}…")
-    }
-}
-/// Compact token count for the status bar: below 1 000 as is (`950`); below
-/// 10 000 with one decimal (`4321` → `4.3k`); below 1 000 000 as whole
-/// thousands (`41234` → `41k`); from 1 000 000 as millions with one decimal
-/// (`1048576` → `1.0M`).
-fn compact_tokens(n: u32) -> String {
-    if n < 1_000 {
-        format!("{n}")
-    } else if n < 10_000 {
-        format!("{:.1}k", n as f64 / 1_000.0)
-    } else if n < 1_000_000 {
-        format!("{}k", n / 1_000)
-    } else {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    }
-}
-
-/// Build the status bar's single line from the state, the elapsed uptime,
-/// the palette and the pane width. Pure: no frame, no terminal.
-///
-/// Left part: `turn N · ctx … · model · session:<short id> · up <uptime>`;
-/// the approval hint sits flush against the right edge. When the two do not
-/// both fit with a space between, the hint is dropped whole; when the left
-/// part alone does not fit, it is clipped with a trailing `…`. Every span is
-/// a readable gray except the context segment, which turns amber at ≥ 75 %
-/// of the window and red at ≥ 90 %.
-fn status_bar_line(
-    status: &StatusBarState<'_>,
-    uptime: std::time::Duration,
-    palette: &crate::cli::palette::Palette,
-    width: u16,
-) -> Line<'static> {
-    let ctx_text = if status.prompt_tokens == 0 {
-        "—".to_string()
-    } else if status.context_window == 0 {
-        compact_tokens(status.prompt_tokens)
-    } else {
-        format!(
-            "{}/{} ({}%)",
-            compact_tokens(status.prompt_tokens),
-            compact_tokens(status.context_window),
-            (status.prompt_tokens as f64 / status.context_window as f64 * 100.0).floor() as u32,
-        )
-    };
-    let left = format!(
-        " turn {} · ctx {} · {} · session:{} · up {}",
-        status.turn,
-        ctx_text,
-        status.model,
-        short_session(status.session_id),
-        fmt_uptime(uptime),
-    );
-
-    let gray = Style::default().fg(Color::Gray);
-    let ctx_style = if status.prompt_tokens == 0 || status.context_window == 0 {
-        gray
-    } else {
-        let pct = status.prompt_tokens as f64 / status.context_window as f64 * 100.0;
-        if pct >= 90.0 {
-            gray.fg(palette.red())
-        } else if pct >= 75.0 {
-            gray.fg(palette.yellow())
-        } else {
-            gray
-        }
-    };
-
-    let left_width = Span::raw(&left).width();
-    let hint = status.approval_hint;
-    let hint_width = Span::raw(hint).width();
-    let fits_with_hint = !hint.is_empty() && width as usize > left_width + hint_width;
-
-    let mut spans: Vec<Span<'static>> = if left_width > width as usize {
-        vec![Span::styled(
-            truncate_with_ellipsis(&left, width as usize),
-            gray,
-        )]
-    } else {
-        // Split at the context segment so it alone carries the budget colour.
-        let marker = " · ctx ";
-        let split = left.find(marker).map(|i| i + marker.len()).unwrap_or(0);
-        let (prefix, rest) = left.split_at(split);
-        let suffix = &rest[ctx_text.len().min(rest.len())..];
-        vec![
-            Span::styled(prefix.to_string(), gray),
-            Span::styled(ctx_text.clone(), ctx_style),
-            Span::styled(suffix.to_string(), gray),
-        ]
-    };
-
-    if fits_with_hint {
-        let gap = " ".repeat(width as usize - left_width - hint_width);
-        spans.push(Span::styled(gap, gray));
-        spans.push(Span::styled(hint.to_string(), gray));
-    }
-    Line::from(spans)
-}
-
-/// The readable-gray status bar under the live region:
-/// ` turn N · ctx T/W (P%) · model · session:<short id> · up <uptime>`,
-/// with the approval hint flush against the right edge.
+/// The status bar under the live region: the model's glyph-led line, at
+/// this instant, over the palette.
 fn render_status_bar(
     frame: &mut ratatui::Frame,
     area: Rect,
-    status: &StatusBarState<'_>,
-    start_time: std::time::Instant,
+    status: &StatusModel,
     palette: &crate::cli::palette::Palette,
 ) {
-    let line = status_bar_line(status, start_time.elapsed(), palette, area.width);
+    let line = crate::cli::status_bar::status_bar_line(
+        status,
+        std::time::Instant::now(),
+        palette,
+        area.width,
+    );
     let status_block = Block::default().borders(Borders::NONE);
     frame.render_widget(Paragraph::new(line).block(status_block), area);
 }
@@ -785,17 +675,6 @@ fn alert_panel(title: &str, red: Color, yellow: Color) -> Block<'static> {
             format!(" {title} "),
             Style::default().fg(yellow).add_modifier(Modifier::BOLD),
         ))
-}
-
-fn fmt_uptime(elapsed: std::time::Duration) -> String {
-    let s = elapsed.as_secs();
-    if s < 60 {
-        format!("{}s", s)
-    } else if s < 3600 {
-        format!("{}m {}s", s / 60, s % 60)
-    } else {
-        format!("{}h {}m", s / 3600, (s % 3600) / 60)
-    }
 }
 
 #[cfg(test)]

@@ -53,6 +53,10 @@ pub struct Config {
     /// Daily spend cap. Default: off (`0.0`).
     #[serde(default)]
     pub budget: BudgetConfig,
+    /// The chat surface's own knobs (`[chat]`): today the status bar's glyph
+    /// dialect. Runtime-swappable.
+    #[serde(default)]
+    pub chat: ChatConfig,
 }
 
 impl Default for Config {
@@ -79,6 +83,63 @@ impl Default for Config {
             execution: ExecutionConfig::default(),
             shells: ShellsConfig::default(),
             budget: BudgetConfig::default(),
+            chat: ChatConfig::default(),
+        }
+    }
+}
+
+/// Chat-surface configuration (`[chat]` in config.toml).
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
+pub struct ChatConfig {
+    /// The status bar's glyph dialect: `emoji`, `symbols` or `ascii`. Any
+    /// other value is a load error naming the three. Default: `emoji`. When
+    /// the locale is not UTF-8 the bar speaks ASCII whatever this says.
+    #[serde(default = "default_glyphs")]
+    pub glyphs: String,
+}
+
+fn default_glyphs() -> String {
+    "emoji".to_string()
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        ChatConfig {
+            glyphs: default_glyphs(),
+        }
+    }
+}
+
+impl ChatConfig {
+    /// The configured dialect, or the load error for a name that is not one
+    /// of the three. The error names them in the same order the docs do.
+    pub fn glyph_set(&self) -> Result<&'static crate::cli::status_glyphs::GlyphSet, String> {
+        crate::cli::status_bar::glyph_set_by_name(&self.glyphs).ok_or_else(|| {
+            format!(
+                "[chat] glyphs = {:?} is not a dialect — supported values are {}",
+                self.glyphs,
+                crate::cli::status_bar::GLYPH_DIALECTS
+                    .iter()
+                    .map(|d| format!("\"{d}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+    }
+
+    /// Every warning about this `[chat]` section, in a stable order — the
+    /// same shape `WebhookConfig::warnings` gives its section.
+    pub fn warnings(&self) -> Vec<String> {
+        match self.glyph_set() {
+            Ok(_) => Vec::new(),
+            Err(e) => vec![e],
+        }
+    }
+
+    /// Warn about an unknown dialect at load, never fail the daemon.
+    pub fn validate(&self) {
+        for w in self.warnings() {
+            log::warn!("{w}");
         }
     }
 }
@@ -632,6 +693,29 @@ impl Config {
             }
         }
         problems
+    }
+}
+
+#[cfg(test)]
+mod chat_tests {
+    use super::*;
+
+    #[test]
+    fn chat_config_rejects_an_unknown_glyph_set() {
+        let ok: Config = toml::from_str("[chat]\nglyphs = \"emoji\"\n").unwrap();
+        assert_eq!(
+            ok.chat
+                .glyph_set()
+                .map(crate::cli::status_bar::glyph_set_name),
+            Ok("emoji"),
+            "\"emoji\" must load"
+        );
+        let bad: Config = toml::from_str("[chat]\nglyphs = \"fancy\"\n").unwrap();
+        let err = bad.chat.glyph_set().expect_err("\"fancy\" must not load");
+        assert!(
+            err.contains("emoji") && err.contains("symbols") && err.contains("ascii"),
+            "the error names all three dialects, got: {err}"
+        );
     }
 }
 

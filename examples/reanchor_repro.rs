@@ -7,7 +7,7 @@
 //! `tmux capture-pane` output before/after.
 
 use daemoneye::cli::input::{AsyncStdin, InputLine, Key, read_key};
-use daemoneye::cli::render::StatusBarState;
+use daemoneye::cli::status_bar::StatusModel;
 use daemoneye::cli::render_ratatui::RatatuiRenderer;
 
 #[tokio::main(flavor = "current_thread")]
@@ -17,23 +17,16 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(30);
 
-    let mut renderer = RatatuiRenderer::new(std::time::Instant::now())?;
+    let mut renderer = RatatuiRenderer::new()?;
     for i in 1..=n_lines {
         renderer.commit(&format!("content line {i:03}")).ok();
     }
 
     let input = InputLine::new();
-    let sb = StatusBarState {
-        session_id: "repro-session",
-        approval_hint: "",
-        model: "repro-model",
-        turn: 0,
-        prompt_tokens: 0,
+    let sb = StatusModel {
+        model: "repro-model".to_string(),
         context_window: 100_000,
-        daemon_up: true,
-        tools_total: 0,
-        cost_usd: 0.0,
-        has_untracked: false,
+        ..Default::default()
     };
     renderer.draw(&input, &sb).ok();
 

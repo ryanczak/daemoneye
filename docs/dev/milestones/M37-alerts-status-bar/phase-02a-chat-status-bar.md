@@ -224,7 +224,95 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 
 ## Update Log
 
+### Notes for executor — 2026-11-13 (refined re-dispatch)
+
+**About half this phase is already on disk, and the build is green. A green
+build is NOT evidence the phase is done.** The last run spent 536 turns,
+mostly re-reading, and hard-failed on the sixth identical
+`grep -rn 'session_id' src/cli/status_bar.rs`. Do not re-read
+`status_bar.rs` to re-derive it. It is finished, and its 28 tests pass
+(`cargo test --lib status_bar`).
+
+**Already done, do not redo:** edit-order step 1 and step 3 in full
+(`src/cli/status_bar.rs`, `status_bar_fit.rs`, `status_glyphs.rs`,
+`status_bar_tests.rs`: `GlyphSet` plus the three dialects, `ChatState`,
+`StatusModel` with `set_alerts` / `resolve_flash_live` / `is_time_based` /
+`set_daemon_up`, the pure `status_bar_line(model, now, palette, width)`,
+`glyph_set_by_name`, `glyph_set_for_locale`, `locale_is_utf8`,
+`glyph_sample`). Most of step 4 is uncommitted in the tree: `ChatConfig` with
+`glyph_set` / `warnings` / `validate` in `src/config/types.rs`, the `chat`
+entries in `src/config/handle.rs`, `chat.validate()` in
+`src/daemon/startup.rs`, and the `[chat]` docs in `assets/etc/config.toml`
+and `config-reference.md`. Keep all of it.
+
+**Remaining work, in this order. Each step ends at a green `cargo build`:**
+
+1. **First write, within 10 turns:** add the test
+   `chat_config_rejects_an_unknown_glyph_set` beside `ChatConfig`'s other
+   tests (wherever `src/config/types.rs`'s config tests live). `"emoji"` must
+   give `Ok`; `"fancy"` must give `Err` naming all three dialects.
+   `cargo test --lib chat_config` reports 1 passed.
+2. **The renderer takes the model.** In `render_ratatui.rs`,
+   `render_ratatui_draw.rs` and `commands/agents.rs`, every
+   `&StatusBarState<'_>` parameter becomes `&crate::cli::status_bar::StatusModel`.
+   `render_status_bar` calls `crate::cli::status_bar::status_bar_line(status,
+   Instant::now(), palette, area.width)`, and its `start_time` parameter goes
+   away. `agents.rs` reads `&status.session_id`. Delete
+   `render_ratatui.rs`'s own `status_bar_line`, `fmt_uptime` and
+   `short_session` (leave `status.rs`'s `fmt_uptime` alone; if `top_text.rs`
+   used the deleted `short_session`, move that function into `top_text.rs`).
+   In `render_ratatui_tests.rs`, the helpers (`default_status`,
+   `approval_test_status`, the one at line ~892, and the literal at line ~21)
+   return or build a `StatusModel` with `..Default::default()`. Delete the
+   tests that pin the old line's content
+   (`status_bar_line_orders_turn_ctx_model_session_uptime`,
+   `fmt_uptime_formats_seconds`, and any other test that calls the deleted
+   functions). Add `renderer_draws_the_status_bar_from_the_model`.
+   This step ends when `grep -c 'session:' src/cli/render_ratatui.rs`
+   prints 0 and the build is green. The chat loop will not compile in the
+   middle of this step; carry on into step 3 before building.
+3. **The loop owns one model.** `run_chat_ratatui` builds one
+   `let mut status = StatusModel { session_id, model, context_window,
+   glyphs, session_started_at, ..Default::default() }`. `glyphs` is
+   `glyph_set_for_locale(config.chat.glyph_set().unwrap_or(&EMOJI),
+   locale_is_utf8(env LANG, LC_ALL, LC_CTYPE))`. Pass it as
+   `&mut StatusModel` to `read_input_line_inner_ratatui`, replacing that
+   function's scalar status parameters, and to `ask_with_session_ratatui`
+   as a new `RatatuiQueryCtx` field. At every former `StatusBarState { … }`
+   site, assign the few fields that site changes (`approval_hint =
+   approval.hint()`, `turn`, `prompt_tokens`, `cost_usd`, `has_untracked`,
+   `set_daemon_up(…)`), then pass `&status`. Delete `prompt_status` in
+   `stream_ask.rs` and the `redraw` closure's scalar list. Set `state` at the
+   points the 7501 `Emitter` is driven: `working` → `Working` plus
+   `turn_started_at = Some(now)` plus `session_dirty = true` when named;
+   `blocked` → `AwaitingApproval`; `idle` → `Idle` plus
+   `last_turn_duration`, `previous_prompt_tokens` and
+   `turn_started_at = None`. This step ends when the 11 literals are gone
+   (`grep -c 'StatusBarState {'` prints 0 for both files) and the build is
+   green. Then delete `StatusBarState` from `render.rs`.
+4. **Step 5 of the edit order**, unchanged from the spec: `PresencePush`,
+   the alert arm (`status.set_alerts(alerts, Instant::now())` then redraw),
+   the 1 s tick while `status.is_time_based(now)`, the saved-name tracking,
+   the doctor row (use `glyph_sample`), and
+   `parked_presence_forwards_alert_state_frames`.
+5. **Docs:** the README's status bar paragraph and slot table, and the
+   `src/cli/` row in CLAUDE.md naming `status_bar.rs`.
+6. The mutation check, the gates, and the end-to-end block.
+
+**Rules for this run:** never repeat a read whose output you already have.
+If you are unsure of a call site, run `cargo build` and let the compiler
+name it. Every step above ends at a build, not at a read.
+
 <!-- entries appended below this line -->
+
+### Update — 2026-11-13 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** The stall (536 turns, `IdenticalToolCallRepetition` on a
+`session_id` grep) came at the wiring step, and the spec gave no per-site
+pattern for it and no "what's done" fence. This is the first refinement for
+this phase, so it comes before any takeover; steps 1 and 3 plus most of step
+4 are kept on disk.
 
 ### Update — 2026-11-13 12:18 (progress)
 
