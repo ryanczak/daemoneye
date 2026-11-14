@@ -254,6 +254,56 @@ impl StatusModel {
         }
     }
 
+    /// A turn was sent — the emitter's `working`. Starts the elapsed clock,
+    /// remembers this prompt's tokens as the growth baseline, and marks a
+    /// named session dirty.
+    pub fn begin_turn(&mut self, now: Instant) {
+        self.state = ChatState::Working;
+        self.turn_started_at = Some(now);
+        self.previous_prompt_tokens = Some(self.prompt_tokens);
+        if self.session_name.is_some() {
+            self.session_dirty = true;
+        }
+    }
+
+    /// An approval prompt opened — the emitter's `blocked`.
+    pub fn prompt_opened(&mut self) {
+        self.state = ChatState::AwaitingApproval;
+    }
+
+    /// The prompt's reply was sent — the emitter's `reply`, back to
+    /// `working`. The turn's start instant is left alone.
+    pub fn prompt_answered(&mut self) {
+        self.state = ChatState::Working;
+    }
+
+    /// The turn ended — the emitter's `idle`. `reached_daemon` is whether the
+    /// ask got through: a failed ask ends the turn `DaemonDown`, which the
+    /// next successful ask clears.
+    pub fn end_turn(&mut self, now: Instant, reached_daemon: bool) {
+        self.state = if reached_daemon {
+            ChatState::Idle
+        } else {
+            ChatState::DaemonDown
+        };
+        self.last_turn_duration = self
+            .turn_started_at
+            .map(|t| now.saturating_duration_since(t));
+        self.turn_started_at = None;
+    }
+
+    /// A text push from the parked presence task: "daemon connection lost…"
+    /// means `Reconnecting`, and "reconnected" clears it (or a stale
+    /// `DaemonDown`) to `Idle`. A running turn or open prompt is never
+    /// overridden by the reconnect.
+    pub fn presence_text(&mut self, msg: &str) {
+        if msg.starts_with("daemon connection lost") {
+            self.state = ChatState::Reconnecting;
+        } else if msg == "reconnected" {
+            self.set_daemon_up(true);
+        }
+    }
+
     /// The unix seconds `now` corresponds to: the session's start anchor plus
     /// the monotonic time since it.
     fn now_unix(&self, now: Instant) -> u64 {

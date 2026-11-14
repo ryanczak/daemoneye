@@ -719,3 +719,126 @@ fn compact_tokens_scales() {
     assert_eq!(compact_tokens(41_234), "41k");
     assert_eq!(compact_tokens(1_048_576), "1.0M");
 }
+
+// ── The emitter's state transitions (bug-02a-1) ──────────────────────────────
+//
+// The bar's state slot follows the OSC 7501 emitter: the loop sets `state`
+// beside each emitter call. These tests pin the model methods behind those
+// calls — the same functions production goes through — so removing a
+// transition in the loop fails here.
+
+#[test]
+fn set_daemon_up_false_leaves_daemon_down_from_idle() {
+    let mut m = StatusModel::default();
+    assert_eq!(m.state, ChatState::Idle, "the model starts idle");
+    m.set_daemon_up(false);
+    assert_eq!(
+        m.state,
+        ChatState::DaemonDown,
+        "a failed ask demotes an idle-looking state to DaemonDown"
+    );
+    m.set_daemon_up(true);
+    assert_eq!(
+        m.state,
+        ChatState::Idle,
+        "the next successful ask clears DaemonDown"
+    );
+}
+
+#[test]
+fn set_daemon_up_false_never_overrides_a_running_turn() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.state = ChatState::Working;
+    m.turn_started_at = Some(now - Duration::from_secs(3));
+    m.set_daemon_up(false);
+    assert_eq!(
+        m.state,
+        ChatState::Working,
+        "a liveness report never overrides a running turn"
+    );
+    assert_eq!(
+        m.turn_started_at,
+        Some(now - Duration::from_secs(3)),
+        "the turn start is untouched"
+    );
+}
+
+#[test]
+fn set_daemon_up_true_clears_reconnecting_to_idle() {
+    let mut m = StatusModel {
+        state: ChatState::Reconnecting,
+        ..Default::default()
+    };
+    m.set_daemon_up(true);
+    assert_eq!(
+        m.state,
+        ChatState::Idle,
+        "liveness back clears Reconnecting to Idle"
+    );
+}
+
+#[test]
+fn the_prompt_reply_returns_the_bar_to_working_with_its_clock() {
+    let start = Instant::now();
+    let mut m = StatusModel::default();
+    m.begin_turn(start);
+    m.prompt_opened();
+    assert_eq!(m.state, ChatState::AwaitingApproval);
+    m.prompt_answered();
+    assert_eq!(m.state, ChatState::Working, "the reply is back to working");
+    assert_eq!(m.turn_started_at, Some(start), "the turn clock is kept");
+    let line = line_at(&m, start + Duration::from_secs(4), 160);
+    assert!(line.contains('4'), "the elapsed seconds show again: {line}");
+}
+
+#[test]
+fn a_failed_turn_ends_daemon_down_and_the_next_success_clears_it() {
+    let start = Instant::now();
+    let mut m = StatusModel::default();
+    m.begin_turn(start);
+    m.end_turn(start + Duration::from_secs(2), false);
+    assert_eq!(
+        m.state,
+        ChatState::DaemonDown,
+        "a failed ask ends daemon-down"
+    );
+    assert_eq!(m.turn_started_at, None);
+    assert_eq!(m.last_turn_duration, Some(Duration::from_secs(2)));
+    m.begin_turn(start + Duration::from_secs(5));
+    m.end_turn(start + Duration::from_secs(6), true);
+    assert_eq!(m.state, ChatState::Idle, "a successful ask clears it");
+}
+
+#[test]
+fn begin_turn_marks_a_named_session_dirty_and_keeps_the_growth_baseline() {
+    let mut m = StatusModel {
+        prompt_tokens: 1200,
+        ..Default::default()
+    };
+    m.begin_turn(Instant::now());
+    assert!(!m.session_dirty, "an unnamed session is never dirty");
+    assert_eq!(m.previous_prompt_tokens, Some(1200));
+    m.session_name = Some("ops".to_string());
+    m.begin_turn(Instant::now());
+    assert!(m.session_dirty, "a named session goes dirty on a turn");
+}
+
+#[test]
+fn presence_text_reconnecting_then_reconnected_returns_to_idle() {
+    let mut m = StatusModel::default();
+    m.presence_text("daemon connection lost — reconnecting…");
+    assert_eq!(m.state, ChatState::Reconnecting);
+    m.presence_text("ALERT something else");
+    assert_eq!(m.state, ChatState::Reconnecting, "other text leaves it");
+    m.presence_text("reconnected");
+    assert_eq!(m.state, ChatState::Idle, "the reconnect clears it");
+
+    m.begin_turn(Instant::now());
+    m.presence_text("reconnected");
+    assert_eq!(
+        m.state,
+        ChatState::Working,
+        "a running turn is not overridden"
+    );
+}

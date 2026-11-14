@@ -133,6 +133,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                 sb.set_daemon_up(true);
             }
             Err(e) => {
+                sb.set_daemon_up(false);
                 eprintln!("\x1b[31m✗\x1b[0m Could not reach the daemon: {}", e);
                 eprintln!("  Make sure it is running:  \x1b[1mdaemoneye daemon --console\x1b[0m");
                 eprintln!("  \x1b[2mWaiting for your input…\x1b[0m");
@@ -329,13 +330,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         // conversation. Same element as tool output — one visual grammar for
         // everything committed above the live region.
         sb.turn += 1;
-        let now = std::time::Instant::now();
-        sb.state = crate::cli::status_bar::ChatState::Working;
-        sb.turn_started_at = Some(now);
-        sb.previous_prompt_tokens = Some(sb.prompt_tokens);
-        if sb.session_name.is_some() {
-            sb.session_dirty = true;
-        }
+        sb.begin_turn(std::time::Instant::now());
         if should_echo(&query) {
             let echo_body: Vec<String> = echo_body(&query);
             let label = turn_budget_label(sb.turn, sb.prompt_tokens, context_window);
@@ -350,7 +345,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
         {
             let cw = chat_width;
             let mut typeahead = Typeahead::default();
-            match ask_with_session_ratatui(
+            let result = ask_with_session_ratatui(
                 QueryArgs {
                     query,
                     prompt_override: current_prompt.as_deref(),
@@ -371,19 +366,19 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     sb: &mut sb,
                 },
             )
-            .await
-            {
-                Ok(()) => {}
+            .await;
+            let reached_daemon = match result {
+                Ok(()) => true,
                 Err(e) => {
                     eprintln!("\x1b[31m✗\x1b[0m {}", e);
+                    false
                 }
-            }
+            };
 
             settle_typeahead(&typeahead, &mut queued_message, input_state);
-            // Turn finished: idle, and the last turn's duration feeds throughput.
-            sb.state = crate::cli::status_bar::ChatState::Idle;
-            sb.last_turn_duration = sb.turn_started_at.map(|t| t.elapsed());
-            sb.turn_started_at = None;
+            // Turn finished: idle (or daemon-down when the ask failed), and
+            // the last turn's duration feeds throughput.
+            sb.end_turn(std::time::Instant::now(), reached_daemon);
 
             redraw(&mut renderer, input_state, approval, &mut sb);
         }
@@ -435,9 +430,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                 match push {
                     super::chat_presence::PresencePush::Text(msg) => {
                         let _ = renderer.commit(&format!("\n⚙ {msg}\n"));
-                        if msg.starts_with("daemon connection lost") {
-                            sb.state = crate::cli::status_bar::ChatState::Reconnecting;
-                        }
+                        sb.presence_text(&msg);
                     }
                     super::chat_presence::PresencePush::Alerts(alerts) => {
                         sb.set_alerts(alerts, std::time::Instant::now());
