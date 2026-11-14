@@ -1,7 +1,7 @@
 # Phase 02c — grants-segment
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced: bug-02c-1)
+**Status:** review
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel` and the glyph dialects)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -447,3 +447,136 @@ at review: `grant_sudo` counts 5, not 4. The ascii `!` (also
 `alert_warning`) and `*` (also `working` / `session_dirty`) collide with
 existing glyphs, but they come from the spec's own table, so they are not
 the executor's defect and are left as drafted.
+
+### Update — 2026-11-14 16:38 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Resumed phase 02c round 2 and fixed all three bug-02c-1 defects. (1) Flush right: `join_slots`'s hint path now carries the whole grants segment as `Option<Vec<Part>>` — `status_bar_line` passes `grants_parts`' output through it, measures all its parts (widths + internal single spaces) in `line_fits`, and drops them per rank while removing only that rank's parts, keeping the lead core until rank 13 — the new `grants_sit_flush_right` pins `line_width == 160`/`== 120` and the segment's last glyph ending the trimmed line. (2) `summary()` now counts `hosts_regular.union(&hosts_sudo).count()`, pinned inside `summary_counts_each_kind` (web01 in both sets + db01 in sudo → 2). (3) The detail emits schedules before agents, pinned by `grants_detail_orders_schedules_before_agents` (📅 before 🤖 at 160). All gates green: fmt clean, build 0 warnings, clippy `-D warnings` clean, full `cargo test` `passed=2949 failed=0` (over the required >2947), hygiene 16 / doc_truth 19 / bug_tracker 6 all ok; acceptance greps hold (`approval_hint=0`, `ctrl_c=0`, `grant_sudo=5`). The flush-right mutation (`gap = 0`) was applied, turned `grants_sit_flush_right` red (`FAILED. 0 passed; 1 failed; … 2858 filtered out`), and reverted; both captures are pasted in a new `(end-to-end verification, round 2)` Update Log entry, with the round-2 started entry above it; status left `in-progress`, no hand-written `(complete)` entry, commit `65943584`, tree clean. Notes for review: the drop loop now removes matching-rank parts from the segment via `retain` and nulls it only once the lead (rank 13) is gone — the detail remains one tier as the tests require; `grants_sit_flush_right`'s fixture (gated cmds, one named agent, schedules) ends in `🤖1`, so its tail assertion pins that glyph, not `📅`.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Checking daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.43s
+
+
+TEST
+rits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_allow_merged_and_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (3083686): No such process
+kill: (-3084400): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M37-alerts-status-bar/phase-02c-grants-segment.md` — +40 -0
+- `src/cli/commands/approval.rs` — +7 -2
+- `src/cli/status_bar.rs` — +23 -6
+- `src/cli/status_bar_fit.rs` — +17 -6
+- `src/cli/status_bar_tests.rs` — +51 -0
+- `src/cli/status_grants.rs` — +8 -1
+
+**Commit:** 659435843aabc9378f0c939b2732e77f633616b0
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
