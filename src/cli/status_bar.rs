@@ -228,6 +228,15 @@ impl StatusModel {
         }
     }
 
+    /// Apply a `SessionCounters` push (M37 02b) to the bar's counters: the
+    /// background, ghost and shell slots. The draw hides zero counters; a
+    /// nonzero frame shows them again.
+    pub fn set_session_counters(&mut self, background: u32, ghosts: u32, shells: u32) {
+        self.background = background;
+        self.ghosts = ghosts;
+        self.shells = shells;
+    }
+
     /// Whether a resolve flash is still live at `now`.
     pub fn resolve_flash_live(&self, now: Instant) -> bool {
         self.resolve_flash_started_at

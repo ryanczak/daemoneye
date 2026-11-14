@@ -435,6 +435,11 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                     super::chat_presence::PresencePush::Alerts(alerts) => {
                         sb.set_alerts(alerts, std::time::Instant::now());
                     }
+                    super::chat_presence::PresencePush::Counters {
+                        background,
+                        ghosts,
+                        shells,
+                    } => sb.set_session_counters(background, ghosts, shells),
                 }
                 sb.approval_hint = approval.hint();
                 let _ = renderer.draw(state.current_line(), sb);

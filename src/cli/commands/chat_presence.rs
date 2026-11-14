@@ -20,6 +20,13 @@ use super::ipc_client::{connect, recv, send_request};
 pub(crate) enum PresencePush {
     Text(String),
     Alerts(Vec<crate::ipc::AlertBadge>),
+    /// The session's live counters (M37 02b): the bar's background, ghost and
+    /// shell slots.
+    Counters {
+        background: u32,
+        ghosts: u32,
+        shells: u32,
+    },
 }
 
 /// The channel the parked task forwards [`PresencePush`]es onto.
@@ -129,6 +136,17 @@ impl HeldPresence {
                         }
                         Ok(Response::AlertState { alerts }) => {
                             let _ = push_tx.send(PresencePush::Alerts(alerts));
+                        }
+                        Ok(Response::SessionCounters {
+                            background,
+                            ghosts,
+                            shells,
+                        }) => {
+                            let _ = push_tx.send(PresencePush::Counters {
+                                background,
+                                ghosts,
+                                shells,
+                            });
                         }
                         _ => {}
                     }
@@ -462,6 +480,35 @@ mod tests {
         assert_eq!(alerts[0].fingerprint, "fp-1");
         assert_eq!(alerts[0].name, "HighCPU");
         assert_eq!(alerts[0].severity, "critical");
+        assert!(
+            parked.holds_presence(),
+            "the guard is still live after the frame"
+        );
+    }
+
+    /// A `SessionCounters` frame the fake daemon pushes arrives on the
+    /// channel as `PresencePush::Counters` (M37 02b) — the arm the chat
+    /// loop's `StatusModel` method consumes.
+    #[tokio::test]
+    async fn parked_presence_forwards_session_counters_frames() {
+        let mut parked = park_with_daemon_held(vec![
+            "{\"SessionCounters\":{\"background\":2,\"ghosts\":1,\"shells\":3}}\n".to_string(),
+        ])
+        .await;
+        let pushes = parked.pushes();
+        let push = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+            .await
+            .expect("the counters frame within 5 s")
+            .expect("a push");
+        assert_eq!(
+            push,
+            PresencePush::Counters {
+                background: 2,
+                ghosts: 1,
+                shells: 3
+            },
+            "a SessionCounters frame forwards as Counters"
+        );
         assert!(
             parked.holds_presence(),
             "the guard is still live after the frame"

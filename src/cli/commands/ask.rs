@@ -116,15 +116,12 @@ async fn run_ask_raw(query: String) -> Result<()> {
             }
             // Auto-deny tool calls — daemon will inform the AI and it will respond in text.
             Response::ToolCallPrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::ToolCallResponse {
-                        id,
-                        approved: false,
-                        user_message: None,
-                    },
-                )
-                .await?;
+                let denied = Request::ToolCallResponse {
+                    id,
+                    approved: false,
+                    user_message: None,
+                };
+                send_request(&mut tx, denied).await?;
             }
             // Auto-deny all other interactive prompts.
             Response::CredentialPrompt { id, .. } => {
@@ -204,6 +201,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
             }
             // Informational responses — silently skip.
             Response::SessionInfo { .. }
+            | Response::SessionCounters { .. }
             | Response::UsageUpdate { .. }
             | Response::SystemMsg(_)
             | Response::ToolResult { .. }

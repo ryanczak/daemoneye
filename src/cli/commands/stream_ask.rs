@@ -295,8 +295,12 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 sb.cost_usd = session_cost_usd;
                 sb.has_untracked = has_untracked_cost;
             }
-            Response::UsageUpdate { prompt_tokens: pt } => {
+            Response::UsageUpdate {
+                prompt_tokens: pt,
+                output_tokens,
+            } => {
                 sb.prompt_tokens = pt;
+                sb.last_output_tokens = output_tokens;
             }
             Response::SystemMsg(msg) => {
                 if !response_started {
@@ -609,6 +613,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             }
             // Ignore informational responses not relevant to minimal rendering.
             Response::ScheduleList { .. }
+            | Response::SessionCounters { .. }
             | Response::ScriptList { .. }
             | Response::RunbookList { .. }
             | Response::DaemonStatus { .. }

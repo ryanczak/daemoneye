@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// listed tool names are permitted. When `deny` is `Some`, all tools except the
 /// listed names are permitted. When both are `None`, all tools are allowed
 /// (default / unrestricted).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ToolPolicy {
     /// If `Some`, only the listed tool names are permitted.
     #[serde(default)]

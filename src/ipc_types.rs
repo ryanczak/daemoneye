@@ -39,7 +39,7 @@ pub struct ContainerStatusReport {
 
 /// A snapshot of a single tmux pane (M12 D7). A named struct rather than a
 /// widening tuple — the tuple had already reached five positional fields.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct PaneInfo {
     pub id: String,
     /// Window-relative pane index — the number `ctrl+a q` shows.
@@ -63,7 +63,7 @@ pub struct PaneInfo {
 }
 
 /// Summary of a scheduled job for the `ScheduleList` response.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScheduleListItem {
     pub id: String,
     pub name: String,
@@ -78,7 +78,7 @@ pub struct ScheduleListItem {
 }
 
 /// Summary of a script file for the `ScriptList` response.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ScriptListItem {
     pub name: String,
     pub size: u64,
@@ -152,7 +152,7 @@ pub struct LogCommand {
 }
 
 /// Configuration for autonomous Ghost Shells triggered by a runbook.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct GhostConfig {
     /// Whether the AI can operate autonomously in a Ghost Shell.
     pub enabled: bool,
@@ -226,7 +226,7 @@ pub struct GhostConfig {
 
 /// Effective limit configuration sent in `DaemonStatus` and `LimitsInfo` responses.
 /// All values mirror `config.limits.*`; 0 means unlimited.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
 pub struct LimitsSummary {
     pub per_tool_batch: u32,
     pub total_tool_calls_per_turn: u32,
@@ -239,7 +239,7 @@ pub struct LimitsSummary {
 }
 
 /// Summary of a runbook for the `RunbookList` response.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct RunbookListItem {
     pub name: String,
     pub tags: Vec<String>,
@@ -247,7 +247,7 @@ pub struct RunbookListItem {
 }
 
 /// Summary of a saved named session for `/session list`.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SessionSummary {
     pub name: String,
     pub description: String,

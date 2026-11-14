@@ -174,3 +174,48 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ### Update — 2026-11-13 19:51 (started, executor)
 
 Status flipped `todo → in-progress` and the milestone README's 02b row updated to match. Beginning the spec: the `SessionCounters` frame and `UsageUpdate.output_tokens` first, then `src/daemon/counters.rs`, the 1 s push task, the attach send, the client arms, and finally the mutation check plus the end-to-end block.
+
+### Update — 2026-11-13 20:56 (end-to-end verification, executor)
+
+Mutation check — the count function's `dedicated` guard removed
+(`if record.in_flight.is_some()`), the named test fails, then reverted:
+
+```
+running 1 test
+test daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background ... FAILED
+
+failures:
+
+---- daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background stdout ----
+thread 'daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background' panicked at src/daemon/counters.rs:257:9:
+assertion `left == right` failed: only the dedicated in-flight shell counts
+  left: 2
+ right: 1
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2849 filtered out; finished in 0.00s
+```
+
+After the revert, the same test is green again:
+
+```
+running 1 test
+test daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2849 filtered out; finished in 0.00s
+```
+
+End-to-end block (run mechanically, output redirected to a file and pasted):
+
+```
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2845 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2849 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.01s
+ipc_frames=6
+build_warnings=0
+passed=2939 failed=0
+```
+
+Gate capture: fmt clean, build 0 warnings, clippy `-D warnings` clean,
+`cargo test` green, hygiene 16/16 (the `tests/integration.rs` allowlist line
+grew 2385 → 2457 for the new attach-counters test — a test-file line, noted
+in the allowlist), `doc_truth` 19/19, `bug_tracker` 6/6.

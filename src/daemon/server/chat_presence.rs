@@ -97,6 +97,23 @@ where
         if !snapshot.is_empty() {
             send_response_split(tx, Response::AlertState { alerts: snapshot }).await?;
         }
+        // M37 phase 02b: the session's counters once at attach, after the
+        // `Ok` (and after the `AlertState` when one is sent). This value
+        // seeds the 1 s task's last-pushed record, so a session whose
+        // counters are already stable gets no duplicate push a second later.
+        let reg = crate::shell::registry().clone();
+        let counters = crate::daemon::counters::counters_for_session(
+            &reg,
+            &session_id,
+            crate::daemon::stats::get_ghosts_active() as u32,
+        );
+        crate::daemon::counters::record_session_counters(&session_id, counters, |frame| {
+            crate::daemon::counters::presence_push_to_session_in(
+                crate::daemon::session::presence_registry(),
+                &session_id,
+                frame,
+            );
+        });
 
         // Hold the connection for the client's lifetime. Any bytes the client
         // sends are read and discarded — the channel carries daemon→client
@@ -131,6 +148,7 @@ where
     let was_last = presence_unregister(&session_id, &conn);
     log::info!("chat presence detached for session {session_id} (last={was_last})");
     if was_last {
+        crate::daemon::counters::forget_session_counters(&session_id);
         record_chat_detach(&session_id, &sessions);
         // B11 (M36 phase-17a): the session's shells get a grace. The task
         // owns the id; no lock — presence or registry — crosses the sleep.

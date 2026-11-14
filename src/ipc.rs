@@ -322,7 +322,7 @@ pub fn classify(host: Option<&str>, is_ghost: bool, known_hosts: &[String]) -> C
 }
 
 /// Messages sent from the daemon back to the CLI client.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[allow(clippy::large_enum_variant)] // DaemonStatus is large by design; boxing would add indirection to every IPC response match
 pub enum Response {
     /// Acknowledgment of a successful request.
@@ -509,6 +509,15 @@ pub enum Response {
     /// to `Request::AlertList`, M37 phase 01). Also pushed over the presence
     /// connection whenever the active-alert record changes.
     AlertState { alerts: Vec<AlertBadge> },
+    /// The session's live counters (M37 phase 02b), pushed over the presence
+    /// connection whenever they change and once at attach. `background` is
+    /// the session's running `wait: false` commands, `ghosts` the daemon-wide
+    /// active ghost runs, `shells` the session's open PTY shells.
+    SessionCounters {
+        background: u32,
+        ghosts: u32,
+        shells: u32,
+    },
     /// The AI wants to perform a file operation; the client MUST show a colored
     /// diff and prompt the user for approval, then return `Request::EditFileResponse`.
     ///
@@ -542,7 +551,14 @@ pub enum Response {
 
     /// Sent after each AI turn completes, carrying the prompt token count from
     /// that turn. The client uses this to update the context-budget display.
-    UsageUpdate { prompt_tokens: u32 },
+    /// `output_tokens` is the turn's total over every model call in it (M37
+    /// phase 02b) — the throughput slot's numerator. Defaulted so a frame
+    /// from an older daemon still decodes.
+    UsageUpdate {
+        prompt_tokens: u32,
+        #[serde(default)]
+        output_tokens: u32,
+    },
     /// Sent periodically while the daemon is waiting for a slow LLM to produce
     /// the next token. The client treats this as a no-op; receiving it resets
     /// the per-token deadline so slow local models don't trigger a timeout.
@@ -721,6 +737,7 @@ impl Response {
     pub fn kind(&self) -> &'static str {
         match self {
             Response::Ok => "Ok",
+            Response::SessionCounters { .. } => "SessionCounters",
             Response::ShellList { .. } => "ShellList",
             Response::ShellLogList { .. } => "ShellLogList",
             Response::ShellLog { .. } => "ShellLog",
@@ -819,5 +836,71 @@ mod alert_wire_tests {
     fn alert_state_names_itself_alert_state() {
         let resp = Response::AlertState { alerts: Vec::new() };
         assert_eq!(resp.kind(), "AlertState");
+    }
+}
+
+#[cfg(test)]
+mod counters_wire_tests {
+    use super::Response;
+
+    /// A `UsageUpdate` without `output_tokens` — an older daemon — still
+    /// decodes, defaulted to 0 (M37 02b).
+    #[test]
+    fn usage_update_decodes_without_output_tokens() {
+        let frame: Response = serde_json::from_str(r#"{"UsageUpdate":{"prompt_tokens":420}}"#)
+            .expect("a frame without output_tokens decodes");
+        match frame {
+            Response::UsageUpdate {
+                prompt_tokens,
+                output_tokens,
+            } => {
+                assert_eq!(prompt_tokens, 420);
+                assert_eq!(output_tokens, 0, "the field defaults to 0");
+            }
+            other => panic!("expected UsageUpdate, got {other:?}"),
+        }
+    }
+
+    /// The turn's output tokens round-trip on the wire.
+    #[test]
+    fn usage_update_carries_output_tokens() {
+        let frame = Response::UsageUpdate {
+            prompt_tokens: 420,
+            output_tokens: 1_140,
+        };
+        let wire = serde_json::to_string(&frame).expect("the frame serializes");
+        let back: Response = serde_json::from_str(&wire).expect("the frame round-trips");
+        match back {
+            Response::UsageUpdate {
+                prompt_tokens,
+                output_tokens,
+            } => {
+                assert_eq!(prompt_tokens, 420);
+                assert_eq!(output_tokens, 1_140);
+            }
+            other => panic!("expected UsageUpdate, got {other:?}"),
+        }
+        assert!(
+            wire.contains("output_tokens"),
+            "the field is on the wire: {wire}"
+        );
+    }
+
+    /// `SessionCounters` round-trips with its three fields.
+    #[test]
+    fn session_counters_round_trips() {
+        let frame = Response::SessionCounters {
+            background: 2,
+            ghosts: 1,
+            shells: 3,
+        };
+        assert_eq!(frame.kind(), "SessionCounters");
+        let wire = serde_json::to_string(&frame).expect("the frame serializes");
+        assert!(
+            wire.contains("\"SessionCounters\""),
+            "the wire name: {wire}"
+        );
+        let back: Response = serde_json::from_str(&wire).expect("the frame round-trips");
+        assert_eq!(back, frame);
     }
 }

@@ -16,6 +16,43 @@ use std::time::Duration;
 use std::time::Instant;
 use tokio::net::UnixListener;
 
+/// The 1 s `SessionCounters` push loop (M37 phase 02b): every present session
+/// gets its counters computed and, when they changed, pushed to its presence
+/// connections. Kept out of `run_daemon` to leave its hygiene-cap line alone.
+async fn session_counters_loop() {
+    let reg = crate::shell::registry().clone();
+    let mut tracker = crate::daemon::counters::CountersTracker::default();
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tick.tick().await;
+        let session_ids = crate::daemon::session::presence_session_ids();
+        crate::daemon::counters::counters_tick(
+            &reg,
+            crate::daemon::stats::get_ghosts_active() as u32,
+            &session_ids,
+            &mut tracker,
+            |sid, frame| {
+                crate::daemon::counters::presence_push_to_session_in(
+                    crate::daemon::session::presence_registry(),
+                    sid,
+                    frame,
+                );
+            },
+        );
+    }
+}
+
+/// The 1 s `SessionCounters` push task (M37 phase 02b), supervised like the
+/// daemon's other background loops. Kept out of `run_daemon` so its
+/// hygiene-cap line does not grow.
+fn spawn_session_counters_task(shutdown: Arc<AtomicBool>) {
+    tokio::spawn(supervise(
+        "session-counters",
+        shutdown,
+        session_counters_loop,
+    ));
+}
+
 /// Start the daemon process.
 ///
 /// Lifecycle:
@@ -444,7 +481,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }));
     }
 
-    // Prune chat sessions idle for more than 30 minutes.
+    spawn_session_counters_task(Arc::clone(&shutdown));
     let sessions_cleanup_sup = sessions.clone();
     let log_path_sup = log_file.clone();
     tokio::spawn(supervise(

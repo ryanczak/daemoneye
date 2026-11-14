@@ -59,6 +59,7 @@ DaemonEye is a Rust daemon that runs an AI assistant beside your terminal. It fo
 | `src/daemon/executor/chat_sandbox.rs` | A chat session's sandbox for `wait: false`: `ensure_chat_sandbox`, the idle reaper (`reap_idle_chat_sandboxes`, 600 s grace) |
 | `src/shell/sbx_backend.rs` | `SbxBackend`: a shell host whose child is `sbx exec`, routing STOP/CONT/close into the VM and sending INT/TERM as a PTY `^C` |
 | `src/daemon/session.rs` | Detects daemon hostname and whether the user's pane is local/SSH/mosh |
+| `src/daemon/counters.rs` | Session counters (M37 02b): `counters_for_session` (shells/background over a registry snapshot, daemon-wide ghosts), the `CountersTracker` last-pushed map, the per-session presence push and the attach's `record_session_counters` |
 | `src/daemon/digest.rs` | Session digest: structured compaction of conversation history at 30 messages; scans events.jsonl + filesystem for artifacts |
 | `src/daemon/context/epoch_extract.rs` | `extract_memories_from_epoch()`, best-effort memory extraction from a finished epoch; a child module of `context/epochs.rs`, re-exported from it |
 | `src/daemon/ghost.rs` | `GhostManager::start_session()` — autonomous remediation runs headless in the daemon; briefing generation on clean exit |

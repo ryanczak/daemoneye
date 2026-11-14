@@ -842,3 +842,41 @@ fn presence_text_reconnecting_then_reconnected_returns_to_idle() {
         "a running turn is not overridden"
     );
 }
+
+// ── Session counters (M37 phase 02b) ─────────────────────────────────────────
+
+#[test]
+fn status_model_applies_session_counters() {
+    let now = Instant::now();
+    let mut m = full_model();
+
+    // A nonzero frame shows all three counters.
+    m.set_session_counters(2, 1, 3);
+    let text = line_at(&m, now, 160);
+    for slot in ["⏳2", "👻1", "🐚3"] {
+        assert!(
+            text.contains(slot),
+            "a live counter shows: {slot} in {text:?}"
+        );
+    }
+
+    // A zero frame hides them entirely.
+    m.set_session_counters(0, 0, 0);
+    let text = line_at(&m, now, 160);
+    for slot in ["⏳", "👻", "🐚"] {
+        assert!(
+            !text.contains(slot),
+            "a zero counter is hidden entirely: {slot} in {text:?}"
+        );
+    }
+
+    // A later nonzero frame shows them again.
+    m.set_session_counters(1, 0, 2);
+    let text = line_at(&m, now, 160);
+    assert!(text.contains("⏳1"), "background shows again: {text:?}");
+    assert!(
+        !text.contains("👻"),
+        "a zero ghost slot stays hidden: {text:?}"
+    );
+    assert!(text.contains("🐚2"), "shells show again: {text:?}");
+}

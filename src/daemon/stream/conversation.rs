@@ -77,6 +77,10 @@ where
     // are always exempt — the user's per-call approval prompt is the gate.
     let mut tool_call_counts: HashMap<&str, u32> = HashMap::new();
     let mut total_turn_call_count: u32 = 0;
+    // The turn's output tokens, summed over every model call in it (M37 02b):
+    // the turn-end `UsageUpdate` carries the total, since `SessionInfo` is
+    // sent before the model runs.
+    let mut turn_output_tokens: u32 = 0;
 
     let mut channel_closed_retries: u32 = 0;
 
@@ -318,6 +322,7 @@ where
                             &mut run_log,
                             &sessions,
                         );
+                        turn_output_tokens = turn_output_tokens.saturating_add(usage.output_tokens);
 
                         // Persist the conversation for the next turn.
                         if let Some(ref id) = session_id {
@@ -435,6 +440,7 @@ where
                                 prompt_tokens: usage.input_tokens
                                     + usage.cache_read_tokens
                                     + usage.cache_write_tokens,
+                                output_tokens: turn_output_tokens,
                             },
                         )
                         .await?;

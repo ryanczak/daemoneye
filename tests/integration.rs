@@ -1544,6 +1544,78 @@ async fn presence_attach_sends_ok_before_alert_state() {
     );
 }
 
+/// M37 phase 02b: the attach hold sends one `SessionCounters` for the
+/// session after the `Ok` (and after the `AlertState` when one is sent).
+#[tokio::test]
+async fn attach_sends_session_counters_after_ok() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let _lock = daemoneye::test_home_guard();
+    daemoneye::config::Config::ensure_dirs().ok();
+
+    let sessions = daemoneye::daemon::session::SessionStore::new();
+    let (client, server) = tokio::io::duplex(1 << 16);
+    let (server_r, server_w) = tokio::io::split(server);
+    let task = tokio::spawn(async move {
+        let mut rx = tokio::io::BufReader::new(server_r);
+        let mut tx = server_w;
+        daemoneye::daemon::handle_chat_attach(
+            sessions,
+            "m37-attach-counters".to_string(),
+            &mut rx,
+            &mut tx,
+        )
+        .await
+    });
+    let (client_r, mut client_w) = tokio::io::split(client);
+    let mut rx = tokio::io::BufReader::new(client_r);
+
+    // Frame order: `Ok` first (no brief, no alerts), then `SessionCounters`.
+    let mut line = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
+        .await
+        .expect("the attach reply within 5 s")
+        .expect("the handler is writing");
+    let first: Response = serde_json::from_str(line.trim()).expect("the reply parses");
+    assert!(
+        matches!(first, Response::Ok),
+        "with no brief, `Ok` is the first attach frame: {first:?}"
+    );
+
+    line.clear();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx.read_line(&mut line))
+        .await
+        .expect("the SessionCounters frame within 5 s")
+        .expect("the handler is writing");
+    let second: Response = serde_json::from_str(line.trim()).expect("the frame parses");
+    let Response::SessionCounters {
+        background,
+        ghosts,
+        shells,
+    } = second
+    else {
+        panic!("`Ok` is followed by the SessionCounters frame, got {second:?}");
+    };
+    // An empty registry with no ghosts in flight: everything zero.
+    assert_eq!(
+        (background, ghosts, shells),
+        (0, 0, 0),
+        "an empty registry and no ghost runs give zero counters"
+    );
+
+    client_w.shutdown().await.unwrap();
+    task.await.unwrap().unwrap();
+
+    // The attach registered a presence connection; its close forgets the
+    // session's last-pushed value, so a re-attach starts fresh.
+    assert!(
+        daemoneye::daemon::session::presence_session_ids()
+            .iter()
+            .all(|id| id != "m37-attach-counters"),
+        "no presence connection remains for the test session"
+    );
+}
+
 // ── G1 Named Agents ──────────────────────────────────────────────────────────
 
 /// Verify that `merge_runbook_ghost_config` propagates all agent fields into the
