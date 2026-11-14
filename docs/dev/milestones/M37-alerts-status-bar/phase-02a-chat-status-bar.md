@@ -1,7 +1,7 @@
 # Phase 02a — chat-status-bar
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-12
 **Depends on:** phase 01 (the `AlertState` frame)
 **Estimated diff:** ~550 lines, about half of it tests
@@ -365,3 +365,153 @@ passed=2922 failed=0
 
 fmt, build (0 warnings), clippy `-D warnings` and the full `cargo test` are
 green; hygiene, `doc_truth` and `bug_tracker` pass.
+
+### Update — 2026-11-14 02:21 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Picked up phase 02a at the re-dispatch's step 1 (the `chat_config_rejects_an_unknown_glyph_set` test beside `ChatConfig`'s tests — passes, `Err` names all three dialects), then completed steps 2–6: the renderer now takes `&StatusModel` and calls `status_bar::status_bar_line(model, Instant::now(), …)` (old `status_bar_line`/`fmt_uptime`/`short_session`/`start_time` deleted, `StatusBarState` removed from `render.rs`); the chat loop owns one `StatusModel` wired through `RatatuiQueryCtx.sb` and `RatatuiInputCtx.sb` with all eleven `StatusBarState` literals gone (I dropped the now-dead `TokenCtx` and `RatatuiQueryCtx.model`/`session_cost`/`session_has_untracked` out-params since the turn writes the model directly — a clean adaptation, noted here); presence pushes ride a `PresencePush::{Text, Alerts}` enum with the alert arm calling `set_alerts`, a 1 s tick gated on `is_time_based`, saved-name/dirty tracking in `/session save|load|rename` and turn starts, `ChatState` set at the 7501 emitter's points, and a `doctor` glyphs info row; docs (config.toml `[chat]`, config-reference, README, CLAUDE.md) updated and one stale hygiene-allowlist entry removed. Mutation check confirmed the tier test fails when the tier-3 ranks are flattened and passes reverted; the mechanical e2e block is pasted in the Update Log — all greps print 0/1 as specified, build has 0 warnings, clippy and the full test suite are green (2922 passed, 0 failed), and everything is committed with a clean tree.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.07s
+
+
+LINT
+    Checking daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.85s
+
+
+TEST
+l_policy_deny_merged_and_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ghost_config_parsing ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 38 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.91s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (2712389): No such process
+kill: (-2713110): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `README.md` — +1 -1
+- `assets/etc/config.toml` — +5 -5
+- `examples/reanchor_repro.rs` — +5 -12
+- `src/cli/commands/agents.rs` — +2 -2
+- `src/cli/commands/ask.rs` — +9 -19
+- `src/cli/commands/chat.rs` — +2 -5
+- `src/cli/commands/chat_loop.rs` — +98 -302
+- `src/cli/commands/chat_presence.rs` — +79 -24
+- `src/cli/commands/slash.rs` — +3 -0
+- `src/cli/commands/slash_session.rs` — +15 -4
+- `src/cli/commands/stream.rs` — +3 -11
+- `src/cli/commands/stream_ask.rs` — +47 -207
+- `src/cli/commands/stream_prompts.rs` — +11 -11
+- `src/cli/doctor.rs` — +48 -2
+- `src/cli/render.rs` — +0 -19
+- `src/cli/render_ratatui.rs` — +21 -142
+- `src/cli/render_ratatui_draw.rs` — +11 -34
+- `src/cli/render_ratatui_tests.rs` — +47 -333
+- `src/cli/status_bar.rs` — +0 -1
+- `src/config/types.rs` — +23 -0
+- `tests/hygiene_allowlist.txt` — +1 -2
+
+**Commit:** 510441b4402fc7dd348950af0f678ab2b0c45ad3
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
