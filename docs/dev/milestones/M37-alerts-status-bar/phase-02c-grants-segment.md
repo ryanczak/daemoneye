@@ -1,7 +1,7 @@
 # Phase 02c — grants-segment
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced: bug-02c-1)
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel` and the glyph dialects)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -152,13 +152,25 @@ The seven tests named in Spec task 5, plus `summary_counts_each_kind`.
       `hint` and its four tests).
 - [ ] `grep -c 'Ctrl+C revokes' src/cli/commands/approval.rs` prints 0
       (today 1).
-- [ ] `grep -c 'grant_sudo' src/cli/status_glyphs.rs` prints 4 (the field
-      and three dialects; today 0).
+- [x] `grep -c 'grant_sudo' src/cli/status_glyphs.rs` prints 5 (the field,
+      three dialects and `glyph_sample`; corrected at review, 2026-11-14).
 - [ ] Mutation check, pasted with its `test result:` line: make the lead
       colour ignore `deletes`, confirm
       `grants_lead_colour_follows_the_riskiest_grant` fails, then revert.
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green. Hygiene,
-      `doc_truth` and `bug_tracker` are ok.
+- [ ] **Bug-02c-1 (open; each item below FAILS today).** At 160 and 120
+      columns, with a non-default `GrantSummary` and a line shorter than the
+      pane, `line_width` equals the pane width and the grants segment is the
+      last visible text (today: 104 of 160, segment mid-line after ` · `),
+      pinned by a new `grants_sit_flush_right`.
+- [ ] Bug-02c-1: a host in both `hosts_regular` and `hosts_sudo` gives
+      `summary().hosts == 1` (today 2).
+- [ ] Bug-02c-1: with schedules and agents both granted, `📅` comes before
+      `🤖` in the line (today 🤖 first).
+- [ ] Bug-02c-1 mutation check, pasted with its `test result:` line: remove
+      the flush-right padding, confirm `grants_sit_flush_right` fails, revert.
+- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+      `failed=0` and **more than 2947** passed. Hygiene, `doc_truth` and
+      `bug_tracker` are ok.
 
 ## End-to-end verification
 
@@ -381,3 +393,17 @@ kill: (-3037980): No such process
 **Commit:** f4a93640f3d8e11a5922dd2b470e2ef865d6269f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-14 16:30 (review: bounced)
+
+Bounced on [bug-02c-1](bugs/bug-02c-1.md). **Green gates and a clean tree
+are expected and are not evidence this phase is done.** All of the work is
+approved except three defects: the grants segment is no longer flush right
+(`join_slots(&slots, &mut None, …)`; a probe at 160 columns measured 104),
+`summary()` sums `hosts_regular.len() + hosts_sudo.len()` instead of taking
+their union, and the detail emits agents before schedules. The acceptance
+criteria above name each one as it fails today. Spec-side corrections made
+at review: `grant_sudo` counts 5, not 4. The ascii `!` (also
+`alert_warning`) and `*` (also `working` / `session_dirty`) collide with
+existing glyphs, but they come from the spec's own table, so they are not
+the executor's defect and are left as drafted.
