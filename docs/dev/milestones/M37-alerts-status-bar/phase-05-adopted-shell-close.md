@@ -1,7 +1,7 @@
 # Phase 05 — adopted-shell-close
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced — [bug-05-1](bugs/bug-05-1.md))
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~150 lines, about half of it tests
@@ -84,8 +84,9 @@ this section: mark each one `active` when you start it and `done` when its
   "exited".
 - `src/shell/registry.rs` is about 35 production lines under the 800-line
   cap. If `sweep_orphaned` and the helper do not fit, put them in a small
-  child module of `registry.rs` rather than growing an allowlist entry; no
-  new `tests/hygiene_allowlist.txt` line.
+  child module of `registry.rs`, or add a `tests/hygiene_allowlist.txt`
+  line for `registry.rs` at its new count with a one-line reason (revised
+  at the bug-05-1 bounce). Never `#[rustfmt::skip]` to fit.
 - The refusal sentence for another session's shell is unchanged;
   `close_shell_refuses_another_owners_shell` keeps passing as written.
 - Tests are hermetic: a throwaway directory for the shells dir, fake lock
@@ -113,7 +114,8 @@ In `src/shell/registry_tests.rs`, following
   host are gone afterwards and the id is returned.
 - `sweep_orphaned_leaves_an_id_the_registry_holds`: the same files for an
   id with a record (dead host, `exited_unix` set) all survive and the id
-  is not returned.
+  is not returned. The host must be **dead** — no lock held by anyone — or
+  the liveness skip passes the test without the fence (bug-05-1).
 - `sweep_orphaned_never_touches_a_live_host`: a lock the test holds keeps
   all its files.
 - `reap_and_sweep_sweeps_the_files_of_the_record_it_reaps` (or the helper's
@@ -132,8 +134,14 @@ In `src/shell/registry_tests.rs`, following
       adopted-owner branch refuse again, confirm
       `close_shell_lets_a_chat_session_close_an_adopted_shell` fails, then
       revert.
+- [ ] **bug-05-1:** mutation check, pasted with both `test result:` lines:
+      remove the "no record" filter from `sweep_orphaned`, confirm
+      `sweep_orphaned_leaves_an_id_the_registry_holds` fails, then revert
+      and confirm it passes. (Today it passes under the mutation.)
+- [ ] **bug-05-1:** `grep -c 'rustfmt::skip' src/shell/registry.rs` prints 0
+      (today 2).
 - [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
-      `failed=0` and more than 2959 passed. Hygiene (`run_daemon`'s count
+      `failed=0` and at least 2965 passed. Hygiene (`run_daemon`'s count
       not grown), `doc_truth` and `bug_tracker` are ok.
 
 ## Pre-flight
@@ -404,3 +412,17 @@ kill: (-3331026): No such process
 **Commit:** 685a81171c2dfecf6030d1cf34738d368398639d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-14 (bounced, architect)
+
+Bounced with [bug-05-1](bugs/bug-05-1.md) (major): `sweep_orphaned_leaves_an_id_the_registry_holds`
+holds the lock live, so it passes with the "no record" fence removed (reviewer
+mutation, pasted in the bug); and two `#[rustfmt::skip]` attributes in
+`registry.rs` exist only to fit the 800-line cap.
+
+**Notes for executor.** Two edits, nothing else: (1) make that test's host
+dead — no lock held — so the record is the only thing saving the files, and
+run the bug's mutation both ways; (2) drop both `#[rustfmt::skip]`, let
+`cargo fmt` format the code, and make room with a child module or an
+allowlist line with a reason (the phase's Constraints now allow either). The
+rest of the phase is approved; see the bug's header.
