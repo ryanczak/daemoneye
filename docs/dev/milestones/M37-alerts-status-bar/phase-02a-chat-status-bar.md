@@ -1,7 +1,7 @@
 # Phase 02a — chat-status-bar
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced: [bug-02a-1](bugs/bug-02a-1.md), the state slot drifts from the emitter)
 **Drafted:** 2026-11-12
 **Depends on:** phase 01 (the `AlertState` frame)
 **Estimated diff:** ~550 lines, about half of it tests
@@ -188,6 +188,17 @@ On a `TestBackend`, beside the existing renderer tests:
       fails, then revert.
 - [ ] fmt, build (0 warnings), clippy and `cargo test` are green. Hygiene,
       `doc_truth` and `bug_tracker` are ok.
+- [ ] **(bug-02a-1)** After an approval prompt's reply, the model's state is
+      `Working` again, with `turn_started_at` unchanged. Pinned by a test.
+      Today `grep -c 'ChatState::Working' src/cli/commands/stream_ask.rs`
+      prints 0, and the bar shows the awaiting glyph until the turn ends.
+- [ ] **(bug-02a-1)** A failed ask (startup or turn) leaves the state
+      `DaemonDown`, and the next successful ask clears it. Pinned by a test.
+      Today `grep -rn 'set_daemon_up(false)' src/cli` finds nothing.
+- [ ] **(bug-02a-1)** The `"reconnected"` presence push returns
+      `Reconnecting` to `Idle`. Pinned by a test.
+- [ ] **(bug-02a-1)** Mutation check pasted: remove the reply transition,
+      confirm the reply test fails, then revert.
 
 ## End-to-end verification
 
@@ -515,3 +526,33 @@ kill: (-2713110): No such process
 **Commit:** 510441b4402fc7dd348950af0f678ab2b0c45ad3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14 (bounced)
+
+- **Verdict:** bounced — [bug-02a-1](bugs/bug-02a-1.md) (major)
+- **Gates (reviewer re-run):** fmt ok, build 0 warnings, clippy ok,
+  `cargo test` 2922 passed, 0 failed. All of the original acceptance greps
+  and test names check out.
+- **Finding:** the state slot misses three of the emitter's transitions:
+  `reply` → `Working`, the daemon-unreachable `DaemonDown`, and
+  `"reconnected"` → `Idle`.
+
+### Notes for executor — 2026-11-14 (bounce)
+
+**Green gates and a clean tree are expected here, and they are NOT evidence
+the phase is done.** Everything else in this phase is approved: the
+renderer, the model wiring, `PresencePush`, the tick, the saved-name
+tracking, the doctor row and the docs. Do not touch them.
+
+**Exactly three transitions are left, all from bug-02a-1:**
+1. At each of the nine `status.reply()` calls in `stream_ask.rs`, the model
+   goes back to `Working` as well.
+2. A failed ask (the `Err` arms at `chat_loop.rs:135` and `:377`) marks the
+   model `DaemonDown` (`set_daemon_up(false)` already exists and only
+   demotes `Idle`, so check that it reaches the state you need at that
+   point), and a successful ask clears it.
+3. The `"reconnected"` text push returns `Reconnecting` to `Idle`.
+
+Each one gets a test that fails without it. The finish condition is the
+four `(bug-02a-1)` acceptance criteria, plus `cargo test` reporting
+**more than 2922 passed**. Paste the mutation check in the Update Log.
