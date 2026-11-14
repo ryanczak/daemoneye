@@ -202,6 +202,46 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 
 <!-- entries appended below this line -->
 
+### Update — 2026-11-14 17:05 (started, round 2)
+
+Executor Claude (direct) resuming phase 02c after the bug-02c-1 bounce. The
+three defects to fix: the grants segment not flush right, hosts double-counted
+across `hosts_regular` ∪ `hosts_sudo`, and the detail emitting agents before
+schedules. Plan: `join_slots`'s hint path carries the whole segment's parts,
+`summary()` takes the union, the detail order follows the spec table, then the
+new tests (`grants_sit_flush_right`, the union pin, the 📅-before-🤖 pin) and
+the mutation + end-to-end captures.
+
+### Update — 2026-11-14 17:20 (end-to-end verification, round 2)
+
+Mutation check — removed the flush-right padding in `join_slots`
+(`let gap = 0usize;` in place of `width.saturating_sub(used + hint_w)`),
+reverted after:
+
+```
+test cli::status_bar::tests::grants_sit_flush_right ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2858 filtered out; finished in 0.00s
+```
+
+End-to-end block, verbatim:
+
+```
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 2849 filtered out; finished in 0.01s
+test cli::commands::approval::tests::summary_counts_each_kind ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2858 filtered out; finished in 0.00s
+approval_hint=0
+ctrl_c=0
+build_warnings=0
+passed=2949 failed=0
+```
+
+Also green: `cargo build` 0 warnings, `cargo clippy --all-targets
+--all-features -- -D warnings` clean, `cargo fmt --all` clean,
+`--test hygiene` ok (16 passed, `production_files_fit_the_cap` included),
+`--test doc_truth` ok (19 passed) and `--test bug_tracker` ok (6 passed).
+`grant_sudo` counts 5 in `status_glyphs.rs` — the field, three dialects and
+`glyph_sample` — unchanged from round 1.
+
 ### Update — 2026-11-14 05:47 (started)
 
 Executor Claude (direct) starting phase 02c. Plan: the `GrantSummary` types

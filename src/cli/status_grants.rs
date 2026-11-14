@@ -117,7 +117,6 @@ pub(super) fn grants_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette)
         (s.scripts, g.grant_scripts),
         (s.runbooks, g.grant_runbooks),
         (s.files, g.grant_files),
-        (s.agents, g.grant_agents),
     ] {
         if scope != Scope::None {
             let text = match scope {
@@ -130,6 +129,14 @@ pub(super) fn grants_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette)
     }
     if s.schedules {
         parts.push(detail(g.grant_schedules, String::new()));
+    }
+    if s.agents != Scope::None {
+        let text = match s.agents {
+            Scope::All => g.grant_all.to_string(),
+            Scope::Named(n) => n.to_string(),
+            Scope::None => String::new(),
+        };
+        parts.push(detail(g.grant_agents, text));
     }
     if s.deletes {
         parts.push(detail(g.grant_deletes, String::new()));

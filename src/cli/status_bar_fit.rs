@@ -57,7 +57,9 @@ pub(super) const RANK_CONTEXT: u16 = 16;
 pub(super) const RANK_ALERTS: u16 = 17;
 pub(super) const RANK_STATE: u16 = 18;
 
-/// Do all the slots plus the hint fit `width` at `sep` between them?
+/// Do all the slots plus the grants segment fit `width` at `sep` between
+/// them? The segment is a whole slot's worth of parts: their widths plus
+/// one space per internal join.
 pub(super) fn line_fits(
     slots: &[Vec<Part>],
     hint_width: Option<usize>,
@@ -84,10 +86,11 @@ pub(super) fn line_fits(
     used <= width
 }
 
-/// Join the slots into one `Line`, the hint flush right when present.
+/// Join the slots into one `Line`, then the grants segment's parts joined by
+/// single spaces, flush right when present.
 pub(super) fn join_slots(
     slots: &[Vec<Part>],
-    hint: &mut Option<Part>,
+    hint: &mut Option<Vec<Part>>,
     sep: &str,
     width: usize,
 ) -> Line<'static> {
@@ -114,10 +117,18 @@ pub(super) fn join_slots(
         }
         live_slot = true;
     }
-    if let Some(h) = hint {
-        let gap = width.saturating_sub(used + h.width);
+    if let Some(parts) = hint {
+        let hint_w = parts.iter().map(|p| p.width).sum::<usize>() + parts.len().saturating_sub(1);
+        let gap = width.saturating_sub(used + hint_w);
         spans.push(Span::styled(" ".repeat(gap), gray()));
-        spans.extend(h.spans.iter().cloned());
+        let mut live_part = false;
+        for part in parts.iter() {
+            if live_part {
+                spans.push(Span::styled(" ".to_string(), gray()));
+            }
+            spans.extend(part.spans.iter().cloned());
+            live_part = true;
+        }
     }
     Line::from(spans)
 }

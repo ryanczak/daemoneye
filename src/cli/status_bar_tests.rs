@@ -1172,6 +1172,57 @@ fn grants_speak_each_dialect() {
 }
 
 #[test]
+fn grants_sit_flush_right() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.grants = GrantSummary {
+        cmds: CmdGrant::Gated,
+        agents: Scope::Named(1),
+        schedules: true,
+        ..GrantSummary::default()
+    };
+
+    for width in [120u16, 160] {
+        let line = status_bar_line(&m, now, &palette(), width);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(
+            line.width(),
+            width as usize,
+            "the line is flush right at {width}: {text:?}"
+        );
+        let trimmed = text.trim_end();
+        assert!(
+            trimmed.ends_with("🤖1"),
+            "the grants segment's last glyph ends the line at {width}: {text:?}"
+        );
+    }
+}
+
+#[test]
+fn grants_detail_orders_schedules_before_agents() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.grants = GrantSummary {
+        cmds: CmdGrant::Auto,
+        agents: Scope::Named(1),
+        schedules: true,
+        ..GrantSummary::default()
+    };
+
+    let text = line_at(&m, now, 160);
+    let schedules = text.find('📅').expect("the schedules glyph shows");
+    let agents = text.find('🤖').expect("the agents glyph shows");
+    assert!(
+        schedules < agents,
+        "📅 comes before 🤖 in the detail: {text:?}"
+    );
+}
+
+#[test]
 fn no_status_line_mentions_ctrl_c() {
     let now = Instant::now();
     let mut m = full_model();

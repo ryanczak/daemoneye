@@ -335,25 +335,42 @@ pub fn status_bar_line(
         counter_parts(g.shells, model.shells, RANK_SHELLS),
         model_parts(model, g),
         session_parts(model, g),
-        grants_parts(model, g, palette),
     ];
+    // The grants segment sits flush right, as `join_slots`'s hint path
+    // places it — it is never a ` · ` slot.
+    let grants_parts_vec = grants_parts(model, g, palette);
+    let mut grants = if grants_parts_vec.is_empty() {
+        None
+    } else {
+        Some(grants_parts_vec)
+    };
 
     // The ranks that exist right now, lowest first; each drop re-measures.
     let mut ranks: Vec<u16> = slots
         .iter()
         .flat_map(|slot| slot.iter().map(|p| p.rank))
+        .chain(grants.iter().flatten().map(|p| p.rank))
         .collect();
     ranks.sort_unstable();
     ranks.dedup();
     for rank in ranks {
-        if line_fits(&slots, None, sep, width) {
+        let hint_width = grants.as_ref().map(|parts| {
+            parts.iter().map(|p| p.width).sum::<usize>() + parts.len().saturating_sub(1)
+        });
+        if line_fits(&slots, hint_width, sep, width) {
             break;
         }
         for slot in &mut slots {
             slot.retain(|p| p.rank != rank);
         }
+        if let Some(parts) = grants.as_mut() {
+            parts.retain(|p| p.rank != rank);
+            if parts.iter().all(|p| p.rank != RANK_GRANTS) {
+                grants = None;
+            }
+        }
     }
-    join_slots(&slots, &mut None, sep, width)
+    join_slots(&slots, &mut grants, sep, width)
 }
 
 /// The state segment: the state glyph; while `Working`, the elapsed mark and
@@ -706,9 +723,9 @@ pub fn compact_tokens(n: u32) -> String {
 mod fit;
 use fit::{
     NARROW_BELOW, NARROW_SEP, Part, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BACKGROUND,
-    RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GROWTH, RANK_MODEL, RANK_SESSION,
-    RANK_SHELLS, RANK_STATE, RANK_THROUGHPUT, RANK_TOOLS, RANK_TURN, WIDE_SEP, join_slots,
-    line_fits,
+    RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GRANTS, RANK_GROWTH, RANK_MODEL,
+    RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_THROUGHPUT, RANK_TOOLS, RANK_TURN, WIDE_SEP,
+    join_slots, line_fits,
 };
 
 #[cfg(test)]

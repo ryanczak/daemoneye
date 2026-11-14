@@ -252,7 +252,7 @@ impl SessionApproval {
             agents: scope_of(self.agents_all, self.agents.len()),
             schedules: self.schedules,
             deletes: self.deletes,
-            hosts: (self.hosts_regular.len() + self.hosts_sudo.len()) as u32,
+            hosts: self.hosts_regular.union(&self.hosts_sudo).count() as u32,
         }
     }
 }
@@ -877,13 +877,18 @@ mod tests {
         a.file_edits_all = true;
         a.schedules = true;
         a.hosts_regular.insert("web01".to_string());
+        a.hosts_sudo.insert("web01".to_string());
+        a.hosts_sudo.insert("db01".to_string());
         let s = a.summary();
         assert_eq!(s.cmds, CmdGrant::Auto, "default: commands auto-approved");
         assert_eq!(s.scripts, Scope::Named(2), "two named scripts");
         assert_eq!(s.files, Scope::All, "the whole class set");
         assert!(s.schedules, "schedules is a boolean");
         assert!(!s.deletes, "deletes untouched");
-        assert_eq!(s.hosts, 1, "one host granted regular commands");
+        assert_eq!(
+            s.hosts, 2,
+            "web01 in both sets counts once; db01 adds the second"
+        );
     }
 
     // ── the /approvals command (M36 phase-03) ────────────────────────────────
