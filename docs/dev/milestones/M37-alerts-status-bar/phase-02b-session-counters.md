@@ -1,7 +1,7 @@
 # Phase 02b — session-counters
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced: [bug-02b-1](bugs/bug-02b-1.md), two last-pushed records)
+**Status:** review
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel`, `PresencePush`)
 **Estimated diff:** ~350 lines, about half of it tests
@@ -530,3 +530,141 @@ clippy `-D warnings` clean, `cargo test` green at **2941 passed, 0 failed**
 second-connection test — a test-file line, annotated in the allowlist),
 `doc_truth` 19/19, `bug_tracker` 6/6, and
 `grep -c 'CountersTracker::default()' src/daemon/startup.rs` prints 0.
+
+### Update — 2026-11-14 05:40 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Both bug-02b-1 edits are complete and committed (`d4001617`); the phase doc stays `in-progress` with fresh progress and end-to-end Update Log entries. `session_counters_loop` no longer builds a private `CountersTracker::default()` — `grep -c 'CountersTracker::default()' src/daemon/startup.rs` prints 0 — it now calls the new `counters_tick_with_global`, which locks the daemon's single global `counters_tracker()` per pass (never across a send; pushes only queue on connection channels), the same record the attach writes via `record_session_counters` and the last close forgets via `forget_session_counters`. The attach send is now unconditional: `record_session_counters` records the value and always pushes one `SessionCounters` to the connection that just attached, so a second connection to an unchanged session gets its frame. I also closed one gap the review pass surfaced: the tool-call round of a turn now sums its `usage.output_tokens` too, so `UsageUpdate.output_tokens` is the whole turn across every model call, not just the final one.
+
+**Notes for review**
+
+- New tests: `a_second_connection_gets_session_counters_at_attach` (integration) and `a_tick_after_an_attach_pushes_nothing_and_after_the_forget_pushes_again` (unit, drives the production `counters_tick_with_global` + `forget_session_counters` pair against the global tracker with a session-id unique to the test). Everything else approved in the bounce was left untouched.
+- Both mutation checks ran and were pasted: removing the `dedicated` guard fails the named counters test (`left: 2, right: 1`), and restoring the `wants_push` gate in the attach send fails the second-connection test (`the second SessionCounters frame within 5 s: Elapsed(())`); both reverted and re-verified green.
+- The end-to-end block prints `ipc_frames=6`, `build_warnings=0`, `passed=2941 failed=0` — above the bounce's >2939 finish condition — with fmt, clippy `-D warnings`, build, hygiene 16/16 (`tests/integration.rs` allowlist line 2457 → 2553, annotated), `doc_truth` 19/19 and `bug_tracker` 6/6 all green. Working tree is clean; all seven spec tasks are done.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (2916430): No such process
+kill: (-2917154): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M37-alerts-status-bar/phase-02b-session-counters.md` — +116 -0
+- `src/daemon/counters.rs` — +88 -8
+- `src/daemon/startup.rs` — +4 -3
+- `src/daemon/stream/conversation.rs` — +1 -0
+- `tests/hygiene_allowlist.txt` — +3 -2
+- `tests/integration.rs` — +93 -0
+
+**Commit:** d40016174ae7f2e183e1e9f89db987d00c504f2c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
