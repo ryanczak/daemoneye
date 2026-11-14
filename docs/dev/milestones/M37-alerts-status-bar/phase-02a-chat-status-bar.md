@@ -1,7 +1,7 @@
 # Phase 02a — chat-status-bar
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced: [bug-02a-2](bugs/bug-02a-2.md), bug-02a-1's reply fix never landed)
 **Drafted:** 2026-11-12
 **Depends on:** phase 01 (the `AlertState` frame)
 **Estimated diff:** ~550 lines, about half of it tests
@@ -199,6 +199,15 @@ On a `TestBackend`, beside the existing renderer tests:
       `Reconnecting` to `Idle`. Pinned by a test.
 - [ ] **(bug-02a-1)** Mutation check pasted: remove the reply transition,
       confirm the reply test fails, then revert.
+- [ ] **(bug-02a-2)** `grep -c 'ChatState::Working' src/cli/commands/stream_ask.rs`
+      is non-zero, or every `status.reply()` arm calls one `StatusModel`
+      method that sets `Working` (today: 0, with no such method).
+- [ ] **(bug-02a-2)** The reply, failed-turn and reconnected transitions each
+      live in a function production calls, and each test calls that
+      function. No test assigns the state it then asserts.
+- [ ] **(bug-02a-2)** A failed turn ask ends the turn in `DaemonDown`, not
+      `Idle` (today the turn end overwrites it with `Idle`).
+- [ ] **(bug-02a-2)** The work is committed and the mutation check is pasted.
 
 ## End-to-end verification
 
@@ -696,3 +705,26 @@ kill: (-2778382): No such process
 **Commit:** 6e4b5167af3183991457ec7e769ac6d84052b552
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14 (bounced, round 2)
+
+- **Verdict:** bounced — [bug-02a-2](bugs/bug-02a-2.md) (major). bug-02a-1
+  stays open.
+- **Gates (reviewer re-run on the dirty tree):** fmt ok, clippy ok,
+  `cargo test` 2927 passed, 0 failed.
+- **Finding:** `stream_ask.rs` is unchanged, so the reply transition is
+  absent. Two of the new tests assert assignments they make themselves. The
+  turn-path `set_daemon_up(false)` is a no-op under `Working` and is
+  overwritten by the turn end's `Idle`. No mutation evidence, and the work is
+  uncommitted.
+
+### Notes for executor — 2026-11-14 (bounce 2)
+
+**Green gates are expected here and are NOT evidence of done.** Keep the
+uncommitted `chat_loop.rs` changes and the three `set_daemon_up_*` tests in
+`status_bar_tests.rs`. The remaining work is in bug-02a-2's Definition of
+done. Make each transition a function production calls, test that function,
+and apply the nine `stream_ask.rs` reply arms **before** you run any
+mutation check. Confirm the final tree with
+`grep -c 'ChatState::Working\|<your method name>' src/cli/commands/stream_ask.rs`
+before you report.
