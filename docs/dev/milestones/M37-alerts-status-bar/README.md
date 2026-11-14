@@ -144,6 +144,6 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 | 02c | grants-segment ([phase-02c-grants-segment.md](phase-02c-grants-segment.md)): the grants slot in decision 3's grammar — a `GrantSummary` struct, lead glyph coloured by risk, a count, per-kind glyphs when room, hidden by default, dialect-aware | decision 3 (grants row, amended 2026-11-14) | done        |
 | 03 | top-alerts-panel ([phase-03-top-alerts-panel.md](phase-03-top-alerts-panel.md)): `top` loads `Request::AlertList` into a fifth `--once` section and a non-focusable Alerts panel between Shells and Activity | decision 5 | done      |
 | 04 | local-provider-pricing ([phase-04-local-provider-pricing.md](phase-04-local-provider-pricing.md)): `ModelEntry::pricing()` lets user `*_cost_per_mtok` rates win over the ollama/lmstudio zero; local stays free when no rate is set | issue #6 (pre-close bug fix) | done |
-| 05 | adopted-shell-close ([phase-05-adopted-shell-close.md](phase-05-adopted-shell-close.md)): a chat session may `close_shell` an `Owner::Adopted` shell; the maintenance tick sweeps dead hosts' `.lock`/`.sock`/sidecar files for ids the registry no longer holds | issue #2 remainder (pre-close bug fix) | in-progress |
+| 05 | adopted-shell-close ([phase-05-adopted-shell-close.md](phase-05-adopted-shell-close.md)): a chat session may `close_shell` an `Owner::Adopted` shell; the maintenance tick sweeps dead hosts' `.lock`/`.sock`/sidecar files for ids the registry no longer holds | issue #2 remainder (pre-close bug fix) | review      |
 
 ## Notes
