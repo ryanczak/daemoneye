@@ -1,7 +1,7 @@
 # Phase 02b — session-counters
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel`, `PresencePush`)
 **Estimated diff:** ~350 lines, about half of it tests
@@ -668,3 +668,24 @@ kill: (-2917154): No such process
 **Commit:** d40016174ae7f2e183e1e9f89db987d00c504f2c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-02b-1](bugs/bug-02b-1.md), fixed)
+- **Executor:** GLM-5.3-Flash
+- **Gates (reviewer re-run):** fmt ok, build 0 warnings, clippy ok,
+  `cargo test` 2941 passed, 0 failed. Both mutation checks are pasted with
+  their red runs. The task list was used (28 and then 22 `update_task`
+  calls), the first M37 phase where it was.
+- **Scope deviations:** (1) The attach push goes through
+  `presence_push_to_session_in`, so when a second connection attaches, the
+  session's existing connections get a duplicate, identical frame. That is
+  benign: the bar applies the same values. (2) The executor also summed the
+  tool-call round's `output_tokens`, closing a gap the spec's "every model
+  call" covered. (3) The `tests/integration.rs` allowlist grew to 2553, all
+  of it test lines and annotated.
+- **Calibration:** a `## Spec` heading seeds the task list. Phases 01 and
+  02a used `## Behaviour` and the executor got no task tracking. With the
+  list, this phase landed in 535 + 266 turns with one bounce, against
+  02a's 1700+ turns and a takeover.

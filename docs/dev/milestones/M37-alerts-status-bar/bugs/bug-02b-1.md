@@ -1,7 +1,7 @@
 # Bug 1 on phase-02b: the attach and the 1 s task keep separate last-pushed records
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-02b re-dispatch, 2026-11-14)
 **Filed:** 2026-11-14
 
 ## What's wrong
