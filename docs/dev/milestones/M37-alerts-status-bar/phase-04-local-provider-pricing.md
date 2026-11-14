@@ -123,3 +123,40 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 Fixing GitHub issue #6: `ModelEntry::pricing()` gives user `*_cost_per_mtok`
 rates precedence over the local-provider zero for `ollama`/`lmstudio`.
 
+### Update — 2026-11-14 11:24 (mutation check)
+
+Moved the local-provider early return back above the user-rate check and
+re-ran the pinned test:
+
+```text
+$ cargo test --lib local_provider_with_user_rates_uses_them 2>&1 | grep -E '^(test result|test config::tests::local_provider_with_user_rates|---- )'
+test config::tests::local_provider_with_user_rates_uses_them ... FAILED
+---- config::tests::local_provider_with_user_rates_uses_them stdout ----
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2868 filtered out; finished in 0.00s
+```
+
+Reverted the mutation; `pricing()` is back to user-rates-first. The test
+drives the production `ModelEntry::pricing()` the ghost's cost site calls
+(break the precedence and it fails), so the mutation check proves it pins
+the behaviour.
+
+### Update — 2026-11-14 11:24 (end-to-end verification)
+
+Ran the phase's end-to-end block mechanically, output redirected to
+`/tmp/p04_e2e.txt` and pasted verbatim:
+
+```text
+$ cargo test --lib local_provider 2>&1 | grep -E '^test result'
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2864 filtered out; finished in 0.00s
+$ grep -c 'always \$0' assets/etc/config.toml | sed 's/^/always_zero=/'
+always_zero=0
+$ cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+build_warnings=0
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2959 failed=0
+```
+
+Hygiene `--test hygiene` ok (16 passed), `doc_truth` ok (19 passed),
+`bug_tracker` ok (6 passed). Baseline was passed=2956; now 2959
+(three new tests, `local_provider_pricing_is_zero` untouched).
+
