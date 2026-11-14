@@ -322,3 +322,46 @@ that reproduces today's content through the new model (registered in
 `src/cli/mod.rs`). Next: the eleven `StatusBarState` literals move to the
 model, then the decision-3 segments and tiers.
 
+
+### Update — 2026-11-14 (progress, resumed run)
+
+Steps 2–5 of the remaining work are done. The renderer takes the model:
+`render_status_bar` calls `crate::cli::status_bar::status_bar_line(status,
+Instant::now(), palette, area.width)`, the old line builder / `fmt_uptime` /
+`short_session` and the `start_time` parameter are gone, and the tests that
+pinned the old line's content are deleted. The loop owns one `StatusModel`
+(`glyphs` from `[chat] glyphs` through `glyph_set_for_locale`), the eleven
+`StatusBarState` literals are gone, `StatusBarState` itself is deleted from
+`render.rs`, and `TokenCtx`/`RatatuiQueryCtx.model` died with the scalars they
+carried (the turn writes the model directly). Step 5: `PresencePush` carries
+`Text`/`Alerts`, the loop stores alerts via `set_alerts`, the 1 s tick runs
+while `is_time_based`, saved-name tracking lives in `/session save|load|rename`
+and each turn start, `state` is set at the emitter's points (`working` →
+`Working` + `turn_started_at` + dirty, `blocked` → `AwaitingApproval`, `idle`
+→ `Idle` + `last_turn_duration`), `Reconnecting` from the connection-lost push,
+and `doctor` gained a `status bar glyphs` info row with `glyph_sample`. Docs
+(config.toml's `[chat]`, config-reference, README's status-bar paragraph,
+CLAUDE.md's `src/cli/` row) are updated. One stale hygiene-allowlist entry
+(`read_input_line_inner_ratatui`, now 146 lines) was removed.
+
+**Mutation check (tier drop):** with the seven tier-3 ranks bumped to 8,
+`status_line_drops_tier_three_before_tier_two_before_the_hint` FAILED
+(`test result: FAILED. 0 passed; 1 failed`); reverted, the test passes again.
+
+**End-to-end verification (mechanical, redirected):**
+
+```
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 2816 filtered out; finished in 0.02s   (cargo test --lib status_line)
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2826 filtered out; finished in 0.11s    (cargo test --lib glyph)
+test cli::commands::chat_presence::tests::parked_presence_forwards_alert_state_frames ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2833 filtered out; finished in 0.00s
+session_colon=0
+src/cli/commands/chat_loop.rs:0
+src/cli/commands/stream_ask.rs:0
+chat_table=1
+build_warnings=0
+passed=2922 failed=0
+```
+
+fmt, build (0 warnings), clippy `-D warnings` and the full `cargo test` are
+green; hygiene, `doc_truth` and `bug_tracker` pass.
