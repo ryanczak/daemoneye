@@ -1,7 +1,7 @@
 # Phase 02c — grants-segment
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel` and the glyph dialects)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -189,3 +189,10 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-14 05:47 (started)
+
+Executor Claude (direct) starting phase 02c. Plan: the `GrantSummary` types
+first (keeping `hint()` until the switch compiles), then the glyph fields,
+then the `StatusModel.grants` switch and `grants_parts`, then the tests and
+docs.
