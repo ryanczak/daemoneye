@@ -1,7 +1,7 @@
 # Phase 05 — adopted-shell-close
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced — [bug-05-1](bugs/bug-05-1.md))
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~150 lines, about half of it tests
@@ -124,23 +124,23 @@ In `src/shell/registry_tests.rs`, following
 
 ## Acceptance criteria
 
-- [ ] Every test in the test plan passes, and
+- [x] Every test in the test plan passes, and
       `close_shell_refuses_another_owners_shell` passes unchanged.
-- [ ] `grep -c 'sweep_orphaned' src/shell/registry.rs src/shell/*.rs | grep -v ':0$' | wc -l`
+- [x] `grep -c 'sweep_orphaned' src/shell/registry.rs src/shell/*.rs | grep -v ':0$' | wc -l`
       prints at least 1 (today 0), and the maintenance tick reaches it:
       `grep -cE 'reap_and_sweep|sweep_orphaned' src/daemon/startup.rs`
       prints at least 1 (today 0).
-- [ ] Mutation check, pasted with its `test result:` line: make the
+- [x] Mutation check, pasted with its `test result:` line: make the
       adopted-owner branch refuse again, confirm
       `close_shell_lets_a_chat_session_close_an_adopted_shell` fails, then
       revert.
-- [ ] **bug-05-1:** mutation check, pasted with both `test result:` lines:
+- [x] **bug-05-1:** mutation check, pasted with both `test result:` lines:
       remove the "no record" filter from `sweep_orphaned`, confirm
       `sweep_orphaned_leaves_an_id_the_registry_holds` fails, then revert
       and confirm it passes. (Today it passes under the mutation.)
-- [ ] **bug-05-1:** `grep -c 'rustfmt::skip' src/shell/registry.rs` prints 0
+- [x] **bug-05-1:** `grep -c 'rustfmt::skip' src/shell/registry.rs` prints 0
       (today 2).
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+- [x] fmt, build (0 warnings), clippy and `cargo test` are green, with
       `failed=0` and at least 2965 passed. Hygiene (`run_daemon`'s count
       not grown), `doc_truth` and `bug_tracker` are ok.
 
@@ -426,3 +426,32 @@ run the bug's mutation both ways; (2) drop both `#[rustfmt::skip]`, let
 `cargo fmt` format the code, and make room with a child module or an
 allowlist line with a reason (the phase's Constraints now allow either). The
 rest of the phase is approved; see the bug's header.
+
+### Update — 2026-11-14 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the re-dispatch hard-failed after 180 turns (`VerifierFailurePersistent`, 6 consecutive failures on `src/shell/registry.rs`) on exactly the remaining edit — wiring the new `registry_sweep.rs` child module — with the module body and the fixed fence test already correct on disk, so a resume would re-meet the same wall for a three-line fix.
+
+Architect's edits (`cdb61028`): `mod registry_sweep;` in `src/shell/mod.rs`; the duplicate `reap_and_sweep` left in `registry.rs` replaced by `pub use super::registry_sweep::{reap_and_sweep, sweep_orphaned, sweep_stale};`, so `mod.rs`'s re-exports and the tests' `super::*` are unchanged; the CLAUDE.md `registry.rs` row names the child module. The executor's `registry_sweep.rs` and its test fix (an unheld `s0.lock` instead of a held one) are kept as written.
+
+Evidence, run by the architect:
+
+```text
+== mutated (fence filter replaced with a pass-through)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2874 filtered out; finished in 0.00s
+== reverted
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2874 filtered out; finished in 0.00s
+rustfmt::skip: registry.rs 0, registry_sweep.rs 0
+tick_calls=1
+fmt clean · build 0 warnings · clippy clean
+passed=2965 failed=0
+hygiene 16 passed · doc_truth 19 passed · bug_tracker 6 passed
+```
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-05-1)
+- **Executor:** GLM-5.3-Flash, then Claude (direct) for the module wiring
+- **Scope deviations:** `registry_sweep.rs` is a new child module (allowed by the bounce's revised Constraints); no allowlist line added.
+- **Calibration:** the first run's fence test guarded against the probe re-creating the lock by holding the lock, which also short-circuited the path under test — a test fixture that pins a precondition can mask the branch it exists for. One occurrence; noted, not folded.
