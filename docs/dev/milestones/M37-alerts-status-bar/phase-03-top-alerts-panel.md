@@ -1,7 +1,7 @@
 # Phase 03 — top-alerts-panel
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-14
 **Depends on:** phase 01 (`Request::AlertList` → `Response::AlertState`)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -208,3 +208,147 @@ Also green: `cargo build` 0 warnings, `cargo clippy --all-targets
 954 → 918 (the fetcher move freed the room; the phase's additions fit
 inside it).
 <!-- entries appended below this line -->
+
+### Update — 2026-11-14 18:35 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 03 is implemented and committed (`e4a47f2f`): `daemoneye top` now lists the daemon's firing alerts. A fifth `Alerts` section sits between Shells and Activity in `--once`, and a fifth non-focusable Alerts panel sits between them in the live view — both fed by one read-only `Request::AlertList` through `alerts_panel()` on the same 2 s refresh cadence as the shells (`alerts()` on `ShellFetcher`, which moved with `shells_refresh`/`IpcFetcher` out of `top_tui.rs` into `top_load.rs`). Rows carry the daemon's severity word and name (both through `escape_controls`), `firing <age>` and `seen <age> ago`; `plan_layout` sizes the panel to its content up to six body lines with a `+N more` tail, Activity still shrinks first, and the severity word is coloured critical-red / warning-yellow / rest-gray with the Budget bar's colours. Docs updated (README `top --once` paragraph and command table, CLAUDE.md's `top_tui_draw.rs` row). All eight test-plan tests pass; the mutation check and the end-to-end block are pasted verbatim in the phase doc's end-to-end Update Log entry — `alert_list=2`, `trait_in_tui=0`, `build_warnings=0`, `passed=2956 failed=0`, hygiene/doc_truth/bug_tracker all ok, and the real `top --once` under a throwaway `HOME` prints `Alerts` / `daemon not running` as required.
+
+**Notes for review**
+
+- The `+N more` line takes the cap's last slot (5 alerts + the tail at six body lines), so the panel never exceeds `ALERTS_MAX_LINES`; the spec's "nine alerts show the first five and a `+4 more`" test plan pins this reading.
+- The fetcher move plus the panel work left `top_tui.rs` production lines at 916, so its allowlist entry was lowered 954 → 918 (authorized; no new entries).
+- Three tests from the plan's live-panel pair live in a new inline test module in `top_tui_draw.rs` rather than `top_tui_tests.rs` — the latter's 2000-line test cap had no room, and the draw module is where the panel is drawn; the caps gate confirms both files fit.
+- `format_age` and `alerts_lines`/`alerts_body` are `pub(crate)` in `top_text.rs` (`top.rs`'s child modules were made `pub(crate) mod` so the re-exports resolve); `plan_layout` gained a fifth `alerts_lines` argument and `PanelRects`/`PanelHeights` an alerts field, which rippled through the existing layout tests (alerts counted in the `used` sum, Alerts-above-Activity pins added).
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+_precedence_over_agent ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test attach_sends_session_counters_after_ok ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (3173382): No such process
+kill: (-3174098): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +3 -3
+- `docs/dev/milestones/M37-alerts-status-bar/README.md` — +1 -1
+- `docs/dev/milestones/M37-alerts-status-bar/phase-03-top-alerts-panel.md` — +44 -1
+- `src/cli/commands/top.rs` — +176 -12
+- `src/cli/commands/top_load.rs` — +55 -1
+- `src/cli/commands/top_text.rs` — +89 -4
+- `src/cli/commands/top_tui.rs` — +23 -59
+- `src/cli/commands/top_tui_draw.rs` — +197 -2
+- `src/cli/commands/top_tui_tests.rs` — +21 -11
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** e4a47f2fc7f7b4ebdc39b56855a9dd0240b92035
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
