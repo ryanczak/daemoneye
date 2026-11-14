@@ -1,7 +1,7 @@
 # Bug 1 on phase-02a: the bar's state slot drifts from the emitter
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (architect takeover, 2026-11-14)
 **Filed:** 2026-11-14
 
 ## What's wrong

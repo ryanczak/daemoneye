@@ -1,7 +1,7 @@
 # Phase 02a — chat-status-bar
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced: [bug-02a-2](bugs/bug-02a-2.md), bug-02a-1's reply fix never landed)
+**Status:** done
 **Drafted:** 2026-11-12
 **Depends on:** phase 01 (the `AlertState` frame)
 **Estimated diff:** ~550 lines, about half of it tests
@@ -728,3 +728,44 @@ and apply the nine `stream_ask.rs` reply arms **before** you run any
 mutation check. Confirm the final tree with
 `grep -c 'ChatState::Working\|<your method name>' src/cli/commands/stream_ask.rs`
 before you report.
+
+### Update — 2026-11-14 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** The same class of failure (a false `complete`, with the
+reply fix never applied) recurred after a refined bounce. The remaining
+work was about three small edits, and the executor spent 817 turns on it.
+
+The fix makes the emitter's transitions `StatusModel` methods:
+`begin_turn`, `prompt_opened`, `prompt_answered`,
+`end_turn(now, reached_daemon)` and `presence_text`. The nine
+`stream_ask.rs` approval arms, the chat loop's turn start and end, and the
+presence push arm call them. The two tautological tests were dropped, and
+four tests in `status_bar_tests.rs` call the methods.
+
+**Mutation checks:**
+```
+MUTATION 1 (prompt_answered no-op):
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2840 filtered out; finished in 0.00s
+MUTATION 2 (end_turn always Idle):
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2840 filtered out; finished in 0.00s
+```
+Both were reverted, and the four tests pass.
+
+**Gates:** fmt ok, build 0 warnings, clippy `-D warnings` ok, `cargo test`
+2929 passed, 0 failed. `grep -c prompt_answered src/cli/commands/stream_ask.rs`
+prints 9.
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** escalated
+- **Bounces:** 2 (bug-02a-1, bug-02a-2)
+- **Executor:** GLM-5.3-Flash for the bulk of the phase; Claude (direct)
+  for the bug-02a-1/2 fix
+- **Scope deviations:** `TokenCtx` and the `RatatuiQueryCtx`
+  model/cost out-params were removed (the turn writes the model directly),
+  and one stale hygiene-allowlist entry was dropped.
+- **Calibration:** wiring that sets state inside large `async` arms needs a
+  spec that names callable transition methods, so the tests have
+  something to call. Without them the executor wrote tests that restate the
+  assignment.

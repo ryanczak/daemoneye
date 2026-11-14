@@ -1,7 +1,7 @@
 # Bug 2 on phase-02a: bug-02a-1's reply fix never landed, and its tests test nothing
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (architect takeover, 2026-11-14)
 **Filed:** 2026-11-14
 
 ## What's wrong
