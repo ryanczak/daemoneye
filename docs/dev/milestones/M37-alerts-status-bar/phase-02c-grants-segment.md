@@ -196,3 +196,58 @@ Executor Claude (direct) starting phase 02c. Plan: the `GrantSummary` types
 first (keeping `hint()` until the switch compiles), then the glyph fields,
 then the `StatusModel.grants` switch and `grants_parts`, then the tests and
 docs.
+
+### Update — 2026-11-14 14:40 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** hard_fail at turn 601 ("identical bash call repeated 6
+times") with tasks 1–6 done and verified on disk by the architect: fmt,
+build (0 warnings) and clippy are clean, the grants tests and
+`summary_counts_each_kind` pass, and the acceptance greps hold. The one wall
+is `production_files_fit_the_cap`: `src/cli/status_bar.rs` has 880
+production lines (cap 800), and the executor looped re-measuring it. That's a
+single mechanical move into a sibling module the spec already allowed, so a
+resume beats a re-dispatch. `grant_sudo` counts 5 in `status_glyphs.rs`, not
+4: `glyph_sample` uses it too, which is a spec miscount and not a defect.
+
+### Update — 2026-11-14 15:45 (resume, tasks 6–7)
+
+Resumed for the one remaining failure, `production_files_fit_the_cap`
+(`src/cli/status_bar.rs` 880 lines, cap 800). Moved `CmdGrant`, `Scope`,
+`GrantSummary` (with its impls) and `grants_parts` / `grants_lead_colour` /
+`grants_active_kinds` verbatim into a new `src/cli/status_grants.rs`, declared
+as `#[path = "status_grants.rs"] mod grants;` beside the existing `mod fit`,
+with `pub use grants::{CmdGrant, GrantSummary, Scope, grants_active_kinds,
+grants_lead_colour};` in `status_bar.rs` so `approval.rs` and the tests keep
+their import paths. `status_bar.rs` is now under the cap; hygiene reports
+`test result: ok. 16 passed`. CLAUDE.md's status-bar row names the new file;
+`doc_truth` passes. Note: `grants_lead_colour` lives in `status_grants.rs`,
+so the mutation check below edits that file.
+
+### Update — 2026-11-14 15:45 (end-to-end verification)
+
+Mutation check — made `grants_lead_colour` ignore `deletes`
+(removed `|| s.deletes` from the `red` arm), reverted after:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2856 filtered out; finished in 0.00s
+```
+
+End-to-end block, verbatim:
+
+```
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 2849 filtered out; finished in 0.00s
+test cli::commands::approval::tests::summary_counts_each_kind ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2856 filtered out; finished in 0.00s
+approval_hint=0
+ctrl_c=0
+build_warnings=0
+passed=2947 failed=0
+```
+
+Also green: `cargo build` 0 warnings, `cargo clippy --all-targets
+--all-features -- -D warnings` clean, `cargo fmt --all` clean,
+`--test hygiene` ok (16 passed, `production_files_fit_the_cap` included) and
+`--test doc_truth` ok (19 passed). `grant_sudo` counts 5 in
+`status_glyphs.rs` — the field, three dialects and `glyph_sample` — matching
+the architect's escalation note.

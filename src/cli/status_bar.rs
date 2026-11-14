@@ -15,6 +15,7 @@ use ratatui::text::{Line, Span};
 use crate::cli::palette::Palette;
 use crate::cli::status_glyphs::{ASCII, EMOJI, GlyphSet, SYMBOLS};
 use crate::ipc::AlertBadge;
+use crate::shell::now_unix;
 use crate::webhook::active_severity_rank;
 
 /// Which chat state the bar's state slot shows. Set at the points the OSC
@@ -79,33 +80,13 @@ pub fn glyph_set_for_locale(configured: &'static GlyphSet, utf8: bool) -> &'stat
     if utf8 { configured } else { &ASCII }
 }
 
-/// A one-line sample of `g`'s glyphs, for `doctor` — the user sees what their
-/// terminal does with the set before they rely on it.
-pub fn glyph_sample(g: &GlyphSet) -> String {
-    [
-        g.idle,
-        g.working,
-        g.awaiting_approval,
-        g.daemon_down,
-        g.reconnecting,
-        g.alert_critical,
-        g.alert_warning,
-        g.alert_info,
-        g.context_empty,
-        g.context_full,
-        g.cost,
-        g.turn,
-        g.background,
-        g.ghosts,
-        g.tools,
-        g.shells,
-        g.session,
-    ]
-    .join(" ")
-}
-
 /// How long a resolved alert's flash lives.
 pub const RESOLVE_FLASH_SECS: Duration = Duration::from_secs(10);
+
+#[path = "status_grants.rs"]
+mod grants;
+use grants::grants_parts;
+pub use grants::{CmdGrant, GrantSummary, Scope, grants_active_kinds, grants_lead_colour};
 
 /// Everything the status bar line reads. The chat loop owns one and updates
 /// it in place; the line builder is pure over it.
@@ -113,8 +94,8 @@ pub const RESOLVE_FLASH_SECS: Duration = Duration::from_secs(10);
 pub struct StatusModel {
     /// The session id the client is attached to.
     pub session_id: String,
-    /// The approval hint, flush right.
-    pub approval_hint: String,
+    /// The session's grants, as the grants segment reads them.
+    pub grants: GrantSummary,
     /// The model id the session runs, as the config names it.
     pub model: String,
     /// The chat's turn counter: 0 before the first turn, the resumed count
@@ -169,7 +150,7 @@ impl Default for StatusModel {
     fn default() -> Self {
         StatusModel {
             session_id: String::new(),
-            approval_hint: String::new(),
+            grants: GrantSummary::default(),
             model: String::new(),
             turn: 0,
             prompt_tokens: 0,
@@ -179,7 +160,7 @@ impl Default for StatusModel {
             last_turn_duration: None,
             turn_started_at: None,
             session_started_at: Instant::now(),
-            session_start_unix: unix_now(),
+            session_start_unix: now_unix(),
             cost_usd: 0.0,
             has_untracked: false,
             state: ChatState::Idle,
@@ -195,15 +176,6 @@ impl Default for StatusModel {
             glyphs: &EMOJI,
         }
     }
-}
-
-/// Unix seconds right now. The one wall-clock read the model makes, at
-/// construction; every age it displays derives from this anchor.
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 impl StatusModel {
@@ -363,32 +335,25 @@ pub fn status_bar_line(
         counter_parts(g.shells, model.shells, RANK_SHELLS),
         model_parts(model, g),
         session_parts(model, g),
+        grants_parts(model, g, palette),
     ];
-    let mut hint = hint_part(model);
 
     // The ranks that exist right now, lowest first; each drop re-measures.
     let mut ranks: Vec<u16> = slots
         .iter()
         .flat_map(|slot| slot.iter().map(|p| p.rank))
         .collect();
-    if hint.is_some() {
-        ranks.push(RANK_HINT);
-    }
     ranks.sort_unstable();
     ranks.dedup();
     for rank in ranks {
-        if line_fits(&slots, hint.as_ref().map(|p| p.width), sep, width) {
+        if line_fits(&slots, None, sep, width) {
             break;
         }
-        if rank == RANK_HINT {
-            hint = None;
-        } else {
-            for slot in &mut slots {
-                slot.retain(|p| p.rank != rank);
-            }
+        for slot in &mut slots {
+            slot.retain(|p| p.rank != rank);
         }
     }
-    join_slots(&slots, &mut hint, sep, width)
+    join_slots(&slots, &mut None, sep, width)
 }
 
 /// The state segment: the state glyph; while `Working`, the elapsed mark and
@@ -722,20 +687,6 @@ fn session_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
     text.push_str(name);
     vec![Part::new(vec![Span::styled(text, gray())], RANK_SESSION)]
 }
-
-/// The grant hint, flush right. The hint string carries its own `⚡` (or
-/// `A:` in ascii) — the glyph dialect's `grants` slot is the prefix the
-/// existing `SessionApproval::hint` already emits, so nothing is added here.
-fn hint_part(model: &StatusModel) -> Option<Part> {
-    if model.approval_hint.is_empty() {
-        return None;
-    }
-    Some(Part::new(
-        vec![Span::styled(model.approval_hint.clone(), gray())],
-        RANK_HINT,
-    ))
-}
-
 /// Compact token count: below 1 000 as is (`950`); below 10 000 with one
 /// decimal (`4321` → `4.3k`); below 1 000 000 as whole thousands (`41234` →
 /// `41k`); from 1 000 000 as millions with one decimal (`1048576` → `1.0M`).
@@ -755,9 +706,9 @@ pub fn compact_tokens(n: u32) -> String {
 mod fit;
 use fit::{
     NARROW_BELOW, NARROW_SEP, Part, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BACKGROUND,
-    RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GROWTH, RANK_HINT, RANK_MODEL,
-    RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_THROUGHPUT, RANK_TOOLS, RANK_TURN, WIDE_SEP,
-    join_slots, line_fits,
+    RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GROWTH, RANK_MODEL, RANK_SESSION,
+    RANK_SHELLS, RANK_STATE, RANK_THROUGHPUT, RANK_TOOLS, RANK_TURN, WIDE_SEP, join_slots,
+    line_fits,
 };
 
 #[cfg(test)]

@@ -19,7 +19,16 @@ fn full_model() -> StatusModel {
     let now = Instant::now();
     let mut m = StatusModel {
         session_id: "0123456789abcdef".to_string(),
-        approval_hint: "⚡approvals: all · Ctrl+C revokes".to_string(),
+        grants: GrantSummary {
+            cmds: CmdGrant::All,
+            scripts: Scope::Named(2),
+            runbooks: Scope::All,
+            files: Scope::All,
+            agents: Scope::Named(1),
+            schedules: true,
+            deletes: true,
+            hosts: 1,
+        },
         model: "claude-sonnet-4-6".to_string(),
         turn: 12,
         prompt_tokens: 41_234,
@@ -107,6 +116,16 @@ fn glyph_sets_contain_no_variation_selectors() {
             set.session,
             set.session_dirty,
             set.grants,
+            set.grant_gated,
+            set.grant_sudo,
+            set.grant_scripts,
+            set.grant_runbooks,
+            set.grant_files,
+            set.grant_schedules,
+            set.grant_agents,
+            set.grant_deletes,
+            set.grant_hosts,
+            set.grant_all,
         ] {
             assert!(
                 !field.contains('\u{fe0f}') && !field.contains('\u{fe0e}'),
@@ -271,18 +290,33 @@ fn status_line_shows_the_resolve_flash_for_ten_seconds() {
 }
 
 #[test]
-fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
+fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
     let now = Instant::now();
     let mut m = full_model();
     m.turn_started_at = None;
     m.state = ChatState::Idle;
 
-    // Tier 3 names the velocities, the alert name and age, the session and
-    // the model. Tier 2 names the counters. Find the narrowest width where
-    // every tier-3 item still shows, then step down one column at a time:
-    // the first thing to go must be a tier-3 item.
+    // Tier 3 names the velocities, the alert name and age, the session, the
+    // model and the grants detail. Tier 2 names the counters. Find the
+    // narrowest width where every tier-3 item still shows, then step down
+    // one column at a time: the first thing to go must be a tier-3 item.
     let wide = line_at(&m, now, 160);
-    for item in ["📈", "⛽", "🐇", "DiskFull", "incident-42", "sonnet-4-6"] {
+    for item in [
+        "📈",
+        "⛽",
+        "🐇",
+        "DiskFull",
+        "incident-42",
+        "sonnet-4-6",
+        "🔑",
+        "📜",
+        "📖",
+        "📄",
+        "🤖",
+        "📅",
+        "🗑",
+        "🌐",
+    ] {
         assert!(
             wide.contains(item),
             "tier 3 shows at 160: {item} in {wide:?}"
@@ -295,18 +329,33 @@ fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
         );
     }
     assert!(
-        wide.contains("⚡approvals"),
-        "the hint shows at 160: {wide:?}"
+        wide.contains("⚡8"),
+        "the grants core shows at 160: {wide:?}"
     );
 
     // Narrow until one tier-3 item drops; the tier-2 items must all survive.
     let mut width = 159usize;
     loop {
         let text = line_at(&m, now, width as u16);
-        let missing: Vec<&str> = ["📈", "⛽", "🐇", "DiskFull", "incident-42", "sonnet-4-6"]
-            .into_iter()
-            .filter(|i| !text.contains(i))
-            .collect();
+        let missing: Vec<&str> = [
+            "📈",
+            "⛽",
+            "🐇",
+            "DiskFull",
+            "incident-42",
+            "sonnet-4-6",
+            "🔑",
+            "📜",
+            "📖",
+            "📄",
+            "🤖",
+            "📅",
+            "🗑",
+            "🌐",
+        ]
+        .into_iter()
+        .filter(|i| !text.contains(i))
+        .collect();
         if !missing.is_empty() {
             for item in ["⏳2", "👻1", "🛠7", "🐚3"] {
                 assert!(
@@ -315,8 +364,8 @@ fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
                 );
             }
             assert!(
-                text.contains("⚡approvals"),
-                "the hint outlives the first tier-3 drop: {text:?}"
+                text.contains("⚡8"),
+                "the grants core outlives the first tier-3 drop: {text:?}"
             );
             break;
         }
@@ -324,7 +373,8 @@ fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
         assert!(width > 20, "no tier-3 item ever dropped: {text:?}");
     }
 
-    // Narrow further until a tier-2 counter drops; the hint must still show.
+    // Narrow further until a tier-2 counter drops; the grants core must still
+    // show.
     let mut width = width - 1;
     loop {
         let text = line_at(&m, now, width as u16);
@@ -334,8 +384,8 @@ fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
             .collect();
         if !missing.is_empty() {
             assert!(
-                text.contains("⚡approvals"),
-                "the hint drops after tier 2, not before: {text:?}"
+                text.contains("⚡8"),
+                "the grants core drops after tier 2, not before: {text:?}"
             );
             break;
         }
@@ -343,11 +393,11 @@ fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
         assert!(width > 10, "no tier-2 item ever dropped: {text:?}");
     }
 
-    // Narrow further until the hint drops; tier 1 must still show.
+    // Narrow further until the grants core drops; tier 1 must still show.
     let mut width = width - 1;
     loop {
         let text = line_at(&m, now, width as u16);
-        if !text.contains("⚡approvals") {
+        if !text.contains("⚡8") {
             assert!(text.contains("💤"), "state is tier 1: {text:?}");
             assert!(text.contains("⚠1"), "alerts are tier 1: {text:?}");
             assert!(text.contains("🌓20%"), "context is tier 1: {text:?}");
@@ -356,7 +406,7 @@ fn status_line_drops_tier_three_before_tier_two_before_the_hint() {
             break;
         }
         width -= 1;
-        assert!(width > 5, "the hint never dropped: {text:?}");
+        assert!(width > 5, "the grants core never dropped: {text:?}");
     }
 }
 
@@ -879,4 +929,265 @@ fn status_model_applies_session_counters() {
         "a zero ghost slot stays hidden: {text:?}"
     );
     assert!(text.contains("🐚2"), "shells show again: {text:?}");
+}
+
+// ── Grants segment (M37 02c) ─────────────────────────────────────────────────
+
+#[test]
+fn grants_hidden_in_the_default_state() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.grants = GrantSummary::default();
+
+    let text = line_at(&m, now, 160);
+    for mark in ["⚡", "🔒", "🔑", "📜", "📖", "📄", "📅", "🤖", "🗑", "🌐"] {
+        assert!(
+            !text.contains(mark),
+            "the default state hides the segment: {mark} in {text:?}"
+        );
+    }
+
+    // Any one non-default field brings the segment back.
+    m.grants.deletes = true;
+    let text = line_at(&m, now, 160);
+    assert!(
+        text.contains("⚡1"),
+        "deletes alone shows the core: {text:?}"
+    );
+    assert!(text.contains("🗑"), "the deletes detail shows: {text:?}");
+}
+
+#[test]
+fn grants_lead_colour_follows_the_riskiest_grant() {
+    let now = Instant::now();
+    let p = palette();
+
+    // Gated commands and nothing else: green.
+    let gated = GrantSummary {
+        cmds: CmdGrant::Gated,
+        ..GrantSummary::default()
+    };
+    assert_eq!(
+        grants_lead_colour(&gated, &p),
+        p.green(),
+        "gated-only is green"
+    );
+
+    // One named script: amber.
+    let named = GrantSummary {
+        cmds: CmdGrant::Auto,
+        scripts: Scope::Named(1),
+        ..GrantSummary::default()
+    };
+    assert_eq!(
+        grants_lead_colour(&named, &p),
+        p.yellow(),
+        "a named script is amber"
+    );
+
+    // Files all: red.
+    let files_all = GrantSummary {
+        cmds: CmdGrant::Auto,
+        files: Scope::All,
+        ..GrantSummary::default()
+    };
+    assert_eq!(
+        grants_lead_colour(&files_all, &p),
+        p.red(),
+        "files all is red"
+    );
+
+    // Deletes alone: red.
+    let deletes = GrantSummary {
+        deletes: true,
+        ..GrantSummary::default()
+    };
+    assert_eq!(grants_lead_colour(&deletes, &p), p.red(), "deletes is red");
+
+    // Sudo alone: red.
+    let sudo = GrantSummary {
+        cmds: CmdGrant::Sudo,
+        ..GrantSummary::default()
+    };
+    assert_eq!(grants_lead_colour(&sudo, &p), p.red(), "sudo is red");
+
+    // Hosts only: amber.
+    let hosts = GrantSummary {
+        hosts: 2,
+        ..GrantSummary::default()
+    };
+    assert_eq!(
+        grants_lead_colour(&hosts, &p),
+        p.yellow(),
+        "hosts only is amber"
+    );
+
+    // And the line the production path draws carries the same colour: the
+    // lead span's style is the risk colour, the rest of the line stays gray.
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.alerts.clear();
+    m.session_name = None;
+    m.background = 0;
+    m.ghosts = 0;
+    m.tools_total = 0;
+    m.shells = 0;
+    m.grants = gated;
+    let line = status_bar_line(&m, now, &p, 120);
+    let lead = line
+        .spans
+        .iter()
+        .find(|s| s.content.contains('⚡'))
+        .expect("the lead glyph is in the line");
+    assert_eq!(
+        lead.style.fg,
+        Some(p.green()),
+        "the drawn lead is green: {lead:?}"
+    );
+}
+
+#[test]
+fn grants_count_active_kinds_and_show_detail_when_room() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.alerts.clear();
+    m.session_name = None;
+    m.background = 0;
+    m.ghosts = 0;
+    m.tools_total = 0;
+    m.shells = 0;
+    m.grants = GrantSummary {
+        cmds: CmdGrant::Sudo,
+        scripts: Scope::Named(2),
+        files: Scope::All,
+        deletes: true,
+        ..GrantSummary::default()
+    };
+
+    // Core: the lead glyph and the count of active kinds (sudo, scripts,
+    // files all, deletes = 4).
+    let text = line_at(&m, now, 160);
+    assert!(text.contains("⚡4"), "four active kinds: {text:?}");
+
+    // Detail at 160: each kind glyph, `∗` for the All scope, in the table's
+    // order and after the lead.
+    let lead_at = text.find('⚡').expect("the lead glyph shows");
+    let mut last = lead_at;
+    for part in ["🔑", "📜2", "📄∗", "🗑"] {
+        let at = text
+            .find(part)
+            .unwrap_or_else(|| panic!("detail part {part} shows at 160: {text:?}"));
+        assert!(at > last, "detail follows in order: {part} in {text:?}");
+        last = at;
+    }
+}
+
+#[test]
+fn grants_detail_drops_before_the_core() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.grants = GrantSummary {
+        cmds: CmdGrant::Sudo,
+        scripts: Scope::Named(2),
+        files: Scope::All,
+        deletes: true,
+        ..GrantSummary::default()
+    };
+
+    // Narrow until the last detail part is gone: the core must still show.
+    let mut width = 160usize;
+    loop {
+        let text = line_at(&m, now, width as u16);
+        if !text.contains('🔑') {
+            for part in ["📜", "📄", "🗑"] {
+                assert!(
+                    !text.contains(part),
+                    "detail drops as one tier: {part} still in {text:?}"
+                );
+            }
+            assert!(
+                text.contains("⚡4"),
+                "the core outlives the detail: {text:?}"
+            );
+            break;
+        }
+        width -= 1;
+        assert!(width > 20, "no detail part ever dropped: {text:?}");
+    }
+
+    // Narrow further until the core drops. Tier 1 must survive it: the core
+    // is the last slot below tier 1.
+    let mut width = width - 1;
+    loop {
+        let text = line_at(&m, now, width as u16);
+        if !text.contains("⚡4") {
+            assert!(text.contains("↻12"), "tier 1 outlives the core: {text:?}");
+            break;
+        }
+        width -= 1;
+        assert!(width > 5, "the grants core never dropped: {text:?}");
+    }
+}
+
+#[test]
+fn grants_speak_each_dialect() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.alerts.clear();
+    m.session_name = None;
+    m.background = 0;
+    m.ghosts = 0;
+    m.tools_total = 0;
+    m.shells = 0;
+    m.grants = GrantSummary {
+        cmds: CmdGrant::Gated,
+        ..GrantSummary::default()
+    };
+
+    m.glyphs = &ASCII;
+    let text = line_at(&m, now, 120);
+    assert!(
+        !text.contains('⚡'),
+        "ascii never speaks the emoji lead: {text:?}"
+    );
+    assert!(text.contains("A1"), "ascii lead with the count: {text:?}");
+    assert!(text.contains('!'), "ascii gated mark: {text:?}");
+
+    m.glyphs = &SYMBOLS;
+    let text = line_at(&m, now, 120);
+    assert!(
+        text.contains("⚡1"),
+        "symbols speak the same lead: {text:?}"
+    );
+    assert!(text.contains('⊘'), "symbols gated mark: {text:?}");
+}
+
+#[test]
+fn no_status_line_mentions_ctrl_c() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    for state in [
+        ChatState::Idle,
+        ChatState::Working,
+        ChatState::AwaitingApproval,
+    ] {
+        m.state = state;
+        for width in [40u16, 60, 80, 120, 160] {
+            let text = line_at(&m, now, width);
+            assert!(
+                !text.contains("Ctrl+C"),
+                "no status line mentions Ctrl+C at {width}: {text:?}"
+            );
+        }
+    }
 }

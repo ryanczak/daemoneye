@@ -88,7 +88,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                   is: &InputState,
                   ap: &SessionApproval,
                   sb: &mut crate::cli::status_bar::StatusModel| {
-        sb.approval_hint = ap.hint();
+        sb.grants = ap.summary();
         let _ = r.draw(is.current_line(), sb);
     };
 
@@ -227,7 +227,7 @@ pub(super) async fn run_chat_ratatui(ctx: RatatuiCtx<'_>) -> Result<()> {
                     }
                 }
                 None => {
-                    sb.approval_hint = approval.hint();
+                    sb.grants = approval.summary();
                     if let Err(e) =
                         super::agents::run_agents(stdin, sigwinch, &mut renderer, &sb).await
                     {
@@ -441,13 +441,13 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         shells,
                     } => sb.set_session_counters(background, ghosts, shells),
                 }
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw(state.current_line(), sb);
             }
             _ = sigwinch.recv() => {
                 *chat_width = terminal_width();
                 renderer.reanchor();
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw(state.current_line(), sb);
             }
             _ = tokio::time::sleep_until(
@@ -456,7 +456,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                 // The bar carries something time-based (a running turn, a
                 // firing alert, a live resolve flash): redraw once a second.
                 // The arm's condition turns the timer off otherwise.
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw(state.current_line(), sb);
             }
             key = read_key(stdin) => {
@@ -521,7 +521,7 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         // Returning to this tmux pane: re-pin the input box to the
                         // bottom in case the terminal was repainted while away.
                         renderer.reanchor();
-                        sb.approval_hint = approval.hint();
+                        sb.grants = approval.summary();
                         let _ = renderer.draw(state.current_line(), sb);
                     }
                     Key::FocusLost => {}
@@ -545,12 +545,12 @@ async fn read_input_line_inner_ratatui(ctx: RatatuiInputCtx<'_>) -> anyhow::Resu
                         {
                             eprintln!("\x1b[31m✗\x1b[0m viewer: {}", e);
                         }
-                        sb.approval_hint = approval.hint();
+                        sb.grants = approval.summary();
                         let _ = renderer.draw(state.current_line(), sb);
                     }
                     _ => {}
                 }
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw(state.current_line(), sb);
             }
         }

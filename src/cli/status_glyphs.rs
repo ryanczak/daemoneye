@@ -45,7 +45,20 @@ pub struct GlyphSet {
     pub session: &'static str,
     /// The dirty mark beside a saved session's name.
     pub session_dirty: &'static str,
+    /// The grants segment: the lead glyph, then one glyph per grant kind and
+    /// the "every one" mark.
     pub grants: &'static str,
+    pub grant_gated: &'static str,
+    pub grant_sudo: &'static str,
+    pub grant_scripts: &'static str,
+    pub grant_runbooks: &'static str,
+    pub grant_files: &'static str,
+    pub grant_schedules: &'static str,
+    pub grant_agents: &'static str,
+    pub grant_deletes: &'static str,
+    pub grant_hosts: &'static str,
+    /// The "every one" mark after a kind whose grant covers the whole class.
+    pub grant_all: &'static str,
 }
 
 /// The emoji dialect: the default.
@@ -84,6 +97,16 @@ pub static EMOJI: GlyphSet = GlyphSet {
     session: "📌",
     session_dirty: "✎",
     grants: "⚡",
+    grant_gated: "🔒",
+    grant_sudo: "🔑",
+    grant_scripts: "📜",
+    grant_runbooks: "📖",
+    grant_files: "📄",
+    grant_schedules: "📅",
+    grant_agents: "🤖",
+    grant_deletes: "🗑",
+    grant_hosts: "🌐",
+    grant_all: "∗",
 };
 
 /// The symbols dialect.
@@ -122,6 +145,16 @@ pub static SYMBOLS: GlyphSet = GlyphSet {
     session: "▣",
     session_dirty: "✎",
     grants: "⚡",
+    grant_gated: "⊘",
+    grant_sudo: "#",
+    grant_scripts: "§",
+    grant_runbooks: "¶",
+    grant_files: "▤",
+    grant_schedules: "◷",
+    grant_agents: "⚦",
+    grant_deletes: "⌫",
+    grant_hosts: "⌂",
+    grant_all: "∗",
 };
 
 /// The ascii dialect, forced when the locale is not UTF-8.
@@ -159,5 +192,51 @@ pub static ASCII: GlyphSet = GlyphSet {
     vendor_local: "",
     session: "@",
     session_dirty: "*",
-    grants: "A:",
+    grants: "A",
+    grant_gated: "!",
+    grant_sudo: "#",
+    grant_scripts: "s",
+    grant_runbooks: "r",
+    grant_files: "f",
+    grant_schedules: "c",
+    grant_agents: "g",
+    grant_deletes: "d",
+    grant_hosts: "h",
+    grant_all: "*",
 };
+
+/// A one-line sample of `g`'s glyphs, for `doctor` — the user sees what their
+/// terminal does with the set before they rely on it.
+pub fn glyph_sample(g: &GlyphSet) -> String {
+    [
+        g.idle,
+        g.working,
+        g.awaiting_approval,
+        g.daemon_down,
+        g.reconnecting,
+        g.alert_critical,
+        g.alert_warning,
+        g.alert_info,
+        g.context_empty,
+        g.context_full,
+        g.cost,
+        g.turn,
+        g.background,
+        g.ghosts,
+        g.tools,
+        g.shells,
+        g.session,
+        g.grants,
+        g.grant_gated,
+        g.grant_sudo,
+        g.grant_scripts,
+        g.grant_runbooks,
+        g.grant_files,
+        g.grant_schedules,
+        g.grant_agents,
+        g.grant_deletes,
+        g.grant_hosts,
+        g.grant_all,
+    ]
+    .join(" ")
+}

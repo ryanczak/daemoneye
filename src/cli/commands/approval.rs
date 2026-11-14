@@ -225,45 +225,34 @@ impl SessionApproval {
             .collect()
     }
 
-    /// Build the status-bar hint string shown in the chat frame.
-    pub(super) fn hint(&self) -> String {
-        let mut active: Vec<String> = Vec::new();
-        match (self.regular, self.sudo) {
-            (true, true) => active.push("all".to_string()),
-            (true, false) => {} // default state; shown as baseline label below
-            (false, true) => active.push("sudo".to_string()),
-            (false, false) => active.push("cmds: gated".to_string()),
+    /// The session's grant state as the status bar reads it: a snapshot, not
+    /// a string. The bar owns the grammar; this only reports the state.
+    pub(super) fn summary(&self) -> crate::cli::status_bar::GrantSummary {
+        use crate::cli::status_bar::{CmdGrant, GrantSummary, Scope};
+        fn scope_of(all: bool, named: usize) -> Scope {
+            if all {
+                Scope::All
+            } else if named > 0 {
+                Scope::Named(named as u32)
+            } else {
+                Scope::None
+            }
         }
-        if self.scripts_all {
-            active.push("scripts: all".to_string());
-        } else if !self.scripts.is_empty() {
-            active.push(format!("scripts: {}", self.scripts.len()));
-        }
-        if self.runbooks_all {
-            active.push("runbooks: all".to_string());
-        } else if !self.runbooks.is_empty() {
-            active.push(format!("runbooks: {}", self.runbooks.len()));
-        }
-        if self.file_edits_all {
-            active.push("files: all".to_string());
-        } else if !self.file_edits.is_empty() {
-            active.push(format!("files: {}", self.file_edits.len()));
-        }
-        if self.schedules {
-            active.push("schedules: all".to_string());
-        }
-        if self.agents_all {
-            active.push("agents: all".to_string());
-        } else if !self.agents.is_empty() {
-            active.push(format!("agents: {}", self.agents.len()));
-        }
-        if self.deletes {
-            active.push("deletes: all".to_string());
-        }
-        if active.is_empty() {
-            "cmds: auto".to_string()
-        } else {
-            format!("⚡approvals: {} · Ctrl+C revokes", active.join(", "))
+        let cmds = match (self.regular, self.sudo) {
+            (true, true) => CmdGrant::All,
+            (false, true) => CmdGrant::Sudo,
+            (true, false) => CmdGrant::Auto,
+            (false, false) => CmdGrant::Gated,
+        };
+        GrantSummary {
+            cmds,
+            scripts: scope_of(self.scripts_all, self.scripts.len()),
+            runbooks: scope_of(self.runbooks_all, self.runbooks.len()),
+            files: scope_of(self.file_edits_all, self.file_edits.len()),
+            agents: scope_of(self.agents_all, self.agents.len()),
+            schedules: self.schedules,
+            deletes: self.deletes,
+            hosts: (self.hosts_regular.len() + self.hosts_sudo.len()) as u32,
         }
     }
 }
@@ -506,6 +495,7 @@ const CATEGORY_LIST: &str = "commands, sudo, scripts, runbooks, files, schedules
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::status_bar::{CmdGrant, Scope};
     use crate::config::ApprovalsConfig;
     use crate::ipc::Response;
 
@@ -670,33 +660,31 @@ mod tests {
         assert!(a.file_edits.is_empty());
     }
 
-    // ── hint ─────────────────────────────────────────────────────────────────
+    // ── summary ───────────────────────────────────────────────────────────────
 
     #[test]
-    fn hint_default_is_auto() {
+    fn summary_default_is_auto_and_empty() {
         let a = SessionApproval::default();
-        assert_eq!(a.hint(), "cmds: auto");
+        let s = a.summary();
+        assert_eq!(s.cmds, CmdGrant::Auto);
+        assert_eq!(s.scripts, Scope::None);
+        assert_eq!(s.hosts, 0);
     }
 
     #[test]
-    fn hint_shows_all_when_both_command_flags_true() {
+    fn summary_shows_all_when_both_command_flags_true() {
         let a = SessionApproval::from_config(&approvals_all());
-        let h = a.hint();
-        assert!(h.contains("all"), "hint='{}' should contain 'all'", h);
+        let s = a.summary();
+        assert_eq!(s.cmds, CmdGrant::All, "both flags set is All: {:?}", s);
     }
 
     #[test]
-    fn hint_shows_scripts_all_when_flag_set() {
+    fn summary_shows_scripts_all_when_flag_set() {
         let a = SessionApproval {
             scripts_all: true,
             ..SessionApproval::default()
         };
-        let h = a.hint();
-        assert!(
-            h.contains("scripts: all"),
-            "hint='{}' should contain 'scripts: all'",
-            h
-        );
+        assert_eq!(a.summary().scripts, Scope::All);
     }
 
     // ── per-host approval scope (M21 phase-06b) ─────────────────────────────
@@ -882,16 +870,20 @@ mod tests {
     }
 
     #[test]
-    fn hint_shows_per_name_count_when_all_flag_false() {
+    fn summary_counts_each_kind() {
         let mut a = SessionApproval::default();
         a.scripts.insert("foo.sh".to_string());
         a.scripts.insert("bar.sh".to_string());
-        let h = a.hint();
-        assert!(
-            h.contains("scripts: 2"),
-            "hint='{}' should contain 'scripts: 2'",
-            h
-        );
+        a.file_edits_all = true;
+        a.schedules = true;
+        a.hosts_regular.insert("web01".to_string());
+        let s = a.summary();
+        assert_eq!(s.cmds, CmdGrant::Auto, "default: commands auto-approved");
+        assert_eq!(s.scripts, Scope::Named(2), "two named scripts");
+        assert_eq!(s.files, Scope::All, "the whole class set");
+        assert!(s.schedules, "schedules is a boolean");
+        assert!(!s.deletes, "deletes untouched");
+        assert_eq!(s.hosts, 1, "one host granted regular commands");
     }
 
     // ── the /approvals command (M36 phase-03) ────────────────────────────────

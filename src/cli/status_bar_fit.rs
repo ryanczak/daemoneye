@@ -18,10 +18,11 @@ pub(super) const NARROW_BELOW: usize = 36;
 /// in the drop order. Ranks are unique; the lowest remaining rank drops
 /// first when the line does not fit.
 ///
-/// Tier 3 (the velocities, the alert name and age, the session, the model)
-/// holds ranks 1–7, tier 2 (the counters) 8–11, the grant hint 12 — it drops
-/// after tier 2 and before tier 1 — and tier 1 (state, alerts, context, cost,
-/// turn) 13–17, the last resort on a very narrow pane.
+/// Tier 3 (the velocities, the alert name and age, the session, the model,
+/// the grants detail) holds ranks 1–8, tier 2 (the counters) 9–12, the
+/// grants core 13 — it drops after tier 2 and before tier 1 — and tier 1
+/// (state, alerts, context, cost, turn) 14–18, the last resort on a very
+/// narrow pane.
 #[derive(Debug)]
 pub(super) struct Part {
     pub spans: Vec<Span<'static>>,
@@ -44,16 +45,17 @@ pub(super) const RANK_ALERT_NAME: u16 = 4;
 pub(super) const RANK_ALERT_AGE: u16 = 5;
 pub(super) const RANK_SESSION: u16 = 6;
 pub(super) const RANK_MODEL: u16 = 7;
-pub(super) const RANK_SHELLS: u16 = 8;
-pub(super) const RANK_TOOLS: u16 = 9;
-pub(super) const RANK_GHOSTS: u16 = 10;
-pub(super) const RANK_BACKGROUND: u16 = 11;
-pub(super) const RANK_HINT: u16 = 12;
-pub(super) const RANK_TURN: u16 = 13;
-pub(super) const RANK_COST: u16 = 14;
-pub(super) const RANK_CONTEXT: u16 = 15;
-pub(super) const RANK_ALERTS: u16 = 16;
-pub(super) const RANK_STATE: u16 = 17;
+pub(super) const RANK_GRANT_DETAIL: u16 = 8;
+pub(super) const RANK_SHELLS: u16 = 9;
+pub(super) const RANK_TOOLS: u16 = 10;
+pub(super) const RANK_GHOSTS: u16 = 11;
+pub(super) const RANK_BACKGROUND: u16 = 12;
+pub(super) const RANK_GRANTS: u16 = 13;
+pub(super) const RANK_TURN: u16 = 14;
+pub(super) const RANK_COST: u16 = 15;
+pub(super) const RANK_CONTEXT: u16 = 16;
+pub(super) const RANK_ALERTS: u16 = 17;
+pub(super) const RANK_STATE: u16 = 18;
 
 /// Do all the slots plus the hint fit `width` at `sep` between them?
 pub(super) fn line_fits(

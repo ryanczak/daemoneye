@@ -119,6 +119,15 @@ impl Palette {
             ColorDepth::Ansi16 => Color::Yellow,
         }
     }
+
+    /// The green for a gated-but-safe grant segment (nothing risky held).
+    pub fn green(&self) -> Color {
+        match self.depth {
+            ColorDepth::Truecolor => Color::Rgb(0, 170, 0),
+            ColorDepth::Xterm256 => Color::Indexed(70),
+            ColorDepth::Ansi16 => Color::Green,
+        }
+    }
 }
 
 /// Foreground-color escape for the given depth. `basic` is a full SGR code

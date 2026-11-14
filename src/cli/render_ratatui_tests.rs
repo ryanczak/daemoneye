@@ -804,7 +804,6 @@ fn commit_panel_borders_fill_by_display_width() {
 pub(super) fn default_status() -> crate::cli::status_bar::StatusModel {
     crate::cli::status_bar::StatusModel {
         session_name: Some("abcdef12-3456".to_string()),
-        approval_hint: "cmds: auto".to_string(),
         model: "test-model".to_string(),
         context_window: 200_000,
         ..Default::default()

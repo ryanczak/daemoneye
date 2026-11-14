@@ -175,7 +175,7 @@ fn glyph_report_line() -> String {
     format!(
         "{}{forced} · {}",
         crate::cli::status_bar::glyph_set_name(set),
-        crate::cli::status_bar::glyph_sample(set)
+        crate::cli::status_glyphs::glyph_sample(set)
     )
 }
 

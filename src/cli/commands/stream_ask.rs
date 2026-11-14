@@ -179,7 +179,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 } else {
                     dot_period - pos + 1
                 };
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw_spinner(
                     SPINNER[spin % SPINNER.len()],
                     verb,
@@ -214,7 +214,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             }
             StreamOutcome::Warn => {
                 // First interrupt press — show warning in live region.
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw_spinner("⚡", "interrupt?", 0, typeahead.text(), sb);
                 continue;
             }
@@ -247,7 +247,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 } else {
                     dot_period - pos + 1
                 };
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 let _ = renderer.draw_spinner(
                     SPINNER[spin % SPINNER.len()],
                     verb,
@@ -319,7 +319,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 interactive,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let (approved, user_message) = prompt_tool_call_ratatui(
                     renderer,
@@ -347,7 +347,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             }
             Response::CredentialPrompt { id, prompt } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let credential = prompt_credential_ratatui(renderer, stdin, sb, &prompt).await;
                 send_request(&mut tx, Request::CredentialResponse { id, credential }).await?;
@@ -356,7 +356,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
             }
             Response::PaneSelectPrompt { id, panes } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let pane_id = prompt_pane_select_ratatui(renderer, stdin, sb, &panes).await;
                 send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
@@ -369,7 +369,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 agent,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let agent_name = agent_name_of(&script_name);
                 let kind_label = if agent { "agent" } else { "script" };
@@ -401,7 +401,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 agent,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let kind = if agent { "agent" } else { "script" };
                 let prompt_kind = if agent {
@@ -439,7 +439,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 action,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let approved = prompt_schedule_write_ratatui(
                     renderer, stdin, sb, approval, &name, &kind, &action,
@@ -456,7 +456,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 existing_content,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let approved = prompt_write_ratatui(
                     renderer,
@@ -491,7 +491,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     )
                 };
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let _ = renderer.commit(&format!(
                     "\n  ⚙ AI wants to delete runbook: {}{}",
@@ -523,7 +523,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 always_asked,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
-                sb.approval_hint = approval.hint();
+                sb.grants = approval.summary();
                 sb.prompt_opened();
                 let (approved, user_message) = prompt_edit_file_ratatui(
                     renderer,
