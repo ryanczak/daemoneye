@@ -5,7 +5,7 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** [phase-02b-session-counters](milestones/M37-alerts-status-bar/phase-02b-session-counters.md). Phases 01 and 02a are done.
+**Active phase:** [phase-02c-grants-segment](milestones/M37-alerts-status-bar/phase-02c-grants-segment.md). Phases 01, 02a and 02b are done.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
