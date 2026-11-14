@@ -66,6 +66,49 @@ impl std::fmt::Display for HostId {
     }
 }
 
+/// The host part of an `ssh` destination: the `ssh://` scheme, a `user@`
+/// prefix and — only in the scheme form — a `:port` suffix are dropped, and
+/// the remainder trimmed. A bare `~/.ssh/config` alias is left as it spells:
+/// the daemon does not resolve it.
+fn ssh_destination_host(ssh: &str) -> &str {
+    let trimmed = ssh.trim();
+    let without_scheme = trimmed.strip_prefix("ssh://").unwrap_or(trimmed);
+    let host_part = match without_scheme.split_once('@') {
+        Some((_, rest)) => rest,
+        None => without_scheme,
+    };
+    // Only the scheme form carries a `:port` — a bare `host:name` is an
+    // `~/.ssh/config` alias the daemon never interprets.
+    if trimmed.starts_with("ssh://") {
+        host_part.split(':').next().unwrap_or(host_part)
+    } else {
+        host_part
+    }
+}
+
+/// Pure decision: does an `ssh` destination name the machine running the
+/// daemon? Case-insensitive on the daemon hostname and its first
+/// dot-separated label, plus the loopback names. Nothing else matches — an
+/// alias that may or may not be this machine is not second-guessed, and no
+/// DNS or `~/.ssh/config` lookup ever decides where a command runs.
+pub fn is_self_destination(ssh: &str, daemon_hostname: &str) -> bool {
+    let host = ssh_destination_host(ssh);
+    let empty_or_unknown =
+        daemon_hostname.is_empty() || daemon_hostname.eq_ignore_ascii_case("unknown");
+    let host = host.trim();
+    if matches!(
+        host.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]"
+    ) {
+        return true;
+    }
+    if empty_or_unknown {
+        return false;
+    }
+    let first_label = daemon_hostname.split('.').next().unwrap_or("");
+    host.eq_ignore_ascii_case(daemon_hostname) || host.eq_ignore_ascii_case(first_label)
+}
+
 /// How a runbook's `ssh_target` maps onto `[hosts]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SshTargetResolution {
@@ -464,6 +507,88 @@ mod tests {
         assert_eq!(
             without, base,
             "removing the inserted pair must restore the plain argv: {argv:?} vs {base:?}"
+        );
+    }
+
+    /// M37 phase-06: the self-destination predicate. The daemon hostname's
+    /// full form and its first dot-separated label both match, any case, and
+    /// so do the loopback names — the four spellings an ssh destination can
+    /// carry them in.
+    #[test]
+    fn self_destination_matches_the_daemon_hostname_and_loopbacks() {
+        for hostname in ["pinky", "pinky.example.org"] {
+            for ssh in [
+                "pinky",
+                "PINKY",
+                "matt@pinky",
+                "ssh://matt@pinky:2222",
+                "localhost",
+                "127.0.0.1",
+                "::1",
+                "[::1]",
+            ] {
+                assert!(
+                    is_self_destination(ssh, hostname),
+                    "{ssh:?} must be a self destination when the daemon host is {hostname:?}"
+                );
+            }
+        }
+    }
+
+    /// The negative half: an alias that may or may not be this machine is
+    /// never second-guessed, and a different host never matches.
+    #[test]
+    fn self_destination_does_not_match_other_hosts_or_aliases() {
+        for ssh in [
+            "pinky2",
+            "pinky-gpu",
+            "notpinky",
+            "pinky.lan",
+            "zoidberg",
+            "matt@zoidberg",
+            "gpu",
+        ] {
+            assert!(
+                !is_self_destination(ssh, "pinky"),
+                "{ssh:?} is not spellable as the daemon host `pinky` and must not match"
+            );
+        }
+        assert!(
+            !is_self_destination("pinky", "zoidberg"),
+            "the daemon hostname decides: `pinky` on host `zoidberg` is remote"
+        );
+    }
+
+    /// A daemon whose hostname could not be read (`""`, `"unknown"`) gets
+    /// only the loopback names — a guess must never refuse a real remote.
+    #[test]
+    fn an_unknown_daemon_hostname_matches_only_the_loopback_names() {
+        for hostname in ["", "unknown", "UNKNOWN"] {
+            for ssh in ["localhost", "127.0.0.1", "::1", "[::1]"] {
+                assert!(
+                    is_self_destination(ssh, hostname),
+                    "{ssh:?} stays a self destination on hostname {hostname:?}"
+                );
+            }
+            for ssh in ["pinky", "matt@pinky"] {
+                assert!(
+                    !is_self_destination(ssh, hostname),
+                    "{ssh:?} must not be judged self against the guess {hostname:?}"
+                );
+            }
+        }
+    }
+
+    /// Whitespace around the destination is trimmed before the host is cut.
+    #[test]
+    fn self_destination_trims_surrounding_whitespace() {
+        assert!(
+            is_self_destination("  pinky  ", "pinky"),
+            "a padded destination is trimmed before the comparison"
+        );
+        assert!(
+            is_self_destination(" matt@pinky ", "pinky"),
+            "a padded user@destination is trimmed too"
         );
     }
 }

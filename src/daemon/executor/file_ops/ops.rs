@@ -1710,6 +1710,56 @@ mod tests {
         );
     }
 
+    /// M37 phase-06: `resolve_edit_host` consults the self-host refusal, so a
+    /// `host:` naming a configured entry whose `ssh` is the daemon's own
+    /// machine is refused through `run_edit_file` — the edit_file mirror of
+    /// the foreground arm's gate. Driven end to end: the config is written to
+    /// the test home so the uninstalled-handle `config::current()` path reads
+    /// it, and the hostname comes from the real `/proc/sys/kernel/hostname`,
+    /// so the entry's `ssh` names the machine this test is running on.
+    #[tokio::test]
+    async fn resolve_edit_host_consults_the_self_host_refusal() {
+        let (_guard, dir) = crate::test_home();
+        let hostname = crate::daemon::utils::daemon_hostname();
+        let cfg_text = format!("[hosts.selfentry]\nssh = \"{hostname}\"\n");
+        let etc = dir.path().join(".daemoneye/etc");
+        std::fs::create_dir_all(&etc).unwrap();
+        std::fs::write(etc.join("config.toml"), &cfg_text).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("never-written.txt");
+        let outcome = super::super::run_edit_file(
+            super::super::EditArgs {
+                id: "t06-self",
+                path: path.to_str().unwrap(),
+                operation: "create",
+                old_string: None,
+                new_string: None,
+                content: Some("must not land\n"),
+                dest_path: None,
+                host: Some("selfentry"),
+                sudo: false,
+            },
+            Some("sess-06"),
+            super::super::super::GhostCtx {
+                policy: None,
+                is_ghost: false,
+            },
+            &mut tokio::io::sink(),
+            &mut tokio::io::BufReader::new(tokio::io::empty()),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("run_edit_file must not error: {e}"));
+        let ToolCallOutcome::Result(s) = outcome else {
+            panic!("expected a Result outcome")
+        };
+        assert!(
+            s.contains("selfentry") && s.contains("is this machine") && s.contains("Omit `host`"),
+            "the self-host refusal comes back before any prompt: {s:?}"
+        );
+        assert!(!path.exists(), "nothing was written on a refused self host");
+    }
+
     /// `get_pane_remote_host` keeps its one live caller, the read-only tmux
     /// context in `prompt.rs`. Its other caller, the tmux foreground path in
     /// `foreground.rs`, was deleted in M27 phase 05; file ops never owned it.

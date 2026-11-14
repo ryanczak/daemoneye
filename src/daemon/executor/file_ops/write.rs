@@ -21,7 +21,17 @@ pub struct EditArgs<'a> {
 pub(super) fn resolve_edit_host(host: Option<&str>) -> Result<crate::host::HostId, String> {
     match host {
         None => Ok(crate::host::HostId::Local),
-        Some(name) => crate::host::HostId::parse(name),
+        Some(name) => {
+            let id = crate::host::HostId::parse(name)?;
+            if let Some(msg) = crate::daemon::executor::host_gate::self_host_refusal(
+                &id,
+                &crate::config::current(),
+                &crate::daemon::utils::daemon_hostname(),
+            ) {
+                return Err(msg);
+            }
+            Ok(id)
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 # Phase 06 — self-host-refusal
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~160 lines, about half of it tests
@@ -187,3 +187,58 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries below this line -->
+
+### Update — 2026-11-14 15:08 (progress)
+
+Started phase 06 (executor run, headless). Flipped the phase and the milestone
+README row to in-progress. Plan: implement `is_self_destination` in
+`src/host.rs` first (task 1), then the `self_host_refusal` gate in
+`host_gate.rs` + `resolve_edit_host` (task 2), then
+`Config::self_host_problems` and the `run_daemon` warn loop (task 3), then the
+README/CLAUDE.md sentences (task 4), then the mutation check and the §
+End-to-end block pasted into one Update Log entry (task 5).
+
+### Update — 2026-11-14 15:39 (end-to-end verification)
+
+Tasks 1–4 implemented and green. Task 5's evidence, captured mechanically into
+`/tmp/e2e-06.txt` and pasted below — the mutation applied and reverted through
+the `patch` tool (the executor contract bans in-place shell edits), and the §
+End-to-end block run verbatim afterwards.
+
+```text
+== MUTATION M1: apply via patch tool (is_self_destination -> false unconditionally) ==
+M1_APPLY_MARKER
+a configured self host is refused
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::host_gate::tests::a_configured_self_host_is_refused_before_the_prompt
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2884 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+0
+== MUTATION M1 RESTORED (patch tool, inverse) ==
+predicate_restored_lines=1
+test daemon::executor::host_gate::tests::a_configured_self_host_is_refused_before_the_prompt ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2884 filtered out; finished in 0.00s
+
+== E2E BLOCK ==
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 2882 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2880 filtered out; finished in 0.00s
+startup_warns=1
+build_warnings=0
+passed=2975 failed=0
+```
+
+The mutated run shows `a_configured_self_host_is_refused_before_the_prompt`
+FAILED (the pin is real); the restored run shows it green. The § End-to-end
+block: `self_destination` 3 passed, `self_host` 5 passed, `startup_warns=1`,
+`build_warnings=0`, full suite `passed=2975 failed=0` (> 2965 baseline 2965).
+
+Acceptance greps (run after the block):
+`grep -c 'is_self_destination' src/host.rs` = 8 (≥ 2);
+`grep -c 'self_host_refusal' src/daemon/executor/host_gate.rs
+src/daemon/executor/file_ops/write.rs` = 7 and 1 (both non-zero);
+`grep -c 'self_host_problems' src/daemon/startup.rs` = 1 (≥ 1).

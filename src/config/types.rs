@@ -694,6 +694,26 @@ impl Config {
         }
         problems
     }
+
+    /// One warning per `[hosts.<name>]` entry whose `ssh` names the daemon's
+    /// own machine (M37 phase-06): such an entry's `host:` is refused by the
+    /// host gate before any prompt. Signature-and-output sibling of
+    /// [`Config::validate_hosts`]: the caller only logs what comes back, and
+    /// a typo'd entry never stops the daemon.
+    pub fn self_host_problems(&self, daemon_hostname: &str) -> Vec<String> {
+        let mut problems = Vec::new();
+        for (name, entry) in &self.hosts {
+            if crate::host::is_self_destination(&entry.ssh, daemon_hostname) {
+                problems.push(format!(
+                    "[hosts.{name}] ssh = \"{}\" names the daemon host ({daemon_hostname}); \
+                     host: \"{name}\" will be refused — omit host to run here, or point ssh \
+                     at another machine.",
+                    entry.ssh
+                ));
+            }
+        }
+        problems
+    }
 }
 
 #[cfg(test)]

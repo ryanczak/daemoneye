@@ -19,7 +19,44 @@ use crate::daemon::policy::GhostPolicy;
 pub(crate) fn resolve_host(host: Option<&str>) -> Result<crate::host::HostId, String> {
     match host {
         None => Ok(crate::host::HostId::Local),
-        Some(name) => crate::host::HostId::parse(name),
+        Some(name) => {
+            let id = crate::host::HostId::parse(name)?;
+            if let Some(msg) = self_host_refusal(
+                &id,
+                &crate::config::current(),
+                &crate::daemon::utils::daemon_hostname(),
+            ) {
+                return Err(msg);
+            }
+            Ok(id)
+        }
+    }
+}
+
+/// The sentence a configured `[hosts.<name>]` entry whose `ssh` names the
+/// daemon's own machine reads instead of an ssh hop to itself. `None` for
+/// `HostId::Local`, for a name the config does not hold, and for a
+/// configured entry whose destination is genuinely elsewhere — an alias that
+/// may or may not be this machine is never second-guessed. Pure: the config
+/// and the hostname come in as arguments so tests pass a parsed `Config` and
+/// a fixed hostname, never the machine's real one.
+pub(crate) fn self_host_refusal(
+    host: &crate::host::HostId,
+    cfg: &crate::config::Config,
+    daemon_hostname: &str,
+) -> Option<String> {
+    let crate::host::HostId::Named(name) = host else {
+        return None;
+    };
+    let entry = cfg.hosts.get(name)?;
+    if crate::host::is_self_destination(&entry.ssh, daemon_hostname) {
+        Some(format!(
+            "Error: host {name} is this machine ([hosts.{name}] ssh = \"{}\" names the daemon \
+             host), so there is nothing to connect to. Omit `host` to run here.",
+            entry.ssh
+        ))
+    } else {
+        None
     }
 }
 
@@ -73,7 +110,7 @@ pub(crate) fn refuse_ghost_host(
 
 #[cfg(test)]
 mod tests {
-    use super::{ghost_host_refusal, resolve_host};
+    use super::{ghost_host_refusal, resolve_host, self_host_refusal};
 
     // ── resolve_foreground_host ordering (M21 phase-06c) ────────────────────
 
@@ -118,6 +155,61 @@ mod tests {
             parsed,
             crate::host::HostId::Named("nope".to_string()),
             "the parsed id is carried on, so the name is parsed once"
+        );
+    }
+
+    /// M37 phase-06: a configured entry whose `ssh` names the daemon host is
+    /// refused before the prompt, with the entry named and the remedy given.
+    #[test]
+    fn a_configured_self_host_is_refused_before_the_prompt() {
+        let cfg: crate::config::Config = toml::from_str("[hosts.me]\nssh = \"pinky\"\n").unwrap();
+        let msg = self_host_refusal(&crate::host::HostId::Named("me".to_string()), &cfg, "pinky")
+            .expect("a configured self host is refused");
+        assert!(
+            msg.contains("me"),
+            "the refusal names the host the call asked for: {msg}"
+        );
+        assert!(
+            msg.contains("pinky"),
+            "the refusal names the ssh destination that is this machine: {msg}"
+        );
+        assert!(
+            msg.contains("Omit `host`"),
+            "the refusal tells the model the remedy: {msg}"
+        );
+        assert!(
+            msg.starts_with("Error:"),
+            "a refusal is error text the model reads as a failed call: {msg}"
+        );
+    }
+
+    /// The negative half: a genuinely remote entry is untouched, so is an
+    /// omitted host, and so is a name the config does not hold.
+    #[test]
+    fn a_configured_remote_host_is_not_refused_before_the_prompt() {
+        let cfg: crate::config::Config =
+            toml::from_str("[hosts.remote]\nssh = \"zoidberg\"\n").unwrap();
+        assert!(
+            self_host_refusal(
+                &crate::host::HostId::Named("remote".to_string()),
+                &cfg,
+                "pinky",
+            )
+            .is_none(),
+            "a configured remote host is not a self destination"
+        );
+        assert!(
+            self_host_refusal(&crate::host::HostId::Local, &cfg, "pinky").is_none(),
+            "HostId::Local is the daemon host by construction, never a refusal"
+        );
+        assert!(
+            self_host_refusal(
+                &crate::host::HostId::Named("unlisted".to_string()),
+                &cfg,
+                "pinky",
+            )
+            .is_none(),
+            "a name the config does not hold has no ssh to judge"
         );
     }
 

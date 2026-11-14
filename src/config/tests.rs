@@ -1246,6 +1246,79 @@ fn validate_hosts_stays_silent_on_clean_entries() {
     );
 }
 
+// ── M37 phase 06: the self-host load warning ────────────────────────────────
+
+/// One entry whose `ssh` names the daemon host produces exactly one problem,
+/// naming the `[hosts.<name>]` key, the `ssh` value and the hostname; a
+/// genuinely remote entry alongside it stays silent.
+#[test]
+fn self_host_problems_names_the_entry_that_is_this_machine() {
+    let cfg: Config = toml::from_str(
+        "[models.default]\n\
+             provider = \"ollama\"\n\
+             \n\
+             [hosts.selfish]\n\
+             ssh = \"pinky\"\n\
+             \n\
+             [hosts.remote]\n\
+             ssh = \"zoidberg\"\n",
+    )
+    .unwrap();
+    let problems = cfg.self_host_problems("pinky");
+    assert_eq!(
+        problems.len(),
+        1,
+        "exactly one self-host problem expected, got {problems:?}"
+    );
+    let p = &problems[0];
+    assert!(p.contains("[hosts.selfish]"), "names the entry: {p}");
+    assert!(p.contains("pinky"), "names the ssh value and the host: {p}");
+    assert!(
+        p.contains("will be refused"),
+        "tells the operator the consequence: {p}"
+    );
+}
+
+/// No entry naming the daemon host: no warning at all.
+#[test]
+fn self_host_problems_is_empty_when_no_entry_is_this_machine() {
+    let cfg: Config = toml::from_str(
+        "[models.default]\n\
+             provider = \"ollama\"\n\
+             \n\
+             [hosts.web01]\n\
+             ssh = \"matt@web01.lan\"\n\
+             \n\
+             [hosts.gpu]\n\
+             ssh = \"zoidberg\"\n",
+    )
+    .unwrap();
+    assert!(
+        cfg.self_host_problems("pinky").is_empty(),
+        "remote-only hosts yield no self-host problems"
+    );
+}
+
+/// The full hostname and its first dot-separated label are both caught, any
+/// case, and so are the loopback spellings — the same predicate the gate uses.
+#[test]
+fn self_host_problems_catches_the_label_and_loopback_spellings() {
+    let cfg: Config = toml::from_str(
+        "[hosts.a]\nssh = \"matt@PINKY.example.org\"\n\
+             [hosts.b]\nssh = \"ssh://matt@pinky:2222\"\n\
+             [hosts.c]\nssh = \"localhost\"\n\
+             [hosts.d]\nssh = \"[::1]\"\n",
+    )
+    .unwrap();
+    let problems = cfg.self_host_problems("pinky.example.org");
+    assert_eq!(problems.len(), 4, "all four entries are self: {problems:?}");
+    assert!(
+        cfg.self_host_problems("zoidberg").len() == 2,
+        "against another hostname only the loopback entries (c, d) remain: {:?}",
+        cfg.self_host_problems("zoidberg")
+    );
+}
+
 // ── M37 phase 01: the severity_threshold validator ──────────────────────────
 
 /// An unrankable `severity_threshold` produces exactly one warning naming the

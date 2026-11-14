@@ -54,6 +54,19 @@ fn spawn_session_counters_task(shutdown: Arc<AtomicBool>) {
     ));
 }
 
+/// The startup host warnings (M37 phase-06): each `[hosts.<name>]` problem
+/// the config validator finds, then each entry whose `ssh` names the daemon's
+/// own machine — that entry's `host:` is refused by the host gate. Kept out
+/// of `run_daemon` so its hygiene-cap line does not grow.
+fn warn_host_problems(startup_config: &crate::config::Config) {
+    for warn in startup_config.validate_hosts() {
+        log::warn!("{warn}");
+    }
+    for warn in startup_config.self_host_problems(&crate::daemon::utils::daemon_hostname()) {
+        log::warn!("{warn}");
+    }
+}
+
 /// Start the daemon process.
 ///
 /// Lifecycle:
@@ -168,9 +181,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     startup_config.webhook.validate();
     // Warn about an unknown `[chat] glyphs` dialect (behaves as "emoji").
     startup_config.chat.validate();
-    for warn in startup_config.validate_hosts() {
-        log::warn!("{warn}");
-    }
+    warn_host_problems(&startup_config);
 
     // Warn about retention settings that are off by default (keep forever).
     for warn in crate::daemon::utils::retention_warnings(&startup_config) {
