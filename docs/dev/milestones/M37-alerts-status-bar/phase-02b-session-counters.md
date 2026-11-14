@@ -1,7 +1,7 @@
 # Phase 02b — session-counters
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel`, `PresencePush`)
 **Estimated diff:** ~350 lines, about half of it tests
@@ -170,3 +170,7 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-13 19:51 (started, executor)
+
+Status flipped `todo → in-progress` and the milestone README's 02b row updated to match. Beginning the spec: the `SessionCounters` frame and `UsageUpdate.output_tokens` first, then `src/daemon/counters.rs`, the 1 s push task, the attach send, the client arms, and finally the mutation check plus the end-to-end block.

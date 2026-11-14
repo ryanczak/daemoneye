@@ -56,7 +56,7 @@ while the user still sees it in chat.
    | shells | 🐚 | ⌨ | `sh` | this session's open PTY shells |
    | model | ⟡ ◎ ♊ 🦙 | ⟡ ◎ ♊ | none | vendor mark (Anthropic, OpenAI, Gemini, local) and the short name, ≤ 12 columns |
    | session | 📌 · 📌✎ | ▣ | `@` | saved name; `✎` when dirty; nothing when unnamed |
-   | grants | ⚡ | ⚡ | `A:` | today's approval hint, flush right |
+   | grants | ⚡ · 🔒 🔑 📜 📖 📄 📅 🤖 🗑 🌐 | ⚡ · ⊘ # § ¶ ▤ ◷ ⚉ ⌫ ⌂ | `A` · `! # s r f c g d h` | the lead glyph coloured by the riskiest grant (red: sudo, deletes or any class-wide grant; amber: per-name grants; green: commands gated), then the count of active kinds; per-kind glyph + count (`∗` for all) when room; hidden in the default state; flush right (PE, 2026-11-14, amending the original "today's approval hint") |
 
    Gone from the bar: the unnamed session id and the uptime.
 
@@ -68,9 +68,10 @@ while the user still sees it in chat.
    1. Below 36 columns, separators become single spaces.
 
    ```
-   120:  💤 · 🔥2 DiskFull 3m · 🌓 20% 📈3.1k · 💸0.42 ⛽1.9/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · ⟡ sonnet-5.5 · 📌 incident-42   ⚡cmds
-    80:  💤 · 🔥2 3m · 🌓 20% · 💸0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · ⟡ sonnet-5.5        ⚡cmds
-    80:  🧠 ⏱12s · 🌓 20% 📈3.1k · 💸0.42 · ↻12 · 🛠7 🐚1 · ⟡ sonnet-5.5              ⚡cmds
+   120:  💤 · 🔥2 DiskFull 3m · 🌓 20% 📈3.1k · 💸0.42 ⛽1.9/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · ⟡ sonnet-5.5 · 📌 incident-42   ⚡4
+    80:  💤 · 🔥2 3m · 🌓 20% · 💸0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · ⟡ sonnet-5.5        ⚡4
+    80:  🧠 ⏱12s · 🌓 20% 📈3.1k · 💸0.42 · ↻12 · 🛠7 🐚1 · ⟡ sonnet-5.5              ⚡4
+   120 (grants detail):  … · ⟡ sonnet-5.5 · 📌 incident-42            ⚡4 🔑 📜2 📄∗ 🗑
     40:  💤 🔥2 🌓20% 💸0.42 ↻12 ⏳2
    down: 💀 daemon down · 💸0.42 · ↻12 · ⟡ sonnet-5.5
    ```
@@ -133,13 +134,14 @@ while the user still sees it in chat.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 4 (phase 02 split into 02a/02b at scoping).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 02 split into 02a/02b at scoping; 02c added 2026-11-14 for the grants slot).
 
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
 | 01 | daemon-alert-state ([phase-01-daemon-alert-state.md](phase-01-daemon-alert-state.md)): the severity gate moves ahead of history injection and the chat-pane notice. A daemon-wide active-alert registry, the `AlertState` frame on the presence connection and at attach, and `Request::AlertList` | issue #3, decisions 2 and 4 | done |
 | 02a | chat-status-bar ([phase-02a-chat-status-bar.md](phase-02a-chat-status-bar.md)): the glyph-led bar of decision 3 on the client: the slot table and three dialects, `[chat] glyphs`, the tiers, the state slot shared with the OSC 7501 emitter, alert state from `AlertState` frames, the ticking ages; counters fed zero until 02b | decisions 3 and 4 | done        |
-| 02b | session-counters ([phase-02b-session-counters.md](phase-02b-session-counters.md)): the daemon's `SessionCounters` push (a 1 s diff per present session, plus once at attach) and the turn's output tokens on `UsageUpdate`; the client feeds them to the bar | decision 6 | todo |
+| 02b | session-counters ([phase-02b-session-counters.md](phase-02b-session-counters.md)): the daemon's `SessionCounters` push (a 1 s diff per present session, plus once at attach) and the turn's output tokens on `UsageUpdate`; the client feeds them to the bar | decision 6 | in-progress |
+| 02c | grants-segment ([phase-02c-grants-segment.md](phase-02c-grants-segment.md)): the grants slot in decision 3's grammar — a `GrantSummary` struct, lead glyph coloured by risk, a count, per-kind glyphs when room, hidden by default, dialect-aware | decision 3 (grants row, amended 2026-11-14) | todo |
 | 03 | top-alerts-panel: `top` loads `Request::AlertList` into an Alerts panel | decision 5 | todo |
 
 ## Notes
