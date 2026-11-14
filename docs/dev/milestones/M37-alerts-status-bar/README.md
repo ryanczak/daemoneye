@@ -142,6 +142,6 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 | 02a | chat-status-bar ([phase-02a-chat-status-bar.md](phase-02a-chat-status-bar.md)): the glyph-led bar of decision 3 on the client: the slot table and three dialects, `[chat] glyphs`, the tiers, the state slot shared with the OSC 7501 emitter, alert state from `AlertState` frames, the ticking ages; counters fed zero until 02b | decisions 3 and 4 | done        |
 | 02b | session-counters ([phase-02b-session-counters.md](phase-02b-session-counters.md)): the daemon's `SessionCounters` push (a 1 s diff per present session, plus once at attach) and the turn's output tokens on `UsageUpdate`; the client feeds them to the bar | decision 6 | done |
 | 02c | grants-segment ([phase-02c-grants-segment.md](phase-02c-grants-segment.md)): the grants slot in decision 3's grammar — a `GrantSummary` struct, lead glyph coloured by risk, a count, per-kind glyphs when room, hidden by default, dialect-aware | decision 3 (grants row, amended 2026-11-14) | done        |
-| 03 | top-alerts-panel: `top` loads `Request::AlertList` into an Alerts panel | decision 5 | todo |
+| 03 | top-alerts-panel ([phase-03-top-alerts-panel.md](phase-03-top-alerts-panel.md)): `top` loads `Request::AlertList` into a fifth `--once` section and a non-focusable Alerts panel between Shells and Activity | decision 5 | todo |
 
 ## Notes
