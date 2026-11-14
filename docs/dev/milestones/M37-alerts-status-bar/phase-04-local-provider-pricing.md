@@ -1,7 +1,7 @@
 # Phase 04 — local-provider-pricing
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~80 lines, most of it tests and docs
@@ -74,13 +74,13 @@ this section: mark each one `active` when you start it and `done` when its
 
 ## Acceptance criteria
 
-- [ ] Every test in the test plan passes, and `local_provider_pricing_is_zero`
+- [x] Every test in the test plan passes, and `local_provider_pricing_is_zero`
       still passes.
-- [ ] `grep -c 'always \$0' assets/etc/config.toml` prints 0 (today 1).
-- [ ] Mutation check, pasted with its `test result:` line: move the
+- [x] `grep -c 'always \$0' assets/etc/config.toml` prints 0 (today 1).
+- [x] Mutation check, pasted with its `test result:` line: move the
       local-provider early return back above the user-rate check, confirm
       `local_provider_with_user_rates_uses_them` fails, then revert.
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+- [x] fmt, build (0 warnings), clippy and `cargo test` are green, with
       `failed=0` and more than 2956 passed. Hygiene,
       `doc_truth` and `bug_tracker` are ok.
 
@@ -294,3 +294,11 @@ kill: (-3244597): No such process
 **Commit:** 534aaddf938c3a1cda3b13f5ce4ac765ae63d687
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** one in-scope extra: the `input_cost_per_mtok` doc comment in `src/config/models.rs` no longer tells local users to set `Some(0.0)` (an authorized file, and a correct fix). The config template's new commented example `input_cost_per_mtok = 0.0` is harmless but mislabelled (uncommented, it would switch the entry to `UserConfig` at zero); left as is.
+- **Calibration:** none. Reviewer re-run: fmt clean, 0 build warnings, clippy clean, `passed=2959 failed=0` (baseline 2956 + 3).
