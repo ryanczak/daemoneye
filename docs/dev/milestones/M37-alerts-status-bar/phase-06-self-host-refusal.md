@@ -1,7 +1,7 @@
 # Phase 06 — self-host-refusal
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~160 lines, about half of it tests
@@ -137,19 +137,19 @@ host tests live):
 
 ## Acceptance criteria
 
-- [ ] Every test in the test plan passes, and
+- [x] Every test in the test plan passes, and
       `an_unconfigured_host_is_not_refused_before_the_prompt` passes
       unchanged.
-- [ ] `grep -c 'is_self_destination' src/host.rs` prints at least 2 (today
+- [x] `grep -c 'is_self_destination' src/host.rs` prints at least 2 (today
       0); `grep -c 'self_host_refusal' src/daemon/executor/host_gate.rs
       src/daemon/executor/file_ops/write.rs` prints a non-zero count for
       both files (today 0 and 0); `grep -c 'self_host_problems'
       src/daemon/startup.rs` prints at least 1 (today 0).
-- [ ] Mutation check, pasted with its `test result:` line: make
+- [x] Mutation check, pasted with its `test result:` line: make
       `is_self_destination` return `false` unconditionally, confirm
       `a_configured_self_host_is_refused_before_the_prompt` fails, then
       revert.
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+- [x] fmt, build (0 warnings), clippy and `cargo test` are green, with
       `failed=0` and more than 2965 passed. Hygiene, `doc_truth` and
       `bug_tracker` are ok.
 
@@ -382,3 +382,12 @@ kill: (-3413325): No such process
 **Commit:** 48cbb77aab3f104ebee5ba375a8809d14510132c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** (1) `resolve_edit_host_consults_the_self_host_refusal` reads the machine's real hostname (the spec asked for fixed hostnames). It is the only way to drive `run_edit_file` through the uninstalled `config::current()` path without a new seam, and it still fails closed: on a host with no `/proc/sys/kernel/hostname` and no `$HOSTNAME`, `daemon_hostname()` is `"unknown"` and the test would fail rather than pass vacuously. Accepted. (2) The startup loop moved into `warn_host_problems` so `run_daemon` does not grow — the right call. (3) `ops.rs`'s test-line allowlist count was raised 2344 → 2397 with a reason, which [[no-function-length-cap]] allows; the executor appended the reason to the `tests/integration.rs` comment block, so the architect moved it above the `ops.rs` line in the approval commit (comment only, counts unchanged).
+- **Calibration:** nit, not bounced: `ssh_destination_host` splits a scheme-form destination on the first `:`, so `ssh://[::1]:22` reads as `[` and is not matched; bare `[::1]` and `::1` are. Not pinned by the spec; left for a later touch.
+- **Reviewer re-run:** fmt clean, 0 build warnings, clippy clean, `passed=2975 failed=0` (baseline 2965 + 10), hygiene ok after the comment move.
