@@ -15,7 +15,11 @@ to a session's presence connections whenever that session's counts change,
 and once at attach. The turn-end `UsageUpdate` carries the turn's output
 tokens. The client never polls.
 
-## Behaviour
+## Spec
+
+Numbered tasks in execution order; the executor's task list is seeded from
+this section, so mark each `active` when you start it and `done` when its
+`cargo build` is green.
 
 1. **The frame.** `Response::SessionCounters { background: u32, ghosts:
    u32, shells: u32 }` in `src/ipc.rs`, with its `kind()` arm.
@@ -51,6 +55,9 @@ tokens. The client never polls.
    loop's arm applies it through one `StatusModel` method, then redraws.
    The stream's `UsageUpdate` arm stores `output_tokens` in
    `last_output_tokens`.
+7. **Capture the mutation check and the end-to-end evidence** — run the
+   mutation check named in § Acceptance criteria and the block in § End-to-end
+   verification verbatim, and paste both outputs into one Update Log entry.
 
 ## Constraints
 
@@ -98,6 +105,7 @@ tokens. The client never polls.
 5. The client: `PresencePush::Counters`, the `StatusModel` method, both
    arms.
 6. CLAUDE.md: a Key-files row for `src/daemon/counters.rs`.
+7. Spec task 7: the mutation check and the end-to-end block, pasted.
 
 **Your first edit lands within your first 15 turns.** Never run `tmux`.
 Never repeat a read whose output you already have; when unsure of a call
