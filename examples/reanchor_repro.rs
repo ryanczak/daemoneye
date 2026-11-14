@@ -7,8 +7,8 @@
 //! `tmux capture-pane` output before/after.
 
 use daemoneye::cli::input::{AsyncStdin, InputLine, Key, read_key};
-use daemoneye::cli::status_bar::StatusModel;
 use daemoneye::cli::render_ratatui::RatatuiRenderer;
+use daemoneye::cli::status_bar::StatusModel;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
