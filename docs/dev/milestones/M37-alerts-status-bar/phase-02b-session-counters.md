@@ -1,7 +1,7 @@
 # Phase 02b — session-counters
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced: [bug-02b-1](bugs/bug-02b-1.md), two last-pushed records)
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel`, `PresencePush`)
 **Estimated diff:** ~350 lines, about half of it tests
@@ -140,6 +140,17 @@ site, let `cargo build` name it.
       fails, then revert.
 - [ ] fmt, build (0 warnings), clippy and `cargo test` are green. Hygiene,
       `doc_truth` and `bug_tracker` are ok.
+- [ ] **(bug-02b-1)** `grep -c 'CountersTracker::default()' src/daemon/startup.rs`
+      prints 0 (today 1). The 1 s task, the attach and the last-close forget
+      share one per-session record.
+- [ ] **(bug-02b-1)** `a_second_connection_gets_session_counters_at_attach`
+      passes. Two connections attach to one session with unchanged counts,
+      and both receive `SessionCounters` after their `Ok`.
+- [ ] **(bug-02b-1)** A test of the production tick and forget: after an
+      attach's record, a same-count tick pushes nothing; after the forget,
+      the next tick pushes.
+- [ ] **(bug-02b-1)** Mutation check pasted: make the attach skip the send
+      when the record matches, and confirm the second-connection test fails.
 
 ## End-to-end verification
 
@@ -374,3 +385,32 @@ kill: (-2878381): No such process
 **Commit:** c03a5c73bf1b49da75f0a363cbe725b9a0ae86fe
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14 (bounced)
+
+- **Verdict:** bounced — [bug-02b-1](bugs/bug-02b-1.md) (major)
+- **Gates (reviewer re-run):** fmt ok, build 0 warnings, clippy ok,
+  `cargo test` 2939 passed, 0 failed. The mutation evidence for the
+  `dedicated` guard is real. The task list was used (28 `update_task` calls).
+- **Finding:** the 1 s task keeps a private `CountersTracker`. The attach
+  writes the global one and skips its send when that record matches, so a
+  second connection to an unchanged session gets no counters, and the task's
+  record is never forgotten.
+
+### Notes for executor — 2026-11-14 (bounce)
+
+**Green gates and a clean tree are expected here, and they are NOT evidence
+the phase is done.** Everything else in this phase is approved: the frame,
+`counters_for_session`, `presence_push_to_session_in`, the output-token
+sum, the client arms and their tests. Do not redo them.
+
+**Two edits are left, both from bug-02b-1:**
+1. `session_counters_loop` drives the **same** record the attach writes and
+   the last close forgets (the global one in `counters.rs`), not a local
+   `CountersTracker::default()`. Lock it per tick, never across an await.
+2. The attach always sends one `SessionCounters` to the connection that
+   just attached, after its `Ok`, and records that value. The send is not
+   conditional on the record.
+
+The finish condition is the four `(bug-02b-1)` criteria, with `cargo test`
+reporting **more than 2939 passed**. Paste the mutation check.
