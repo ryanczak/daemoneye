@@ -151,7 +151,7 @@ cache_write_cost_per_mtok = 3.75
 # cache_write_cost_per_mtok = 0.0
 # max_tokens = 8192   # per-response generation cap (default 8192)
 
-# ── Local (no API key required, always $0) ───────────────────────────────────
+# ── Local (no API key required; free unless you set rates) ────────────────────
 
 # [models.local]
 # provider  = "ollama"
@@ -159,6 +159,7 @@ cache_write_cost_per_mtok = 3.75
 # base_url  = "http://localhost:11434/v1"
 # context_window_tokens = 8192
 # max_tokens = 8192   # per-response generation cap (default 8192)
+# input_cost_per_mtok = 0.0   # local models are free unless you set rates
 
 # [models.lmstudio]
 # provider = "lmstudio"

@@ -406,7 +406,7 @@ DaemonEye tracks the dollar cost of every AI call — interactive sessions, ghos
 - **`daemoneye status`**: daemon-wide "Cost (today)" section shows total spend broken down by provider and by agent. Hidden when total is $0.
 - **`daemoneye costs`**: reads `events.jsonl` directly (no daemon required, works when the daemon is down). Supports `--since`, `--until`, `--by day|agent|provider|model|session`, `--agent <name>`, `--json` for integration with external tooling.
 - **Catch-up brief**: AI spend during a detach window is included alongside event summaries. If only local providers ran: `$0.00 (local providers only)`. If no AI calls occurred, the cost line is omitted entirely.
-- **Local models always $0.00** — `ollama` and `lmstudio` providers are priced at zero; costs are never guessed for unknown models (flagged with `+` instead).
+- **Local models free unless you set rates** — `ollama` and `lmstudio` providers cost $0 by default; set `*_cost_per_mtok` on a `[models.<name>]` block to price a self-hosted model (`PricingSource::UserConfig`), and costs are never guessed for unknown models (flagged with `+` instead).
 
 Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-mini), and Gemini (2.5 Pro, 2.5 Flash). Override or extend with per-model cost fields in `[models.<name>]` config blocks.
 

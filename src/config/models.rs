@@ -204,12 +204,11 @@ impl ModelEntry {
     /// Resolve pricing for this model entry.
     /// Returns a `Pricing` struct with rates from the user's config, or `None`
     /// if no cost fields are set (cost accounting will report `$0+` for the model).
-    /// Local providers always return zero pricing.
+    /// User-set rates win over the local-provider zero: an `ollama`/`lmstudio`
+    /// entry with any `*_cost_per_mtok` field set is priced at those rates
+    /// (unset fields at 0.0, `PricingSource::UserConfig`). A local entry with
+    /// no rates at all returns `Pricing::zero()` (`PricingSource::Local`).
     pub fn pricing(&self) -> Option<Pricing> {
-        if self.provider == "ollama" || self.provider == "lmstudio" {
-            return Some(Pricing::zero());
-        }
-
         let has_user = self.input_cost_per_mtok.is_some()
             || self.output_cost_per_mtok.is_some()
             || self.cache_read_cost_per_mtok.is_some()
@@ -223,6 +222,10 @@ impl ModelEntry {
                 cache_write_per_mtok: self.cache_write_cost_per_mtok.unwrap_or(0.0),
                 source: PricingSource::UserConfig,
             });
+        }
+
+        if self.provider == "ollama" || self.provider == "lmstudio" {
+            return Some(Pricing::zero());
         }
 
         None
@@ -240,7 +243,8 @@ pub enum PricingSource {
     /// Alias covers records written before pricing moved to config-only.
     #[serde(alias = "BuiltinDefault")]
     UserConfig,
-    /// Provider is local (ollama, lmstudio) — all rates are 0.0.
+    /// Provider is local (ollama, lmstudio) and no user rate is set —
+    /// all rates are 0.0.
     Local,
     /// Model is not recognized and no user pricing was set.
     Unknown,

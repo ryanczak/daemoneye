@@ -513,6 +513,49 @@ fn local_provider_pricing_is_zero() {
 }
 
 #[test]
+fn local_provider_with_user_rates_uses_them() {
+    for provider in &["ollama", "lmstudio"] {
+        let entry = ModelEntry {
+            provider: provider.to_string(),
+            model: "some-local-model".to_string(),
+            input_cost_per_mtok: Some(1.0),
+            output_cost_per_mtok: Some(2.0),
+            cache_read_cost_per_mtok: Some(0.1),
+            cache_write_cost_per_mtok: Some(0.2),
+            ..ModelEntry::default()
+        };
+        let pricing = entry.pricing().expect("user rates must resolve pricing");
+        assert_eq!(pricing.input_per_mtok, 1.0, "{provider}: input rate");
+        assert_eq!(pricing.output_per_mtok, 2.0, "{provider}: output rate");
+        assert_eq!(
+            pricing.cache_read_per_mtok, 0.1,
+            "{provider}: cache-read rate"
+        );
+        assert_eq!(
+            pricing.cache_write_per_mtok, 0.2,
+            "{provider}: cache-write rate"
+        );
+        assert_eq!(pricing.source, PricingSource::UserConfig);
+    }
+}
+
+#[test]
+fn local_provider_partial_rates_price_unset_buckets_at_zero() {
+    let entry = ModelEntry {
+        provider: "ollama".to_string(),
+        model: "some-local-model".to_string(),
+        output_cost_per_mtok: Some(3.0),
+        ..ModelEntry::default()
+    };
+    let pricing = entry.pricing().expect("one set rate must resolve pricing");
+    assert_eq!(pricing.input_per_mtok, 0.0); // unset → zero
+    assert_eq!(pricing.output_per_mtok, 3.0); // user value
+    assert_eq!(pricing.cache_read_per_mtok, 0.0); // unset → zero
+    assert_eq!(pricing.cache_write_per_mtok, 0.0); // unset → zero
+    assert_eq!(pricing.source, PricingSource::UserConfig);
+}
+
+#[test]
 fn pricing_partial_override_unset_fields_are_zero() {
     // User sets input rate only; unset fields default to 0.0.
     let entry = ModelEntry {

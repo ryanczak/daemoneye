@@ -5,7 +5,7 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** [phase-03-top-alerts-panel](milestones/M37-alerts-status-bar/phase-03-top-alerts-panel.md), the milestone's last. Phases 01, 02a, 02b and 02c are done.
+**Active phase:** [phase-04-local-provider-pricing](milestones/M37-alerts-status-bar/phase-04-local-provider-pricing.md) — GitHub issue #6, the first of the pre-close bug fixes (PE, 2026-11-14). Phases 01 through 03 are done.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

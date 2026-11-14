@@ -319,6 +319,30 @@ mod tests {
     }
 
     #[test]
+    fn local_provider_user_rates_produce_nonzero_cost() {
+        let entry = crate::config::ModelEntry {
+            provider: "ollama".to_string(),
+            model: "llama3.2".to_string(),
+            input_cost_per_mtok: Some(10.0),
+            output_cost_per_mtok: Some(50.0),
+            ..Default::default()
+        };
+        let pricing = entry.pricing().expect("user rates resolve pricing");
+        let tokens = TokenBreakdown {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+        };
+        let cost = compute_cost(&tokens, &pricing);
+        assert!(
+            (cost.total_cost_usd - 15.0).abs() < 1e-9,
+            "1M input at $10/Mtok + 100k output at $50/Mtok = $15.00: {:?}",
+            cost
+        );
+    }
+
+    #[test]
     fn ghost_unnamed_attributes_to_ghost_anonymous() {
         let attribution = CostAttribution {
             agent_name: "ghost-anonymous".to_string(),
