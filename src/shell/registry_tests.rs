@@ -1109,6 +1109,10 @@ fn sweep_orphaned_removes_a_recordless_dead_hosts_files() {
 fn sweep_orphaned_leaves_an_id_the_registry_holds() {
     let (dir, _logs) = fixture_dirs();
     write(dir.path(), "s0.sock");
+    // A lock file nobody holds: the shape of a dead host — a probe both
+    // reads it dead and leaves the file behind, so its presence is no
+    // signal of the fence under test.
+    write(dir.path(), "s0.lock");
     write_sandbox_sidecar(dir.path(), "s0", "de-ghost-r1").unwrap();
     write_owner_sidecar(
         dir.path(),
@@ -1119,9 +1123,9 @@ fn sweep_orphaned_leaves_an_id_the_registry_holds() {
     .unwrap();
     // A dead host with an exit stamp: exactly what the reaper holds onto
     // through its retention. The fence is the record, not the exit — this is
-    // the case the sweep must skip: its host may read dead, only the record
-    // saves it. The lock the test holds is what a live probe would see; the
-    // record alone must be fence enough either way.
+    // the case the sweep must skip: its host reads dead (nothing holds the
+    // lock — a held lock would let the liveness probe short-circuit the path
+    // under test, bug-05-1), so the record alone must be fence enough.
     let reg = ShellRegistry::default();
     let mut rec = record(0, Owner::Chat("a".into()));
     rec.exited_unix = Some(1_000);
@@ -1129,8 +1133,6 @@ fn sweep_orphaned_leaves_an_id_the_registry_holds() {
     with_shells(&reg, |store| {
         store.insert(id.as_str().to_string(), rec);
     });
-    let _held_live =
-        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
 
     let swept = sweep_orphaned(&reg, dir.path());
 

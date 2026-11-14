@@ -15,6 +15,7 @@ pub mod program_status;
 mod proto;
 mod pty;
 mod registry;
+mod registry_sweep;
 mod sbx_backend;
 mod screen;
 mod session;
