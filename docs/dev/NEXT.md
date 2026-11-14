@@ -5,7 +5,7 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** [phase-06-self-host-refusal](milestones/M37-alerts-status-bar/phase-06-self-host-refusal.md) — GitHub issue #8 (PE decision 2026-11-14: warn at load and refuse the call; never route local). Phases 01 through 05 are done.
+**Active phase:** [phase-07-scheduler-recovery](milestones/M37-alerts-status-bar/phase-07-scheduler-recovery.md) — GitHub issue #9 plus the failed-recurring-job bug. GitHub #5 (script-job notifications) is queued after it. Phases 01 through 06 are done.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
