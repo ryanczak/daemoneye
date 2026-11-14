@@ -1,7 +1,7 @@
 # Phase 03 — top-alerts-panel
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** phase 01 (`Request::AlertList` → `Response::AlertState`)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -123,15 +123,15 @@ test is the only measure of a file's length.
 
 ## Acceptance criteria
 
-- [ ] Every test in the test plan passes.
-- [ ] `grep -c 'Request::AlertList' src/cli/commands/top_load.rs` prints at
+- [x] Every test in the test plan passes.
+- [x] `grep -c 'Request::AlertList' src/cli/commands/top_load.rs` prints at
       least 1 (today 0).
-- [ ] `grep -c 'trait ShellFetcher' src/cli/commands/top_tui.rs` prints 0
+- [x] `grep -c 'trait ShellFetcher' src/cli/commands/top_tui.rs` prints 0
       (today 1).
-- [ ] Mutation check, pasted with its `test result:` line: make
+- [x] Mutation check, pasted with its `test result:` line: make
       `alerts_text` skip `escape_controls` on the name, confirm
       `alerts_text_escapes_control_characters` fails, then revert.
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+- [x] fmt, build (0 warnings), clippy and `cargo test` are green, with
       `failed=0` and more than 2949 passed. Hygiene, `doc_truth` and
       `bug_tracker` are ok.
 
@@ -352,3 +352,24 @@ kill: (-3174098): No such process
 **Commit:** e4a47f2fc7f7b4ebdc39b56855a9dd0240b92035
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none against the acceptance criteria. Three nits are
+  noted for a follow-up, none of which a user can see:
+  (1) the live panel's `alerts_body_text` draws name and severity without
+  `escape_controls`. An architect probe on a `TestBackend` found that ratatui
+  drops the ESC and BEL bytes itself, so nothing reaches the terminal, but the
+  live and `--once` rows can differ for a hostile name. The row formatter
+  exists three times (`alerts_text`, `alerts_body`, `alerts_body_text`), which
+  is how the escaping diverged. (2) Other severities draw in `Color::Reset`,
+  not gray. My spec asked for both gray and "the Budget bar's colours", and
+  the Budget bar has no gray. (3) `window_text`'s doc comment now sits above
+  `alerts_body_text` in `top_tui_draw.rs`.
+- **Calibration:** 430 turns for a ~300-line phase. The fetcher move and the
+  `plan_layout` signature change rippled through the existing layout tests,
+  and `top_tui_tests.rs` had no room under its test cap. A spec that names
+  "one row formatter, shared by both views" would have prevented nit (1).
