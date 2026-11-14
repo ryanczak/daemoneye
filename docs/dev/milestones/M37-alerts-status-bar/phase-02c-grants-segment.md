@@ -1,7 +1,7 @@
 # Phase 02c — grants-segment
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** phase 02a (the `StatusModel` and the glyph dialects)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -146,29 +146,29 @@ The seven tests named in Spec task 5, plus `summary_counts_each_kind`.
 
 ## Acceptance criteria
 
-- [ ] Every test in the test plan passes.
-- [ ] `grep -c 'approval_hint' src/cli/status_bar.rs` prints 0 (today 4).
-- [ ] `grep -c 'fn hint' src/cli/commands/approval.rs` prints 0 (today 5:
+- [x] Every test in the test plan passes.
+- [x] `grep -c 'approval_hint' src/cli/status_bar.rs` prints 0 (today 4).
+- [x] `grep -c 'fn hint' src/cli/commands/approval.rs` prints 0 (today 5:
       `hint` and its four tests).
-- [ ] `grep -c 'Ctrl+C revokes' src/cli/commands/approval.rs` prints 0
+- [x] `grep -c 'Ctrl+C revokes' src/cli/commands/approval.rs` prints 0
       (today 1).
 - [x] `grep -c 'grant_sudo' src/cli/status_glyphs.rs` prints 5 (the field,
       three dialects and `glyph_sample`; corrected at review, 2026-11-14).
-- [ ] Mutation check, pasted with its `test result:` line: make the lead
+- [x] Mutation check, pasted with its `test result:` line: make the lead
       colour ignore `deletes`, confirm
       `grants_lead_colour_follows_the_riskiest_grant` fails, then revert.
-- [ ] **Bug-02c-1 (open; each item below FAILS today).** At 160 and 120
+- [x] **Bug-02c-1 (open; each item below FAILS today).** At 160 and 120
       columns, with a non-default `GrantSummary` and a line shorter than the
       pane, `line_width` equals the pane width and the grants segment is the
       last visible text (today: 104 of 160, segment mid-line after ` · `),
       pinned by a new `grants_sit_flush_right`.
-- [ ] Bug-02c-1: a host in both `hosts_regular` and `hosts_sudo` gives
+- [x] Bug-02c-1: a host in both `hosts_regular` and `hosts_sudo` gives
       `summary().hosts == 1` (today 2).
-- [ ] Bug-02c-1: with schedules and agents both granted, `📅` comes before
+- [x] Bug-02c-1: with schedules and agents both granted, `📅` comes before
       `🤖` in the line (today 🤖 first).
-- [ ] Bug-02c-1 mutation check, pasted with its `test result:` line: remove
+- [x] Bug-02c-1 mutation check, pasted with its `test result:` line: remove
       the flush-right padding, confirm `grants_sit_flush_right` fails, revert.
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+- [x] fmt, build (0 warnings), clippy and `cargo test` are green, with
       `failed=0` and **more than 2947** passed. Hygiene, `doc_truth` and
       `bug_tracker` are ok.
 
@@ -580,3 +580,20 @@ kill: (-3084400): No such process
 **Commit:** 659435843aabc9378f0c939b2732e77f633616b0
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-14
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-02c-1](bugs/bug-02c-1.md): the grants segment had lost
+  its flush-right placement, hosts were summed rather than unioned, and the
+  detail put agents before schedules). There was also one resume, after a
+  hard_fail at turn 601 on the 800-line hygiene cap.
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. `status_grants.rs` was split out under the
+  spec's "or a sibling the bar re-exports".
+- **Calibration:** three spec errors were mine. The `grant_sudo` count should
+  have been 5 (`glyph_sample` uses it too). The ascii table reused `!` and `*`,
+  which existing glyphs already use, against the spec's own no-collision
+  constraint; that is left as drafted. And a "stays flush right" requirement
+  needs a width-measuring test in the test plan, because the round-1 executor
+  dropped it silently with every test green.

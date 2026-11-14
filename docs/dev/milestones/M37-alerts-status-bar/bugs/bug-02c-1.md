@@ -1,7 +1,7 @@
 # Bug 1 on phase-02c: the grants segment is no longer flush right; hosts double-count; detail order
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (phase-02c re-dispatch, 2026-11-14)
 **Filed:** 2026-11-14
 
 > **Green gates and a clean tree are EXPECTED here and are NOT evidence the
@@ -69,22 +69,22 @@
 Each of these FAILS against the current tree (architect-verified with a
 throwaway probe, 2026-11-14):
 
-- [ ] A new test `grants_sit_flush_right` in `src/cli/status_bar_tests.rs`:
+- [x] A new test `grants_sit_flush_right` in `src/cli/status_bar_tests.rs`:
       with a non-default `GrantSummary` and a line shorter than the pane,
       `line_width(&m, now, 160) == 160`, and the line text, trimmed of
       trailing whitespace, ends with the grants segment's last detail glyph.
       Also check 120 columns. Today the width is 104.
-- [ ] `grants_detail_drops_before_the_core` and
+- [x] `grants_detail_drops_before_the_core` and
       `status_line_drops_tier_three_before_tier_two_before_the_grants_core`
       still pass unchanged: flush right must not change the drop order.
-- [ ] `summary_counts_each_kind` (or a sibling) pins that a host present in
+- [x] `summary_counts_each_kind` (or a sibling) pins that a host present in
       both `hosts_regular` and `hosts_sudo` gives `hosts == 1`. Today: 2.
-- [ ] A test pins `📅` before `🤖` when both schedules and agents are
+- [x] A test pins `📅` before `🤖` when both schedules and agents are
       granted. Today 🤖 comes first.
-- [ ] Mutation check, pasted with its `test result:` line: make the join
+- [x] Mutation check, pasted with its `test result:` line: make the join
       drop the flush-right padding again and confirm `grants_sit_flush_right`
       fails, then revert.
-- [ ] fmt, build (0 warnings), clippy clean; `cargo test` reports
+- [x] fmt, build (0 warnings), clippy clean; `cargo test` reports
       `failed=0` with **more than 2947** passed (the new tests add to it).
 </content>
 </invoke>
