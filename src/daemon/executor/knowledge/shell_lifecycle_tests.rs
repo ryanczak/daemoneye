@@ -768,6 +768,86 @@ async fn lingering_host_spawn(id: ShellId) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The rejection this phase's close-side change must not disturb: a ghost
+/// caller gains no right over an adopted shell — the refusal sentence is the
+/// same one another session's shell gets.
+#[tokio::test]
+async fn close_shell_refuses_an_adopted_shell_to_a_ghost_caller() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    insert(&reg, 6, Owner::Adopted, NOW);
+    let out = close_shell_with(
+        &reg,
+        "s6",
+        &Owner::Ghost("cross".into()),
+        Duration::from_millis(500),
+    )
+    .await;
+    assert!(
+        out.starts_with("Error:") && out.contains("s6"),
+        "a ghost's close of an adopted shell must be refused, the id named: {out}"
+    );
+    assert!(
+        out.contains("not yours"),
+        "the refusal sentence is the shared one: {out}"
+    );
+    assert!(
+        has_record(&reg, "s6"),
+        "a refused close must not have removed the record"
+    );
+}
+
+/// Task 1: an adopted shell — one re-adopted after a restart with no owner
+/// sidecar, owned by nobody — may be closed by any chat session. The close
+/// proceeds exactly as for the caller's own shell: same signal, same
+/// observed-end accounting, and the sentence begins `Closed shell`.
+#[tokio::test]
+async fn close_shell_lets_a_chat_session_close_an_adopted_shell() {
+    let (_home, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let id = spawn_for_on_host(
+        &reg,
+        Owner::Adopted,
+        5,
+        crate::host::HostId::Local,
+        false,
+        detach_close_spawn,
+    )
+    .await
+    .expect("the shell spawns");
+    assert!(
+        host_is_alive(&crate::shell::lock_path(id.as_str())),
+        "the precondition is a live adopted host holding its lock"
+    );
+
+    let out = close_shell_with(
+        &reg,
+        id.as_str(),
+        &Owner::Chat("adopter".into()),
+        Duration::from_millis(3000),
+    )
+    .await;
+    assert!(
+        out.starts_with("Closed shell"),
+        "an adopted shell closed by a chat session reports like its own: {out}"
+    );
+    assert!(
+        !host_is_alive(&crate::shell::lock_path(id.as_str())),
+        "the observed close means the host really is gone: {out}"
+    );
+    let (stamped, still_there) = with_shells(&reg, |store| {
+        (
+            store.get(id.as_str()).and_then(|r| r.exited_unix),
+            store.contains_key(id.as_str()),
+        )
+    });
+    assert!(still_there, "the record must survive the close");
+    assert!(
+        stamped.is_some(),
+        "the same observed-end accounting stamps the record: {out}"
+    );
+}
+
 #[tokio::test]
 async fn close_shell_refuses_another_owners_shell() {
     let (_home, _dir) = crate::test_home();

@@ -222,7 +222,9 @@ wait_for?, settle_ms?, timeout_secs?)` — \
 ### `close_shell`
 
 - `close_shell(shell)` — end one of **this session's** shells by id (the ids \
-  `list_shells` shows; another session's or a ghost job's shell is refused). \
+  `list_shells` shows; another session's or a ghost job's shell is refused, \
+  but an adopted shell — no owner after a restart — may be closed by any chat \
+  session). \
   The tool hangs the shell up (ending any command running in it) and then \
   reports what it actually observed: the shell's host gone, or the host still \
   holding its lock and possibly still finishing. Use it to free a per-owner \

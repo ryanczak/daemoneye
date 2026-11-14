@@ -439,7 +439,11 @@ pub(crate) async fn close_shell_with(
     let Some(owner_key) = owner_in_registry else {
         return unknown_shell_error(reg, shell);
     };
-    if owner_key != caller.key() {
+    // An adopted shell (no owner after a restart) is owned by nobody, so any
+    // chat session may close it; every other mismatch is refused as before.
+    let may_close = owner_key == caller.key()
+        || (matches!(caller, Owner::Chat(_)) && owner_key == Owner::Adopted.key());
+    if !may_close {
         return format!(
             "Error: shell {shell} is not yours (it belongs to {owner_key}), so this \
              session cannot close it. If it needs closing, the session that owns \

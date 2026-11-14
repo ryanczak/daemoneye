@@ -1071,3 +1071,147 @@ fn sweep_stale_removes_a_dead_hosts_owner_sidecar() {
         "the live host's owner sidecar must survive"
     );
 }
+
+// ── Phase 05: the maintenance tick's orphan sweep ────────────────────────
+
+#[test]
+fn sweep_orphaned_removes_a_recordless_dead_hosts_files() {
+    let (dir, _logs) = fixture_dirs();
+    write(dir.path(), "s0.sock");
+    write_sandbox_sidecar(dir.path(), "s0", "de-ghost-r1").unwrap();
+    write_owner_sidecar(
+        dir.path(),
+        "s0",
+        &Owner::Chat("gone".into()),
+        &crate::host::HostId::Local,
+    )
+    .unwrap();
+    // The record was reaped (or the host predates the daemon): no record.
+
+    let reg = ShellRegistry::default();
+    let swept = sweep_orphaned(&reg, dir.path());
+
+    let ids: Vec<&str> = swept.iter().map(|id| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["s0"],
+        "the recordless dead host's id is what comes back"
+    );
+    for name in ["s0.sock", "s0.lock", "s0.sandbox", "s0.owner"] {
+        assert!(
+            !dir.path().join(name).exists(),
+            "{name} must be gone after the sweep"
+        );
+    }
+}
+
+#[test]
+fn sweep_orphaned_leaves_an_id_the_registry_holds() {
+    let (dir, _logs) = fixture_dirs();
+    write(dir.path(), "s0.sock");
+    write_sandbox_sidecar(dir.path(), "s0", "de-ghost-r1").unwrap();
+    write_owner_sidecar(
+        dir.path(),
+        "s0",
+        &Owner::Chat("a".into()),
+        &crate::host::HostId::Local,
+    )
+    .unwrap();
+    // A dead host with an exit stamp: exactly what the reaper holds onto
+    // through its retention. The fence is the record, not the exit — this is
+    // the case the sweep must skip: its host may read dead, only the record
+    // saves it. The lock the test holds is what a live probe would see; the
+    // record alone must be fence enough either way.
+    let reg = ShellRegistry::default();
+    let mut rec = record(0, Owner::Chat("a".into()));
+    rec.exited_unix = Some(1_000);
+    let id = rec.id.clone();
+    with_shells(&reg, |store| {
+        store.insert(id.as_str().to_string(), rec);
+    });
+    let _held_live =
+        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+    let swept = sweep_orphaned(&reg, dir.path());
+
+    assert!(
+        swept.is_empty(),
+        "an id the registry holds must never be swept, whatever its state"
+    );
+    for name in ["s0.sock", "s0.lock", "s0.sandbox", "s0.owner"] {
+        assert!(
+            dir.path().join(name).exists(),
+            "{name} must survive the sweep"
+        );
+    }
+}
+
+#[test]
+fn sweep_orphaned_never_touches_a_live_host() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "s0.sock");
+    write_sandbox_sidecar(dir.path(), "s0", "de-ghost-r1").unwrap();
+    write_owner_sidecar(
+        dir.path(),
+        "s0",
+        &Owner::Chat("a".into()),
+        &crate::host::HostId::Local,
+    )
+    .unwrap();
+    let _held_live =
+        crate::daemon::instance::InstanceLock::acquire(&dir.path().join("s0.lock")).unwrap();
+
+    let reg = ShellRegistry::default();
+    let swept = sweep_orphaned(&reg, dir.path());
+
+    assert!(
+        swept.is_empty(),
+        "a live host's files must never be swept, record or no record"
+    );
+    for name in ["s0.sock", "s0.lock", "s0.sandbox", "s0.owner"] {
+        assert!(dir.path().join(name).exists(), "{name} must survive");
+    }
+}
+
+#[test]
+fn reap_and_sweep_sweeps_the_files_of_the_record_it_reaps() {
+    let (_home, _home_dir) = reaper_home();
+    let dir = crate::config::shells_dir();
+    let reg = ShellRegistry::default();
+    let mut rec = record(0, Owner::Chat("a".into()));
+    // Past any retention the caller names.
+    rec.exited_unix = Some(0);
+    let id = rec.id.clone();
+    with_shells(&reg, |store| {
+        store.insert(id.as_str().to_string(), rec);
+    });
+    write(&dir, "s0.sock");
+    write_sandbox_sidecar(&dir, "s0", "de-ghost-r1").unwrap();
+    write_owner_sidecar(
+        &dir,
+        "s0",
+        &Owner::Chat("a".into()),
+        &crate::host::HostId::Local,
+    )
+    .unwrap();
+
+    let swept = reap_and_sweep(&reg, &dir, 300, 1_000);
+
+    let gone = with_shells(&reg, |store| store.contains_key(id.as_str()));
+    assert!(
+        !gone,
+        "the record past its retention must be reaped by the same call"
+    );
+    let ids: Vec<&str> = swept.iter().map(|id| id.as_str()).collect();
+    assert_eq!(
+        ids,
+        vec!["s0"],
+        "the files of the record just reaped must be swept on the same call"
+    );
+    for name in ["s0.sock", "s0.lock", "s0.sandbox", "s0.owner"] {
+        assert!(
+            !dir.join(name).exists(),
+            "{name} must be gone after one reap_and_sweep"
+        );
+    }
+}

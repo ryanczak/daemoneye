@@ -52,6 +52,7 @@ pub use registry::{
     scan_shell_ids, set_in_flight, spawn_for, spawn_for_in_sandbox, spawn_for_on_host, sweep_stale,
     with_shells, write_owner_sidecar,
 };
+pub use registry::{reap_and_sweep, sweep_orphaned};
 pub use sbx_backend::{SbxBackend, SbxRunner, VmRun, real_runner};
 pub use screen::ShellScreen;
 pub use session::{

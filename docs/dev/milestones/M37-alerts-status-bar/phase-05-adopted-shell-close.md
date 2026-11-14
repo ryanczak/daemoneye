@@ -1,7 +1,7 @@
 # Phase 05 — adopted-shell-close
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~150 lines, about half of it tests
@@ -175,3 +175,15 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 ## Update Log
 
 <!-- entries below this line -->
+
+### Update — 2026-11-14 20:03 (progress)
+
+Started (executor, phase-05 headless run). Status flipped to `in-progress` here
+and in the milestone README. Reading the four touchpoints —
+`close_shell_with`, `sweep_stale`/`reap_exited`, the maintenance tick, and the
+existing close/sweep tests — before editing. Plan: widen the owner check in
+`close_shell_with` for the adopted case, add `sweep_orphaned` beside
+`sweep_stale`, fold the tick's `reap_exited` + sweep into a `reap_and_sweep`
+helper so `run_daemon`'s line count does not grow, then the two doc rows and
+the sre.toml line, then tests and evidence.
+
