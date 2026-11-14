@@ -90,7 +90,8 @@ pub struct ModelEntry {
     #[serde(default)]
     pub max_tokens: Option<u32>,
     /// Per-1M-token input cost in USD. None = unknown (will log warning).
-    /// Local providers (lmstudio, ollama) should set this to Some(0.0).
+    /// Local providers (lmstudio, ollama) are free by default; set a rate
+    /// here to price a self-hosted model.
     #[serde(default)]
     pub input_cost_per_mtok: Option<f64>,
     /// Per-1M-token output cost in USD.
