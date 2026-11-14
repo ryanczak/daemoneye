@@ -1,16 +1,16 @@
-//! The live ratatui screen of `daemoneye top` (M30 phase 09). The same four
+//! The live ratatui screen of `daemoneye top` (M30 phase 09). The same
 //! panels `top --once` prints, redrawn every 500 ms over
 //! [`TopFingerprint`]: the disk panels are re-read only when the fingerprint
-//! changes or the ages have gone stale, and the Shells panel every 2 s.
-//! The selection follows the newest live run until the user scrolls; `/`
-//! edits the Activity filter; `q` quits. Read-only: nothing is written.
+//! changes or the ages have gone stale, and the Shells and Alerts panels
+//! every 2 s. The selection follows the newest live run until the user
+//! scrolls; `/` edits the Activity filter; `q` quits. Read-only.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
-use chrono::{DateTime, FixedOffset, Local};
+use chrono::{DateTime, FixedOffset, Local, Utc};
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -18,13 +18,15 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 
 use crate::cli::commands::top::{
-    ActivityRow, BarLevel, Liveness, PanelRects, ShellsPanel, TopFingerprint, TopRunRow,
-    activity_text, budget_bar, budget_text, collapse_activity, filter_activity, fingerprint,
-    header_text, plan_layout, rect_or_area, run_fades, runs_text, shells_text,
+    ActivityRow, BarLevel, IpcFetcher, Liveness, PanelRects, ShellsPanel, TopFingerprint,
+    TopRunRow, activity_text, budget_bar, budget_text, collapse_activity, filter_activity,
+    fingerprint, header_text, plan_layout, rect_or_area, run_fades, runs_text, shells_refresh,
+    shells_text,
+    text_frame::{alerts_lines, format_age},
 };
 use crate::cli::viewer::AltScreenGuard;
 use crate::ipc::Response;
@@ -35,40 +37,6 @@ const TICK: Duration = Duration::from_millis(500);
 /// draws beside the cells — three digits, because the percentage is printed
 /// as it is and runs over the cap.
 const BAR_CHROME: usize = 7;
-
-/// Replace the model's Shells panel and daemon header with fresh answers
-/// from the daemon: one read-only `Request::ShellList` and one
-/// `Request::Status`, the header's facts on the same 2 s cadence as the
-/// shells. The selection stays on the shell it was on; a shell that has
-/// gone clamps it into the new rows. A test drives it without a daemon
-/// behind the [`ShellFetcher`] seam.
-pub(crate) async fn shells_refresh(model: &mut TopModel, fetch: &impl ShellFetcher) {
-    let keep = model.selected_shell_id();
-    model.snapshot.shells = fetch.shells().await;
-    model.snapshot.daemon = fetch.daemon().await;
-    model.restore_shell_selection(keep);
-}
-
-/// The daemon answers the live loop asks for: its shells and the header's
-/// facts. The production impl calls the real IPC client; tests install a
-/// fake, so the loop's tests stay hermetic.
-pub(crate) trait ShellFetcher {
-    fn shells(&self) -> impl Future<Output = crate::cli::commands::top::ShellsPanel>;
-    fn daemon(&self) -> impl Future<Output = Option<crate::cli::commands::top::DaemonHeader>>;
-}
-
-/// The production fetcher: real read-only IPC, one round-trip per call.
-struct IpcFetcher;
-
-impl ShellFetcher for IpcFetcher {
-    async fn shells(&self) -> crate::cli::commands::top::ShellsPanel {
-        crate::cli::commands::top::shells_panel().await
-    }
-
-    async fn daemon(&self) -> Option<crate::cli::commands::top::DaemonHeader> {
-        crate::cli::commands::top::daemon_header().await
-    }
-}
 
 /// Re-read the disk panels when the fingerprint has sat unchanged this long —
 /// ages and the 30 s liveness window move with the clock even when nothing
@@ -563,8 +531,9 @@ impl TopModel {
 
     /// Put the selection back on `id` after a Shells refresh: the same shell
     /// keeps it, a gone or absent one clamps into the new rows, and the
-    /// window follows the selection.
-    fn restore_shell_selection(&mut self, id: Option<String>) {
+    /// window follows the selection. `pub(crate)`: the refresh lives in
+    /// `top_load.rs`, not here.
+    pub(crate) fn restore_shell_selection(&mut self, id: Option<String>) {
         if let Some(id) = id
             && let ShellsPanel::Rows(rows) = &self.snapshot.shells
             && let Some(idx) = rows.iter().position(|s| s.id == id)
@@ -702,15 +671,17 @@ fn focus_of(c: char) -> Panel {
     }
 }
 
-/// The rects and the four panel inner heights the model's current content
-/// and terminal give. The one call site of the layout planner in this file,
-/// so the drawn panels and the stored heights cannot disagree again.
+/// The rects and the panel inner heights the model's current content and
+/// terminal give. The one call site of the layout planner here, so the
+/// drawn panels and the stored heights cannot disagree.
 fn layout_at(model: &TopModel, area: ratatui::layout::Rect) -> (PanelRects, PanelHeights) {
+    let now_unix = Utc::now().timestamp().max(0) as u64;
     let rects = plan_layout(
         area,
-        runs_lines(&model.snapshot.runs),
+        model.snapshot.runs.len() + 1,
         budget_lines(&model.snapshot.budget),
         shells_lines(&model.snapshot.shells),
+        alerts_lines(&model.snapshot.alerts, now_unix),
     );
     let heights = PanelHeights {
         runs: inner_height(rects.runs),
@@ -722,8 +693,8 @@ fn layout_at(model: &TopModel, area: ratatui::layout::Rect) -> (PanelRects, Pane
 }
 
 /// The one panel the detail view draws: the full span between the header
-/// and the footer, at the area's width. Derived from the laid-out rects, so
-/// `plan_layout` stays the single layout call site.
+/// and the footer, at the area's width. Derived from the laid-out rects,
+/// so `plan_layout` stays the single layout call site.
 fn detail_rect(rects: &PanelRects, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
     rect_or_area(
         area,
@@ -736,19 +707,12 @@ fn detail_rect(rects: &PanelRects, area: ratatui::layout::Rect) -> ratatui::layo
 
 /// Re-measure the stored heights for `size` and the model's current content.
 /// A size the backend cannot report leaves the stored heights alone. The
-/// loop calls this on resize and after every content refresh, because the
-/// panels are sized to their content.
+/// loop calls this on resize and after every content refresh.
 fn refresh_heights(model: &mut TopModel, size: Option<ratatui::layout::Rect>) {
     let Some(size) = size else {
         return;
     };
     model.heights = layout_at(model, size).1;
-}
-
-/// The Runs panel's body line count: one per run plus the column header,
-/// capped where `plan_layout` caps it. Pure.
-fn runs_lines(runs: &[crate::cli::commands::top::TopRunRow]) -> usize {
-    runs.len() + 1
 }
 
 /// The Budget panel's body line count: the four text lines plus the bar

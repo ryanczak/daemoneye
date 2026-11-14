@@ -1,7 +1,7 @@
 # Phase 03 — top-alerts-panel
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-14
 **Depends on:** phase 01 (`Request::AlertList` → `Response::AlertState`)
 **Estimated diff:** ~300 lines, about half of it tests
@@ -164,4 +164,47 @@ The `top` line must print `Alerts` then `daemon not running`.
 
 ## Update Log
 
+<!-- entries below this line -->
+
+### Update — 2026-11-14 17:30 (started, executor)
+
+Status flipped `todo → in-progress` and the milestone README's 03 row updated to match. Plan per the edit order: (1) the fetcher move (`shells_refresh`, `ShellFetcher`, `IpcFetcher` → `top_load.rs`) to free `top_tui.rs`'s allowlisted room, (2) `AlertsPanel` + the snapshot field + `alerts_panel()`, (3) `alerts()` on the fetcher and the `--once` load, (4) `alerts_text` + `render_once`, (5) `plan_layout` + the draw + colours, then tests, docs, and the mutation + end-to-end captures.
+<!-- entries appended below this line -->
+
+### Update — 2026-11-14 18:10 (end-to-end verification)
+
+Mutation check — `alerts_text`'s `escape(&a.name)` replaced with the raw
+`a.name`, the named test fails, then reverted and it passes again:
+
+```
+test cli::commands::top::tests::alerts_text_escapes_control_characters ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2865 filtered out; finished in 0.00s
+test cli::commands::top::tests::alerts_text_escapes_control_characters ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2865 filtered out; finished in 0.00s
+```
+
+End-to-end block, verbatim (the `top` line ran against a throwaway `HOME`,
+so no daemon answered):
+
+```
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 2852 filtered out; finished in 0.00s
+alert_list=2
+trait_in_tui=0
+build_warnings=0
+passed=2956 failed=0
+```
+
+The `top --once` Alerts section under a down daemon:
+
+```
+Alerts
+daemon not running
+```
+
+Also green: `cargo build` 0 warnings, `cargo clippy --all-targets
+--all-features -- -D warnings` clean, `cargo fmt --all -- --check` clean,
+`--test hygiene` ok (16 passed), `--test doc_truth` ok (19 passed),
+`--test bug_tracker` ok (6 passed). `top_tui.rs`'s allowlist entry lowered
+954 → 918 (the fetcher move freed the room; the phase's additions fit
+inside it).
 <!-- entries appended below this line -->

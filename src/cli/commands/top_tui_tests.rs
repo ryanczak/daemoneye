@@ -1,5 +1,5 @@
 use super::*;
-use crate::cli::commands::top::{DaemonHeader, ShellsPanel, TopRunRow};
+use crate::cli::commands::top::{DaemonHeader, ShellFetcher, ShellsPanel, TopRunRow};
 use chrono::{DateTime, Utc};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -202,6 +202,7 @@ pub(super) fn snapshot_with(
         },
         activity,
         shells: crate::cli::commands::top::ShellsPanel::DaemonDown,
+        alerts: crate::cli::commands::top::AlertsPanel::DaemonDown,
         daemon: None,
     }
 }
@@ -247,7 +248,7 @@ fn filtered_activity_collapses_repeats() {
     assert_eq!(
         out.len(),
         1,
-        "five identical consecutive rows collapse to one: {out:?}"
+        "five identical consecutive rows collapse: {out:?}"
     );
     assert_eq!(
         out.first().map(|r| r.summary.as_str()),
@@ -316,7 +317,7 @@ fn every_title_is_padded_once() {
 }
 
 #[test]
-fn screen_draws_the_four_panels() {
+fn screen_draws_the_five_panels() {
     let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
     let model = TopModel::new(snapshot(vec![]));
     terminal.draw(|f| draw(f, &model)).unwrap();
@@ -327,7 +328,7 @@ fn screen_draws_the_four_panels() {
         .iter()
         .flat_map(|c| c.symbol().chars())
         .collect();
-    for title in ["Runs", "Budget", "Shells", "Activity"] {
+    for title in ["Runs", "Budget", "Shells", "Alerts", "Activity"] {
         assert!(
             text.contains(title),
             "the {title} title is on screen: {text:?}"
@@ -620,6 +621,10 @@ impl ShellFetcher for FakeFetcher {
         ShellsPanel::DaemonDown
     }
 
+    async fn alerts(&self) -> crate::cli::commands::top::AlertsPanel {
+        crate::cli::commands::top::AlertsPanel::DaemonDown
+    }
+
     async fn daemon(&self) -> Option<DaemonHeader> {
         self.daemon.clone()
     }
@@ -724,11 +729,7 @@ fn number_keys_type_into_the_filter_while_editing() {
         model.filter, "3",
         "a digit typed while editing goes to the filter"
     );
-    assert_eq!(
-        model.focus,
-        Panel::Runs,
-        "a digit typed while editing leaves the focus"
-    );
+    assert_eq!(model.focus, Panel::Runs, "a digit leaves the focus");
 }
 
 // ── scroll keys act on the focused panel only ────────────────────────────
@@ -1222,12 +1223,14 @@ fn screen_draws_scrolled_shells() {
 /// The heights `draw_at` lays out, computed here from the drawn text so a
 /// drift in the input convention between drawing and measuring fails.
 fn drawn_heights(model: &TopModel, size: ratatui::layout::Rect) -> PanelHeights {
+    let now_unix = model.snapshot.taken_at.timestamp().max(0) as u64;
     let rects = plan_layout(
         size,
         runs_text(&model.snapshot.runs).lines().count(),
         budget_text(&model.snapshot.budget).lines().count()
             + usize::from(model.snapshot.budget.cap > 0.0),
         shells_text(&model.snapshot.shells).lines().count(),
+        alerts_lines(&model.snapshot.alerts, now_unix),
     );
     PanelHeights {
         runs: inner_height(rects.runs),
@@ -1320,13 +1323,16 @@ fn scrolled_activity_holds_its_rows_as_the_window_slides() {
         activity: 8,
         detail: 0,
     };
+    // The Alerts panel now takes the rows Shells used to leave it: shrink
+    // the panel's own expectation, not the screen.
+    model.heights.activity = 5;
     model.focus = Panel::Activity;
     model.clamp_offsets();
     for _ in 0..10 {
         press(&mut model, KeyCode::Up);
     }
     assert!(!model.tailing, "scrolled up 10, the panel stopped tailing");
-    assert_eq!(model.activity_top, 32, "the tail top is 42; 10 up is 32");
+    assert_eq!(model.activity_top, 35, "the tail top is 45; 10 up is 35");
     let panel_text = |terminal: &Terminal<ratatui::backend::TestBackend>| -> Vec<String> {
         (0..24u16)
             .map(|y| {
@@ -1342,7 +1348,7 @@ fn scrolled_activity_holds_its_rows_as_the_window_slides() {
     let before = panel_text(&terminal);
     assert_eq!(
         before.len(),
-        8,
+        5,
         "the panel's rows are on screen: {before:?}"
     );
     // A refresh drops the five oldest rows and lands five new ones: the
@@ -1743,6 +1749,10 @@ impl ShellFetcher for SeqFetcher {
             .borrow_mut()
             .pop_front()
             .unwrap_or(ShellsPanel::DaemonDown)
+    }
+
+    async fn alerts(&self) -> crate::cli::commands::top::AlertsPanel {
+        crate::cli::commands::top::AlertsPanel::DaemonDown
     }
 
     async fn daemon(&self) -> Option<DaemonHeader> {

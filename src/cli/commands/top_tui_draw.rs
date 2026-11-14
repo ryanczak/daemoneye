@@ -2,6 +2,7 @@
 //! windowing that keeps the rows that matter on screen.
 
 use super::*;
+use crate::cli::commands::top::text_frame::ALERTS_MAX_LINES;
 
 /// Draw one frame at the wall clock: [`draw_at`] with the local zone now.
 pub fn draw(frame: &mut ratatui::Frame<'_>, model: &TopModel) {
@@ -109,6 +110,12 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
         model.focus == Panel::Shells,
     );
 
+    // The Alerts panel is not focusable: it takes no Panel and never gets
+    // the focus colour or a selection. The severity word carries the row's
+    // colour — the Budget bar's levels, gray for the rest.
+    let alerts_window = alerts_body_text(&model.snapshot.alerts, now);
+    draw_alerts_panel(frame, rects.alerts, &alerts_window);
+
     let activity_total = activity_body.lines().count();
     let activity_window = if model.tailing {
         // The newest rows fill the panel: the tail starts where the last
@@ -134,6 +141,17 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
         &[],
         model.focus == Panel::Activity,
     );
+    render_footer(frame, model, rects.footer);
+}
+
+/// The footer line: the key hints, the focused panel, the Runs-follow and
+/// Activity-tail modes, the attach hint and note, the filter. Drops the
+/// left hints (never `q quit`, how the user leaves) when it overflows.
+fn render_footer(
+    frame: &mut ratatui::Frame<'_>,
+    model: &TopModel,
+    footer_rect: ratatui::layout::Rect,
+) {
     let mode = if model.follow {
         "following"
     } else {
@@ -160,14 +178,14 @@ pub fn draw_at(frame: &mut ratatui::Frame<'_>, model: &TopModel, now: DateTime<F
     // An overflow would cut the right end — the newest segments, the attach
     // hint and an open error. Drop key hints from the left (never `q quit`,
     // how the user leaves) until the line fits.
-    let width = rects.footer.width as usize;
+    let width = footer_rect.width as usize;
     while footer.chars().count() > width {
         let Some(sep) = footer.char_indices().skip(2).find(|(_, c)| *c == '\u{b7}') else {
             break;
         };
         footer = footer[sep.0 + 2..].to_string();
     }
-    Paragraph::new(Line::raw(footer)).render(rects.footer, frame.buffer_mut());
+    Paragraph::new(Line::raw(footer)).render(footer_rect, frame.buffer_mut());
 }
 
 /// The selected shell's line index inside the Shells panel's drawn window,
@@ -231,6 +249,87 @@ fn panel_title_line(panel: Panel, focused: bool) -> Line<'static> {
 
 /// The Shells body's visible window: the lines `top` onward as far as the
 /// panel's inner height shows, from the one pure range helper.
+/// The Alerts panel's drawn body, at the wall clock `now`: the same lines
+/// [`crate::cli::commands::top_tui::alerts_body`] lays out, with each line
+/// carrying its severity colour so [`draw_alerts_panel`] can style the
+/// severity word. One `Line` per alert, in the daemon's order.
+fn alerts_body_text(
+    panel: &crate::cli::commands::top::AlertsPanel,
+    now: DateTime<FixedOffset>,
+) -> Vec<Line<'_>> {
+    let now_unix = now.timestamp().max(0) as u64;
+    let rows = match panel {
+        crate::cli::commands::top::AlertsPanel::Rows(rows) => rows,
+        crate::cli::commands::top::AlertsPanel::DaemonDown => {
+            return vec![Line::raw("daemon not running".to_string())];
+        }
+    };
+    if rows.is_empty() {
+        return vec![Line::raw("none".to_string())];
+    }
+    let shown = rows
+        .len()
+        .min(ALERTS_MAX_LINES - usize::from(rows.len() > ALERTS_MAX_LINES));
+    let mut lines: Vec<Line<'_>> = rows[..shown]
+        .iter()
+        .map(|a| {
+            let severity = a.severity.clone();
+            let rest = format!(
+                " {} firing {} seen {} ago",
+                a.name,
+                format_age(now_unix.saturating_sub(a.first_seen_unix) as i64),
+                format_age(now_unix.saturating_sub(a.last_seen_unix) as i64),
+            );
+            severity_colour(&severity, |colour| {
+                Line::from(vec![
+                    Span::styled(severity.clone(), Style::default().fg(colour)),
+                    Span::raw(rest.clone()),
+                ])
+            })
+        })
+        .collect();
+    let more = rows.len() - shown;
+    if more > 0 {
+        lines.push(Line::raw(format!("+{more} more")));
+    }
+    lines
+}
+
+/// The colour a severity word carries: `critical` red, `warning` yellow,
+/// everything else gray — the Budget bar's levels. `paint` builds the line
+/// from the colour, so the caller keeps the spans in one place.
+fn severity_colour<F>(severity: &str, paint: F) -> Line<'static>
+where
+    F: FnOnce(Color) -> Line<'static>,
+{
+    let colour = match severity {
+        "critical" => Color::Red,
+        "warning" => Color::Yellow,
+        _ => Color::Reset,
+    };
+    paint(colour)
+}
+
+/// One bordered Alerts panel, full width, not focusable: no Panel, no
+/// focus colour, no selection. The severity word of each row carries the
+/// colour [`severity_colour`] picks.
+fn draw_alerts_panel(
+    frame: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    lines: &[Line<'_>],
+) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(Line::styled(
+            " Alerts ",
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+    let inner = block.inner(area);
+    block.render(area, frame.buffer_mut());
+    Paragraph::new(lines.to_vec()).render(inner, frame.buffer_mut());
+}
+
 fn window_text(body: &str, top: usize, inner_h: usize) -> String {
     let range = visible_range(body.lines().count(), inner_h, top);
     body.lines()
@@ -338,4 +437,100 @@ fn draw_panel(
         })
         .collect();
     Paragraph::new(lines).render(inner, frame.buffer_mut());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ipc::AlertBadge;
+
+    /// One `AlertBadge` with the given identity and stamps.
+    fn alert_badge(name: &str, severity: &str, first: u64, last: u64) -> AlertBadge {
+        AlertBadge {
+            fingerprint: format!("fp-{name}"),
+            name: name.to_string(),
+            severity: severity.to_string(),
+            first_seen_unix: first,
+            last_seen_unix: last,
+        }
+    }
+
+    #[test]
+    fn alerts_panel_caps_and_counts_the_rest() {
+        let alerts: Vec<_> = (1..=9)
+            .map(|i| alert_badge(&format!("Alert{i}"), "critical", 100, 110))
+            .collect();
+        let mut snap = TopModel::new(super::super::tests::snapshot(vec![]));
+        snap.snapshot.alerts = crate::cli::commands::top::AlertsPanel::Rows(alerts);
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 30)).unwrap();
+        terminal.draw(|f| draw(f, &snap)).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .flat_map(|c| c.symbol().chars())
+            .collect();
+        for i in 1..=5 {
+            assert!(
+                text.contains(&format!("Alert{i}")),
+                "alert {i} is among the shown first five: {text:?}"
+            );
+        }
+        assert!(
+            text.contains("+4 more"),
+            "the overflow line names the rest: {text:?}"
+        );
+        assert!(
+            !text.contains("Alert6"),
+            "the sixth alert is past the cap: {text:?}"
+        );
+    }
+
+    #[test]
+    fn alerts_panel_colours_the_severity() {
+        let mut model = TopModel::new(super::super::tests::snapshot(vec![]));
+        model.snapshot.alerts = crate::cli::commands::top::AlertsPanel::Rows(vec![
+            alert_badge("DiskFull", "critical", 100, 110),
+            alert_badge("HighCPU", "warning", 100, 110),
+            alert_badge("StaleRun", "info", 100, 110),
+        ]);
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(80, 30)).unwrap();
+        terminal.draw(|f| draw(f, &model)).unwrap();
+        // The severity word is the row's first span, so the cell that starts
+        // the row carries its colour. Read row-wise: find the row whose text
+        // names the alert, then its first cell inside the border.
+        let width = 80usize;
+        let cells = terminal.backend().buffer().content.clone();
+        let severity_cell = |needle: &str| {
+            let row = (0..cells.len() / width).find(|&y| {
+                (0..width)
+                    .filter_map(|x| cells.get(y * width + x))
+                    .map(|c| c.symbol())
+                    .collect::<String>()
+                    .contains(needle)
+            });
+            let y = row.expect("the alert row is drawn");
+            cells
+                .iter()
+                .skip(y * width)
+                .find(|c| c.symbol() != " " && c.symbol() != "│")
+                .map(|c| c.style().fg)
+        };
+        assert_eq!(
+            severity_cell("DiskFull").flatten(),
+            Some(Color::Red),
+            "a critical row's severity cell is red"
+        );
+        assert_eq!(
+            severity_cell("HighCPU").flatten(),
+            Some(Color::Yellow),
+            "a warning row's severity cell is yellow"
+        );
+        assert_eq!(
+            severity_cell("StaleRun").flatten(),
+            Some(Color::Reset),
+            "everything else is gray"
+        );
+    }
 }

@@ -14,7 +14,7 @@ fn src/ai/backends/openai.rs OpenAiClient::chat 238
 fn src/cli/commands/ask.rs run_ask_raw 170
 fn src/cli/commands/chat_loop.rs run_chat_ratatui 544
 fn src/cli/commands/setup.rs run_setup 257
-file src/cli/commands/top_tui.rs 954
+file src/cli/commands/top_tui.rs 918
 file src/daemon/executor/shell_exec.rs 826
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216

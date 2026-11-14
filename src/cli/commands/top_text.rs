@@ -112,7 +112,7 @@ pub fn runs_text(runs: &[TopRunRow]) -> String {
 
 /// One run's age as a compact string: seconds under a minute, `Mm` under an
 /// hour, `HhMM` under a day, `DdHHh` beyond.
-pub(super) fn format_age(secs: i64) -> String {
+pub(crate) fn format_age(secs: i64) -> String {
     if secs < 0 {
         return "0s".to_string();
     }
@@ -173,6 +173,8 @@ pub struct PanelRects {
     pub budget: Rect,
     /// The Shells panel.
     pub shells: Rect,
+    /// The Alerts panel.
+    pub alerts: Rect,
     /// The Activity panel.
     pub activity: Rect,
     /// The unbordered footer line.
@@ -182,7 +184,9 @@ pub struct PanelRects {
 /// The widest a Runs panel's body gets, in lines.
 const RUNS_MAX_LINES: usize = 12;
 /// The widest a Shells panel's body gets, in lines.
-const SHELLS_MAX_LINES: usize = 6;
+pub(crate) const SHELLS_MAX_LINES: usize = 6;
+/// The widest an Alerts panel's body gets, in lines.
+pub(crate) const ALERTS_MAX_LINES: usize = 6;
 /// A bordered panel's border rows, top and bottom.
 const BORDER_ROWS: usize = 2;
 /// The width Budget takes when it shares a row with Runs.
@@ -215,18 +219,20 @@ pub(crate) fn rect_or_area(area: Rect, x: u16, y: u16, w: usize, h: usize) -> Re
 /// the borders. Runs is capped at 12 body lines, Shells at 6; Activity takes
 /// every remaining row and shrinks first. At `area.width >= 120` Runs and
 /// Budget share one row, Budget on the right 40 columns wide; below that they
-/// stack Runs, Budget, Shells, Activity.
+/// stack Runs, Budget, Shells, Alerts, Activity.
 pub fn plan_layout(
     area: Rect,
     runs_lines: usize,
     budget_lines: usize,
     shells_lines: usize,
+    alerts_lines: usize,
 ) -> PanelRects {
     let h = area.height as usize;
     let w = area.width as usize;
     let wide = w >= WIDE_MIN;
     let runs_h = (runs_lines.min(RUNS_MAX_LINES) + BORDER_ROWS).min(h);
     let shells_h = (shells_lines.min(SHELLS_MAX_LINES) + BORDER_ROWS).min(h);
+    let alerts_h = (alerts_lines.min(ALERTS_MAX_LINES) + BORDER_ROWS).min(h);
     let budget_h = (budget_lines + BORDER_ROWS).min(h);
     let row_h = if wide { runs_h.max(budget_h) } else { 0 };
 
@@ -254,6 +260,9 @@ pub fn plan_layout(
     let shells = rect_or_area(area, area.x, y as u16, w, shells_h.min(inner));
     y += shells_h.min(inner);
 
+    let alerts = rect_or_area(area, area.x, y as u16, w, alerts_h.min(inner));
+    y += alerts_h.min(inner);
+
     let bottom = area.y as usize + h;
     let activity_h = bottom.saturating_sub(y).saturating_sub(1).min(inner);
     let activity = rect_or_area(area, area.x, y as u16, w, activity_h);
@@ -264,6 +273,7 @@ pub fn plan_layout(
         runs,
         budget,
         shells,
+        alerts,
         activity,
         footer,
     }
@@ -274,12 +284,58 @@ pub fn plan_layout(
 pub fn render_once(snapshot: &TopSnapshot, filter: &str) -> String {
     let activity = collapse_activity(filter_activity(snapshot.activity.clone(), filter));
     format!(
-        "Runs\n{}\n\nBudget\n{}\n\nShells\n{}\n\nActivity\n{}",
+        "Runs\n{}\n\nBudget\n{}\n\nShells\n{}\n\nAlerts\n{}\n\nActivity\n{}",
         runs_text(&snapshot.runs),
         budget_text(&snapshot.budget),
         shells_text(&snapshot.shells),
+        alerts_text(
+            &snapshot.alerts,
+            snapshot.taken_at.timestamp().max(0) as u64
+        ),
         activity_text(&activity),
     )
+}
+
+/// The Alerts panel's drawn body line count: one per alert up to the cap,
+/// plus a `+N more` line when more are firing than the cap shows. Pure,
+/// so the layout planner and the draw agree on the height.
+pub(crate) fn alerts_lines(panel: &AlertsPanel, now_unix: u64) -> usize {
+    alerts_body(panel, now_unix).lines().count()
+}
+
+/// The Alerts panel's drawn body, as plain text: up to the cap of alerts,
+/// one line each, with a final `+N more` when more are firing than the cap
+/// shows — the more line takes the cap's last slot, so the panel never
+/// grows past `ALERTS_MAX_LINES` body lines. Pure; the live panel draws
+/// the same rows with the severity coloured.
+pub(crate) fn alerts_body(panel: &AlertsPanel, now_unix: u64) -> String {
+    let rows = match panel {
+        AlertsPanel::DaemonDown => return "daemon not running".to_string(),
+        AlertsPanel::Rows(rows) => rows,
+    };
+    if rows.is_empty() {
+        return "none".to_string();
+    }
+    let shown = rows
+        .len()
+        .min(ALERTS_MAX_LINES - usize::from(rows.len() > ALERTS_MAX_LINES));
+    let mut lines: Vec<String> = rows[..shown]
+        .iter()
+        .map(|a| {
+            format!(
+                "{} {} firing {} seen {} ago",
+                a.severity,
+                a.name,
+                format_age(now_unix.saturating_sub(a.first_seen_unix) as i64),
+                format_age(now_unix.saturating_sub(a.last_seen_unix) as i64),
+            )
+        })
+        .collect();
+    let more = rows.len() - shown;
+    if more > 0 {
+        lines.push(format!("+{more} more"));
+    }
+    lines.join("\n")
 }
 
 /// A shell owner key worth printing: `chat:<16 hex>` to `chat:<8>`,
@@ -297,6 +353,35 @@ pub fn short_owner(owner: &str) -> String {
         return format!("ghost:{inner}");
     }
     owner.to_string()
+}
+
+/// The Alerts section as text: one line per firing alert — severity, name,
+/// `firing <age>` since it was first seen and `seen <age> ago` since the
+/// last re-fire — `daemon not running` when the daemon did not answer and
+/// `none` when it is up with none firing. Pure. The name and severity come
+/// from a webhook payload, so both pass through
+/// [`crate::cli::render::escape_controls`].
+pub fn alerts_text(panel: &AlertsPanel, now_unix: u64) -> String {
+    let rows = match panel {
+        AlertsPanel::DaemonDown => return "daemon not running".to_string(),
+        AlertsPanel::Rows(rows) => rows,
+    };
+    if rows.is_empty() {
+        return "none".to_string();
+    }
+    let escape = crate::cli::render::escape_controls;
+    rows.iter()
+        .map(|a| {
+            format!(
+                "{} {} firing {} seen {} ago",
+                escape(&a.severity),
+                escape(&a.name),
+                format_age(now_unix.saturating_sub(a.first_seen_unix) as i64),
+                format_age(now_unix.saturating_sub(a.last_seen_unix) as i64),
+            )
+        })
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 /// The Shells section as text: one row per live shell — id, owner,

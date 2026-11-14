@@ -156,10 +156,63 @@ pub async fn daemon_header() -> Option<DaemonHeader> {
     }
 }
 
+/// Replace the model's Shells panel and daemon header with fresh answers
+/// from the daemon: one read-only `Request::ShellList` and one
+/// `Request::Status`, the header's facts on the same 2 s cadence as the
+/// shells. The selection stays on the shell it was on; a shell that has
+/// gone clamps it into the new rows. A test drives it without a daemon
+/// behind the [`ShellFetcher`] seam.
+pub(crate) async fn shells_refresh(
+    model: &mut crate::cli::commands::top_tui::TopModel,
+    fetch: &impl ShellFetcher,
+) {
+    let keep = model.selected_shell_id();
+    model.snapshot.shells = fetch.shells().await;
+    model.snapshot.alerts = fetch.alerts().await;
+    model.snapshot.daemon = fetch.daemon().await;
+    model.restore_shell_selection(keep);
+}
+
+/// The daemon answers the live loop asks for: its shells, its firing alerts
+/// and the header's facts. The production impl calls the real IPC client;
+/// tests install a fake, so the loop's tests stay hermetic.
+pub(crate) trait ShellFetcher {
+    fn shells(&self) -> impl Future<Output = ShellsPanel>;
+    fn alerts(&self) -> impl Future<Output = AlertsPanel>;
+    fn daemon(&self) -> impl Future<Output = Option<DaemonHeader>>;
+}
+
+/// The production fetcher: real read-only IPC, one round-trip per call.
+pub(crate) struct IpcFetcher;
+
+impl ShellFetcher for IpcFetcher {
+    async fn shells(&self) -> ShellsPanel {
+        shells_panel().await
+    }
+
+    async fn alerts(&self) -> AlertsPanel {
+        alerts_panel().await
+    }
+
+    async fn daemon(&self) -> Option<DaemonHeader> {
+        daemon_header().await
+    }
+}
+
+/// Ask the daemon for its firing alerts: one read-only `Request::AlertList`.
+/// The rows come back worst first, in the daemon's order. The daemon-down
+/// mark when no daemon answers or the reply is not an `AlertState`.
+pub async fn alerts_panel() -> AlertsPanel {
+    match super::ipc_client::request_once(crate::ipc::Request::AlertList).await {
+        Ok(crate::ipc::Response::AlertState { alerts }) => AlertsPanel::Rows(alerts),
+        _ => AlertsPanel::DaemonDown,
+    }
+}
+
 /// Take one frame: the disk panels plus the Shells panel from the daemon.
 pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
     let now = Utc::now();
-    let (shells, daemon) = tokio::join!(shells_panel(), daemon_header());
+    let (shells, alerts, daemon) = tokio::join!(shells_panel(), alerts_panel(), daemon_header());
     let DiskPanels {
         runs,
         budget,
@@ -171,6 +224,7 @@ pub async fn take_snapshot(config_cap: f64) -> TopSnapshot {
         budget,
         activity,
         shells,
+        alerts,
         daemon,
     }
 }

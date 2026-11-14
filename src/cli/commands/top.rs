@@ -142,6 +142,8 @@ pub struct TopSnapshot {
     pub activity: Vec<ActivityRow>,
     /// The Shells panel: the daemon's live shells, or the daemon-down mark.
     pub shells: ShellsPanel,
+    /// The Alerts panel: the daemon's firing alerts, or the daemon-down mark.
+    pub alerts: AlertsPanel,
     /// The daemon facts the header names; `None` when the daemon is down.
     pub daemon: Option<DaemonHeader>,
 }
@@ -165,6 +167,17 @@ pub enum ShellsPanel {
     Rows(Vec<crate::ipc::ShellInfo>),
     /// No daemon answered — the socket is closed or the reply was not a
     /// `ShellList`.
+    DaemonDown,
+}
+
+/// The Alerts panel: the daemon's firing alerts, or the mark that the
+/// daemon did not answer.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub enum AlertsPanel {
+    /// The daemon answered: its firing alerts, worst first.
+    Rows(Vec<crate::ipc::AlertBadge>),
+    /// No daemon answered — the socket is closed or the reply was not an
+    /// `AlertState`.
     DaemonDown,
 }
 
@@ -569,10 +582,10 @@ pub fn collapse_activity(rows: Vec<ActivityRow>) -> Vec<ActivityRow> {
 }
 
 #[path = "top_load.rs"]
-mod load;
+pub(crate) mod load;
 pub use load::*;
 #[path = "top_text.rs"]
-mod text_frame;
+pub(crate) mod text_frame;
 pub use text_frame::*;
 // The children reach these sibling commands as `super::…`, through this import.
 use super::{ipc_client, scorecard};
@@ -701,7 +714,7 @@ mod tests {
     #[test]
     fn layout_puts_runs_and_budget_side_by_side_when_wide() {
         let area = ratatui::layout::Rect::new(0, 0, 120, 40);
-        let r = plan_layout(area, 20, 6, 8);
+        let r = plan_layout(area, 20, 6, 8, 0);
         assert_eq!(r.runs.y, r.budget.y, "the panels share a row");
         assert_eq!(
             r.runs.x + r.runs.width,
@@ -720,7 +733,7 @@ mod tests {
     #[test]
     fn layout_stacks_panels_when_narrow() {
         let area = ratatui::layout::Rect::new(0, 0, 119, 40);
-        let r = plan_layout(area, 20, 6, 8);
+        let r = plan_layout(area, 20, 6, 8, 0);
         assert_eq!(
             r.budget.y,
             r.runs.y + r.runs.height,
@@ -732,9 +745,14 @@ mod tests {
             "Shells sits directly below Budget"
         );
         assert_eq!(
-            r.activity.y,
+            r.alerts.y,
             r.shells.y + r.shells.height,
-            "Activity sits directly below Shells"
+            "Alerts sits directly below Shells"
+        );
+        assert_eq!(
+            r.activity.y,
+            r.alerts.y + r.alerts.height,
+            "Activity sits directly below Alerts"
         );
         assert_eq!(r.runs.width, 119, "each panel takes the full width");
     }
@@ -742,10 +760,10 @@ mod tests {
     #[test]
     fn layout_sizes_runs_and_shells_to_content_up_to_a_cap() {
         let area = ratatui::layout::Rect::new(0, 0, 100, 60);
-        let small = plan_layout(area, 3, 4, 3);
+        let small = plan_layout(area, 3, 4, 3, 0);
         assert_eq!(small.runs.height, 5, "3 body lines plus 2 borders");
         assert_eq!(small.shells.height, 5, "3 body lines plus 2 borders");
-        let big = plan_layout(area, 40, 4, 40);
+        let big = plan_layout(area, 40, 4, 40, 0);
         assert_eq!(big.runs.height, 14, "12 body lines plus 2 borders");
         assert_eq!(big.shells.height, 8, "6 body lines plus 2 borders");
     }
@@ -753,9 +771,13 @@ mod tests {
     #[test]
     fn layout_gives_activity_the_rest() {
         let area = ratatui::layout::Rect::new(0, 0, 80, 40);
-        let r = plan_layout(area, 10, 4, 4);
-        let used =
-            1 + r.runs.height as usize + r.budget.height as usize + r.shells.height as usize + 1;
+        let r = plan_layout(area, 10, 4, 4, 0);
+        let used = 1
+            + r.runs.height as usize
+            + r.budget.height as usize
+            + r.shells.height as usize
+            + r.alerts.height as usize
+            + 1;
         assert_eq!(
             r.activity.height as usize,
             area.height as usize - used,
@@ -773,7 +795,7 @@ mod tests {
     fn layout_survives_a_tiny_terminal() {
         for (w, h) in [(40u16, 10u16), (1u16, 1u16)] {
             let area = ratatui::layout::Rect::new(0, 0, w, h);
-            let r = plan_layout(area, 20, 6, 8);
+            let r = plan_layout(area, 20, 6, 8, 0);
             for (name, rect) in [
                 ("header", r.header),
                 ("runs", r.runs),
@@ -1970,6 +1992,148 @@ mod tests {
         assert!(
             !text.contains("14:36:20"),
             "the UTC clock does not leak: {text}"
+        );
+    }
+
+    // ── alerts_text ──────────────────────────────────────────────────────────
+
+    /// One `AlertBadge` with the given identity and stamps.
+    fn badge(name: &str, severity: &str, first: u64, last: u64) -> crate::ipc::AlertBadge {
+        crate::ipc::AlertBadge {
+            fingerprint: format!("fp-{name}"),
+            name: name.to_string(),
+            severity: severity.to_string(),
+            first_seen_unix: first,
+            last_seen_unix: last,
+        }
+    }
+
+    #[test]
+    fn alerts_text_lists_each_alert_worst_first() {
+        let panel = AlertsPanel::Rows(vec![
+            badge("DiskFull", "critical", 1_788_470_000, 1_788_470_090),
+            badge("HighCPU", "warning", 1_788_469_000, 1_788_470_030),
+            badge("StaleRun", "info", 1_788_460_000, 1_788_469_000),
+        ]);
+        let text = alerts_text(&panel, 1_788_470_100);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "one line per alert, in order: {text}");
+        assert!(
+            lines[0].starts_with("critical DiskFull"),
+            "the first line is the worst alert: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("firing 1m"),
+            "the firing age runs from first_seen: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("seen 10s ago"),
+            "the seen age runs from last_seen: {lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("warning HighCPU"),
+            "the daemon's order is kept: {lines:?}"
+        );
+        assert!(
+            lines[1].contains("firing 18m") && lines[1].contains("seen 1m ago"),
+            "both ages per row: {lines:?}"
+        );
+        assert!(
+            lines[2].starts_with("info StaleRun"),
+            "the last line is the mildest: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn alerts_text_says_none_and_daemon_down() {
+        assert_eq!(
+            alerts_text(&AlertsPanel::Rows(Vec::new()), 100),
+            "none",
+            "an up daemon with no firing alerts says none"
+        );
+        assert_eq!(
+            alerts_text(&AlertsPanel::DaemonDown, 100),
+            "daemon not running",
+            "the down mark is the whole section"
+        );
+    }
+
+    #[test]
+    fn alerts_text_escapes_control_characters() {
+        let panel = AlertsPanel::Rows(vec![badge("\x1b[31mHighCPU", "critical", 100, 110)]);
+        let text = alerts_text(&panel, 120);
+        assert!(
+            !text.bytes().any(|b| b == 0x1b),
+            "no raw ESC byte in the text: {text:?}"
+        );
+        assert!(
+            text.contains("HighCPU"),
+            "the name survives, escaped: {text:?}"
+        );
+    }
+
+    #[test]
+    fn once_frame_has_an_alerts_section_between_shells_and_activity() {
+        let taken_at: DateTime<Utc> = "2026-10-22T00:00:00Z".parse().expect("a fixed time");
+        let snapshot = TopSnapshot {
+            taken_at,
+            runs: Vec::new(),
+            budget: BudgetPanel {
+                ai_cost: 0.0,
+                cap: 0.0,
+                tokens: 0,
+                refused: 0,
+                tok_per_s: 0.0,
+            },
+            activity: Vec::new(),
+            shells: ShellsPanel::DaemonDown,
+            alerts: AlertsPanel::Rows(vec![badge("HighCPU", "warning", 0, 0)]),
+            daemon: None,
+        };
+        let frame = render_once(&snapshot, "");
+        let shells = frame.find("Shells\n").expect("a Shells section");
+        let alerts = frame.find("Alerts\n").expect("an Alerts section");
+        let activity = frame.find("Activity\n").expect("an Activity section");
+        assert!(
+            shells < alerts && alerts < activity,
+            "Alerts sits between Shells and Activity: {frame:?}"
+        );
+        assert!(
+            frame.contains("warning HighCPU"),
+            "the alert row is in the frame: {frame:?}"
+        );
+    }
+
+    #[test]
+    fn plan_layout_places_alerts_between_shells_and_activity() {
+        let area = ratatui::layout::Rect::new(0, 0, 100, 60);
+        let r = plan_layout(area, 5, 3, 4, 9);
+        assert_eq!(
+            r.alerts.y,
+            r.shells.y + r.shells.height,
+            "Alerts sits directly below Shells"
+        );
+        assert_eq!(
+            r.activity.y,
+            r.alerts.y + r.alerts.height,
+            "Activity sits directly below Alerts"
+        );
+        assert_eq!(r.alerts.width, 100, "Alerts takes the full width");
+        assert_eq!(
+            r.alerts.height, 8,
+            "9 alert lines cap at 6 body lines plus 2 borders"
+        );
+        let small = plan_layout(area, 5, 3, 4, 2);
+        assert_eq!(
+            small.alerts.height, 4,
+            "2 body lines plus 2 borders when the alerts fit"
+        );
+        let tight = ratatui::layout::Rect::new(0, 0, 80, 40);
+        let with = plan_layout(tight, 5, 3, 4, 4);
+        let without = plan_layout(tight, 5, 3, 4, 0);
+        assert!(
+            with.activity.height < without.activity.height,
+            "Activity shrinks first to make room for Alerts"
         );
     }
 }
