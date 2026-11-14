@@ -1616,6 +1616,99 @@ async fn attach_sends_session_counters_after_ok() {
     );
 }
 
+/// bug-02b-1: the attach send is unconditional. Two connections attach to one
+/// session whose counts do not change between the attaches; both receive a
+/// `SessionCounters` frame after their `Ok`. The first attach's value is
+/// already in the tracker, so a send gated on the record would deliver the
+/// second connection nothing.
+#[tokio::test]
+async fn a_second_connection_gets_session_counters_at_attach() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    let _lock = daemoneye::test_home_guard();
+    daemoneye::config::Config::ensure_dirs().ok();
+
+    let sid = "m37-attach-second";
+
+    // First connection: `Ok`, then `SessionCounters`.
+    let sessions = daemoneye::daemon::session::SessionStore::new();
+    let (client1, server1) = tokio::io::duplex(1 << 16);
+    let (server_r1, server_w1) = tokio::io::split(server1);
+    let task1 = tokio::spawn(async move {
+        let mut rx = tokio::io::BufReader::new(server_r1);
+        let mut tx = server_w1;
+        daemoneye::daemon::handle_chat_attach(sessions, sid.to_string(), &mut rx, &mut tx).await
+    });
+    let (client_r1, mut client_w1) = tokio::io::split(client1);
+    let mut rx1 = tokio::io::BufReader::new(client_r1);
+
+    let mut line = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx1.read_line(&mut line))
+        .await
+        .expect("the first attach reply within 5 s")
+        .expect("the handler is writing");
+    let first: Response = serde_json::from_str(line.trim()).expect("the reply parses");
+    assert!(matches!(first, Response::Ok), "the first frame is `Ok`");
+
+    line.clear();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx1.read_line(&mut line))
+        .await
+        .expect("the first SessionCounters frame within 5 s")
+        .expect("the handler is writing");
+    let counters1: Response = serde_json::from_str(line.trim()).expect("the frame parses");
+    let Response::SessionCounters { .. } = counters1 else {
+        panic!("the first attach sends SessionCounters after its `Ok`, got {counters1:?}");
+    };
+
+    // Second connection to the same session, unchanged counts: `Ok`, then
+    // `SessionCounters` again.
+    let sessions2 = daemoneye::daemon::session::SessionStore::new();
+    let (client2, server2) = tokio::io::duplex(1 << 16);
+    let (server_r2, server_w2) = tokio::io::split(server2);
+    let task2 = tokio::spawn(async move {
+        let mut rx = tokio::io::BufReader::new(server_r2);
+        let mut tx = server_w2;
+        daemoneye::daemon::handle_chat_attach(sessions2, sid.to_string(), &mut rx, &mut tx).await
+    });
+    let (client_r2, mut client_w2) = tokio::io::split(client2);
+    let mut rx2 = tokio::io::BufReader::new(client_r2);
+
+    line.clear();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx2.read_line(&mut line))
+        .await
+        .expect("the second attach reply within 5 s")
+        .expect("the handler is writing");
+    let second: Response = serde_json::from_str(line.trim()).expect("the reply parses");
+    assert!(
+        matches!(second, Response::Ok),
+        "the second attach's first frame is `Ok`, got {second:?}"
+    );
+
+    line.clear();
+    tokio::time::timeout(std::time::Duration::from_secs(5), rx2.read_line(&mut line))
+        .await
+        .expect("the second SessionCounters frame within 5 s")
+        .expect("the handler is writing");
+    let counters2: Response = serde_json::from_str(line.trim()).expect("the frame parses");
+    assert_eq!(
+        counters2, counters1,
+        "the second connection gets the same counters, despite the unchanged record"
+    );
+
+    // Both connections drop together: the second's close is the last, which
+    // forgets the session's record.
+    client_w1.shutdown().await.unwrap();
+    task1.await.unwrap().unwrap();
+    client_w2.shutdown().await.unwrap();
+    task2.await.unwrap().unwrap();
+    assert!(
+        daemoneye::daemon::session::presence_session_ids()
+            .iter()
+            .all(|id| id != sid),
+        "no presence connection remains for the test session"
+    );
+}
+
 // ── G1 Named Agents ──────────────────────────────────────────────────────────
 
 /// Verify that `merge_runbook_ghost_config` propagates all agent fields into the

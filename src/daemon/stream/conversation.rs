@@ -458,6 +458,7 @@ where
                         &mut run_log,
                         &sessions,
                     );
+                    turn_output_tokens = turn_output_tokens.saturating_add(usage.output_tokens);
 
                     // Update session token tracking so the budget line in the next
                     // prompt reflects the actual context size of this turn.

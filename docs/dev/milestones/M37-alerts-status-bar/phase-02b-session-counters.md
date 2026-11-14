@@ -414,3 +414,119 @@ sum, the client arms and their tests. Do not redo them.
 
 The finish condition is the four `(bug-02b-1)` criteria, with `cargo test`
 reporting **more than 2939 passed**. Paste the mutation check.
+
+### Update — 2026-11-13 21:36 (progress, executor, bug-02b-1 re-dispatch)
+
+Both bug-02b-1 edits are in. `session_counters_loop` now drives the daemon's
+**one** per-session record — `counters_tick_with_global` locks the global
+`counters_tracker()` for the tick pass (never across a send; the pushes only
+queue), and `grep -c 'CountersTracker::default()' src/daemon/startup.rs` is 0.
+The attach's `record_session_counters` no longer gates its send on the record:
+it records the value and **always** pushes one `SessionCounters` to the
+connection that just attached, so a second connection to an unchanged session
+gets its frame too. New tests:
+`a_second_connection_gets_session_counters_at_attach` (integration, fails on
+the old gated send) and
+`a_tick_after_an_attach_pushes_nothing_and_after_the_forget_pushes_again`
+(unit, drives the production tick + forget pair). The `tests/integration.rs`
+allowlist line grew 2457 → 2553 for the second-connection test. The two
+mutation checks and the end-to-end block are in this dispatch's
+end-to-end entry below.
+
+### Update — 2026-11-13 21:36 (end-to-end verification, executor, bug-02b-1 round)
+
+Mutation check 1 — the count function's `dedicated` guard removed
+(`if record.in_flight.is_some()`), the named test fails, then reverted:
+
+```
+running 1 test
+test daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background ... FAILED
+
+failures:
+
+---- daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background stdout ----
+
+thread 'daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background' (2901406) panicked at src/daemon/counters.rs:276:9:
+assertion `left == right` failed: only the dedicated in-flight shell counts
+  left: 2
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2850 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+After the revert, the same test is green again:
+
+```
+running 1 test
+test daemon::counters::tests::session_counters_count_dedicated_shells_with_a_command_in_flight_as_background ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2850 filtered out; finished in 0.00s
+```
+
+Mutation check 2 (bug-02b-1) — the attach made to skip its send when the
+record matches (`if !tracker.wants_push(...) { return; }` restored in
+`record_session_counters`), the second-connection test fails, then reverted:
+
+```
+running 1 test
+test a_second_connection_gets_session_counters_at_attach ... FAILED
+
+failures:
+
+---- a_second_connection_gets_session_counters_at_attach stdout ----
+
+thread 'a_second_connection_gets_session_counters_at_attach' (2902467) panicked at tests/integration.rs:1690:10:
+the second SessionCounters frame within 5 s: Elapsed(())
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    a_second_connection_gets_session_counters_at_attach
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 41 filtered out; finished in 5.01s
+
+error: test failed, to rerun pass `--test integration`
+```
+
+After the revert, the same test is green again:
+
+```
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+running 1 test
+test a_second_connection_gets_session_counters_at_attach ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.01s
+```
+
+End-to-end block (run mechanically, output redirected to a file and pasted;
+`exit=0` from the block itself):
+
+```
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 2846 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2850 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.01s
+ipc_frames=6
+build_warnings=0
+passed=2941 failed=0
+```
+
+The bug-02b-1 production tick-and-forget test, and the two attach tests
+by name:
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2850 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.01s
+```
+
+Gate capture: fmt clean (`--check` exit 0), build 0 warnings,
+clippy `-D warnings` clean, `cargo test` green at **2941 passed, 0 failed**
+(> 2939, the bounce's finish condition), hygiene 16/16 (the
+`tests/integration.rs` allowlist line grew 2457 → 2553 for the
+second-connection test — a test-file line, annotated in the allowlist),
+`doc_truth` 19/19, `bug_tracker` 6/6, and
+`grep -c 'CountersTracker::default()' src/daemon/startup.rs` prints 0.

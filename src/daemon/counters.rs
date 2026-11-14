@@ -114,17 +114,20 @@ pub fn presence_push_to_session_in(
 }
 
 /// The daemon's last-pushed counters per session. Process-global like the
-/// presence map itself; tests drive a fresh [`CountersTracker`], since cargo
-/// runs tests in parallel.
+/// presence map itself, and the **one** record: the attach writes it, the 1 s
+/// task diffs against it and the last close forgets it (bug-02b-1). Tests
+/// drive a fresh [`CountersTracker`], since cargo runs tests in parallel.
 static COUNTERS_TRACKER: std::sync::OnceLock<Mutex<CountersTracker>> = std::sync::OnceLock::new();
 
-fn counters_tracker() -> &'static Mutex<CountersTracker> {
+pub(crate) fn counters_tracker() -> &'static Mutex<CountersTracker> {
     COUNTERS_TRACKER.get_or_init(|| Mutex::new(CountersTracker::default()))
 }
 
 /// Push `value` to `session_id`'s presence connections and record it as the
-/// session's last-pushed counters. The attach send uses this; the value it
-/// records is the one the 1 s task diffs against.
+/// session's last-pushed counters. The attach send uses this: the send is
+/// unconditional — every connection that attaches gets one `SessionCounters`
+/// after its `Ok` — and the value it records is the one the 1 s task diffs
+/// against.
 pub fn record_session_counters(
     session_id: &str,
     value: SessionCounters,
@@ -132,9 +135,6 @@ pub fn record_session_counters(
 ) {
     {
         let mut tracker = counters_tracker().lock().unwrap_or_log();
-        if !tracker.wants_push(session_id, value) {
-            return;
-        }
         tracker.record_push(session_id, value);
     }
     push(&Response::SessionCounters {
@@ -156,6 +156,25 @@ pub fn forget_session_counters(session_id: &str) {
 /// that session's connections only, and only when the value differs from the
 /// last one pushed to it. The tracker records every value pushed here, so an
 /// attach's first push starts from this task's last known value.
+///
+/// The session-to-tracker seam the startup loop drives: the tick runs against
+/// the daemon's **one** per-session record — the same `CountersTracker` the
+/// attach writes and the last close forgets (bug-02b-1). The tracker lock is
+/// held for the pass and never across a client send: the pushes only queue on
+/// the connections' channels.
+pub fn counters_tick_with_global(
+    reg: &ShellRegistry,
+    ghosts_active: u32,
+    session_ids: &[String],
+    push: impl FnMut(&str, &Response),
+) {
+    let mut tracker = counters_tracker().lock().unwrap_or_log();
+    counters_tick(reg, ghosts_active, session_ids, &mut tracker, push)
+}
+
+/// [`counters_tick_with_global`] over an explicit tracker — the seam tests
+/// drive with a fresh `CountersTracker`, the way [`presence_push_to_session_in`]
+/// takes an explicit map.
 pub fn counters_tick(
     reg: &ShellRegistry,
     ghosts_active: u32,
@@ -324,5 +343,66 @@ mod tests {
         }
         assert!(rx_a.try_recv().is_err());
         assert!(rx_b.try_recv().is_err());
+    }
+
+    /// bug-02b-1, the production tick-and-forget pair: after an attach's
+    /// record, a tick with the same counts pushes nothing; after the forget,
+    /// the next tick pushes again. Drives the production
+    /// [`counters_tick_with_global`] and [`forget_session_counters`] — the
+    /// same seam the startup loop and the attach handler call — against the
+    /// global tracker. The session id is unique to this test so the
+    /// process-global record carries only its own values.
+    #[test]
+    fn a_tick_after_an_attach_pushes_nothing_and_after_the_forget_pushes_again() {
+        let sid = "m37-tick-forget";
+        let reg = registry_with(vec![record(40, Owner::Chat(sid.to_string()), false, false)]);
+        let pushed: Mutex<Vec<(String, u32, u32, u32)>> = Mutex::new(Vec::new());
+        let record_push =
+            |pushed: &Mutex<Vec<(String, u32, u32, u32)>>, sid: &str, frame: &Response| {
+                if let Response::SessionCounters {
+                    background,
+                    ghosts,
+                    shells,
+                } = frame
+                {
+                    pushed
+                        .lock()
+                        .unwrap()
+                        .push((sid.to_string(), *background, *ghosts, *shells));
+                }
+            };
+
+        // The attach records one value unconditionally (the same call the
+        // attach handler makes).
+        let value = counters_for_session(&reg, sid, 0);
+        record_session_counters(sid, value, |frame| record_push(&pushed, sid, frame));
+        assert_eq!(
+            pushed.lock().unwrap().len(),
+            1,
+            "the attach's send lands once"
+        );
+
+        // A tick with unchanged counts pushes nothing.
+        counters_tick_with_global(&reg, 0, &[sid.to_string()], |sid, frame| {
+            record_push(&pushed, sid, frame)
+        });
+        assert_eq!(
+            pushed.lock().unwrap().len(),
+            1,
+            "a tick after the attach's record, same counts, pushes nothing"
+        );
+
+        // The last close forgets; the next tick pushes again.
+        forget_session_counters(sid);
+        counters_tick_with_global(&reg, 0, &[sid.to_string()], |sid, frame| {
+            record_push(&pushed, sid, frame)
+        });
+        let pushes = pushed.lock().unwrap();
+        assert_eq!(
+            pushes.len(),
+            2,
+            "after the forget, the next tick pushes again"
+        );
+        assert_eq!(pushes.last().map(|p| p.0.as_str()), Some(sid));
     }
 }

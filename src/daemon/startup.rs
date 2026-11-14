@@ -19,18 +19,19 @@ use tokio::net::UnixListener;
 /// The 1 s `SessionCounters` push loop (M37 phase 02b): every present session
 /// gets its counters computed and, when they changed, pushed to its presence
 /// connections. Kept out of `run_daemon` to leave its hygiene-cap line alone.
+/// The tracker is the daemon's **one** per-session record — the same one the
+/// attach writes and the last close forgets — so a tick after an attach with
+/// unchanged counts pushes nothing, and a tick after the forget pushes again.
 async fn session_counters_loop() {
     let reg = crate::shell::registry().clone();
-    let mut tracker = crate::daemon::counters::CountersTracker::default();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         tick.tick().await;
         let session_ids = crate::daemon::session::presence_session_ids();
-        crate::daemon::counters::counters_tick(
+        crate::daemon::counters::counters_tick_with_global(
             &reg,
             crate::daemon::stats::get_ghosts_active() as u32,
             &session_ids,
-            &mut tracker,
             |sid, frame| {
                 crate::daemon::counters::presence_push_to_session_in(
                     crate::daemon::session::presence_registry(),
