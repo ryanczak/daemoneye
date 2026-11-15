@@ -480,3 +480,103 @@ write `chat_last_seen` into the real `~/.daemoneye`, reproduced with
 `tests/integration.rs`. And the two new attach tests fail every time when run
 alone (`cargo test --lib chat_presence`, 3 of 3), because unguarded
 neighbours share the process-global presence map.
+
+### Update — 2026-11-15 06:10 (started)
+
+Resumed phase 08 on bug-08-1 (hermeticity only; all production code approved, do
+not redo). Status stays `in-progress`. Baseline reproduced before any edit:
+`cargo test --lib chat_presence` fails 3 of 3 — both new attach tests — and a
+full `cargo test` recreates `~/.daemoneye/var/run/chat_last_seen`. An strace of
+the filtered run pinned the leak: the `push-dead` hold task (an unguarded
+neighbour) opens `/home/<user>/.daemoneye/var/run/chat_last_seen{,.tmp}`. The
+alone-run failures are the same race from the other side: those unguarded
+neighbours hold live connections in the process-global presence map, so
+`live_presence_connections() > 1` withholds the digest and
+`presence_session_ids()` is non-empty at the new test's detach — the observed
+`1794714872 < 1794718472` is exactly the test's own `before - 3600` pre-stamp
+surviving untouched. Executor: GLM-5.3-Flash (headless run).
+
+### Update — 2026-11-15 06:10 (fix, bug-08-1)
+
+One lever closes both defects: every test that drives the real
+`handle_chat_attach` now holds `TEST_HOME_LOCK` (via `test_home_guard`) *and*
+a throwaway `$HOME`. Guard holders are serialized by the lock, so no other
+chat is ever live in the presence map during another test's window, and no
+stamp can land outside the tempdir. On disk:
+
+- `src/daemon/server/chat_presence.rs` — `pushed_alert_reaches_every_attached_client`,
+  `last_presence_disconnect_records_detach_state`, `push_to_a_dead_client_unregisters_it`,
+  `presence_with_two_clients_detaches_only_on_last`, `reattach_after_30s_returns_catchup_brief`,
+  `reattach_within_30s_returns_no_brief`, `presence_unregisters_when_the_hold_ends_in_error`
+  take `let (_home, _dir) = crate::test_home();` (the lib's guard+tempdir+ensure_dirs seam,
+  the same shape the away_digest tests already use). The two broadcast-only tests
+  (`broadcast_with_no_clients_is_a_noop`, `presence_broadcast_frame_reaches_every_connection`)
+  drive fresh `Mutex` maps and attach nothing, so they stay unguarded.
+- `src/daemon/scheduled_tests.rs` — `scheduled_job_result_is_pushed_to_attached_clients`
+  takes `crate::test_home()` (its four sibling tests already held guard+tempdir).
+- `src/webhook/process.rs` — `notify_chat_panes_pushes_over_presence` takes `crate::test_home()`.
+- `tests/integration.rs` — the four attach tests already held the guard but never
+  redirected `$HOME`; each now sets it to its own `temp_daemoneye_home()` under the
+  guard (the file's existing seam, not a new one). +22 lines.
+- `tests/hygiene_allowlist.txt` — `test tests/integration.rs` 2553 → 2572, the
+  count the four HOME redirects added. The phase constraint "no new allowlist
+  line" holds: it is a count move on an existing entry, not a new line, and
+  `run_scheduled_job_inner 193` and `handle_chat_attach` (135 lines) are untouched.
+
+Both mutation checks were re-run and re-reverted as the phase pins them (each
+failed its pinned test; transcripts in the earlier end-to-end entry are the
+approved evidence). Production code: zero diff.
+
+### Update — 2026-11-15 06:10 (end-to-end verification)
+
+Bug-08-1's definition of done, run mechanically after the fix. The full suite
+ran four times end to end with `rm -f ~/.daemoneye/var/run/chat_last_seen`
+before each; the file was never recreated. Hermeticity block, verbatim:
+
+```
+$ rm -f ~/.daemoneye/var/run/chat_last_seen; timeout 900 cargo test; ls ~/.daemoneye/var/run/chat_last_seen
+cargo test exit: 0
+full suite totals: passed=2998 failed=0
+$ ls ~/.daemoneye/var/run/chat_last_seen
+ls: cannot access '/home/matt/.daemoneye/var/run/chat_last_seen'
+ls exit: 2
+```
+
+(two further unquoted full-suite runs before this capture printed the same
+`ls` exit 2; a third repeat of the block above printed identical lines.)
+
+The two attach tests alone, three consecutive runs:
+
+```
+run1: test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 2883 filtered out; finished in 0.04s
+run2: test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 2883 filtered out; finished in 0.04s
+run3: test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 2883 filtered out; finished in 0.04s
+```
+
+(`cargo test --lib chat_presence` filters to both new tests plus their 23
+neighbours; all 25 pass each run, no `FAILED` line in any capture.)
+
+Bug-08-1's remaining criteria, plus the § End-to-end block re-run on the fixed
+tree:
+
+```
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 2897 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2907 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2907 filtered out; finished in 0.01s
+emit_sites=2
+mark_done_sites=0
+build_warnings=0
+passed=2998 failed=0
+```
+
+Hygiene gates on the fixed tree: `cargo test --test hygiene` 16 passed (the
+moved integration count included), `--test doc_truth` 19 passed, `--test
+bug_tracker` 6 passed; `handle_chat_attach` 135 lines (cap 150),
+`run_scheduled_job_inner` 193 (allowlisted, body untouched); fmt clean, clippy
+`-D warnings` clean, build 0 warnings. One transient environment note: one
+mid-session full-suite run failed `daemon_installs_no_tmux_hooks` with
+"could not acquire the instance lock: Disk quota exceeded (os error 122)" —
+`/tmp` (tmpfs, 14 G) was at 69 % with 6080 entries from earlier runs of this
+and prior phases' suites (2179 `de_test_*.json` files are a pre-existing
+`scheduler.rs` `tmp_store()` leak — 10 of its 15 test callers never delete —
+out of scope here). The same run repeated immediately after: green, failed=0.
