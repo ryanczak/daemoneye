@@ -1,41 +1,21 @@
-//! The status bar's fitting half (M37 phase 02a): the `Part` shape, its
-//! drop ranks, and the measure-and-drop join — split from `status_bar.rs`
-//! to keep that file under the hygiene cap. The ranks order the whole bar;
-//! `status_bar_line` in the parent drives them.
+//! The status bar's fitting half (M37 phase 02a): the drop ranks, and the
+//! measure-and-drop join — split from `status_bar.rs` to keep that file under
+//! the hygiene cap. The ranks order the whole bar; `status_bar_line` in the
+//! parent drives them. Since phase 09 the parts are two-form (`Part` in
+//! `status_words.rs`): a wide form with the item's word and a compact form
+//! that is byte-for-byte the pre-words bar.
 
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthStr;
 
 use super::gray;
+use super::words::TwoFormPart;
 
 /// The separator between segments: ` · ` at ≥ 36 columns, a single space
 /// below.
 pub(super) const WIDE_SEP: &str = " · ";
 pub(super) const NARROW_SEP: &str = " ";
 pub(super) const NARROW_BELOW: usize = 36;
-
-/// One rendered piece of the bar: its spans, its columns, and where it sits
-/// in the drop order. Ranks are unique; the lowest remaining rank drops
-/// first when the line does not fit.
-///
-/// Tier 3 (the velocities, the alert name and age, the session, the model,
-/// the grants detail) holds ranks 1–8, tier 2 (the counters) 9–12, the
-/// grants core 13 — it drops after tier 2 and before tier 1 — and tier 1
-/// (state, alerts, context, cost, turn) 14–18, the last resort on a very
-/// narrow pane.
-#[derive(Debug)]
-pub(super) struct Part {
-    pub spans: Vec<Span<'static>>,
-    pub width: usize,
-    pub rank: u16,
-}
-
-impl Part {
-    pub(super) fn new(spans: Vec<Span<'static>>, rank: u16) -> Self {
-        let width = spans.iter().map(Span::width).sum();
-        Part { spans, width, rank }
-    }
-}
 
 // Drop ranks, lowest drops first.
 pub(super) const RANK_GROWTH: u16 = 1;
@@ -58,12 +38,13 @@ pub(super) const RANK_ALERTS: u16 = 17;
 pub(super) const RANK_STATE: u16 = 18;
 
 /// Do all the slots plus the grants segment fit `width` at `sep` between
-/// them? The segment is a whole slot's worth of parts: their widths plus
-/// one space per internal join.
+/// them, in the form `wide` selects? The segment is a whole slot's worth of
+/// parts: their widths plus one space per internal join.
 pub(super) fn line_fits(
-    slots: &[Vec<Part>],
+    slots: &[Vec<TwoFormPart>],
     hint_width: Option<usize>,
     sep: &str,
+    wide: bool,
     width: usize,
 ) -> bool {
     let sep_w = UnicodeWidthStr::width(sep);
@@ -74,7 +55,7 @@ pub(super) fn line_fits(
             continue;
         }
         live_slots += 1;
-        used += slot.iter().map(|p| p.width).sum::<usize>() + slot.len().saturating_sub(1); // the spaces within the slot
+        used += slot.iter().map(|p| p.width(wide)).sum::<usize>() + slot.len().saturating_sub(1); // the spaces within the slot
     }
     if live_slots > 1 {
         used += sep_w * (live_slots - 1);
@@ -86,12 +67,13 @@ pub(super) fn line_fits(
     used <= width
 }
 
-/// Join the slots into one `Line`, then the grants segment's parts joined by
-/// single spaces, flush right when present.
+/// Join the slots into one `Line` in the form `wide` selects, then the grants
+/// segment's parts joined by single spaces, flush right when present.
 pub(super) fn join_slots(
-    slots: &[Vec<Part>],
-    hint: &mut Option<Vec<Part>>,
+    slots: &[Vec<TwoFormPart>],
+    hint: &mut Option<Vec<TwoFormPart>>,
     sep: &str,
+    wide: bool,
     width: usize,
 ) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -111,14 +93,16 @@ pub(super) fn join_slots(
                 spans.push(Span::styled(" ".to_string(), gray()));
                 used += 1;
             }
-            spans.extend(part.spans.iter().cloned());
-            used += part.width;
+            let part_spans = part.spans(wide);
+            spans.extend(part_spans.iter().cloned());
+            used += part.width(wide);
             live_part = true;
         }
         live_slot = true;
     }
     if let Some(parts) = hint {
-        let hint_w = parts.iter().map(|p| p.width).sum::<usize>() + parts.len().saturating_sub(1);
+        let hint_w =
+            parts.iter().map(|p| p.width(wide)).sum::<usize>() + parts.len().saturating_sub(1);
         let gap = width.saturating_sub(used + hint_w);
         spans.push(Span::styled(" ".repeat(gap), gray()));
         let mut live_part = false;
@@ -126,7 +110,7 @@ pub(super) fn join_slots(
             if live_part {
                 spans.push(Span::styled(" ".to_string(), gray()));
             }
-            spans.extend(part.spans.iter().cloned());
+            spans.extend(part.spans(wide).iter().cloned());
             live_part = true;
         }
     }

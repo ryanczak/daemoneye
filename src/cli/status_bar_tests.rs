@@ -87,7 +87,6 @@ fn glyph_sets_contain_no_variation_selectors() {
             set.awaiting_approval,
             set.daemon_down,
             set.reconnecting,
-            set.elapsed,
             set.alert_critical,
             set.alert_warning,
             set.alert_info,
@@ -189,6 +188,15 @@ fn status_line_hides_zero_counters_and_shows_nonzero_ones() {
             "a zero counter is hidden entirely: {slot} in {text:?}"
         );
     }
+
+    // Wide: the pluralised word replaces the glyph, count after it.
+    let mut m = full_model();
+    m.ghosts = 2;
+    let text = line_at(&m, now, 400);
+    assert!(
+        text.contains("ghosts 2"),
+        "the wide ghost counter carries the word: {text:?}"
+    );
 }
 
 #[test]
@@ -224,7 +232,7 @@ fn status_line_leads_with_the_worst_alert_and_counts_all() {
     let text = line_at(&m, now, 160);
     assert!(
         text.contains("🔥3"),
-        "the worst severity's glyph and every count: {text:?}"
+        "the worst severity's glyph and the count of every firing alert: {text:?}"
     );
     assert!(
         text.contains("DaemonGone"),
@@ -252,6 +260,17 @@ fn status_line_leads_with_the_worst_alert_and_counts_all() {
         .or_else(|| text.find("🌕"))
         .expect("the context glyph is on the line");
     assert!(lead < ctx, "alerts sit left of context: {text:?}");
+
+    // Wide (a model whose wide bar fits): the severity word beside the glyph.
+    let mut m = m.clone();
+    m.session_name = None;
+    m.turn_started_at = None;
+    m.grants = GrantSummary::default();
+    let text = line_at(&m, now, 400);
+    assert!(
+        text.contains("🔥 crit") && text.contains("DaemonGone"),
+        "the wide severity carries the word beside the glyph: {text:?}"
+    );
 }
 
 #[test]
@@ -286,6 +305,13 @@ fn status_line_shows_the_resolve_flash_for_ten_seconds() {
     assert!(
         !at_11.contains("🧯") && !at_11.contains("DiskFull"),
         "the flash is gone after ten seconds: {at_11:?}"
+    );
+
+    // Wide: the word `resolved` beside the glyph; compact drops it.
+    let wide_flash = line_at(&m, t0 + Duration::from_secs(9), 400);
+    assert!(
+        wide_flash.contains("🧯 resolved DiskFull"),
+        "the wide flash carries the word: {wide_flash:?}"
     );
 }
 
@@ -399,7 +425,7 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
         let text = line_at(&m, now, width as u16);
         if !text.contains("⚡8") {
             assert!(text.contains("💤"), "state is tier 1: {text:?}");
-            assert!(text.contains("⚠1"), "alerts are tier 1: {text:?}");
+            assert!(text.contains("⚠"), "alerts are tier 1: {text:?}");
             assert!(text.contains("🌓20%"), "context is tier 1: {text:?}");
             assert!(text.contains("💸0.42"), "cost is tier 1: {text:?}");
             assert!(text.contains("↻12"), "turn is tier 1: {text:?}");
@@ -518,18 +544,18 @@ fn status_line_working_state_shows_elapsed_seconds() {
         "the working state's glyph leads: {text:?}"
     );
     assert!(
-        text.contains("⏱12s"),
-        "the elapsed mark and seconds since the turn started: {text:?}"
+        text.contains("thinking 12s"),
+        "the word and seconds since the turn started (no ⏱ mark): {text:?}"
     );
     assert!(!text.contains("daemon down"), "not down: {text:?}");
+    assert!(!text.contains("⏱"), "the elapsed mark is gone: {text:?}");
 
-    // The working slot drops the elapsed seconds under the ascii dialect's
-    // bare spelling: the seconds still show.
+    // The working slot keeps the word in the ascii dialect too.
     m.glyphs = &ASCII;
     let text = line_at(&m, now, 160);
     assert!(
-        text.contains("12s"),
-        "ascii spells the seconds bare: {text:?}"
+        text.contains("thinking 12s"),
+        "ascii spells the word and seconds bare: {text:?}"
     );
 }
 
@@ -839,7 +865,10 @@ fn the_prompt_reply_returns_the_bar_to_working_with_its_clock() {
     assert_eq!(m.state, ChatState::Working, "the reply is back to working");
     assert_eq!(m.turn_started_at, Some(start), "the turn clock is kept");
     let line = line_at(&m, start + Duration::from_secs(4), 160);
-    assert!(line.contains('4'), "the elapsed seconds show again: {line}");
+    assert!(
+        line.contains("thinking 4s"),
+        "the elapsed seconds show again: {line}"
+    );
 }
 
 #[test]
@@ -1069,16 +1098,16 @@ fn grants_count_active_kinds_and_show_detail_when_room() {
         ..GrantSummary::default()
     };
 
-    // Core: the lead glyph and the count of active kinds (sudo, scripts,
-    // files all, deletes = 4).
+    // Core: the lead glyph, the word and the count of active kinds (sudo,
+    // scripts, files all, deletes = 4).
     let text = line_at(&m, now, 160);
-    assert!(text.contains("⚡4"), "four active kinds: {text:?}");
+    assert!(text.contains("⚡ grants 4"), "four active kinds: {text:?}");
 
-    // Detail at 160: each kind glyph, `∗` for the All scope, in the table's
-    // order and after the lead.
+    // Detail at 160: each kind glyph, its word, the count or `all`, in the
+    // table's order and after the lead.
     let lead_at = text.find('⚡').expect("the lead glyph shows");
     let mut last = lead_at;
-    for part in ["🔑", "📜2", "📄∗", "🗑"] {
+    for part in ["🔑 sudo", "📜 scripts 2", "📄 files all", "🗑 deletes"] {
         let at = text
             .find(part)
             .unwrap_or_else(|| panic!("detail part {part} shows at 160: {text:?}"));
@@ -1106,7 +1135,7 @@ fn grants_detail_drops_before_the_core() {
     loop {
         let text = line_at(&m, now, width as u16);
         if !text.contains('🔑') {
-            for part in ["📜", "📄", "🗑"] {
+            for part in ["📜", "📄", "🗑", "sudo", "scripts", "files", "deletes"] {
                 assert!(
                     !text.contains(part),
                     "detail drops as one tier: {part} still in {text:?}"
@@ -1159,16 +1188,19 @@ fn grants_speak_each_dialect() {
         !text.contains('⚡'),
         "ascii never speaks the emoji lead: {text:?}"
     );
-    assert!(text.contains("A1"), "ascii lead with the count: {text:?}");
-    assert!(text.contains('!'), "ascii gated mark: {text:?}");
+    assert!(
+        text.contains("A grants 1"),
+        "ascii lead with the count: {text:?}"
+    );
+    assert!(text.contains("! gated"), "ascii gated mark: {text:?}");
 
     m.glyphs = &SYMBOLS;
     let text = line_at(&m, now, 120);
     assert!(
-        text.contains("⚡1"),
+        text.contains("⚡ grants 1"),
         "symbols speak the same lead: {text:?}"
     );
-    assert!(text.contains('⊘'), "symbols gated mark: {text:?}");
+    assert!(text.contains("⊘ gated"), "symbols gated mark: {text:?}");
 }
 
 #[test]

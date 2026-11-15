@@ -1,6 +1,7 @@
 //! The status bar's glyph dialects (M37 phase 02a): one slot table per
 //! dialect — `EMOJI` (the default), `SYMBOLS`, `ASCII` — sharing one field
-//! per slot. No glyph contains U+FE0F or U+FE0E.
+//! per slot. No glyph contains U+FE0F or U+FE0E. The working state's `⏱`
+//! mark went with phase 09's words.
 
 /// A glyph dialect's slot table: one field per glyph the bar can lead a
 /// segment with. No glyph contains U+FE0F or U+FE0E.
@@ -11,9 +12,6 @@ pub struct GlyphSet {
     pub awaiting_approval: &'static str,
     pub daemon_down: &'static str,
     pub reconnecting: &'static str,
-    /// The elapsed mark beside a working state's seconds; empty in a dialect
-    /// that spells the seconds bare.
-    pub elapsed: &'static str,
     pub alert_critical: &'static str,
     pub alert_warning: &'static str,
     pub alert_info: &'static str,
@@ -68,7 +66,6 @@ pub static EMOJI: GlyphSet = GlyphSet {
     awaiting_approval: "✋",
     daemon_down: "💀",
     reconnecting: "📡",
-    elapsed: "⏱",
     alert_critical: "🔥",
     alert_warning: "⚠",
     alert_info: "ℹ",
@@ -116,7 +113,6 @@ pub static SYMBOLS: GlyphSet = GlyphSet {
     awaiting_approval: "⏸",
     daemon_down: "✖",
     reconnecting: "⟳",
-    elapsed: "⏱",
     alert_critical: "●",
     alert_warning: "●",
     alert_info: "●",
@@ -164,7 +160,6 @@ pub static ASCII: GlyphSet = GlyphSet {
     awaiting_approval: "?",
     daemon_down: "X",
     reconnecting: "~",
-    elapsed: "",
     alert_critical: "!!",
     alert_warning: "!",
     alert_info: "i",

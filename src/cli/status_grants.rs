@@ -3,9 +3,9 @@
 //! `crate::cli::status_bar::GrantSummary` path.
 
 use ratatui::style::{Color, Style};
-use ratatui::text::Span;
 
-use super::fit::{Part, RANK_GRANT_DETAIL, RANK_GRANTS};
+use super::fit::{RANK_GRANT_DETAIL, RANK_GRANTS};
+use super::words::{TwoFormPart as Part, two_form as part_two_form, word};
 use super::{StatusModel, gray};
 use crate::cli::palette::Palette;
 use crate::cli::status_glyphs::GlyphSet;
@@ -83,9 +83,10 @@ impl GrantSummary {
 }
 
 /// The grants segment: hidden in the default state (`Auto` cmds, nothing
-/// else); otherwise the lead glyph coloured by the riskiest grant and the
-/// count of active kinds (tier 1), plus — droppable — one part per active
-/// kind, glyph then count or mark (tier 3). Flush right, as the hint was.
+/// else); otherwise the lead glyph coloured by the riskiest grant, the word
+/// `grants` and the count of active kinds (tier 1, the word exempt), plus —
+/// droppable — one part per active kind, glyph then word then count (tier
+/// 3). Flush right, as the hint was.
 pub(super) fn grants_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Part> {
     let s = model.grants;
     if s.is_default() {
@@ -93,56 +94,82 @@ pub(super) fn grants_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette)
     }
     let colour = grants_lead_colour(&s, palette);
     let kinds = s.active_kinds();
-    let core = Part::new(
-        vec![Span::styled(
-            format!("{}{kinds}", g.grants),
-            Style::default().fg(colour),
-        )],
+    let lead_style = Style::default().fg(colour);
+    let core = part_two_form(
+        lead_style,
+        g.grants,
+        kinds.to_string(),
+        Some((format!("{} {kinds}", word::GRANTS), false)),
         RANK_GRANTS,
     );
-    let detail = |glyph: &str, text: String| {
-        Part::new(
-            vec![Span::styled(format!("{glyph}{text}"), gray())],
+    let detail = |glyph: &str, wide_word: String, compact_text: String| {
+        part_two_form(
+            gray(),
+            glyph,
+            compact_text,
+            Some((wide_word, false)),
             RANK_GRANT_DETAIL,
         )
     };
     let mut parts = vec![core];
     if s.cmds == CmdGrant::Gated {
-        parts.push(detail(g.grant_gated, String::new()));
+        parts.push(detail(g.grant_gated, word::GATED.into(), String::new()));
     }
     if s.cmds == CmdGrant::Sudo || s.cmds == CmdGrant::All {
-        parts.push(detail(g.grant_sudo, String::new()));
+        parts.push(detail(g.grant_sudo, word::SUDO.into(), String::new()));
     }
-    for (scope, glyph) in [
-        (s.scripts, g.grant_scripts),
-        (s.runbooks, g.grant_runbooks),
-        (s.files, g.grant_files),
+    for (scope, glyph, kind) in [
+        (s.scripts, g.grant_scripts, word::SCRIPTS),
+        (s.runbooks, g.grant_runbooks, word::RUNBOOKS),
+        (s.files, g.grant_files, word::FILES),
     ] {
         if scope != Scope::None {
-            let text = match scope {
-                Scope::All => g.grant_all.to_string(),
-                Scope::Named(n) => n.to_string(),
-                Scope::None => String::new(),
-            };
-            parts.push(detail(glyph, text));
+            match scope {
+                Scope::All => parts.push(detail(
+                    glyph,
+                    format!("{kind} {}", word::ALL),
+                    g.grant_all.into(),
+                )),
+                Scope::Named(n) => parts.push(detail(glyph, format!("{kind} {n}"), n.to_string())),
+                Scope::None => {}
+            }
         }
     }
     if s.schedules {
-        parts.push(detail(g.grant_schedules, String::new()));
+        parts.push(detail(
+            g.grant_schedules,
+            word::SCHEDULES.into(),
+            String::new(),
+        ));
     }
     if s.agents != Scope::None {
-        let text = match s.agents {
-            Scope::All => g.grant_all.to_string(),
-            Scope::Named(n) => n.to_string(),
-            Scope::None => String::new(),
-        };
-        parts.push(detail(g.grant_agents, text));
+        match s.agents {
+            Scope::All => parts.push(detail(
+                g.grant_agents,
+                format!("{} {}", word::AGENTS, word::ALL),
+                g.grant_all.into(),
+            )),
+            Scope::Named(n) => parts.push(detail(
+                g.grant_agents,
+                format!("{} {n}", word::AGENTS),
+                n.to_string(),
+            )),
+            Scope::None => {}
+        }
     }
     if s.deletes {
-        parts.push(detail(g.grant_deletes, String::new()));
+        parts.push(detail(g.grant_deletes, word::DELETES.into(), String::new()));
     }
     if s.hosts > 0 {
-        parts.push(detail(g.grant_hosts, s.hosts.to_string()));
+        parts.push(detail(
+            g.grant_hosts,
+            format!(
+                "{} {}",
+                word::plural(s.hosts, word::HOST, word::HOSTS),
+                s.hosts
+            ),
+            s.hosts.to_string(),
+        ));
     }
     parts
 }

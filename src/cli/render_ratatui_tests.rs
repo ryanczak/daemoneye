@@ -855,7 +855,9 @@ fn status_bar_shows_turn_on_every_panel() {
             .flat_map(|c| c.symbol().chars())
             .collect();
         assert!(
-            all_text.contains("↻6") || all_text.contains("t6"),
+            all_text.contains("↻ turn 6")
+                || all_text.contains("t turn 6")
+                || all_text.contains("t6"),
             "draw path {draw} must put the turn 6 on its status row: {all_text:?}"
         );
     }

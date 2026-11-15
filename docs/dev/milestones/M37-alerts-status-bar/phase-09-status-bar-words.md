@@ -1,7 +1,7 @@
 # Phase 09 — status-bar-words
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-15
 **Depends on:** phases 02a, 02b and 02c (the bar, the counters, the grants segment)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -169,5 +169,14 @@ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {
 - The `daemoneye top` and `/panes` views.
 
 ## Update Log
+
+### Update — 2026-11-15 15:54 (started)
+
+Phase 09 status-bar-words begun by the executor (GLM-5.3-Flash). Status
+flipped `todo → in-progress`; the M37 README's phase-09 row matches. Plan:
+task 1 the two-form `Part` and the `status_words.rs` child module, task 2 the
+words-drop step in `status_bar_line`, task 3 the wide forms (with `elapsed`
+removed from `GlyphSet`), task 4 the grants segment, task 5 the docs, task 6
+the mutation check and the end-to-end capture.
 
 <!-- entries below this line -->

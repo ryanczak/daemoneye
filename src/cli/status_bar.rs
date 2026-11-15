@@ -329,10 +329,34 @@ pub fn status_bar_line(
         context_parts(model, g, palette),
         cost_parts(model, now, g),
         turn_parts(model, g),
-        counter_parts(g.background, model.background, RANK_BACKGROUND),
-        counter_parts(g.ghosts, model.ghosts, RANK_GHOSTS),
-        counter_parts(g.tools, model.tools_total, RANK_TOOLS),
-        counter_parts(g.shells, model.shells, RANK_SHELLS),
+        counter_parts(
+            g.background,
+            model.background,
+            RANK_BACKGROUND,
+            word::BACKGROUND,
+            word::BACKGROUND,
+        ),
+        counter_parts(
+            g.ghosts,
+            model.ghosts,
+            RANK_GHOSTS,
+            word::GHOST,
+            word::GHOSTS,
+        ),
+        counter_parts(
+            g.tools,
+            model.tools_total,
+            RANK_TOOLS,
+            word::TOOL,
+            word::TOOLS,
+        ),
+        counter_parts(
+            g.shells,
+            model.shells,
+            RANK_SHELLS,
+            word::SHELL,
+            word::SHELLS,
+        ),
         model_parts(model, g),
         session_parts(model, g),
     ];
@@ -345,6 +369,13 @@ pub fn status_bar_line(
         Some(grants_parts_vec)
     };
 
+    // Wide first: every part carries its word. If the whole line (slots plus
+    // the grants segment) does not fit, every part drops to its compact form
+    // at once — never a mixed bar — and stays there: the rank drops then run
+    // over the compact parts only. The state and severity words are one-form,
+    // so they survive at every width the drops leave them.
+    let wide = line_fits(&slots, grants_width(&grants), sep, true, width);
+
     // The ranks that exist right now, lowest first; each drop re-measures.
     let mut ranks: Vec<u16> = slots
         .iter()
@@ -354,10 +385,7 @@ pub fn status_bar_line(
     ranks.sort_unstable();
     ranks.dedup();
     for rank in ranks {
-        let hint_width = grants.as_ref().map(|parts| {
-            parts.iter().map(|p| p.width).sum::<usize>() + parts.len().saturating_sub(1)
-        });
-        if line_fits(&slots, hint_width, sep, width) {
+        if line_fits(&slots, grants_width_compact(&grants), sep, wide, width) {
             break;
         }
         for slot in &mut slots {
@@ -370,34 +398,46 @@ pub fn status_bar_line(
             }
         }
     }
-    join_slots(&slots, &mut grants, sep, width)
+    join_slots(&slots, &mut grants, sep, wide, width)
 }
 
-/// The state segment: the state glyph; while `Working`, the elapsed mark and
-/// the seconds since the turn started; when down, the words `daemon down`.
+/// The grants segment's columns: its parts plus their internal joins.
+fn grants_width(grants: &Option<Vec<Part>>) -> Option<usize> {
+    grants.as_ref().map(|parts| {
+        parts.iter().map(|p| p.width(true)).sum::<usize>() + parts.len().saturating_sub(1)
+    })
+}
+
+/// The columns the grants segment measures in the compact form, once the
+/// words have dropped.
+fn grants_width_compact(grants: &Option<Vec<Part>>) -> Option<usize> {
+    grants.as_ref().map(|parts| {
+        parts.iter().map(|p| p.width(false)).sum::<usize>() + parts.len().saturating_sub(1)
+    })
+}
+
+/// The state segment: the state glyph and the state word, one form — the
+/// word never drops. While `Working` the word is `thinking` and the seconds
+/// since the turn started follow it (`thinking 12s` reads as elapsed, so the
+/// `⏱` mark is gone); when down, `daemon down`.
 fn state_part(model: &StatusModel, now: Instant, g: &GlyphSet) -> Part {
-    let glyph = match model.state {
-        ChatState::Idle => g.idle,
-        ChatState::Working => g.working,
-        ChatState::AwaitingApproval => g.awaiting_approval,
-        ChatState::DaemonDown => g.daemon_down,
-        ChatState::Reconnecting => g.reconnecting,
-    };
-    let mut text = glyph.to_string();
-    if model.state == ChatState::Working {
-        let secs = model
-            .turn_started_at
-            .map(|t| now.saturating_duration_since(t).as_secs())
-            .unwrap_or(0);
-        if g.elapsed.is_empty() {
-            text.push_str(&format!("{secs}s"));
-        } else {
-            text.push_str(&format!(" {}{secs}s", g.elapsed));
+    let (glyph, text) = match model.state {
+        ChatState::Idle => (g.idle, word::IDLE.to_string()),
+        ChatState::Working => {
+            let secs = model
+                .turn_started_at
+                .map(|t| now.saturating_duration_since(t).as_secs())
+                .unwrap_or(0);
+            (g.working, format!("{} {secs}s", word::THINKING))
         }
-    } else if model.state == ChatState::DaemonDown {
-        text.push_str(" daemon down");
-    }
-    Part::new(vec![Span::styled(text, gray())], RANK_STATE)
+        ChatState::AwaitingApproval => (g.awaiting_approval, word::APPROVE.to_string()),
+        ChatState::DaemonDown => (g.daemon_down, word::DAEMON_DOWN.to_string()),
+        ChatState::Reconnecting => (g.reconnecting, word::RECONNECTING.to_string()),
+    };
+    Part::new(
+        vec![Span::styled(format!("{glyph} {text}"), gray())],
+        RANK_STATE,
+    )
 }
 
 /// The alert slot: the worst severity's glyph and the count of all firing,
@@ -417,19 +457,42 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
         1 => g.alert_info,
         _ => g.alert_unknown,
     };
+    let severity_word = |rank: u8| match rank {
+        3 => word::CRITICAL,
+        2 => word::WARNING,
+        1 => word::INFO,
+        _ => word::ALERT,
+    };
     let flash_live = model.resolve_flash_live(now);
     if flash_live && model.alerts.is_empty() {
         let Some(resolved) = &model.resolved_flash else {
             return Vec::new();
         };
         let rank = active_severity_rank(&resolved.severity);
-        let mut parts = vec![Part::new(
+        // Wide: `🧯 resolved Watchdog`; compact: `🧯 Watchdog` (today).
+        let wide = if resolved.name.is_empty() {
             vec![Span::styled(
-                g.alert_resolved.to_string(),
+                format!("{} {}", g.alert_resolved, word::RESOLVED),
                 severity_style(rank),
-            )],
-            RANK_ALERTS,
+            )]
+        } else {
+            vec![
+                Span::styled(
+                    format!("{} {}", g.alert_resolved, word::RESOLVED),
+                    severity_style(rank),
+                ),
+                Span::styled(format!(" {}", resolved.name), gray()),
+            ]
+        };
+        let compact = vec![Span::styled(
+            g.alert_resolved.to_string(),
+            severity_style(rank),
         )];
+        let mut parts = vec![Part {
+            wide,
+            compact,
+            rank: RANK_ALERTS,
+        }];
         if !resolved.name.is_empty() {
             parts.push(Part::new(
                 vec![Span::styled(resolved.name.clone(), gray())],
@@ -448,13 +511,38 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
         .max()
         .unwrap_or(0);
     let style = severity_style(worst_rank);
-    let mut parts = vec![Part::new(
+    // The severity part: the word stays at every width, so the wide and
+    // compact forms differ only in the count. Wide shows the worst
+    // severity's own count only at two or more (`⚠ 2 warn`); the compact
+    // form is today's bar — the glyph and the count of every firing alert.
+    let worst_count = model
+        .alerts
+        .iter()
+        .filter(|a| active_severity_rank(&a.severity) == worst_rank)
+        .count();
+    let wide = if worst_count >= 2 {
         vec![
             Span::styled(severity_glyph(worst_rank).to_string(), style),
-            Span::styled(model.alerts.len().to_string(), style),
-        ],
-        RANK_ALERTS,
-    )];
+            Span::styled(
+                format!(" {} {worst_count}", severity_word(worst_rank)),
+                style,
+            ),
+        ]
+    } else {
+        vec![
+            Span::styled(severity_glyph(worst_rank).to_string(), style),
+            Span::styled(format!(" {}", severity_word(worst_rank)), style),
+        ]
+    };
+    let compact = vec![
+        Span::styled(severity_glyph(worst_rank).to_string(), style),
+        Span::styled(model.alerts.len().to_string(), style),
+    ];
+    let mut parts = vec![Part {
+        wide,
+        compact,
+        rank: RANK_ALERTS,
+    }];
     let newest = model
         .alerts
         .iter()
@@ -476,18 +564,7 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
     parts
 }
 
-/// Age as `45s`, `3m`, `2h`, `5d`.
-fn age_str(secs: u64) -> String {
-    if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86_400 {
-        format!("{}h", secs / 3600)
-    } else {
-        format!("{}d", secs / 86_400)
-    }
-}
+pub(super) use words::{age_str, clip_to_width, compact_tokens};
 
 /// The context slot: the fill glyph for `prompt_tokens / context_window` in
 /// five steps, then the percentage — amber at ≥ 75 %, red at ≥ 90 % — then,
@@ -524,11 +601,17 @@ fn context_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Pa
     } else {
         format!("{pct}%")
     };
-    let mut parts = vec![Part::new(
-        vec![
-            Span::styled(fill.to_string(), gray().fg(color)),
-            Span::styled(value, gray().fg(color)),
-        ],
+    let mut parts = vec![part_two_form(
+        gray().fg(color),
+        fill,
+        value.clone(),
+        // The ascii dialect's glyph already spells `ctx`: the wide form is
+        // the glyph alone followed by the value, so it never reads `ctx ctx`.
+        if g.context_empty == "ctx" {
+            None
+        } else {
+            Some((format!("{} {value}", word::CONTEXT), false))
+        },
         RANK_CONTEXT,
     )];
     if let Some(previous) = model.previous_prompt_tokens {
@@ -541,11 +624,18 @@ fn context_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Pa
             } else {
                 gray()
             };
-            parts.push(Part::new(
-                vec![
-                    Span::styled(g.context_growth.to_string(), style),
-                    Span::styled(compact_tokens(growth), style),
-                ],
+            let shown = compact_tokens(growth);
+            parts.push(part_two_form(
+                style,
+                g.context_growth,
+                shown.clone(),
+                // The growth word is a sign, not a name: `+` in the wide
+                // form, the bare value in the compact form.
+                if g.context_growth.is_empty() {
+                    None
+                } else {
+                    Some((format!("+{shown}"), true))
+                },
                 RANK_GROWTH,
             ));
         }
@@ -557,70 +647,49 @@ fn context_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Pa
 /// glyph after it when any call had unknown pricing, then — droppable — the
 /// burn rate over the session's hours.
 fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
-    let mut cost_text = format!("{}{:.2}", g.cost, model.cost_usd);
-    if model.has_untracked {
-        cost_text.push_str(g.cost_untracked);
-    }
-    let mut parts = vec![Part::new(vec![Span::styled(cost_text, gray())], RANK_COST)];
+    let spend = format!("{:.2}", model.cost_usd);
+    // The symbols and ascii glyphs already say `$`: their wide form is the
+    // glyph followed by the value, never `$$`.
+    let dollar_glyph = g.cost.contains('$');
+    let cost = part_two_form(
+        gray(),
+        g.cost,
+        format!(
+            "{spend}{}",
+            if model.has_untracked {
+                g.cost_untracked
+            } else {
+                ""
+            }
+        ),
+        if dollar_glyph {
+            None
+        } else {
+            Some((format!("${spend}"), true))
+        },
+        RANK_COST,
+    );
+    let mut parts = vec![cost];
     let hours = now
         .saturating_duration_since(model.session_started_at)
         .as_secs_f64()
         / 3600.0;
     if model.cost_usd > 0.0 && hours >= 0.01 && !g.cost_burn.is_empty() {
-        parts.push(Part::new(
-            vec![Span::styled(
-                format!("{}{:.1}/h", g.cost_burn, model.cost_usd / hours),
-                gray(),
-            )],
+        let rate = format!("{:.1}/h", model.cost_usd / hours);
+        let burn_glyph = g.cost_burn.contains('$');
+        parts.push(part_two_form(
+            gray(),
+            g.cost_burn,
+            rate.clone(),
+            if burn_glyph {
+                Some((format!("{rate} {}", word::BURN), false))
+            } else {
+                Some((format!("${rate} {}", word::BURN), false))
+            },
             RANK_BURN,
         ));
     }
     parts
-}
-
-/// The turn slot: the turn glyph and the count, then — droppable, and only
-/// once a turn has finished — the last turn's throughput.
-fn turn_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
-    let mut parts = vec![Part::new(
-        vec![
-            Span::styled(g.turn.to_string(), gray()),
-            Span::styled(model.turn.to_string(), gray()),
-        ],
-        RANK_TURN,
-    )];
-    if let (Some(duration), true) = (model.last_turn_duration, model.last_output_tokens > 0) {
-        let secs = duration.as_secs_f64();
-        if secs >= 0.5 {
-            let tps = model.last_output_tokens as f64 / secs;
-            let glyph = if tps >= 30.0 {
-                g.throughput_fast
-            } else {
-                g.throughput_slow
-            };
-            parts.push(Part::new(
-                vec![Span::styled(
-                    format!("{}{}t/s", glyph, tps.round() as u64),
-                    gray(),
-                )],
-                RANK_THROUGHPUT,
-            ));
-        }
-    }
-    parts
-}
-
-/// One counter slot: glyph and count, hidden at zero.
-fn counter_parts(glyph: &str, count: u32, rank: u16) -> Vec<Part> {
-    if count == 0 {
-        return Vec::new();
-    }
-    vec![Part::new(
-        vec![
-            Span::styled(glyph.to_string(), gray()),
-            Span::styled(count.to_string(), gray()),
-        ],
-        rank,
-    )]
 }
 
 /// The model slot: the vendor mark and the short name.
@@ -674,22 +743,6 @@ fn short_model_name(model: &str) -> String {
     clip_to_width(&name, 12)
 }
 
-/// The longest prefix of `s` whose display width is at most `max` columns. A
-/// grapheme wider than the remaining budget ends the string before it.
-fn clip_to_width(s: &str, max: usize) -> String {
-    let mut kept = String::new();
-    let mut used = 0usize;
-    for ch in s.chars() {
-        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used + w > max {
-            break;
-        }
-        used += w;
-        kept.push(ch);
-    }
-    kept
-}
-
 /// The session slot: hidden when unnamed; the session glyph, the dirty mark
 /// when dirty, and the saved name.
 fn session_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
@@ -704,29 +757,17 @@ fn session_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
     text.push_str(name);
     vec![Part::new(vec![Span::styled(text, gray())], RANK_SESSION)]
 }
-/// Compact token count: below 1 000 as is (`950`); below 10 000 with one
-/// decimal (`4321` → `4.3k`); below 1 000 000 as whole thousands (`41234` →
-/// `41k`); from 1 000 000 as millions with one decimal (`1048576` → `1.0M`).
-pub fn compact_tokens(n: u32) -> String {
-    if n < 1_000 {
-        format!("{n}")
-    } else if n < 10_000 {
-        format!("{:.1}k", n as f64 / 1_000.0)
-    } else if n < 1_000_000 {
-        format!("{}k", n / 1_000)
-    } else {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    }
-}
 
 #[path = "status_bar_fit.rs"]
 mod fit;
+#[path = "status_words.rs"]
+pub(crate) mod words;
 use fit::{
-    NARROW_BELOW, NARROW_SEP, Part, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BACKGROUND,
+    NARROW_BELOW, NARROW_SEP, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BACKGROUND,
     RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GRANTS, RANK_GROWTH, RANK_MODEL,
-    RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_THROUGHPUT, RANK_TOOLS, RANK_TURN, WIDE_SEP,
-    join_slots, line_fits,
+    RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_TOOLS, WIDE_SEP, join_slots, line_fits,
 };
+use words::{TwoFormPart as Part, counter_parts, turn_parts, two_form as part_two_form, word};
 
 #[cfg(test)]
 #[path = "status_bar_tests.rs"]
