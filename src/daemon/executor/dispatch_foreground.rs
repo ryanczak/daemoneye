@@ -57,20 +57,35 @@ struct ApprovedRun<'a> {
 /// — the same rule `shell_for_owner` runs, so the label can never be a
 /// guess the run contradicts. The pick never creates a shell and never
 /// connects to a host: a denied prompt leaves the registry as it found it.
+/// A value that can never be a shell is `Err` with `resolve_shell_target`'s
+/// own wording: it is refused before the prompt, as a malformed host is,
+/// never put to the user and never run.
 async fn pick_shell_for_run(
     host: &crate::host::HostId,
     shell_arg: Option<&str>,
     session_id: Option<&str>,
-) -> Option<crate::shell::ShellId> {
-    match shell_arg {
-        Some("new") => None,
-        Some(value) => Some(crate::shell::ShellId::parse(value).ok()?),
-        None => {
+) -> Result<Option<crate::shell::ShellId>, String> {
+    match shell_exec::resolve_shell_target(shell_arg)? {
+        shell_exec::ShellTarget::New => Ok(None),
+        shell_exec::ShellTarget::Existing(id) => Ok(Some(id)),
+        shell_exec::ShellTarget::Reuse => {
             let owner = chat_owner(session_id);
-            crate::shell::reusable_shell_for_owner(crate::shell::registry(), owner, host.clone())
-                .await
+            Ok(crate::shell::reusable_shell_for_owner(
+                crate::shell::registry(),
+                owner,
+                host.clone(),
+            )
+            .await)
         }
     }
+}
+
+/// The `shell` argument the approved run is pinned to: the picked id, or
+/// `"new"` when nothing was picked. Never `None` — `None` would re-run the
+/// reuse rule after approval, and a shell that fell idle while the prompt
+/// was open could then take a command the label said would open a new one.
+fn pinned_shell(picked: Option<&crate::shell::ShellId>) -> String {
+    picked.map_or_else(|| "new".to_string(), |id| id.as_str().to_string())
 }
 
 /// The label the approval panel is titled with: where the command runs and
@@ -91,6 +106,28 @@ fn build_shell_label(host: &crate::host::HostId, picked: Option<&crate::shell::S
             shell_where_label(user.as_deref(), &host_name, picked.map(|s| s.as_str()))
         }
     }
+}
+
+/// Refuse the call before anything runs: the `ToolResult` frame carrying
+/// `msg`, then the same text as the outcome. Shared by the pre-prompt gates
+/// (a malformed host, a ghost's forbidden host, an unparseable shell).
+async fn refuse_before_prompt<W>(
+    tx: &mut W,
+    id: &str,
+    msg: String,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    send_response_split(
+        tx,
+        Response::ToolResult {
+            tool_call_id: id.to_string(),
+            output: msg.clone(),
+        },
+    )
+    .await?;
+    Ok(ToolCallOutcome::Result(msg))
 }
 
 pub(super) async fn dispatch<W, R>(
@@ -138,18 +175,7 @@ where
             // connects on approval using the bare name (06c).
             let host = match resolve_host(host.as_deref()) {
                 Ok(host) => host,
-                Err(msg) => {
-                    let msg = format!("Error: {msg}");
-                    send_response_split(
-                        tx,
-                        Response::ToolResult {
-                            tool_call_id: id.to_string(),
-                            output: msg.clone(),
-                        },
-                    )
-                    .await?;
-                    return Ok(ToolCallOutcome::Result(msg));
-                }
+                Err(msg) => return refuse_before_prompt(tx, id, format!("Error: {msg}")).await,
             };
             // A runbook's `hosts:` list is a boundary, not advice: a ghost
             // reaching a host its runbook did not name is refused here, with
@@ -158,15 +184,7 @@ where
                 && let Some(msg) =
                     refuse_ghost_host(policy, &host, "run_terminal_command", session_id)
             {
-                send_response_split(
-                    tx,
-                    Response::ToolResult {
-                        tool_call_id: id.to_string(),
-                        output: msg.clone(),
-                    },
-                )
-                .await?;
-                return Ok(ToolCallOutcome::Result(msg));
+                return refuse_before_prompt(tx, id, msg).await;
             }
             // The PTY shell substrate, the only substrate. A ghost session
             // falls through to `refuse_foreground`, which refuses.
@@ -175,14 +193,12 @@ where
                 // explicit id names itself, "new" picks none, and the reuse
                 // rule picks the owner's idle shell on this host. The run is
                 // then pinned to exactly this id (or "new").
-                let picked = pick_shell_for_run(&host, shell.as_deref(), session_id).await;
-                let shell_label = build_shell_label(&host, picked.as_ref());
-                let run_shell = match picked.as_ref() {
-                    Some(id) => Some(id.as_str().to_string()),
-                    None => shell
-                        .as_deref()
-                        .and_then(|s| (s == "new").then(|| s.to_string())),
+                let picked = match pick_shell_for_run(&host, shell.as_deref(), session_id).await {
+                    Ok(picked) => picked,
+                    Err(msg) => return refuse_before_prompt(tx, id, msg).await,
                 };
+                let shell_label = build_shell_label(&host, picked.as_ref());
+                let run_shell = Some(pinned_shell(picked.as_ref()));
                 match prompt_and_await_approval(
                     ApprovalRequest {
                         id,
@@ -987,6 +1003,41 @@ mod approved_path_tests {
             0,
             "a denied prompt leaves no shell behind"
         );
+    }
+
+    /// A value that can never be a shell is refused before the prompt: no
+    /// `ToolCallPrompt`, the `unknown shell target` wording, and no shell
+    /// opened for the session — nothing was asked and nothing ran.
+    #[tokio::test]
+    async fn an_unparseable_shell_target_is_refused_without_asking() {
+        let (_home, _dir) = crate::test_home();
+        let sid = "sess-10-bogus";
+
+        let frames = drive(
+            sid,
+            &call_with_shell("echo DE-P10-BOGUS", Some("bogus")),
+            &approval_reply("fg-83"),
+        )
+        .await;
+        assert!(
+            !frames.iter().any(|f| matches!(f, R::ToolCallPrompt { .. })),
+            "a value that can never be a shell is not put to the user: {frames:?}"
+        );
+        let out = tool_result(&frames);
+        assert!(
+            out.contains("unknown shell target"),
+            "the refusal is resolve_shell_target's own wording: {out}"
+        );
+        assert_eq!(session_shell_count(sid), 0, "nothing ran, no shell opened");
+    }
+
+    /// The run is pinned even when nothing was picked: a `None` pick gives
+    /// the run `"new"`, never `None` (which would re-run the reuse rule).
+    #[test]
+    fn an_unpicked_run_is_pinned_to_a_new_shell() {
+        assert_eq!(pinned_shell(None), "new");
+        let id = crate::shell::ShellId::parse("s4").expect("s4 parses");
+        assert_eq!(pinned_shell(Some(&id)), "s4", "a picked id pins itself");
     }
 
     /// An explicit shell id labels itself.

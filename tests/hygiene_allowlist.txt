@@ -57,4 +57,5 @@ test tests/integration.rs 2572
 # M36 phase-21b — the OSC 7501 watch/listing tests (12 named in the plan) grew the file past the cap.
 test src/daemon/executor/knowledge/shell_observer_tests.rs 2233
 fn src/daemon/executor/file_ops/write.rs run_edit_file 151
+# M37 phase-10 — `prompt_and_await_approval` split into `ghost_auto_outcome` + `approval_reply` and `ApprovalRequest` gained `session_id`; the file crossed the cap on the split, not on new logic.
 file src/daemon/executor/mod.rs 866

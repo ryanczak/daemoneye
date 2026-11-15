@@ -24,19 +24,11 @@ pub fn ssh_user_host(target: &str) -> (Option<String>, String) {
 }
 
 /// The passwd name for the daemon's effective uid, through `libc`'s
-/// `getpwuid`. Falls back to `$USER`, then to the numeric uid as a string.
+/// `getpwuid_r`. Falls back to `$USER`, then to the numeric uid as a string.
 pub fn local_username() -> String {
     let uid = unsafe { libc::geteuid() };
-    // SAFETY: `getpwuid` returns a pointer into libc's own static buffer;
-    // it is read and the name copied out before anything else can call it.
-    let pw = unsafe { libc::getpwuid(uid) };
-    if !pw.is_null() {
-        let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
-        if let Ok(s) = name.to_str()
-            && !s.is_empty()
-        {
-            return s.to_string();
-        }
+    if let Some(name) = passwd_name(uid) {
+        return name;
     }
     if let Ok(user) = std::env::var("USER")
         && !user.trim().is_empty()
@@ -44,6 +36,34 @@ pub fn local_username() -> String {
         return user;
     }
     uid.to_string()
+}
+
+/// The passwd name for `uid` through the reentrant `getpwuid_r`: the daemon
+/// is multi-threaded, and `getpwuid`'s static buffer is not thread-safe.
+/// `None` when there is no entry, the buffer is too small, or the name is
+/// empty or not UTF-8.
+fn passwd_name(uid: libc::uid_t) -> Option<String> {
+    let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    // SAFETY: every pointer is to a live local; `getpwuid_r` writes the
+    // entry's strings into `buf`, which outlives the `CStr` read below, and
+    // `result` is checked before `pw.pw_name` is read.
+    let rc = unsafe {
+        libc::getpwuid_r(
+            uid,
+            &mut pw,
+            buf.as_mut_ptr().cast::<libc::c_char>(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() || pw.pw_name.is_null() {
+        return None;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(pw.pw_name) };
+    let name = name.to_str().ok()?;
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// The panel title from the label pieces: `user@host:sN`, `host:sN` without
