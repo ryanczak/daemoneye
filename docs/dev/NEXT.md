@@ -5,10 +5,7 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** none. All 10 M37 phases are done and the retrospective is
-written in the milestone README. The close waits on the exit-criteria live
-check on pinky, then the PE's sign-off and the 2.9.0 release (`REXYMCP.md`
-§ Versioning).
+**Active phase:** [phase-09-status-bar-words](milestones/M37-alerts-status-bar/phase-09-status-bar-words.md) — words on every status-bar item and grants kind (PE decision 7, 2026-11-15), drafted before the M37 live check so the check sees the final bar. Phases 01 through 08 are done.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

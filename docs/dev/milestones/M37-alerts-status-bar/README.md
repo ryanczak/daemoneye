@@ -75,6 +75,12 @@ while the user still sees it in chat.
     40:  💤 🔥2 🌓20% 💸0.42 ↻12 ⏳2
    down: 💀 daemon down · 💸0.42 · ↻12 · ⟡ sonnet-5.5
    ```
+7. **Status bar words** (PE, 2026-11-15, amending decision 3). Decision 3's
+   "every segment is a glyph and a number" gives way: each item carries a
+   word (`idle`, `thinking 12s`, `ctx 2%`, `turn 7`, `2 shells`, `grants 3`,
+   `scripts 2`), in all three dialects. When the line does not fit, the words
+   drop first, all at once, back to the glyph-and-number form; the state word
+   and the alert severity word never drop. Phase 09.
 4. **Many alerts: the worst, plus a count.** The alert glyph is the worst
    firing severity, the number is every firing alert; the name and age
    are the newest alert of that severity.
@@ -134,7 +140,7 @@ while the user still sees it in chat.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 02 split into 02a/02b at scoping; 02c added 2026-11-14 for the grants slot).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 02 split into 02a/02b at scoping; 02c added 2026-11-14 for the grants slot; 09 added 2026-11-15 for the status-bar words).
 
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
@@ -148,6 +154,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 | 06 | self-host-refusal ([phase-06-self-host-refusal.md](phase-06-self-host-refusal.md)): a `[hosts.<name>]` entry whose `ssh` names the daemon's own machine is warned about at startup and refused by every host-taking tool before its prompt; nothing is routed local | issue #8 (pre-close bug fix; PE: warn + refuse, 2026-11-14) | done |
 | 07 | scheduler-recovery ([phase-07-scheduler-recovery.md](phase-07-scheduler-recovery.md)): a recurring job left `Running` by a restart skips to its next slot at daemon startup; a failed recurring run no longer ends the job, and still ends the run `hard_fail` | issue #9 (pre-close bug fix; PE: skip to next slot, fix failed-recurring too, 2026-11-14) | done        |
 | 08 | away-digest ([phase-08-away-digest.md](phase-08-away-digest.md)): the first chat to attach after a gap gets one summary — script runs per job (ok/failed) and alerts fired per name — delivered once, joined to the attach brief | issue #5 (pre-close bug fix; PE: first-attach, once, counts since the last interactive chat, 2026-11-15) | done        |
+| 09 | status-bar-words ([phase-09-status-bar-words.md](phase-09-status-bar-words.md)): every bar item and every grants kind gets a pithy word in all three dialects; when the line does not fit the words drop first, all at once, back to the glyph-and-number form | decision 7 (PE, 2026-11-15, amending decision 3) | todo |
 
 ## Notes
 
