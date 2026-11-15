@@ -1,7 +1,7 @@
 # Phase 08 — away-digest
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-15
 **Depends on:** nothing in M37
 **Estimated diff:** ~300 lines, about half of it tests
@@ -317,3 +317,143 @@ Both mutations reverted and re-run green before the block. Hygiene: no
 193, body untouched); `handle_chat_attach` is 136 lines. `cargo test --test hygiene`
 16 passed, `--test doc_truth` 19 passed, `--test bug_tracker` 6 passed, build 0
 warnings, fmt clean, clippy `-D warnings` clean.
+
+### Update — 2026-11-15 04:36 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 08 (away-digest) is complete and committed (`4a2cbd7e`); working tree clean. Built on the prior run's on-disk work: fixed the two test `E0308`s, replaced the session-count gate with a live-**connection** count (sum of `Vec::len` over the presence map, acting only when the total is exactly 1), and wired `take_away_digest_on_attach` after the `from_disk` insert plus `stamp_on_last_detach` after `presence_unregister` in `handle_chat_attach` (136 lines, cap 150) with the brief/digest join in a small `join_brief_and_digest` helper. Added the three missing tests (`a_script_run_records_a_finished_event`, `attach_joins_the_digest_to_the_brief_in_one_system_msg`, `the_last_detach_stamps_last_seen`) and the README/CLAUDE.md docs.
+
+**Notes for review**
+
+- Three latent test bugs surfaced on first green compile and were fixed rather than worked around: the `ignores_events_outside…` record used `action: "script"` with no `outcome` (a shape the emitter never writes — now `action: "command"`), the test event helper wrote pinned-2023 records into today's segment so the window never read them (now the helper picks the segment from the record's own `ts`), and `an_attach_with_another_chat_present…` only registered the *other* chat so the gate saw one connection and delivered (now it registers the attaching connection too, matching production order).
+- Both mutation checks ran and failed the pinned tests as required, then reverted; the end-to-end block is pasted verbatim in the phase doc's end-to-end Update Log entry: `emit_sites=2`, `mark_done_sites=0`, `build_warnings=0`, `passed=2998 failed=0`, plus hygiene (16), doc_truth (19) and bug_tracker (6) all green; fmt and clippy `-D warnings` clean; no allowlist change.
+- `cargo test` count is 2998 vs the 2984 baseline (+14 new tests), all other suites unchanged.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Checking daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.08s
+
+
+TEST
+ok
+test cancel_request_roundtrip ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_entry_format ... ok
+test attach_sends_session_counters_after_ok ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (3605608): No such process
+kill: (-3606273): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -1
+- `README.md` — +1 -0
+- `docs/dev/milestones/M37-alerts-status-bar/phase-08-away-digest.md` — +60 -0
+- `src/daemon/away_digest.rs` — +56 -35
+- `src/daemon/scheduled_tests.rs` — +66 -0
+- `src/daemon/server/chat_presence.rs` — +146 -2
+
+**Commit:** 4a2cbd7e5810b3f0083888706bff437b69b8c5ae
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
