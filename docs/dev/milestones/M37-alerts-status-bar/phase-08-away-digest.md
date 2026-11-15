@@ -1,7 +1,7 @@
 # Phase 08 — away-digest
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-15
 **Depends on:** nothing in M37
 **Estimated diff:** ~300 lines, about half of it tests
@@ -200,11 +200,11 @@ tests there:
       (`run_scheduled_job_inner` and `handle_chat_attach` not grown, no new
       allowlist line), `doc_truth` and `bug_tracker` are ok.
 
-- [ ] **(bug-08-1, open) No test touches the real `$HOME`:**
+- [x] **(bug-08-1, fixed) No test touches the real `$HOME`:**
       `rm -f ~/.daemoneye/var/run/chat_last_seen; timeout 900 cargo test; ls ~/.daemoneye/var/run/chat_last_seen`
       prints `No such file or directory`. Today the file is recreated
       (`tests/integration.rs` and the unguarded `handle_chat_attach` tests).
-- [ ] **(bug-08-1, open) The new attach tests pass run alone:**
+- [x] **(bug-08-1, fixed) The new attach tests pass run alone:**
       `timeout 600 cargo test --lib chat_presence` three times in a row
       prints `test result: ok.` each time. Today it fails 3 of 3
       (`attach_joins_the_digest_to_the_brief_in_one_system_msg`,
@@ -718,3 +718,13 @@ kill: (-3803910): No such process
 **Commit:** 5f99e66c8577f6ae8cb9d58bd6cb89339582233e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-15
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-08-1](bugs/bug-08-1.md): attach-driving tests wrote `chat_last_seen` into the real `$HOME`, and the two new attach tests failed run alone)
+- **Executor:** GLM-5.3-Flash (one dispatch, one resume after an `IdenticalToolCallRepetition` `hard_fail`, one bounce re-dispatch)
+- **Scope deviations:** `tests/hygiene_allowlist.txt`'s existing `test tests/integration.rs` count moved 2553 → 2572 for the four HOME redirects, with the reason stated in the file; no new line, no production-function growth.
+- **Calibration:** a phase that adds file I/O to a shared path (`handle_chat_attach`) must make every *existing* caller's test hermetic, not just the new tests; the drafting should list those callers. The bug's "run the filtered module alone" criterion caught what the green full suite hid. Nit, not bounced: the four `integration.rs` redirects leave `HOME` at the temp dir instead of restoring it, unlike most of the file's tests.
+
+Independent gates (reviewer, 2026-11-15): fmt exit 0, build 0 warnings, clippy `-D warnings` clean, `cargo test` passed=2998 failed=0 (baseline 2984), and `~/.daemoneye/var/run/chat_last_seen` was not recreated after `rm -f`. `cargo test --lib chat_presence` ok 3 of 3 (25 passed), `--lib away_digest` 11 passed, `--test integration` 40 passed; `scheduled_job_finished` sites 2 in `scheduled.rs`, 0 in `scheduler.rs`.
