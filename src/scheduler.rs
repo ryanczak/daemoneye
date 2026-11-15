@@ -1,3 +1,4 @@
+use crate::daemon::utils::log_event;
 use crate::util::UnpoisonExt;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -193,6 +194,24 @@ impl JobStatus {
     }
 }
 
+/// The outcome a recovered `Running` job got at startup.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecoveredOutcome {
+    /// The job's next slot was pushed into the future and it is `Pending` again.
+    SkippedToNextSlot,
+    /// The job cannot recur, so the interrupted run ends it `Failed`.
+    Failed,
+}
+
+impl RecoveredOutcome {
+    pub fn describe(&self) -> &'static str {
+        match self {
+            RecoveredOutcome::SkippedToNextSlot => "skipped_to_next_slot",
+            RecoveredOutcome::Failed => "failed",
+        }
+    }
+}
+
 /// A single persisted scheduled job.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScheduledJob {
@@ -212,6 +231,13 @@ pub struct ScheduledJob {
     pub created_at: DateTime<Utc>,
     /// Wall-clock time of the most recent execution attempt.
     pub last_run: Option<DateTime<Utc>>,
+    /// The error the most recent failed run recorded. Absent on jobs written
+    /// by older stores (`#[serde(default)]` keeps existing `schedules.json`
+    /// files loadable). A recurring job's failed run leaves the job
+    /// `Pending`, so this field is what keeps the failure visible to the
+    /// run log: the status alone can no longer carry it.
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 impl ScheduledJob {
@@ -231,6 +257,7 @@ impl ScheduledJob {
             status: JobStatus::Pending,
             created_at: Utc::now(),
             last_run: None,
+            last_error: None,
         }
     }
 }
@@ -398,8 +425,9 @@ impl ScheduleStore {
             if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
                 job_name = job.name.clone();
                 if success {
+                    job.last_error = None;
                     match &mut job.kind {
-                        ScheduleKind::Every { .. } => {
+                        ScheduleKind::Every { .. } | ScheduleKind::Cron { .. } => {
                             job.kind.advance();
                             // Skip any intervals that are still in the past (e.g. after
                             // a daemon restart that missed several intervals).  Without
@@ -408,18 +436,34 @@ impl ScheduleStore {
                             job.kind.skip_to_future();
                             job.status = JobStatus::Pending;
                         }
-                        ScheduleKind::Cron { .. } => {
-                            job.kind.advance();
-                            job.kind.skip_to_future();
-                            job.status = JobStatus::Pending;
-                        }
                         ScheduleKind::Once { .. } => {
                             job.status = JobStatus::Succeeded;
                         }
                     }
                 } else {
-                    job.status =
-                        JobStatus::Failed(error_msg.unwrap_or_else(|| "unknown error".to_string()));
+                    let error = error_msg.unwrap_or_else(|| "unknown error".to_string());
+                    match &mut job.kind {
+                        // A recurring job's failed run does not end the job: it
+                        // reschedules exactly as a successful one does. The
+                        // error is kept on `last_error` so the run log can
+                        // still report the failure — the status reads `Pending`
+                        // for a recurring job either way.
+                        ScheduleKind::Every { .. } | ScheduleKind::Cron { .. } => {
+                            job.kind.advance();
+                            job.kind.skip_to_future();
+                            job.status = JobStatus::Pending;
+                            job.last_error = Some(error.clone());
+                            log::warn!(
+                                "Recurring job '{}' failed, rescheduled: {}",
+                                job.name,
+                                error
+                            );
+                        }
+                        ScheduleKind::Once { .. } => {
+                            job.status = JobStatus::Failed(error);
+                            job.last_error = None;
+                        }
+                    }
                 }
                 new_status_str = job.status.describe();
             }
@@ -431,6 +475,96 @@ impl ScheduleStore {
             new_status_str
         );
         let _ = self.save();
+    }
+
+    /// Mark a running job failed **terminally**: the job's status becomes
+    /// `Failed` whatever its kind, and it never fires again. For a job that
+    /// can never run — the deprecated `ActionOn::Command` refusal — a
+    /// reschedule would re-fire and re-notify at every slot, so the failure
+    /// must end the job. Only for permanent refusals; every transient
+    /// failure goes through [`ScheduleStore::mark_done`], which reschedules
+    /// a recurring job.
+    pub fn mark_failed_terminal(&self, id: &str, msg: String) {
+        let mut job_name = String::new();
+        {
+            let mut jobs = self.jobs.write().unwrap_or_log();
+            if let Some(job) = jobs.iter_mut().find(|j| j.id == id) {
+                job_name = job.name.clone();
+                job.status = JobStatus::Failed(msg.clone());
+                job.last_error = None;
+            }
+        }
+        log::warn!(
+            "Job '{}' (ID: {}) failed terminally: {}",
+            job_name,
+            &id[..8.min(id.len())],
+            msg
+        );
+        let _ = self.save();
+    }
+
+    /// Reconcile jobs a daemon restart left `Running`: the interrupted run
+    /// never recorded an outcome, so nothing would ever move them on.
+    ///
+    /// A recurring job skips to its next **future** slot (the interrupted run
+    /// is not repeated) and becomes `Pending` again; a `Once` job ends
+    /// `Failed`. Any other status is untouched, and a second call finds
+    /// nothing `Running` and changes nothing.
+    ///
+    /// Called from the daemon's startup path only — never from
+    /// `load_or_create`, which the CLI also calls while a live daemon may be
+    /// running a job.
+    pub fn recover_interrupted(&self) -> Vec<String> {
+        let mut recovered: Vec<(String, ScheduleKind, RecoveredOutcome)> = Vec::new();
+        {
+            let mut jobs = self.jobs.write().unwrap_or_log();
+            for job in jobs.iter_mut() {
+                if job.status != JobStatus::Running {
+                    continue;
+                }
+                let outcome = match &mut job.kind {
+                    ScheduleKind::Every { .. } | ScheduleKind::Cron { .. } => {
+                        job.kind.advance();
+                        // Same catch-up rule as `mark_done`: without the skip,
+                        // take_due() would re-fire the job on every tick until
+                        // next_run catches up to the present.
+                        job.kind.skip_to_future();
+                        job.status = JobStatus::Pending;
+                        RecoveredOutcome::SkippedToNextSlot
+                    }
+                    ScheduleKind::Once { .. } => {
+                        job.status = JobStatus::Failed("daemon restarted mid-run".to_string());
+                        RecoveredOutcome::Failed
+                    }
+                };
+                recovered.push((job.name.clone(), job.kind.clone(), outcome));
+            }
+        }
+        if recovered.is_empty() {
+            return Vec::new();
+        }
+        let _ = self.save();
+        for (name, kind, outcome) in &recovered {
+            log::warn!(
+                "Recovered scheduled job '{}' ({}): {}",
+                name,
+                kind.describe(),
+                match outcome {
+                    RecoveredOutcome::SkippedToNextSlot =>
+                        "interrupted by a daemon restart, skipped to its next slot",
+                    RecoveredOutcome::Failed => "interrupted by a daemon restart, failed",
+                }
+            );
+            log_event(
+                "scheduler_job_recovered",
+                serde_json::json!({
+                    "job": name,
+                    "kind": kind.describe(),
+                    "outcome": outcome.describe(),
+                }),
+            );
+        }
+        recovered.into_iter().map(|(name, _, _)| name).collect()
     }
 }
 
@@ -684,7 +818,7 @@ mod tests {
         assert_eq!(due.len(), 1);
 
         // Reload from disk — should be Running, not Pending (no double-fire on restart).
-        let reloaded = ScheduleStore::load_or_create(path).unwrap();
+        let reloaded = ScheduleStore::load_or_create(path.clone()).unwrap();
         assert_eq!(reloaded.list()[0].status, JobStatus::Running);
     }
 
@@ -910,5 +1044,264 @@ mod tests {
             store.take_due().is_empty(),
             "a parked Every job never re-fires"
         );
+    }
+
+    fn every_job(name: &str, interval_secs: i64, next_run: DateTime<Utc>) -> ScheduledJob {
+        ScheduledJob::new(
+            name.to_string(),
+            ScheduleKind::Every {
+                interval_secs: interval_secs as u64,
+                next_run,
+            },
+            ActionOn::Alert,
+            None,
+        )
+    }
+
+    fn cron_job(name: &str, expression: &str, next_run: DateTime<Utc>) -> ScheduledJob {
+        ScheduledJob::new(
+            name.to_string(),
+            ScheduleKind::Cron {
+                expression: expression.to_string(),
+                next_run,
+            },
+            ActionOn::Alert,
+            None,
+        )
+    }
+
+    fn once_job(name: &str, at: DateTime<Utc>) -> ScheduledJob {
+        ScheduledJob::new(
+            name.to_string(),
+            ScheduleKind::Once { at },
+            ActionOn::Alert,
+            None,
+        )
+    }
+
+    fn every_next_run(job: &ScheduledJob) -> DateTime<Utc> {
+        match &job.kind {
+            ScheduleKind::Every { next_run, .. } => *next_run,
+            _ => panic!("expected Every"),
+        }
+    }
+
+    #[test]
+    fn recover_interrupted_skips_a_running_every_job_to_its_next_slot() {
+        let _home = crate::test_home_guard();
+        let (store, path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = every_job("interrupted-every", 300, past);
+        let fired_slot = every_next_run(&job);
+        store.add(job).unwrap();
+        let due = store.take_due();
+        assert_eq!(due.len(), 1, "the job fires so it can be left Running");
+
+        let reloaded = ScheduleStore::load_or_create(path.clone()).unwrap();
+        let recovered = reloaded.recover_interrupted();
+        assert_eq!(recovered, vec!["interrupted-every".to_string()]);
+
+        let jobs = reloaded.list();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Pending);
+        let next = every_next_run(&jobs[0]);
+        assert!(
+            next > Utc::now(),
+            "next_run should be in the future after recovery"
+        );
+        assert_ne!(
+            next, fired_slot,
+            "recovery pushes to a later slot than the fired one"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn recover_interrupted_skips_a_running_cron_job_to_its_next_slot() {
+        let _home = crate::test_home_guard();
+        let (store, path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = cron_job("interrupted-cron", "*/5 * * * *", past);
+        store.add(job).unwrap();
+        let due = store.take_due();
+        assert_eq!(due.len(), 1, "the job fires so it can be left Running");
+
+        let reloaded = ScheduleStore::load_or_create(path.clone()).unwrap();
+        let recovered = reloaded.recover_interrupted();
+        assert_eq!(recovered, vec!["interrupted-cron".to_string()]);
+
+        let jobs = reloaded.list();
+        assert_eq!(jobs[0].status, JobStatus::Pending);
+        let next = match &jobs[0].kind {
+            ScheduleKind::Cron { next_run, .. } => *next_run,
+            _ => panic!("expected Cron"),
+        };
+        assert!(
+            next > Utc::now(),
+            "next_run should be in the future after recovery"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn recover_interrupted_fails_a_running_once_job() {
+        let _home = crate::test_home_guard();
+        let (store, path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = once_job("interrupted-once", past);
+        store.add(job).unwrap();
+        let due = store.take_due();
+        assert_eq!(due.len(), 1, "the job fires so it can be left Running");
+
+        let reloaded = ScheduleStore::load_or_create(path.clone()).unwrap();
+        let recovered = reloaded.recover_interrupted();
+        assert_eq!(recovered, vec!["interrupted-once".to_string()]);
+        assert_eq!(
+            reloaded.list()[0].status,
+            JobStatus::Failed("daemon restarted mid-run".to_string())
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn recover_interrupted_leaves_other_statuses_alone() {
+        let (store, path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let future = Utc::now() + chrono::Duration::seconds(600);
+        let mut pending = every_job("pending-job", 300, future);
+        pending.status = JobStatus::Pending;
+        let mut succeeded = once_job("succeeded-job", past);
+        succeeded.status = JobStatus::Succeeded;
+        let mut failed = once_job("failed-job", past);
+        failed.status = JobStatus::Failed("boom".to_string());
+        let mut cancelled = once_job("cancelled-job", past);
+        cancelled.status = JobStatus::Cancelled;
+        store.add(pending).unwrap();
+        store.add(succeeded).unwrap();
+        store.add(failed).unwrap();
+        store.add(cancelled).unwrap();
+
+        let recovered = store.recover_interrupted();
+        assert!(recovered.is_empty(), "nothing Running: nothing recovered");
+
+        let statuses: Vec<JobStatus> = store.list().iter().map(|j| j.status.clone()).collect();
+        assert_eq!(
+            statuses,
+            vec![
+                JobStatus::Pending,
+                JobStatus::Succeeded,
+                JobStatus::Failed("boom".to_string()),
+                JobStatus::Cancelled,
+            ],
+            "every non-Running status is untouched"
+        );
+
+        // Idempotent: a second call finds nothing Running and changes nothing.
+        let again = store.recover_interrupted();
+        assert!(again.is_empty());
+        assert_eq!(store.list().len(), 4);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_recovered_job_is_not_due_on_the_next_tick() {
+        let _home = crate::test_home_guard();
+        let (store, path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = every_job("recovered-every", 300, past);
+        store.add(job).unwrap();
+        store.take_due();
+
+        let reloaded = ScheduleStore::load_or_create(path.clone()).unwrap();
+        reloaded.recover_interrupted();
+        assert!(
+            reloaded.take_due().is_empty(),
+            "a recovered job's next slot is genuinely in the future"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn mark_done_failure_keeps_a_recurring_job_pending() {
+        let (store, _path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let every = every_job("failing-every", 300, past);
+        let every_id = store.add(every).unwrap();
+        store.take_due();
+        store.mark_done(&every_id, false, Some("boom".to_string()));
+        let jobs = store.list();
+        assert_eq!(jobs[0].status, JobStatus::Pending);
+        assert!(every_next_run(&jobs[0]) > Utc::now());
+        assert_eq!(jobs[0].last_error.as_deref(), Some("boom"));
+
+        // Not due again until the slot: take_due is empty right after.
+        assert!(store.take_due().is_empty());
+
+        // A due failing recurring job fires again.
+        let past2 = Utc::now() - chrono::Duration::seconds(10);
+        let cron = cron_job("failing-cron", "*/5 * * * *", past2);
+        let cron_id = store.add(cron).unwrap();
+        store.take_due();
+        store.mark_done(&cron_id, false, Some("boom".to_string()));
+        let jobs = store.list();
+        let cron_index = jobs.iter().position(|j| j.id == cron_id).unwrap();
+        assert_eq!(jobs[cron_index].status, JobStatus::Pending);
+        let next = match &jobs[cron_index].kind {
+            ScheduleKind::Cron { next_run, .. } => *next_run,
+            _ => panic!("expected Cron"),
+        };
+        assert!(next > Utc::now());
+        assert_eq!(jobs[cron_index].last_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn mark_done_failure_ends_a_once_job_failed() {
+        let (store, _path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = once_job("failing-once", past);
+        let id = store.add(job).unwrap();
+        store.take_due();
+        store.mark_done(&id, false, Some("boom".to_string()));
+        assert_eq!(
+            store.list()[0].status,
+            JobStatus::Failed("boom".to_string())
+        );
+    }
+
+    #[test]
+    fn a_terminal_failure_ends_a_recurring_job_failed() {
+        let (store, _path) = tmp_store();
+
+        let past = Utc::now() - chrono::Duration::seconds(10);
+        let job = every_job("refused-every", 300, past);
+        let id = store.add(job).unwrap();
+        store.take_due();
+        store.mark_failed_terminal(&id, "refused: no longer supported".to_string());
+
+        let jobs = store.list();
+        assert_eq!(
+            jobs[0].status,
+            JobStatus::Failed("refused: no longer supported".to_string())
+        );
+        assert!(
+            store.take_due().is_empty(),
+            "a terminally failed job never fires again"
+        );
+
+        // Even when its slot passes, the status keeps it out of take_due.
+        let due_after_slot = store.take_due();
+        assert!(due_after_slot.is_empty());
     }
 }

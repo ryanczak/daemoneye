@@ -395,6 +395,8 @@ Long sessions don't get truncated at an arbitrary message count — DaemonEye ma
 - **Flexible Scheduling** — Run commands or Ghost Shell tasks once at a specific time, on a repeating interval, or on a full cron expression.
 - **Watchdog Monitors** — Active monitors use AI-powered analysis to evaluate system state on a schedule and trigger remediation when something looks wrong.
 - **Failure Isolation** — Each job runs in its own scheduler-owned PTY shell with a real exit code recorded in the shell's log; the shell is swept when the job is done.
+- **Restart Recovery** — If the daemon restarts while a recurring job is running, the job skips to its next slot instead of staying stuck; a `once` job interrupted this way is marked failed.
+- **Failures Don't End Recurring Jobs** — A failed run of an interval or cron job is logged and the job is rescheduled to its next slot; only a permanent refusal (or a failed `once` job) ends a job.
 
 ---
 

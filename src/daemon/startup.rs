@@ -67,6 +67,21 @@ fn warn_host_problems(startup_config: &crate::config::Config) {
     }
 }
 
+/// Reconcile the schedule store right after it loads: jobs a daemon restart
+/// left `Running` must not stay `Running` forever. Kept out of `run_daemon`
+/// so its hygiene-cap line does not grow, and called here only — the CLI
+/// loads the same store too, and a reset there could double-fire a job a
+/// live daemon is running.
+fn recover_schedules(store: &ScheduleStore) {
+    let recovered = store.recover_interrupted();
+    if !recovered.is_empty() {
+        log::info!(
+            "Scheduler startup recovery: {} job(s) reconciled",
+            recovered.len()
+        );
+    }
+}
+
 /// Start the daemon process.
 ///
 /// Lifecycle:
@@ -408,6 +423,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             ScheduleStore::new_empty()
         }),
     );
+    recover_schedules(&schedule_store);
 
     // Scheduler task: poll every second for due jobs.
     {

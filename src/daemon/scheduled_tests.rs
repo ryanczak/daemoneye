@@ -132,7 +132,7 @@ fn hard_fail_goal(state: &RunState) -> String {
 
 #[test]
 fn scheduled_state_succeeded_is_complete() {
-    let state = scheduled_terminal_state(Some(&JobStatus::Succeeded), "nightly-backup");
+    let state = scheduled_terminal_state(Some(&(JobStatus::Succeeded, None)), "nightly-backup");
     assert_eq!(
         state,
         RunState::Complete,
@@ -142,7 +142,7 @@ fn scheduled_state_succeeded_is_complete() {
 
 #[test]
 fn scheduled_state_pending_is_complete_because_every_jobs_reschedule() {
-    let state = scheduled_terminal_state(Some(&JobStatus::Pending), "disk-check");
+    let state = scheduled_terminal_state(Some(&(JobStatus::Pending, None)), "disk-check");
     assert_eq!(
         state,
         RunState::Complete,
@@ -153,9 +153,32 @@ fn scheduled_state_pending_is_complete_because_every_jobs_reschedule() {
 }
 
 #[test]
+fn a_failed_recurring_run_still_ends_hard_fail_with_its_error() {
+    // A recurring job's failed run reads back Pending (mark_done reschedules
+    // it), so the failure reaches this mapping through last_error.
+    let failed = scheduled_terminal_state(
+        Some(&(JobStatus::Pending, Some("boom".to_string()))),
+        "disk-check",
+    );
+    assert_eq!(
+        hard_fail_blocker(&failed).as_deref(),
+        Some("boom"),
+        "a failed recurring run must end hard_fail with its error as the blocker, \
+             not as a reported success"
+    );
+
+    let succeeded = scheduled_terminal_state(Some(&(JobStatus::Pending, None)), "disk-check");
+    assert_eq!(
+        succeeded,
+        RunState::Complete,
+        "a recurring run with no error is still Complete"
+    );
+}
+
+#[test]
 fn scheduled_state_failed_carries_the_error_as_the_blocker() {
     let state = scheduled_terminal_state(
-        Some(&JobStatus::Failed("exit code 1".to_string())),
+        Some(&(JobStatus::Failed("exit code 1".to_string()), None)),
         "nightly-backup",
     );
     assert_eq!(
@@ -172,7 +195,7 @@ fn scheduled_state_failed_carries_the_error_as_the_blocker() {
 
 #[test]
 fn scheduled_state_cancelled_reports_zero_turns() {
-    let state = scheduled_terminal_state(Some(&JobStatus::Cancelled), "cleanup-tmp");
+    let state = scheduled_terminal_state(Some(&(JobStatus::Cancelled, None)), "cleanup-tmp");
     match state {
         RunState::Cancelled { stage, turns } => {
             assert_eq!(
@@ -187,7 +210,7 @@ fn scheduled_state_cancelled_reports_zero_turns() {
 
 #[test]
 fn scheduled_state_running_is_a_hard_fail() {
-    let state = scheduled_terminal_state(Some(&JobStatus::Running), "still-running");
+    let state = scheduled_terminal_state(Some(&(JobStatus::Running, None)), "still-running");
     let blocker = hard_fail_blocker(&state);
     assert_eq!(
         blocker.as_deref(),
@@ -212,7 +235,8 @@ fn scheduled_state_missing_job_is_a_hard_fail() {
 
 #[test]
 fn scheduled_state_failed_and_missing_have_different_blockers() {
-    let failed = scheduled_terminal_state(Some(&JobStatus::Failed("boom".to_string())), "j");
+    let failed =
+        scheduled_terminal_state(Some(&(JobStatus::Failed("boom".to_string()), None)), "j");
     let missing = scheduled_terminal_state(None, "j");
     assert_ne!(
         hard_fail_blocker(&failed),
@@ -230,7 +254,7 @@ fn a_refused_watchdog_ends_the_scheduled_run_budget_exceeded() {
     let message = crate::daemon::spend::refusal_message(3.0, 2.0);
     let state = scheduled_run_state(
         Some(message.clone()),
-        Some(&JobStatus::Succeeded),
+        Some(&(JobStatus::Succeeded, None)),
         "nightly-backup",
     );
     match state {
@@ -255,10 +279,11 @@ fn a_refused_watchdog_ends_the_scheduled_run_budget_exceeded() {
     // Without the refusal, the status alone decides: a succeeded job is
     // Complete, so the refusal replaces this state rather than changing
     // how the job was marked.
-    let unrefused = scheduled_run_state(None, Some(&JobStatus::Succeeded), "nightly-backup");
+    let unrefused =
+        scheduled_run_state(None, Some(&(JobStatus::Succeeded, None)), "nightly-backup");
     assert_eq!(
         unrefused,
-        scheduled_terminal_state(Some(&JobStatus::Succeeded), "nightly-backup"),
+        scheduled_terminal_state(Some(&(JobStatus::Succeeded, None)), "nightly-backup"),
         "no refusal means the state `scheduled_terminal_state` would have given"
     );
 }
@@ -469,6 +494,7 @@ fn test_job(name: &str, action: ActionOn, id: &str) -> ScheduledJob {
         status: JobStatus::Pending,
         created_at: chrono::Utc::now(),
         last_run: None,
+        last_error: None,
     }
 }
 
@@ -510,7 +536,7 @@ async fn run_refusal_arm(job: &ScheduledJob, store: &Arc<ScheduleStore>) -> (Str
             "reason": COMMAND_REFUSAL_REASON,
         }),
     );
-    fail_job(job, store, &config, &notify_tx, reason.clone()).await;
+    fail_job_terminal(job, store, &config, &notify_tx, reason.clone()).await;
     (reason, 1)
 }
 

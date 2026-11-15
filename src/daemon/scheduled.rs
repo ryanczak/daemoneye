@@ -12,14 +12,21 @@ use crate::webhook::inject_ghost_event;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The terminal [`RunState`] a scheduled job's run records, from the status the
-/// store holds after the job ran. Pure: takes the status and the job name, not
-/// the store, so its tests need no filesystem.
+/// The terminal [`RunState`] a scheduled job's run records, from the record
+/// the store holds after the job ran. Pure: takes the record and the job
+/// name, not the store, so its tests need no filesystem.
 ///
 /// Note that a successful **`Every`** job does *not* read back as `Succeeded`:
 /// the store's `mark_done` advances it and it returns to `Pending`. `Pending`
-/// therefore maps to [`RunState::Complete`], not to "never finished".
-fn scheduled_terminal_state(status: Option<&JobStatus>, job_name: &str) -> RunState {
+/// therefore maps to [`RunState::Complete`], not to "never finished". The same
+/// is now true of a *failed* recurring run — `mark_done` reschedules it — so
+/// the failure reaches this mapping through the job's `last_error`: a
+/// `Pending` status with an error ends the run `HardFail` with that error as
+/// the blocker, exactly as a `Failed` status would.
+fn scheduled_terminal_state(
+    record: Option<&(JobStatus, Option<String>)>,
+    job_name: &str,
+) -> RunState {
     let hard_fail = |blocker: String| {
         RunState::HardFail(Briefing::new(
             format!("scheduled job {job_name}"),
@@ -30,28 +37,35 @@ fn scheduled_terminal_state(status: Option<&JobStatus>, job_name: &str) -> RunSt
             None,
         ))
     };
+    let Some((status, last_error)) = record else {
+        return hard_fail("the job left the store before it finished".to_string());
+    };
     match status {
         // A successful recurring (`Every`/`Cron`) job lands here too, because
         // it reschedules itself back to Pending as soon as it is marked done.
-        Some(JobStatus::Pending) | Some(JobStatus::Succeeded) => RunState::Complete,
-        Some(JobStatus::Failed(msg)) => hard_fail(msg.clone()),
-        Some(JobStatus::Running) => hard_fail("the job never recorded an outcome".to_string()),
-        Some(JobStatus::Cancelled) => RunState::Cancelled {
+        // A failed recurring run lands here *with* a `last_error`, and is
+        // reported through it below rather than as a success.
+        JobStatus::Pending | JobStatus::Succeeded => match last_error {
+            Some(error) => hard_fail(error.clone()),
+            None => RunState::Complete,
+        },
+        JobStatus::Failed(msg) => hard_fail(msg.clone()),
+        JobStatus::Running => hard_fail("the job never recorded an outcome".to_string()),
+        JobStatus::Cancelled => RunState::Cancelled {
             stage: "job_cancelled".into(),
             turns: 0,
         },
-        None => hard_fail("the job left the store before it finished".to_string()),
     }
 }
 
 /// The terminal [`RunState`] a scheduled job's run records: a watchdog
 /// refusal (`Some`) ends the run `BudgetExceeded` with the message as the
-/// blocker and the `Usd` dimension; without one (`None`) the job's status
+/// blocker and the `Usd` dimension; without one (`None`) the job's record
 /// alone decides. Pure — the shape [`run_scheduled_job`] applies, so its
 /// test runs the same mapping the caller does.
 fn scheduled_run_state(
     refusal: Option<String>,
-    status: Option<&JobStatus>,
+    record: Option<&(JobStatus, Option<String>)>,
     job_name: &str,
 ) -> RunState {
     match refusal {
@@ -63,7 +77,7 @@ fn scheduled_run_state(
             Some(message),
             Some(crate::daemon::run::BudgetDimension::Usd),
         )),
-        None => scheduled_terminal_state(status, job_name),
+        None => scheduled_terminal_state(record, job_name),
     }
 }
 
@@ -114,6 +128,19 @@ async fn fail_job(
     notify_job_result(&job.name, reason, config, notify_tx).await;
 }
 
+/// Mark the job failed terminally — it can never run, so it must not be
+/// re-fired at every slot — then notify and return.
+async fn fail_job_terminal(
+    job: &ScheduledJob,
+    store: &Arc<ScheduleStore>,
+    config: &Config,
+    notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    reason: String,
+) {
+    store.mark_failed_terminal(&job.id, reason.clone());
+    notify_job_result(&job.name, reason, config, notify_tx).await;
+}
+
 /// Jobs due this tick, whatever the daemon's adopted session name is.
 ///
 /// An empty session name is normal: the daemon can run without any chat
@@ -159,15 +186,15 @@ pub async fn run_scheduled_job(
         notify_tx,
     )
     .await;
-    let status = store
+    let record = store
         .list()
         .into_iter()
         .find(|j| j.id == job_id)
-        .map(|j| j.status);
+        .map(|j| (j.status, j.last_error));
     // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
     // place of the state the job status alone would give — the job itself
     // still ran and is still marked done as now.
-    let state = scheduled_run_state(refusal, status.as_ref(), &job_name);
+    let state = scheduled_run_state(refusal, record.as_ref(), &job_name);
     run_log.finish(state);
     Ok(())
 }
@@ -333,7 +360,7 @@ async fn run_scheduled_job_inner(
                     "reason": COMMAND_REFUSAL_REASON,
                 }),
             );
-            fail_job(
+            fail_job_terminal(
                 &job,
                 &store,
                 &config,
