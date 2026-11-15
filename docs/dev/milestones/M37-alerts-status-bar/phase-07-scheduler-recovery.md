@@ -1,7 +1,7 @@
 # Phase 07 — scheduler-recovery
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~200 lines, about two thirds of it tests
@@ -361,3 +361,144 @@ already approved; `grep -c 'recover_interrupted' src/scheduler.rs` = 11 (≥ 2);
 `cli_calls=0`. `cargo fmt --all -- --check` exits 0; `cargo build` and
 `cargo clippy --all-targets --all-features -- -D warnings` both clean with
 zero warnings.
+
+### Update — 2026-11-15 02:50 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 07 (scheduler-recovery) is complete on top of the approved work already on disk. I fixed the test self-deadlock the gate run found (removed `crate::test_home_guard()` from the `every_job` helper — `scheduler::tests` now runs in 0.07s with no hang), added the one missing planned test `a_failed_recurring_run_still_ends_hard_fail_with_its_error` (Pending + `Some("boom")` → HardFail blocker `"boom"`; Pending + `None` → `Complete`), and wrote the task-5 docs (README gains **Restart Recovery** and **Failures Don't End Recurring Jobs** bullets; CLAUDE.md's `src/scheduler.rs` row now states the new `mark_done`/`mark_failed_terminal`/`recover_interrupted` semantics). Both mutation checks were run with `timeout 600` and reverted; the end-to-end block is pasted verbatim into one Update Log entry. Final gate: `passed=2984 failed=0` (baseline 2975, +9 new tests), build 0 warnings, clippy clean, `fmt --check` exit 0, `startup_calls=1` / `cli_calls=0`. Committed as `d7b2c7ae`; working tree clean; phase doc status left at `in-progress` per the lifecycle split.
+
+**Notes for review**
+
+- **Mutation-1 needed an extra step, and I want it visible:** removing `skip_to_future` from the `Every` arm left `recover_interrupted_skips_a_running_every_job_to_its_next_slot` **green**. The reason is benign — `advance()` on a 300s job with a 10s-past slot already lands in the future, so the mutation doesn't change what the test observes. I proved the test body is live (and would fail on a bad `next_run`) with a temporary `panic!` probe that turned it red, then reverted; both transcripts are in the Update Log. The assertion still pins the spec's behaviour, but `skip_to_future` is only load-bearing on a long daemon-down gap, which a fast offset test can't produce — flagging in case you want the mutation criterion reworded or the test given a many-intervals-past slot.
+- Mutation 2 was applied to `scheduled_terminal_state`'s `Pending` arm (mapping to `Complete` unconditionally, dropping the `last_error` branch) rather than inside `mark_done` — the seam is where the failure reaches the run state, and the test failed with `left: None, right: Some("boom")` as expected, then went green on revert.
+- `run_daemon`'s line count is unchanged from the approved diff (the helper `recover_schedules` sits beside it, per task 2).
+- Status flip to `review` and the completion Update Log entry are left to the server, as contracted.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Checking daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.08s
+
+
+TEST
+policy_allow_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test config_pricing_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (3507830): No such process
+kill: (-3508544): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +2 -0
+- `docs/dev/milestones/M37-alerts-status-bar/phase-07-scheduler-recovery.md` — +128 -0
+- `src/daemon/scheduled.rs` — +44 -17
+- `src/daemon/scheduled_tests.rs` — +36 -10
+- `src/daemon/startup.rs` — +16 -0
+- `src/scheduler.rs` — +6 -4
+
+**Commit:** d7b2c7ae831af7e0f0fcaf6e6876f72bf60694f4
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
