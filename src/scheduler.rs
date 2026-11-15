@@ -1091,9 +1091,8 @@ mod tests {
         let _home = crate::test_home_guard();
         let (store, path) = tmp_store();
 
-        let past = Utc::now() - chrono::Duration::seconds(10);
-        let job = every_job("interrupted-every", 300, past);
-        let fired_slot = every_next_run(&job);
+        let fired_slot = Utc::now() - chrono::Duration::seconds(6 * 86400 + 10);
+        let job = every_job("interrupted-every", 300, fired_slot);
         store.add(job).unwrap();
         let due = store.take_due();
         assert_eq!(due.len(), 1, "the job fires so it can be left Running");
