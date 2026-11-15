@@ -1,7 +1,7 @@
 # Phase 09 — status-bar-words
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-15
 **Depends on:** phases 02a, 02b and 02c (the bar, the counters, the grants segment)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -180,3 +180,148 @@ removed from `GlyphSet`), task 4 the grants segment, task 5 the docs, task 6
 the mutation check and the end-to-end capture.
 
 <!-- entries below this line -->
+
+### Update — 2026-11-15 18:07 (complete, server-authored)
+
+**Summary:** The work is committed and the tree is clean. Summary of the run:
+
+**Summary**
+
+Phase 09 (status-bar-words) is implemented and committed as `2da83ad1`. Every status-bar item and grants kind now carries a wide form — glyph plus pithy word (`💤 idle`, `🧠 thinking 12s`, `⚠ warn`, `🌒 ctx 2%`, `💸 $0.42`, `⛽ $0.9/h burn`, `↻ turn 7`, `🐇 123 tok/s`, `⏳ 2 bg`, `👻 2 ghosts`, `🛠 3 tools`, `🐚 2 shells`, `⚡ grants 3`, `🔑 sudo`, `📜 scripts 2`, `📄 files all`, `🌐 2 hosts`) — with the compact form byte-for-byte the pre-phase bar. When the line doesn't fit, every non-exempt part drops to compact at once (never a mixed bar), then the existing rank drops run; the state and severity words survive every width. The word logic lives in the new child module `src/cli/status_words.rs` (two-form `TwoFormPart`, the word table, counter/age/clip/token helpers), keeping `status_bar.rs` at 774 production lines, under the 800 cap with no allowlist growth. `GlyphSet.elapsed` and its three table entries are removed; docs (README status-bar bullet + `/approvals` paragraph, CLAUDE.md key-files row, M37 README decision 7) are updated.
+
+**Notes for review**
+
+- **Adaptation on the wide counter form:** where the ascii glyph already spells an abbreviation (`ctx`, `bg`), the wide form is **word-then-count with the glyph dropped** (`ctx 2%`, `bg 2 bg`→`bg 2` avoided), per the constraint's "the word replaces the glyph" option; symbols/ascii cost keeps glyph-then-value so `$$` never doubles; other counters render word-then-count (`ghosts 2`, `scripts 2`) in all dialects.
+- The wide alert count is the worst severity's own count at two or more (`⚠ 2 warn`); the compact form keeps today's every-firing count (`🔥3`), per the regression anchor.
+- The mutation check on the words-drop step (`words_drop_all_at_once_before_any_rank_drop` fails when the step never switches to compact) and the § End-to-end block could not be run as a final capture step: the run hit its turn budget during the multi-round fix cycle; all 2 998 tests pass (`failed=0`), hygiene/doc_truth/bug_tracker are green, `grep 'elapsed' src/cli/status_glyphs.rs` prints nothing, build has 0 warnings, clippy and fmt are clean, and the working tree is clean at `2da83ad1`. The mutation-check and end-to-end capture entries should be treated as outstanding for a re-dispatch if the reviewer wants them pasted verbatim.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.21s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+injection_block_format ... ok
+test g3_tool_policy_runbook_precedence_over_agent ... ok
+test g5_depth_limit_enforced ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (4086823): No such process
+kill: (-4087553): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +2 -2
+- `docs/dev/milestones/M37-alerts-status-bar/README.md` — +3 -2
+- `docs/dev/milestones/M37-alerts-status-bar/phase-09-status-bar-words.md` — +10 -1
+- `src/cli/render_ratatui_tests.rs` — +3 -1
+- `src/cli/status_bar.rs` — +192 -151
+- `src/cli/status_bar_fit.rs` — +23 -39
+- `src/cli/status_bar_tests.rs` — +53 -21
+- `src/cli/status_glyphs.rs` — +2 -7
+- `src/cli/status_grants.rs` — +61 -34
+- `src/cli/status_words.rs` — +244 -0
+
+**Commit:** 2da83ad1d3631f3cf4ce376166fabc010c91f3f9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
