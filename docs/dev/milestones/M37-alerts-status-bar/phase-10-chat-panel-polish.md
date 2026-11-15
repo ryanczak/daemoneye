@@ -1,7 +1,7 @@
 # Phase 10 — chat-panel-polish
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced: [bug-10-1](bugs/bug-10-1.md))
 **Drafted:** 2026-11-15
 **Depends on:** phase 09 (the tree at `bff5abc2`)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -240,6 +240,20 @@ Client (in `stream.rs`'s `tool_call_panel_tests`): update
 - [ ] fmt, build (0 warnings) and clippy are green. `cargo test` (under
       `timeout 600`) reports `failed=0` and passed greater than 3008. The
       hygiene, `doc_truth` and `bug_tracker` tests pass.
+
+- [ ] **(bug-10-1)** `an_unparseable_shell_target_is_refused_without_asking`
+      exists and passes: `shell: "bogus"` sends no `ToolCallPrompt` and
+      returns `unknown shell target`, and nothing runs. Today
+      `grep -rlw "fn an_unparseable_shell_target_is_refused_without_asking" src`
+      prints nothing, and the call is asked and runs.
+- [ ] **(bug-10-1)** `an_unpicked_run_is_pinned_to_a_new_shell` exists and
+      passes: a `None` pick gives the run `shell: "new"`. Today `run_shell` is
+      `None`. Its mutation check is pasted.
+- [ ] **(bug-10-1)** `grep -c getpwuid_r src/daemon/executor/shell_label.rs`
+      prints at least 1 (today 0). The `mod.rs 866` allowlist line has a
+      reason comment.
+- [ ] **(bug-10-1)** `timeout 600 cargo test` reports `failed=0` with passed
+      greater than 3025.
 
 ## Pre-flight
 
@@ -513,3 +527,15 @@ kill: (-105651): No such process
 **Commit:** 8eaf580744805cc0c37c04dbea7f2363f2d757e1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-15 (bounced)
+
+Independent gates are green: fmt, build with 0 warnings, clippy, and
+`cargo test` passed=3025 failed=0. The renderer, glyphs, label module and
+reuse-rule factoring are approved. Bounced on
+[bug-10-1](bugs/bug-10-1.md) (major). `run_shell` falls back to `None` rather
+than `"new"` when nothing is picked, so the run is not pinned. It also turns
+an unparseable `shell` value into a silent default-shell run, where it used to
+be the `unknown shell target` refusal. Also in the bug: `getpwuid_r` (minor)
+and a reason comment for the new `mod.rs` allowlist line (nit; the entry
+itself is accepted).
