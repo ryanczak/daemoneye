@@ -4,18 +4,25 @@ use ratatui::backend::TestBackend;
 
 // ── Helpers for spinner-row tests ──────────────────────────
 
-/// The y of the input box's top rule — the first row made entirely of `─`.
-/// Committed panels never produce such a row (their rule rows carry corners),
-/// so the plain run is the box's signature. (The box has no corners since the
-/// side borders became blank paste-safe columns.)
+/// The y of the input box's top rule — the first row whose rule glyphs are
+/// `─` or a box-drawing corner (`╭`/`╮`), i.e. any full-width rule row.
+/// Committed panels never produce a *live-region* rule row above the box, so
+/// the first such row is the box's top rule. (The box now carries corners on
+/// its rules, phase 10.)
 pub(super) fn corner_row(buf: &ratatui::buffer::Buffer) -> u16 {
     let cols = buf.area.width;
+    let is_rule = |y: u16| {
+        (0..cols).all(|x| {
+            let sym = buf[(x, y)].symbol();
+            sym == "─" || sym == "╭" || sym == "╮" || sym == "╰" || sym == "╯"
+        })
+    };
     for y in 0..buf.area.height {
-        if (0..cols).all(|x| buf[(x, y)].symbol() == "─") {
+        if is_rule(y) {
             return y;
         }
     }
-    panic!("no full-width ─ rule row found in buffer");
+    panic!("no full-width rule row found in buffer");
 }
 
 /// Collect an entire row's symbols into a single String.
@@ -29,19 +36,23 @@ pub(super) fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
 }
 
 /// Locate the input box in a rendered buffer: the y of its top rule, the y of
-/// its bottom rule, and the rows strictly between them. The box's rules are
-/// the only rows in the live region made entirely of `─` (committed panels
-/// carry corners on their rule rows), so a full-width plain run is the box's
-/// signature. The first such row is the top rule; the next is the bottom.
+/// its bottom rule, and the rows strictly between them. A rule row is a row
+/// of `─` with optional `╭`/`╮` (top) or `╰`/`╯` (bottom) corners; the box's
+/// rules are the only such rows in the live region.
 pub(super) fn box_rules(buf: &ratatui::buffer::Buffer) -> (u16, u16, Vec<u16>) {
     let cols = buf.area.width;
-    let is_rule = |y: u16| (0..cols).all(|x| buf[(x, y)].symbol() == "─");
+    let is_rule = |y: u16| {
+        (0..cols).all(|x| {
+            let sym = buf[(x, y)].symbol();
+            sym == "─" || sym == "╭" || sym == "╮" || sym == "╰" || sym == "╯"
+        })
+    };
     let rules: Vec<u16> = (0..buf.area.height).filter(|y| is_rule(*y)).collect();
     let Some(top) = rules.first().copied() else {
-        panic!("no full-width ─ rule row found in buffer");
+        panic!("no full-width rule row found in buffer");
     };
     let Some(bottom) = rules.into_iter().find(|y| *y > top) else {
-        panic!("no second full-width ─ rule row found in buffer");
+        panic!("no second full-width rule row found in buffer");
     };
     let content_rows: Vec<u16> = (top + 1..bottom).collect();
     (top, bottom, content_rows)
@@ -251,15 +262,31 @@ fn paste_safe_box_keeps_top_and_bottom_rules() {
 
     let (top, bottom, content_rows) = box_rules(buf);
 
-    // The rule rows themselves: every column is a plain ─.
+    // The rule rows themselves: every column is a plain ─ except the
+    // box-drawing corners at the ends (phase 10's rounded corners).
+    let rule_ok = |y: u16| {
+        row_text(buf, y)
+            .chars()
+            .all(|c| c == '─' || c == '╭' || c == '╮' || c == '╰' || c == '╯')
+    };
     assert!(
-        (0..buf.area.width).all(|x| buf[(x, top)].symbol() == "─"),
-        "top rule row {top} must be ─ across the width, got: {:?}",
+        rule_ok(top),
+        "top rule row {top} must be ─ with corners, got: {:?}",
         row_text(buf, top)
     );
     assert!(
-        (0..buf.area.width).all(|x| buf[(x, bottom)].symbol() == "─"),
-        "bottom rule row {bottom} must be ─ across the width, got: {:?}",
+        rule_ok(bottom),
+        "bottom rule row {bottom} must be ─ with corners, got: {:?}",
+        row_text(buf, bottom)
+    );
+    assert!(
+        row_text(buf, top).starts_with('╭') && row_text(buf, top).ends_with('╮'),
+        "the top rule opens ╭ and closes ╮: {:?}",
+        row_text(buf, top)
+    );
+    assert!(
+        row_text(buf, bottom).starts_with('╰') && row_text(buf, bottom).ends_with('╯'),
+        "the bottom rule opens ╰ and closes ╯: {:?}",
         row_text(buf, bottom)
     );
 
@@ -337,14 +364,21 @@ fn paste_safe_box_blank_under_spinner_and_prompt() {
                 .all(|y| row_text(buf, *y).starts_with(' ') && row_text(buf, *y).ends_with(' ')),
         "spinner region content rows must have blank side columns, rows {content_rows:?}"
     );
+    let rule_ok = |y: u16| {
+        row_text(buf, y)
+            .chars()
+            .all(|c| c == '─' || c == '╭' || c == '╮' || c == '╰' || c == '╯')
+    };
     assert!(
-        (0..buf.area.width).all(|x| buf[(x, top)].symbol() == "─"),
-        "spinner region top rule must be ─ across the width, got: {:?}",
+        rule_ok(top) && row_text(buf, top).starts_with('╭') && row_text(buf, top).ends_with('╮'),
+        "spinner region top rule must be ╭─╮, got: {:?}",
         row_text(buf, top)
     );
     assert!(
-        (0..buf.area.width).all(|x| buf[(x, bottom)].symbol() == "─"),
-        "spinner region bottom rule must be ─ across the width, got: {:?}",
+        rule_ok(bottom)
+            && row_text(buf, bottom).starts_with('╰')
+            && row_text(buf, bottom).ends_with('╯'),
+        "spinner region bottom rule must be ╰─╯, got: {:?}",
         row_text(buf, bottom)
     );
 
@@ -368,14 +402,21 @@ fn paste_safe_box_blank_under_spinner_and_prompt() {
                 .all(|y| row_text(buf, *y).starts_with(' ') && row_text(buf, *y).ends_with(' ')),
         "prompt region content rows must have blank side columns, rows {content_rows:?}"
     );
+    let rule_ok = |y: u16| {
+        row_text(buf, y)
+            .chars()
+            .all(|c| c == '─' || c == '╭' || c == '╮' || c == '╰' || c == '╯')
+    };
     assert!(
-        (0..buf.area.width).all(|x| buf[(x, top)].symbol() == "─"),
-        "prompt region top rule must be ─ across the width, got: {:?}",
+        rule_ok(top) && row_text(buf, top).starts_with('╭') && row_text(buf, top).ends_with('╮'),
+        "prompt region top rule must be ╭─╮, got: {:?}",
         row_text(buf, top)
     );
     assert!(
-        (0..buf.area.width).all(|x| buf[(x, bottom)].symbol() == "─"),
-        "prompt region bottom rule must be ─ across the width, got: {:?}",
+        rule_ok(bottom)
+            && row_text(buf, bottom).starts_with('╰')
+            && row_text(buf, bottom).ends_with('╯'),
+        "prompt region bottom rule must be ╰─╯, got: {:?}",
         row_text(buf, bottom)
     );
 }
@@ -957,4 +998,138 @@ fn credential_panel_short_region_falls_back() {
             &approval_test_status(),
         )
         .unwrap();
+}
+
+// ── Phase 10: the input box takes the history panel's border ────────────────
+
+#[test]
+fn the_input_box_has_rounded_corners() {
+    let mut renderer = make_test_renderer();
+    let mut input = InputLine::new();
+    input.insert_str("hello");
+    renderer
+        .draw(&input, &default_status())
+        .expect("draw the live region");
+
+    let buf = renderer.terminal.backend().buffer().clone();
+    let (top, bottom, _) = box_rules(&buf);
+    let top_rule = row_text(&buf, top);
+    let bottom_rule = row_text(&buf, bottom);
+    assert!(
+        top_rule.starts_with('╭') && top_rule.ends_with('╮'),
+        "the box's top rule opens ╭ and closes ╮: {top_rule:?}"
+    );
+    assert!(
+        bottom_rule.starts_with('╰') && bottom_rule.ends_with('╯'),
+        "the box's bottom rule opens ╰ and closes ╯: {bottom_rule:?}"
+    );
+}
+
+#[test]
+fn the_input_box_border_matches_the_history_panel() {
+    let mut renderer = make_test_renderer();
+    let input = InputLine::new();
+    renderer
+        .draw(&input, &default_status())
+        .expect("draw the live region");
+    renderer
+        .commit_panel("Output", &["a body line".to_string()], false)
+        .expect("commit the panel");
+
+    let backend = renderer.terminal.backend();
+    let buf = backend.buffer().clone();
+
+    // A border cell from the committed history panel: the `history` rows the
+    // renderer recorded at commit, whose rule spans carry the panel's style.
+    // Compared field-for-field: the buffer's cell styles are fully
+    // initialised (bg/underline_color set), the span's are sparse.
+    let panel_style = renderer
+        .history
+        .iter()
+        .find(|l| l.spans.iter().any(|s| s.content.starts_with('╭')))
+        .and_then(|l| l.spans.iter().find(|s| s.content.starts_with('╭')))
+        .map(|s| s.style)
+        .expect("a history panel top-rule span is in the committed rows");
+    let same = |a: &Style, b: &Style| a.fg == b.fg && a.add_modifier == b.add_modifier;
+
+    // The input box's rule cells (all four corners and a mid-rule `─`).
+    let (top, bottom, _) = box_rules(&buf);
+    for y in [top, bottom] {
+        for x in 0..buf.area.width {
+            let cell = &buf[(x, y)];
+            assert!(
+                same(&cell.style(), &panel_style),
+                "input-box border cell ({x},{y}) carries the history panel's style, got {:?} vs {:?}",
+                cell.style(),
+                panel_style
+            );
+        }
+    }
+}
+
+#[test]
+fn the_input_box_sides_stay_blank() {
+    let mut renderer = make_test_renderer();
+    let mut input = InputLine::new();
+    input.insert_str("hello");
+    renderer
+        .draw(&input, &default_status())
+        .expect("draw the live region");
+
+    let buf = renderer.terminal.backend().buffer().clone();
+    let (_, _, content_rows) = box_rules(&buf);
+    assert!(
+        !content_rows.is_empty(),
+        "the box has at least one content row"
+    );
+    for y in content_rows {
+        let row = row_text(&buf, y);
+        assert!(
+            row.starts_with(' ') && row.ends_with(' '),
+            "content row {y}'s first and last cells are blank: {row:?}"
+        );
+    }
+}
+
+#[test]
+fn the_prompt_and_spinner_boxes_have_the_same_corners() {
+    let mut renderer = make_test_renderer();
+    let input = InputLine::new();
+    let status = default_status();
+
+    let corner_glyphs = |buf: &ratatui::buffer::Buffer| {
+        let (top, bottom, _) = box_rules(buf);
+        let t = row_text(buf, top);
+        let b = row_text(buf, bottom);
+        (
+            (t.chars().next(), t.chars().last()),
+            (b.chars().next(), b.chars().last()),
+        )
+    };
+
+    renderer
+        .draw(&input, &status)
+        .expect("draw the live region");
+    let live = corner_glyphs(renderer.terminal.backend().buffer());
+
+    let mut renderer = make_test_renderer();
+    renderer
+        .draw_prompt("password:", &input, &status)
+        .expect("draw the prompt region");
+    let prompt = corner_glyphs(renderer.terminal.backend().buffer());
+
+    let mut renderer = make_test_renderer();
+    renderer
+        .draw_spinner("(◉)", "scrying", 3, "", &status)
+        .expect("draw the spinner region");
+    let spinner = corner_glyphs(renderer.terminal.backend().buffer());
+
+    assert_eq!(
+        live, prompt,
+        "the prompt box's corners match the live box's"
+    );
+    assert_eq!(
+        live, spinner,
+        "the spinner box's corners match the live box's"
+    );
 }

@@ -51,6 +51,48 @@ struct ApprovedRun<'a> {
     max_per_owner: u32,
 }
 
+/// The shell the prompt's label names, picked **before** the prompt and
+/// pinned for the run. An explicit `shell` id names itself; `"new"` picks
+/// none; otherwise the reuse rule picks the session's idle shell on `host`
+/// — the same rule `shell_for_owner` runs, so the label can never be a
+/// guess the run contradicts. The pick never creates a shell and never
+/// connects to a host: a denied prompt leaves the registry as it found it.
+async fn pick_shell_for_run(
+    host: &crate::host::HostId,
+    shell_arg: Option<&str>,
+    session_id: Option<&str>,
+) -> Option<crate::shell::ShellId> {
+    match shell_arg {
+        Some("new") => None,
+        Some(value) => Some(crate::shell::ShellId::parse(value).ok()?),
+        None => {
+            let owner = chat_owner(session_id);
+            crate::shell::reusable_shell_for_owner(crate::shell::registry(), owner, host.clone())
+                .await
+        }
+    }
+}
+
+/// The label the approval panel is titled with: where the command runs and
+/// which shell the approved run is pinned to (`user@host:sN`, `host:sN`
+/// without a user, `…:new` when nothing was picked).
+fn build_shell_label(host: &crate::host::HostId, picked: Option<&crate::shell::ShellId>) -> String {
+    use super::shell_label::{local_username, shell_where_label, ssh_user_host};
+    match host {
+        crate::host::HostId::Local => shell_where_label(
+            Some(&local_username()),
+            &crate::daemon::utils::daemon_hostname(),
+            picked.map(|s| s.as_str()),
+        ),
+        crate::host::HostId::Named(name) => {
+            let (user, host_name) = crate::shell::host_entry_or_bare(name)
+                .map(|entry| ssh_user_host(&entry.ssh))
+                .unwrap_or_else(|_| (None, name.clone()));
+            shell_where_label(user.as_deref(), &host_name, picked.map(|s| s.as_str()))
+        }
+    }
+}
+
 pub(super) async fn dispatch<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -129,6 +171,18 @@ where
             // The PTY shell substrate, the only substrate. A ghost session
             // falls through to `refuse_foreground`, which refuses.
             if !is_ghost && session_id.is_some() {
+                // The shell the label names, picked before the prompt: an
+                // explicit id names itself, "new" picks none, and the reuse
+                // rule picks the owner's idle shell on this host. The run is
+                // then pinned to exactly this id (or "new").
+                let picked = pick_shell_for_run(&host, shell.as_deref(), session_id).await;
+                let shell_label = build_shell_label(&host, picked.as_ref());
+                let run_shell = match picked.as_ref() {
+                    Some(id) => Some(id.as_str().to_string()),
+                    None => shell
+                        .as_deref()
+                        .and_then(|s| (s == "new").then(|| s.to_string())),
+                };
                 match prompt_and_await_approval(
                     ApprovalRequest {
                         id,
@@ -140,8 +194,9 @@ where
                             .as_deref()
                             .filter(|s| crate::shell::is_user_shell(crate::shell::registry(), s)),
                         interactive: is_launch(*interactive, cmd),
+                        shell_label: Some(shell_label),
+                        session_id,
                     },
-                    session_id,
                     ghost_policy.as_ref(),
                     tx,
                     rx,
@@ -153,7 +208,7 @@ where
                         let run = ApprovedRun {
                             id,
                             cmd,
-                            shell,
+                            shell: &run_shell,
                             timeout_secs,
                             interactive,
                             cmd_id,
@@ -809,6 +864,163 @@ mod approved_path_tests {
         assert!(
             out.contains("[A-Za-z0-9._-]"),
             "the refusal names the rule: {out}"
+        );
+    }
+
+    use crate::ipc::Response as R;
+
+    /// Extract a `ToolCallPrompt` frame's `shell_label` and background flag.
+    fn prompt_label(frames: &[R]) -> (Option<String>, bool) {
+        frames
+            .iter()
+            .find_map(|f| match f {
+                R::ToolCallPrompt {
+                    shell_label,
+                    background,
+                    ..
+                } => Some((shell_label.clone(), *background)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("a ToolCallPrompt frame: {frames:?}"))
+    }
+
+    fn approval_reply(id: &str) -> String {
+        let mut reply = serde_json::to_string(&crate::ipc::Request::ToolCallResponse {
+            id: id.to_string(),
+            approved: true,
+            user_message: None,
+        })
+        .expect("ToolCallResponse serialises");
+        reply.push('\n');
+        reply
+    }
+
+    fn denial_reply(id: &str) -> String {
+        let mut reply = serde_json::to_string(&crate::ipc::Request::ToolCallResponse {
+            id: id.to_string(),
+            approved: false,
+            user_message: None,
+        })
+        .expect("ToolCallResponse serialises");
+        reply.push('\n');
+        reply
+    }
+
+    fn call_with_shell(cmd: &str, shell: Option<&str>) -> PendingCall {
+        PendingCall::Foreground {
+            id: "fg-83".to_string(),
+            thought_signature: None,
+            cmd: cmd.to_string(),
+            shell: shell.map(str::to_string),
+            host: None,
+            timeout_secs: Some(20),
+            interactive: false,
+        }
+    }
+
+    fn session_shell_count(sid: &str) -> usize {
+        crate::shell::with_shells(crate::shell::registry(), |store| {
+            store
+                .values()
+                .filter(|r| r.owner.key() == Owner::Chat(sid.to_string()).key())
+                .count()
+        })
+    }
+
+    /// The prompt names the shell the run lands in: the session already has
+    /// an idle shell, the label ends in `:<that id>`, and the approved run's
+    /// result names the same shell.
+    #[tokio::test]
+    async fn the_prompt_names_the_shell_the_run_lands_in() {
+        let (_home, _dir) = crate::test_home();
+        let sid = "sess-10-label";
+        let id = crate::shell::spawn_for(
+            crate::shell::registry(),
+            Owner::Chat(sid.to_string()),
+            5,
+            false,
+            |id| Box::pin(spawn_in_process_host(id)),
+        )
+        .await
+        .expect("the session's shell opens");
+
+        let frames = drive(
+            sid,
+            &call_with_shell("echo DE-P10-LABEL", None),
+            &approval_reply("fg-83"),
+        )
+        .await;
+        let (label, background) = prompt_label(&frames);
+        assert!(!background, "a foreground prompt");
+        let label = label.expect("a foreground prompt carries a shell label");
+        assert!(
+            label.ends_with(&format!(":{}", id.as_str())),
+            "the label ends in the shell the run lands in: {label:?} vs {id}"
+        );
+
+        let out = tool_result(&frames);
+        assert!(
+            out.contains(&format!("[ran in shell {}]", id.as_str())),
+            "the approved run names the same shell: {out}"
+        );
+    }
+
+    /// A session with no shell is labelled `:new`; the denied call leaves the
+    /// registry holding no shell for the session — the pick never creates one.
+    #[tokio::test]
+    async fn a_session_without_a_shell_is_labelled_new() {
+        let (_home, _dir) = crate::test_home();
+        let sid = "sess-10-new";
+
+        let frames = drive(
+            sid,
+            &call_with_shell("echo DE-P10-NEW", None),
+            &denial_reply("fg-83"),
+        )
+        .await;
+        let (label, _) = prompt_label(&frames);
+        let label = label.expect("a foreground prompt carries a shell label");
+        assert!(label.ends_with(":new"), "no pick reads `new`: {label:?}");
+
+        assert_eq!(
+            session_shell_count(sid),
+            0,
+            "a denied prompt leaves no shell behind"
+        );
+    }
+
+    /// An explicit shell id labels itself.
+    #[tokio::test]
+    async fn an_explicit_shell_id_labels_itself() {
+        let (_home, _dir) = crate::test_home();
+        let sid = "sess-10-explicit";
+        let id = crate::shell::spawn_for(
+            crate::shell::registry(),
+            Owner::Chat(sid.to_string()),
+            5,
+            false,
+            |id| Box::pin(spawn_in_process_host(id)),
+        )
+        .await
+        .expect("the session's shell opens");
+
+        let frames = drive(
+            sid,
+            &call_with_shell("echo DE-P10-EXPLICIT", Some(id.as_str())),
+            &approval_reply("fg-83"),
+        )
+        .await;
+        let (label, _) = prompt_label(&frames);
+        let label = label.expect("a foreground prompt carries a shell label");
+        assert!(
+            label.ends_with(&format!(":{}", id.as_str())),
+            "an explicit id names itself: {label:?}"
+        );
+
+        let out = tool_result(&frames);
+        assert!(
+            out.contains(&format!("[ran in shell {}]", id.as_str())),
+            "the approved run lands in the named shell: {out}"
         );
     }
 }

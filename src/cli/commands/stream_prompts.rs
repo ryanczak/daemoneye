@@ -361,7 +361,7 @@ async fn prompt_with_session_approve_view(
 
 // ── Ratatui prompt functions (called from ask_with_session_ratatui) ──────────
 
-#[allow(clippy::too_many_arguments)] // 9 params: the flow needs renderer, stdin, status, approval, command, background, pane, class, and the launch flag
+#[allow(clippy::too_many_arguments)] // 10 params: the flow needs renderer, stdin, status, approval, command, background, pane, class, the launch flag, and the shell label
 pub(super) async fn prompt_tool_call_ratatui(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -372,10 +372,11 @@ pub(super) async fn prompt_tool_call_ratatui(
     target_pane: Option<&str>,
     classification: &crate::ipc::Classification,
     interactive: bool,
+    shell_label: Option<&str>,
 ) -> anyhow::Result<(bool, Option<String>)> {
     use crate::daemon::utils::command_has_sudo;
 
-    let where_label = tool_call_panel_label(background);
+    let where_label = tool_call_panel_label(background, shell_label);
     let body = tool_call_panel_body(
         command,
         background,
@@ -383,7 +384,7 @@ pub(super) async fn prompt_tool_call_ratatui(
         classification,
         interactive,
     );
-    let _ = renderer.commit_panel(where_label, &body, false);
+    let _ = renderer.commit_panel(&where_label, &body, false);
 
     let is_sudo = command_has_sudo(command);
     let auto_approved = approval.auto_approves(classification, is_sudo);
@@ -433,72 +434,6 @@ pub(super) async fn prompt_tool_call_ratatui(
         Ok((true, None))
     } else {
         Ok((false, commit_declined(renderer, user_msg)))
-    }
-}
-
-/// The session label the approval panel shows after `[A]pprove for`, naming
-/// the host (or the always-asked class) the grant would widen.
-pub(super) fn approval_session_label(
-    classification: &crate::ipc::Classification,
-    is_sudo: bool,
-) -> String {
-    let scope = if is_sudo { "sudo session" } else { "session" };
-    match classification {
-        crate::ipc::Classification::Command => scope.to_string(),
-        crate::ipc::Classification::RemoteShell { host } => format!("{host} {scope}"),
-        crate::ipc::Classification::NewHost { host } => {
-            format!("{host} (unconfigured) — always asked")
-        }
-        crate::ipc::Classification::EscapeHatch => "escape hatch — always asked".to_string(),
-        crate::ipc::Classification::UserShell { shell } => {
-            format!("your shell {shell} — always asked")
-        }
-    }
-}
-
-/// The approval-panel body a `ToolCallPrompt` renders, classification included.
-///
-/// Separate from `prompt_tool_call_ratatui` because that function is the whole
-/// interactive flow (panel + input + decision); the tests pin the body text
-/// against a test backend without driving the input loop.
-pub(super) fn tool_call_panel_body(
-    command: &str,
-    _background: bool,
-    target_pane: Option<&str>,
-    classification: &crate::ipc::Classification,
-    interactive: bool,
-) -> Vec<String> {
-    let mut body = vec![format!("$ {}", command)];
-    if interactive {
-        body.push("→ interactive: the command keeps the shell; nothing waits for it".to_string());
-    }
-    if let Some(tp) = target_pane {
-        body.push(format!("→ target: {}", tp));
-    }
-    match classification {
-        crate::ipc::Classification::Command => {}
-        crate::ipc::Classification::RemoteShell { host } => {
-            body.push(format!("→ host: {} (configured)", host));
-        }
-        crate::ipc::Classification::NewHost { host } => {
-            body.push(format!("→ host: {} (unconfigured)", host));
-        }
-        crate::ipc::Classification::EscapeHatch => {
-            body.push("→ ghost shell reaching outside its sandbox".to_string());
-        }
-        crate::ipc::Classification::UserShell { shell } => {
-            body.push(format!("→ your shell {shell} (opened with /shell)"));
-        }
-    }
-    body
-}
-
-/// The label above the approval-panel body.
-pub(super) fn tool_call_panel_label(background: bool) -> &'static str {
-    if background {
-        "daemon · runs silently"
-    } else {
-        "terminal · visible to you"
     }
 }
 

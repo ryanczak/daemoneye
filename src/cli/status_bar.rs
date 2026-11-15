@@ -448,7 +448,7 @@ fn state_part(model: &StatusModel, now: Instant, g: &GlyphSet) -> Part {
 fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palette) -> Vec<Part> {
     let severity_style = |rank: u8| match rank {
         3 => gray().fg(palette.red()),
-        2 => gray().fg(palette.yellow()),
+        2 | 1 => gray().fg(palette.yellow()),
         _ => gray(),
     };
     let severity_glyph = |rank: u8| match rank {

@@ -27,6 +27,7 @@ pub mod sbx;
 pub mod sbx_lifecycle;
 mod schedule;
 pub(crate) mod shell_exec;
+mod shell_label;
 
 use crate::ai::PendingCall;
 use crate::daemon::policy::GhostPolicy;
@@ -72,6 +73,34 @@ struct ApprovalRequest<'a> {
     /// for it. Display-only — the panel names the fact; classification and
     /// the ghost `is_safe` check read the command string alone.
     interactive: bool,
+    /// Where the command runs, as `user@host:sN` — the shell picked before
+    /// the prompt and pinned for the run. `None` for a background prompt,
+    /// which names no shell.
+    shell_label: Option<String>,
+    /// The chat session the approval is for, as the log lines name it.
+    session_id: Option<&'a str>,
+}
+
+/// The `ToolCallPrompt` frame, built once so the prompt send reads as one
+/// call. `id`/`cmd` are owned here; the rest carry through verbatim.
+fn tool_call_prompt_frame(
+    id: &str,
+    cmd: &str,
+    background: bool,
+    target_pane_hint: Option<&str>,
+    classification: crate::ipc::Classification,
+    interactive: bool,
+    shell_label: Option<String>,
+) -> Response {
+    Response::ToolCallPrompt {
+        id: id.to_string(),
+        command: cmd.to_string(),
+        background,
+        target_pane: target_pane_hint.map(|s| s.to_string()),
+        classification,
+        interactive,
+        shell_label,
+    }
 }
 
 /// The classification an approval prompt carries: `UserShell` when the call
@@ -582,7 +611,6 @@ fn approval_log_line(background: bool, decision: &str, cmd: &str) -> String {
 /// Returns `Err` on connection EOF.
 async fn prompt_and_await_approval<W, R>(
     req: ApprovalRequest<'_>,
-    session_id: Option<&str>,
     ghost_policy: Option<&GhostPolicy>,
     tx: &mut W,
     rx: &mut R,
@@ -591,97 +619,136 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let ApprovalRequest {
-        id,
-        cmd,
-        background,
-        target_pane_hint,
-        host,
-        user_shell,
-        interactive,
-    } = req;
-    let mode = if background {
-        "background"
-    } else {
-        "foreground"
-    };
     // The configured host names, read once for the classification. On a load
     // error the map is empty, so every named host classifies as `new_host` —
     // the honest class for "I could not read the host table".
     let known_hosts: Vec<String> = crate::config::current().hosts.keys().cloned().collect();
 
-    // ── Ghost Shell Logic ──────────────────────────────────────────────────
-    if let Some(policy) = ghost_policy {
-        if policy.is_safe(cmd) {
-            log::info!("Ghost Shell auto-approved {}: {}", mode, cmd);
-            if background {
-                crate::daemon::stats::inc_commands_bg_approved();
-            } else {
-                crate::daemon::stats::inc_commands_fg_approved();
-            }
-            let cmd_id = crate::daemon::stats::start_command(cmd, mode);
-            if cmd.contains(".daemoneye/scripts/") {
-                crate::daemon::stats::inc_scripts_executed();
-            }
-            crate::daemon::utils::log_event(
-                "command_approval",
-                serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": mode,
-                    "cmd": cmd,
-                    "decision": "ghost_auto_approved",
-                }),
-            );
-            return Ok(Ok(cmd_id));
-        } else {
-            log::info!(
-                "Ghost Shell auto-denied (sudo command not on whitelist): {} — whitelist={:?} run_with_sudo={}",
-                cmd,
-                policy.auto_approve_scripts,
-                policy.run_with_sudo,
-            );
-            let msg = format!(
-                "Command denied by Ghost Policy (sudo requires a pre-approved script via install-sudoers): {}",
-                cmd
-            );
-            if background {
-                crate::daemon::stats::inc_commands_bg_denied();
-            } else {
-                crate::daemon::stats::inc_commands_fg_denied();
-            }
-            crate::daemon::utils::log_event(
-                "command_approval",
-                serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": mode,
-                    "cmd": cmd,
-                    "decision": "ghost_auto_denied",
-                }),
-            );
-            crate::daemon::utils::log_command(session_id, mode, "", cmd, "ghost_denied", "");
-            return Ok(Err(ToolCallOutcome::Result(msg)));
-        }
+    if let Some(outcome) = ghost_auto_outcome(&req, ghost_policy, mode(req.background)) {
+        return Ok(outcome);
     }
-    // ──────────────────────────────────────────────────────────────────────────
 
     send_response_split(
         tx,
-        Response::ToolCallPrompt {
-            id: id.to_string(),
-            command: cmd.to_string(),
-            background,
-            target_pane: target_pane_hint.map(|s| s.to_string()),
-            classification: prompt_classification(
-                host,
+        tool_call_prompt_frame(
+            req.id,
+            req.cmd,
+            req.background,
+            req.target_pane_hint,
+            prompt_classification(
+                req.host,
                 ghost_policy.is_some(),
                 &known_hosts,
-                user_shell,
+                req.user_shell,
             ),
-            interactive,
-        },
+            req.interactive,
+            req.shell_label.clone(),
+        ),
     )
     .await?;
 
+    match approval_reply(&req, tx, rx).await? {
+        ApprovalReply::Approved(cmd_id) => Ok(Ok(cmd_id)),
+        ApprovalReply::Denied(outcome) | ApprovalReply::Redirected(outcome) => Ok(Err(outcome)),
+    }
+}
+
+/// The mode word the approval log and counters speak: `background` or
+/// `foreground`.
+fn mode(background: bool) -> &'static str {
+    if background {
+        "background"
+    } else {
+        "foreground"
+    }
+}
+
+/// A ghost policy's auto decision for `cmd`: `Some(Ok)` on auto-approve,
+/// `Some(Err)` on the sudo refusal, `None` when a chat prompt must open.
+fn ghost_auto_outcome(
+    req: &ApprovalRequest<'_>,
+    ghost_policy: Option<&GhostPolicy>,
+    mode: &str,
+) -> Option<Result<usize, ToolCallOutcome>> {
+    let policy = ghost_policy?;
+    let cmd = req.cmd;
+    let background = req.background;
+    if policy.is_safe(cmd) {
+        log::info!("Ghost Shell auto-approved {}: {}", mode, cmd);
+        if background {
+            crate::daemon::stats::inc_commands_bg_approved();
+        } else {
+            crate::daemon::stats::inc_commands_fg_approved();
+        }
+        let cmd_id = crate::daemon::stats::start_command(cmd, mode);
+        if cmd.contains(".daemoneye/scripts/") {
+            crate::daemon::stats::inc_scripts_executed();
+        }
+        crate::daemon::utils::log_event(
+            "command_approval",
+            serde_json::json!({
+                "session": req.session_id.unwrap_or("-"),
+                "mode": mode,
+                "cmd": cmd,
+                "decision": "ghost_auto_approved",
+            }),
+        );
+        return Some(Ok(cmd_id));
+    }
+    log::info!(
+        "Ghost Shell auto-denied (sudo command not on whitelist): {} — whitelist={:?} run_with_sudo={}",
+        cmd,
+        policy.auto_approve_scripts,
+        policy.run_with_sudo,
+    );
+    let msg = format!(
+        "Command denied by Ghost Policy (sudo requires a pre-approved script via install-sudoers): {}",
+        cmd
+    );
+    if background {
+        crate::daemon::stats::inc_commands_bg_denied();
+    } else {
+        crate::daemon::stats::inc_commands_fg_denied();
+    }
+    crate::daemon::utils::log_event(
+        "command_approval",
+        serde_json::json!({
+            "session": req.session_id.unwrap_or("-"),
+            "mode": mode,
+            "cmd": cmd,
+            "decision": "ghost_auto_denied",
+        }),
+    );
+    crate::daemon::utils::log_command(req.session_id, mode, "", cmd, "ghost_denied", "");
+    Some(Err(ToolCallOutcome::Result(msg)))
+}
+
+/// What the approval reply means for the command.
+enum ApprovalReply {
+    /// Approved: the stats command id the run stages under.
+    Approved(usize),
+    /// Denied or timed out: the outcome handed to the caller.
+    Denied(ToolCallOutcome),
+    /// The user typed a message instead of approving: the redirect.
+    Redirected(ToolCallOutcome),
+}
+
+/// Send the prompt frame, await the reply until `APPROVAL_TIMEOUT`, and turn
+/// the reply into an [`ApprovalReply`]. A closed stream or an unparseable
+/// line is a denial, never a hang.
+async fn approval_reply<W, R>(
+    req: &ApprovalRequest<'_>,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ApprovalReply>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let id = req.id;
+    let cmd = req.cmd;
+    let background = req.background;
+    let session_id = req.session_id;
     let mut line = String::new();
     let read_result = tokio::time::timeout(APPROVAL_TIMEOUT, rx.read_line(&mut line)).await;
 
@@ -724,20 +791,20 @@ where
             } else {
                 crate::daemon::stats::inc_commands_fg_approved();
             }
-            let cmd_id = crate::daemon::stats::start_command(cmd, mode);
+            let cmd_id = crate::daemon::stats::start_command(cmd, mode(background));
             if cmd.contains(".daemoneye/scripts/") {
                 crate::daemon::stats::inc_scripts_executed();
             }
             crate::daemon::utils::log_event(
                 "command_approval",
                 serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": mode,
+                    "session": req.session_id.unwrap_or("-"),
+                    "mode": mode(background),
                     "cmd": cmd,
                     "decision": "approved",
                 }),
             );
-            Ok(Ok(cmd_id))
+            Ok(ApprovalReply::Approved(cmd_id))
         }
         Parsed::Denied => {
             let decision = if timed_out { "timeout" } else { "denied" };
@@ -750,13 +817,13 @@ where
             crate::daemon::utils::log_event(
                 "command_approval",
                 serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": mode,
+                    "session": req.session_id.unwrap_or("-"),
+                    "mode": mode(background),
                     "cmd": cmd,
                     "decision": decision,
                 }),
             );
-            crate::daemon::utils::log_command(session_id, mode, "", cmd, decision, "");
+            crate::daemon::utils::log_command(session_id, mode(background), "", cmd, decision, "");
             let msg = if timed_out {
                 let notice = format!(
                     "Approval prompt timed out after {} s — the command was not executed. \
@@ -768,20 +835,26 @@ where
             } else {
                 "User denied execution".to_string()
             };
-            Ok(Err(ToolCallOutcome::Result(msg)))
+            Ok(ApprovalReply::Denied(ToolCallOutcome::Result(msg)))
         }
         Parsed::UserMessage(text) => {
-            log::info!("{} command redirected by user message: {}", mode, cmd);
+            log::info!(
+                "{} command redirected by user message: {}",
+                mode(background),
+                cmd
+            );
             crate::daemon::utils::log_event(
                 "command_approval",
                 serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "mode": mode,
+                    "session": req.session_id.unwrap_or("-"),
+                    "mode": mode(background),
                     "cmd": cmd,
                     "decision": "user_message",
                 }),
             );
-            Ok(Err(ToolCallOutcome::UserMessage(text)))
+            Ok(ApprovalReply::Redirected(ToolCallOutcome::UserMessage(
+                text,
+            )))
         }
     }
 }

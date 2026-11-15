@@ -427,7 +427,7 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
             assert!(text.contains("💤"), "state is tier 1: {text:?}");
             assert!(text.contains("⚠"), "alerts are tier 1: {text:?}");
             assert!(text.contains("🌓20%"), "context is tier 1: {text:?}");
-            assert!(text.contains("💸0.42"), "cost is tier 1: {text:?}");
+            assert!(text.contains("💰0.42"), "cost is tier 1: {text:?}");
             assert!(text.contains("↻12"), "turn is tier 1: {text:?}");
             break;
         }
@@ -612,7 +612,7 @@ fn status_line_cost_shows_spend_untracked_and_burn() {
     m.session_started_at = now - Duration::from_secs(3600);
     let text = line_at(&m, now, 160);
     assert!(
-        text.contains("💸0.42"),
+        text.contains("💰0.42"),
         "the spend to two decimals: {text:?}"
     );
     assert!(text.contains("❔"), "the unknown-pricing mark: {text:?}");
@@ -1346,7 +1346,7 @@ fn wide_form_carries_the_words() {
     // Context, growth, cost, burn, turn, throughput.
     assert!(text.contains("🌓 ctx 20%"), "context word: {text:?}");
     assert!(text.contains("📈 +3.1k"), "growth word: {text:?}");
-    assert!(text.contains("💸 $0.42"), "cost word: {text:?}");
+    assert!(text.contains("💰 $0.42"), "cost word: {text:?}");
     assert!(text.contains("⛽ $0.4/h burn"), "burn word: {text:?}");
     assert!(text.contains("↻ turn 12"), "turn word: {text:?}");
     assert!(text.contains("🐇 38 tok/s"), "throughput word: {text:?}");
@@ -1432,7 +1432,7 @@ fn words_drop_all_at_once_before_any_rank_drop() {
         "🛠7",
         "🐚3",
         "🌓20%",
-        "💸0.42",
+        "💰0.42",
         "↻12",
         "🐇38t/s",
     ] {
@@ -1703,4 +1703,75 @@ fn a_line_never_exceeds_the_pane_width() {
             );
         }
     }
+}
+
+// ── Phase 10 (M37): the info and cost glyphs ────────────────────────────────
+
+#[test]
+fn an_info_alert_shows_a_yellow_warning_glyph() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.alerts = vec![AlertBadge {
+        fingerprint: "fp-info".to_string(),
+        name: "Heartbeat".to_string(),
+        severity: "info".to_string(),
+        first_seen_unix: 1_700_000_000,
+        last_seen_unix: 1_700_000_000,
+    }];
+
+    // Compact: the glyph leads, no `ℹ` anywhere.
+    let p = palette();
+    let line = status_bar_line(&m, now, &p, 160);
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    assert!(
+        text.contains('⚠'),
+        "the info alert leads with the warning glyph: {text:?}"
+    );
+    assert!(!text.contains('ℹ'), "no info glyph remains: {text:?}");
+
+    // The glyph's span is palette yellow, as the warning rank's is.
+    let glyph_span = line
+        .spans
+        .iter()
+        .find(|s| s.content.contains('⚠'))
+        .expect("the alert glyph span");
+    assert_eq!(
+        glyph_span.style.fg,
+        Some(p.yellow()),
+        "the info glyph is drawn in palette yellow: {glyph_span:?}"
+    );
+
+    // Wide: the word tells info and warning apart.
+    let wide = line_at(&m, now, 400);
+    assert!(
+        wide.contains("⚠ info Heartbeat"),
+        "the wide info alert names the word and the alert: {wide:?}"
+    );
+}
+
+#[test]
+fn the_cost_glyph_is_a_money_bag() {
+    let now = Instant::now();
+    let m = full_model();
+
+    // Compact and wide: `💰`, never `💸`.
+    let text = line_at(&m, now, 160);
+    assert!(text.contains("💰0.42"), "compact cost: {text:?}");
+    assert!(!text.contains("💸"), "no flying money glyph: {text:?}");
+    let wide = line_at(&m, now, 400);
+    assert!(wide.contains("💰 $0.42"), "wide cost: {wide:?}");
+    assert!(!wide.contains("💸"), "no flying money glyph wide: {wide:?}");
+}
+
+#[test]
+fn the_symbols_and_ascii_alert_glyphs_are_unchanged() {
+    assert_eq!(SYMBOLS.alert_info, "●");
+    assert_eq!(SYMBOLS.cost, "$");
+    assert_eq!(ASCII.alert_info, "i");
+    assert_eq!(ASCII.cost, "$");
+    // And the warning/critical glyphs in the emoji dialect are untouched.
+    assert_eq!(EMOJI.alert_critical, "🔥");
+    assert_eq!(EMOJI.alert_warning, "⚠");
 }

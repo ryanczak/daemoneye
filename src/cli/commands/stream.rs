@@ -15,6 +15,78 @@ use super::approval::SessionApproval;
 use super::interrupt::{InterruptAction, InterruptState};
 use super::ipc_client::{connect, send_request};
 
+// The tool-call approval panel's text pieces, moved here from
+// `stream_prompts.rs` (M37 phase 10) so that file stays at its 810-line
+// allowlist. The prompt flow calls them through `prompts::*`.
+
+/// The session label the approval panel shows after `[A]pprove for`, naming
+/// the host (or the always-asked class) the grant would widen.
+pub(super) fn approval_session_label(
+    classification: &crate::ipc::Classification,
+    is_sudo: bool,
+) -> String {
+    let scope = if is_sudo { "sudo session" } else { "session" };
+    match classification {
+        crate::ipc::Classification::Command => scope.to_string(),
+        crate::ipc::Classification::RemoteShell { host } => format!("{host} {scope}"),
+        crate::ipc::Classification::NewHost { host } => {
+            format!("{host} (unconfigured) — always asked")
+        }
+        crate::ipc::Classification::EscapeHatch => "escape hatch — always asked".to_string(),
+        crate::ipc::Classification::UserShell { shell } => {
+            format!("your shell {shell} — always asked")
+        }
+    }
+}
+
+/// The approval-panel body a `ToolCallPrompt` renders, classification
+/// included. The tests pin the body text without driving the input loop.
+pub(super) fn tool_call_panel_body(
+    command: &str,
+    _background: bool,
+    target_pane: Option<&str>,
+    classification: &crate::ipc::Classification,
+    interactive: bool,
+) -> Vec<String> {
+    let mut body = vec![format!("$ {}", command)];
+    if interactive {
+        body.push("→ interactive: the command keeps the shell; nothing waits for it".to_string());
+    }
+    if let Some(tp) = target_pane {
+        body.push(format!("→ target: {}", tp));
+    }
+    match classification {
+        crate::ipc::Classification::Command => {}
+        crate::ipc::Classification::RemoteShell { host } => {
+            body.push(format!("→ host: {} (configured)", host));
+        }
+        crate::ipc::Classification::NewHost { host } => {
+            body.push(format!("→ host: {} (unconfigured)", host));
+        }
+        crate::ipc::Classification::EscapeHatch => {
+            body.push("→ ghost shell reaching outside its sandbox".to_string());
+        }
+        crate::ipc::Classification::UserShell { shell } => {
+            body.push(format!("→ your shell {shell} (opened with /shell)"));
+        }
+    }
+    body
+}
+
+/// The label above the approval-panel body. A foreground prompt names where
+/// the command runs — the `user@host:sN` label the frame carries; an older
+/// daemon's frame (no label) falls back to today's wording. A background
+/// prompt never names a shell.
+pub(super) fn tool_call_panel_label(background: bool, shell_label: Option<&str>) -> String {
+    if background {
+        "daemon · runs silently".to_string()
+    } else {
+        shell_label
+            .map(|l| l.to_string())
+            .unwrap_or_else(|| "terminal · visible to you".to_string())
+    }
+}
+
 /// Client-side silence bounds, derived from the daemon's
 /// `KEEPALIVE_PERIOD_SECS` (15 s) with >= 6x margin: while a turn is in
 /// flight the daemon sends *something* at least every 15 s, so 90 s of
@@ -1187,14 +1259,24 @@ mod tool_call_panel_tests {
             "a Command classification adds nothing to the pre-phase panel body"
         );
         assert_eq!(
-            tool_call_panel_label(false),
+            tool_call_panel_label(false, None),
             "terminal · visible to you",
-            "the foreground label is the pre-phase wording"
+            "the foreground label with no shell label is the pre-phase wording"
         );
         assert_eq!(
-            tool_call_panel_label(true),
+            tool_call_panel_label(false, Some("matt@pinky:s3")),
+            "matt@pinky:s3",
+            "the foreground label names user, host and shell when the frame carries one"
+        );
+        assert_eq!(
+            tool_call_panel_label(true, None),
             "daemon · runs silently",
             "the background label is the pre-phase wording"
+        );
+        assert_eq!(
+            tool_call_panel_label(true, Some("matt@pinky:s3")),
+            "daemon · runs silently",
+            "the background label never names a shell"
         );
     }
 
@@ -1313,6 +1395,38 @@ mod tool_call_panel_tests {
             approval_session_label(&crate::ipc::Classification::EscapeHatch, false),
             "escape hatch — always asked",
             "the escape-hatch label states the always-asked property"
+        );
+    }
+}
+
+#[cfg(test)]
+mod shell_title_tests {
+    use super::*;
+
+    /// The terminal panel's title names where the command runs: the frame's
+    /// `shell_label` when the daemon carries one, today's wording when an
+    /// older daemon's frame has none, and the background wording either way.
+    #[test]
+    fn the_terminal_panel_names_user_host_and_shell() {
+        assert_eq!(
+            tool_call_panel_label(false, Some("matt@pinky:s3")),
+            "matt@pinky:s3",
+            "a foreground prompt with a label names user, host and shell"
+        );
+        assert_eq!(
+            tool_call_panel_label(false, None),
+            "terminal · visible to you",
+            "an older daemon's frame (no label) falls back to today's wording"
+        );
+        assert_eq!(
+            tool_call_panel_label(true, Some("matt@pinky:s3")),
+            "daemon · runs silently",
+            "a background prompt never names a shell"
+        );
+        assert_eq!(
+            tool_call_panel_label(true, None),
+            "daemon · runs silently",
+            "a background prompt without a label reads as before"
         );
     }
 }

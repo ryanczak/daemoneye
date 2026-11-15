@@ -259,6 +259,7 @@ fn response_tool_call_prompt_roundtrip() {
         target_pane: Some("%5".to_string()),
         classification: Classification::default(),
         interactive: false,
+        shell_label: Some("matt@pinky:s3".to_string()),
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {
@@ -268,12 +269,18 @@ fn response_tool_call_prompt_roundtrip() {
             target_pane,
             classification,
             interactive,
+            shell_label,
         } => {
             assert_eq!(id, "tc_3");
             assert_eq!(command, "ls -la");
             assert!(!background);
             assert!(!interactive);
             assert_eq!(target_pane, Some("%5".to_string()));
+            assert_eq!(
+                shell_label.as_deref(),
+                Some("matt@pinky:s3"),
+                "the shell label survives the wire"
+            );
             assert_eq!(
                 classification,
                 Classification::Command,
@@ -306,6 +313,7 @@ fn tool_call_prompt_round_trips_its_classification() {
             host: "nope".to_string(),
         },
         interactive: false,
+        shell_label: None,
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {
@@ -315,6 +323,7 @@ fn tool_call_prompt_round_trips_its_classification() {
             target_pane,
             classification,
             interactive,
+            ..
         } => {
             assert_eq!(id, "tc_3");
             assert_eq!(command, "uptime");
@@ -351,6 +360,34 @@ fn tool_call_prompt_without_a_classification_defaults_to_command() {
                 "an unclassified frame is by definition an ordinary local command"
             );
             assert!(target_pane.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn tool_call_prompt_without_shell_label_parses_as_none() {
+    // An older daemon's frame: no `shell_label` key. The `#[serde(default)]`
+    // on the field is what keeps it deserialising, as `None` — the client
+    // then falls back to today's `terminal · visible to you` title.
+    let json = r#"{"ToolCallPrompt":{"id":"tc_3","command":"ls -la","background":false}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("backward-compat deserialize");
+    match parsed {
+        Response::ToolCallPrompt { shell_label, .. } => {
+            assert!(shell_label.is_none(), "an unlabelled frame is None");
+        }
+        _ => panic!("wrong variant"),
+    }
+
+    let json = r#"{"ToolCallPrompt":{"id":"tc_3","command":"ls -la","background":false,"shell_label":"matt@pinky:s3"}}"#;
+    let parsed: Response = serde_json::from_str(json).expect("deserialize labelled frame");
+    match parsed {
+        Response::ToolCallPrompt { shell_label, .. } => {
+            assert_eq!(
+                shell_label.as_deref(),
+                Some("matt@pinky:s3"),
+                "the label survives the wire"
+            );
         }
         _ => panic!("wrong variant"),
     }

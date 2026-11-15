@@ -91,18 +91,17 @@ pub async fn probe_foreground(reg: &ShellRegistry, id: &ShellId, timeout: Durati
 /// A ready shell socket for `owner` on `host`: reuse the owner's live shell
 /// on that host, or create one. Returns the shell id and the path to its
 /// bound, ready socket.
-pub async fn shell_for_owner<F, Fut>(
+/// The shell the reuse rule would hand `owner` on `host`, or `None` when no
+/// live idle shell qualifies. **Never spawns and never touches a host**: the
+/// registry walk removes a dead-host record exactly as `shell_for_owner`
+/// does, and the live probe is the same one `shell_for_owner` runs. This is
+/// the one reuse rule — `shell_for_owner` calls it, so a caller cannot see a
+/// different reuse answer than the prompt's label named.
+pub async fn reusable_shell_for_owner(
     reg: &ShellRegistry,
     owner: Owner,
     host: crate::host::HostId,
-    max_per_owner: u32,
-    ready_timeout: Duration,
-    spawn: F,
-) -> anyhow::Result<(ShellId, PathBuf)>
-where
-    F: FnOnce(ShellId) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<()>>,
-{
+) -> Option<ShellId> {
     // (1) The owner's live shells on `host`, lowest index first — the reuse
     // order. A match whose host is dead is removed here so it is not handed
     // to the next caller as a live shell; the rest are candidates the probe
@@ -144,14 +143,27 @@ where
     // shell is skipped, never removed, so the program holding it is
     // untouched. D4: the decision probes live, never the cached
     // `last_foreground`.
-    let mut idle: Option<ShellId> = None;
-    for id in &candidates {
-        if probe_foreground(reg, id, PROBE_TIMEOUT).await == crate::shell::Foreground::Prompt {
-            idle = Some(id.clone());
-            break;
+    for id in candidates {
+        if probe_foreground(reg, &id, PROBE_TIMEOUT).await == crate::shell::Foreground::Prompt {
+            return Some(id);
         }
     }
-    if let Some(id) = idle {
+    None
+}
+
+pub async fn shell_for_owner<F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    host: crate::host::HostId,
+    max_per_owner: u32,
+    ready_timeout: Duration,
+    spawn: F,
+) -> anyhow::Result<(ShellId, PathBuf)>
+where
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    if let Some(id) = reusable_shell_for_owner(reg, owner.clone(), host.clone()).await {
         let socket = launch::socket_path(id.as_str());
         return Ok((id, socket));
     }

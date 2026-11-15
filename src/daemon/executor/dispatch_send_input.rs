@@ -117,8 +117,9 @@ where
                     user_shell: crate::shell::is_user_shell(crate::shell::registry(), shell)
                         .then_some(shell.as_str()),
                     interactive: false,
+                    shell_label: None,
+                    session_id,
                 },
-                session_id,
                 None,
                 tx,
                 rx,

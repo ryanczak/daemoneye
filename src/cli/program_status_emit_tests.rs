@@ -402,6 +402,7 @@ fn program_status_emit_frame_mapping() {
                 target_pane: None,
                 classification: crate::ipc::Classification::Command,
                 interactive: false,
+                shell_label: None,
             },
             Kind::Permission,
         ),

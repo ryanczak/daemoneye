@@ -371,12 +371,10 @@ impl<B: Backend> RatatuiRenderer<B> {
         let title_len = Span::raw(title).width();
         let fill = inner.saturating_sub(title_len + 4);
 
-        let border_color = self.palette.red();
+        let _border_color = self.palette.red();
         let title_color = self.palette.yellow();
 
-        let border_style = Style::default()
-            .fg(border_color)
-            .add_modifier(Modifier::BOLD);
+        let border_style = history_border_style(&self.palette);
         let title_style = Style::default()
             .fg(title_color)
             .add_modifier(Modifier::BOLD);

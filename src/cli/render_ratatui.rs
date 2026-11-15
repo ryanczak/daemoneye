@@ -404,15 +404,46 @@ impl RatatuiRenderer<ratatui::backend::CrosstermBackend<std::io::Stdout>> {
 #[path = "render_ratatui_draw.rs"]
 mod draw;
 
+/// The history panel's border style: palette red, bold — the style
+/// `commit_panel_labeled` draws its `╭─ … ─╮` rules with, and the style the
+/// input box's rules must match so the live region reads as one system.
+pub(crate) fn history_border_style(palette: &crate::cli::palette::Palette) -> Style {
+    Style::default()
+        .fg(palette.red())
+        .add_modifier(Modifier::BOLD)
+}
+
 /// The input box's `Block`: top and bottom rules only — the side columns are
 /// blank so a multi-line copy from the terminal has no `│` in it — with
 /// horizontal padding 1 so the inner area is where `Borders::ALL` put it.
-fn input_box_block() -> Block<'static> {
+fn input_box_block(palette: &crate::cli::palette::Palette) -> Block<'static> {
     Block::default()
         .borders(Borders::TOP | Borders::BOTTOM)
         .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(Color::Gray))
+        .border_style(history_border_style(palette))
         .padding(Padding::horizontal(1))
+}
+
+/// Overwrite the input box's four corner cells in `frame`'s buffer. ratatui
+/// draws no corners on a `Block` with only `TOP | BOTTOM` borders — the
+/// box's sides must stay blank paste-safe columns — so the `╭`/`╮`/`╰`/`╯`
+/// are painted onto the rule rows after the paragraph renders, in the same
+/// style the rules carry. Shared by every region that draws the box.
+fn draw_input_box_corners(frame: &mut ratatui::Frame, area: Rect, style: Style) {
+    let left = area.x;
+    let right = area.x + area.width.saturating_sub(1);
+    let top = area.y;
+    let bottom = area.y + area.height.saturating_sub(1);
+    for (x, y, glyph) in [
+        (left, top, "╭"),
+        (right, top, "╮"),
+        (left, bottom, "╰"),
+        (right, bottom, "╯"),
+    ] {
+        if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+            cell.set_symbol(glyph).set_style(style);
+        }
+    }
 }
 
 /// Render the live (non-committed) region: input box + status bar.
@@ -447,9 +478,10 @@ fn render_live_region(
     };
 
     let input_para = Paragraph::new(input_text.clone())
-        .block(input_box_block())
+        .block(input_box_block(palette))
         .scroll((scroll_offset, 0));
     frame.render_widget(input_para, content_area);
+    draw_input_box_corners(frame, content_area, history_border_style(palette));
 
     // ── Set cursor position (clamped to visible content area) ──
     if let Some((col, row)) = cursor_pos {
@@ -568,9 +600,10 @@ fn render_prompt_region(
         .map(|l| Line::from(Span::raw(l)))
         .collect();
     let input_para = Paragraph::new(input_text_obj)
-        .block(input_box_block())
+        .block(input_box_block(palette))
         .wrap(Wrap { trim: false });
     frame.render_widget(input_para, chunks[0]);
+    draw_input_box_corners(frame, chunks[0], history_border_style(palette));
 
     // ── Status bar ─────────────────────────────────────────────
     render_status_bar(frame, chunks[1], status, palette);
@@ -595,8 +628,9 @@ fn render_spinner_region(
 
     // ── Bordered input box holding the kept text ───────────────
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(body);
-    let input_para = Paragraph::new(typeahead_text.to_string()).block(input_box_block());
+    let input_para = Paragraph::new(typeahead_text.to_string()).block(input_box_block(palette));
     frame.render_widget(input_para, chunks[0]);
+    draw_input_box_corners(frame, chunks[0], history_border_style(palette));
 
     // ── Status bar ─────────────────────────────────────────────
     render_status_bar(frame, chunks[1], status, palette);

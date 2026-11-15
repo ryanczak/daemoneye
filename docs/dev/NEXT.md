@@ -5,7 +5,7 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** [phase-09-status-bar-words](milestones/M37-alerts-status-bar/phase-09-status-bar-words.md) — words on every status-bar item and grants kind (PE decision 7, 2026-11-15), drafted before the M37 live check so the check sees the final bar. Phases 01 through 08 are done.
+**Active phase:** [phase-10-chat-panel-polish](milestones/M37-alerts-status-bar/phase-10-chat-panel-polish.md) — chat polish before the M37 live check: the input box gets the history panels' red border and rounded corners, and the terminal approval panel is titled `user@host:sN`, the info alert glyph becomes a yellow `⚠` and the cost glyph `💰` (PE, 2026-11-15). Phases 01 through 09 are done.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

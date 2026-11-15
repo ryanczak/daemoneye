@@ -411,6 +411,11 @@ pub enum Response {
         /// still deserialises with `false`.
         #[serde(default)]
         interactive: bool,
+        /// Where the command runs, as `user@host:sN` — the shell picked
+        /// before the prompt, which the approved run is pinned to. `None`
+        /// from an older daemon, or for a background prompt.
+        #[serde(default)]
+        shell_label: Option<String>,
     },
     /// The approved background command requires a credential (sudo password, etc.).
     /// The client MUST prompt the user with echo disabled and return a `CredentialResponse`.

@@ -317,6 +317,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                 target_pane,
                 classification,
                 interactive,
+                shell_label,
             } => {
                 status.blocked(crate::shell::program_status::Kind::Permission);
                 sb.grants = approval.summary();
@@ -331,6 +332,7 @@ pub(in super::super) async fn ask_with_session_ratatui(
                     target_pane.as_deref(),
                     &classification,
                     interactive,
+                    shell_label.as_deref(),
                 )
                 .await?;
                 send_request(

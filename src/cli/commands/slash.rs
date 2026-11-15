@@ -976,6 +976,7 @@ mod tests {
             target_pane: None,
             classification: crate::ipc::Classification::default(),
             interactive: false,
+            shell_label: None,
         };
         let line = error_line(&resp);
         assert!(line.contains("ToolCallPrompt"), "should name variant");
