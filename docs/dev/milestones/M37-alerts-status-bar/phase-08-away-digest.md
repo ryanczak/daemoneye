@@ -1,7 +1,7 @@
 # Phase 08 — away-digest
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-15
 **Depends on:** nothing in M37
 **Estimated diff:** ~300 lines, about half of it tests
@@ -199,6 +199,16 @@ tests there:
       `failed=0` and more than the baseline passed. Hygiene
       (`run_scheduled_job_inner` and `handle_chat_attach` not grown, no new
       allowlist line), `doc_truth` and `bug_tracker` are ok.
+
+- [ ] **(bug-08-1, open) No test touches the real `$HOME`:**
+      `rm -f ~/.daemoneye/var/run/chat_last_seen; timeout 900 cargo test; ls ~/.daemoneye/var/run/chat_last_seen`
+      prints `No such file or directory`. Today the file is recreated
+      (`tests/integration.rs` and the unguarded `handle_chat_attach` tests).
+- [ ] **(bug-08-1, open) The new attach tests pass run alone:**
+      `timeout 600 cargo test --lib chat_presence` three times in a row
+      prints `test result: ok.` each time. Today it fails 3 of 3
+      (`attach_joins_the_digest_to_the_brief_in_one_system_msg`,
+      `the_last_detach_stamps_last_seen`).
 
 ## Pre-flight
 
@@ -457,3 +467,16 @@ kill: (-3606273): No such process
 **Commit:** 4a2cbd7e5810b3f0083888706bff437b69b8c5ae
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-15 (bounced)
+
+Bounced on [bug-08-1](bugs/bug-08-1.md). The production code is approved:
+the event, the stamp, the digest builder, the connection count, the attach
+and detach wiring, the docs, and both mutation checks (each failed its
+pinned test). Independent gates: fmt exit 0, build with 0 warnings, clippy
+clean, full `cargo test` passed=2998 failed=0. Two hermeticity defects
+remain. Tests that drive `handle_chat_attach` without a throwaway `$HOME`
+write `chat_last_seen` into the real `~/.daemoneye`, reproduced with
+`tests/integration.rs`. And the two new attach tests fail every time when run
+alone (`cargo test --lib chat_presence`, 3 of 3), because unguarded
+neighbours share the process-global presence map.
