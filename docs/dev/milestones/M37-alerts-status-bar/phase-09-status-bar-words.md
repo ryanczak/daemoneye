@@ -1,7 +1,7 @@
 # Phase 09 — status-bar-words
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced on [bug-09-2](bugs/bug-09-2.md))
+**Status:** done
 **Drafted:** 2026-11-15
 **Depends on:** phases 02a, 02b and 02c (the bar, the counters, the grants segment)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -17,8 +17,9 @@ first, all at once, back to today's glyph-and-number form (the **compact
 form**); only then do the existing rank drops begin.
 
 PE decision 7 (2026-11-15), amending decision 3's "every segment is a glyph
-and a number": words describe each item; the state word and the alert
-severity word are exempt from dropping.
+and a number": words describe each item; the state word is exempt from dropping. (Amended 2026-11-15, at the
+second review: the alert severity word drops with the other words, back to
+the glyph and count, `⚠1`; PE decision.)
 
 ## Architecture references
 
@@ -42,20 +43,21 @@ green. **Step 1 is a write**; make the first edit within 15 turns.
 1. **The two-form `Part`** — a part carries its wide spans and its compact
    spans (equal for a part with no word). Its width is measured per form. The
    compact form of every part is **byte-for-byte what the bar renders today**,
-   except the state part and the alert's severity part, which have one form.
+   except the state part, which has one form.
    Put the word formatting in a new child module `src/cli/status_words.rs`.
 2. **The words-drop step** — in `status_bar_line`, build the wide form; if the
    line (slots plus the grants segment) does not fit, switch **every** part to
    its compact form at once, never a mixed bar; then continue with the
-   existing rank drops over the compact parts. The state word and the alert
-   severity word stay at every width the rank drops leave them.
+   existing rank drops over the compact parts. The state word stays at every
+   width the rank drops leave it. The alert severity word has no exemption: its
+   compact form is today's glyph and count (PE, 2026-11-15).
 3. **The wide forms** (emoji dialect shown; the other two dialects use the
    same words with their own glyphs):
 
    | Item | Wide form | Compact (today) |
    |---|---|---|
    | state | `💤 idle` · `🧠 thinking 12s` · `✋ approve?` · `💀 daemon down` · `📡 reconnecting` | same (exempt) |
-   | alert | `ℹ info Watchdog 11h` · with two or more firing at the worst severity `⚠ 2 warn disk-high 3m` · severity words `crit` / `warn` / `info`, and `alert` for an unrankable severity | the severity word stays; the count shows only at two or more; name and age drop by their existing ranks |
+   | alert | `ℹ info Watchdog 11h` · with two or more firing at the worst severity `⚠ 2 warn disk-high 3m` · severity words `crit` / `warn` / `info`, and `alert` for an unrankable severity | `⚠1` (today's glyph and the count of every firing alert); name and age drop by their existing ranks |
    | alert, resolved flash | `🧯 resolved Watchdog` | `🧯 Watchdog` |
    | context | `🌒 ctx 2%` | `🌒2%` |
    | context growth | `📈 +1.4k` | `📈1.4k` |
@@ -115,7 +117,7 @@ In `src/cli/status_bar_tests.rs`, calling `status_bar_line`:
   fit but compact does renders today's string for every part, with no word
   left on any non-exempt part (no mixed bar).
 - `state_and_alert_words_survive_every_drop`: at 50 columns the state word
-  and the alert severity word are present; the rank drops took other parts.
+  and the alert glyph are present; the rank drops took other parts.
 - `an_idle_default_bar_has_no_grants_and_reads_idle`.
 - `plural_forms_follow_the_count`: `1 shell` / `2 shells`, `1 ghost` / `2
   ghosts`, `1 tool` / `3 tools`, `1 host` / `2 hosts`; `scripts 2` stays a
@@ -153,15 +155,15 @@ In `src/cli/status_bar_tests.rs`, calling `status_bar_line`:
 - [x] **(bug-09-1, fixed) Evidence pasted:** the mutation check's failing
       `test result:` line and the § End-to-end block's output, verbatim.
 
-- [ ] **(bug-09-2, open) The alert severity word has one form:** a test
+- [~] **(bug-09-2, withdrawn by PE) The alert severity word has one form:** a test
       `the_alert_severity_word_has_one_form` asserts `⚠ warn` at the
       words-drop width and at 50 columns, and `⚠ 2 warn` with two warnings.
       Today `grep -rlw "fn the_alert_severity_word_has_one_form" src` prints
       nothing, and the compact alert part renders `⚠1`.
-- [ ] **(bug-09-2, open) No test pins the drop of the severity word:**
+- [~] **(bug-09-2, withdrawn by PE) No test pins the drop of the severity word:**
       `words_drop_all_at_once_before_any_rank_drop` asserts `warn` present
       after the drop (today it asserts it absent).
-- [ ] **(bug-09-2, open) Mutation check pasted** for the new test, and
+- [~] **(bug-09-2, withdrawn by PE) Mutation check pasted** for the new test, and
       `cargo test` passed greater than 3008.
 
 ## Pre-flight
@@ -534,3 +536,20 @@ passed=3008 failed=0. The one remaining defect is the alert severity part.
 Its compact form is today's `⚠1`, so the severity word drops with the
 others. Tasks 1–3 and PE decision 7 make it exempt, and two tests pin the
 drop.
+
+### Review — 2026-11-15 (bug-09-2 withdrawn by the PE)
+
+The PE decided the alert severity word may drop with the other words, so
+the executor's behaviour (`⚠1` once the words drop) stands. [bug-09-2](bugs/bug-09-2.md)
+is withdrawn, its three criteria struck, and the spec's task 1, 2 and 3 and
+decision 7 amended to match. No re-dispatch.
+
+### Review verdict — 2026-11-15
+
+- **Verdict:** approved_after_1
+- **Bounces:** 2 filed: [bug-09-1](bugs/bug-09-1.md) (ten test-plan tests missing, no evidence, counters in the wrong word order; fixed) and [bug-09-2](bugs/bug-09-2.md) (severity word drops; withdrawn by PE decision, so it needed no fix)
+- **Executor:** GLM-5.3-Flash (a first run that hit its turn budget, then a 598-turn re-dispatch)
+- **Scope deviations:** the spec was amended at review (severity word not exempt). The wide-form assertions pin at 400 columns, not the 160 the phase named, because the full busy bar does not fit wide at 160; the executor said so.
+- **Calibration:** the architect's own spec contradicted itself. The 80-column mock-up and the task-1 exemption said the severity word never drops, while the "compact equals today's bar" anchor said otherwise, and the executor followed the anchor. A spec with a regression anchor and a list of exceptions to it should name each exception at the one place it appears, not in three. Also: a run that reports `complete` with its test plan unwritten and its evidence "outstanding" is a false completion; the missing-test bounce caught it. Nit, not bounced: a comment above the alert part in `status_bar.rs` still says "the word stays at every width", and `state_and_alert_words_survive_every_drop` checks the glyph, not the word; both are now harmless but stale.
+
+Independent gates (reviewer, 2026-11-15): fmt exit 0, build 0 warnings, clippy `-D warnings` clean, `cargo test` passed=3008 failed=0 (baseline 2998), `grep elapsed src/cli/status_glyphs.rs` empty, `status_bar.rs` 774 production lines (cap 800).
