@@ -1,7 +1,7 @@
 # Phase 08 — away-digest
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-15
 **Depends on:** nothing in M37
 **Estimated diff:** ~300 lines, about half of it tests
@@ -246,3 +246,74 @@ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {
 ## Update Log
 
 <!-- entries below this line -->
+
+### Update — 2026-11-15 03:30 (started)
+
+Started phase 08 (away-digest). Status flipped `todo` → `in-progress` (phase doc and
+milestone README table). Baseline confirmed: `cargo test` passed=2984, failed=0 at
+`3bfffe89`-equivalent tree. Executor: GLM-5.3-Flash (headless run).
+
+### Update — 2026-11-15 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the run ended `hard_fail` (`IdenticalToolCallRepetition`, 6×, turn 445) re-running `cargo build | grep -v 'never used'` filters. The 16 warnings are dead code only because `take_away_digest_on_attach` and `stamp_on_last_detach` are not yet called from `handle_chat_attach`; wiring them clears every warning. Tasks 1–3 and the module's task 4/5 functions are on disk and the design is right. The architect's gate run found two `E0308` compile errors in the module's tests (an `i64`/`u64` mismatch at `from_timestamp`, near `away_digest.rs:544`). It also found one logic gap: the only-presence check counts `presence_session_ids()`, but the spec requires the only live **connection**. Still to do: the two compile errors, the connection count, fmt, the wiring in `chat_presence.rs`, the two `chat_presence` tests and the `scheduled_tests.rs` test, the docs and the evidence.
+
+### Update — 2026-11-15 (end-to-end verification)
+
+Resumed run completed the remaining tasks: fixed the two test `E0308`s, replaced the
+session-count gate with a live-connection count (sum of `Vec::len` over the presence
+map), wired `take_away_digest_on_attach` after the `from_disk` insert and
+`stamp_on_last_detach` after `presence_unregister` in `handle_chat_attach` (136 lines,
+cap 150) with the join in a `join_brief_and_digest` helper, added
+`a_script_run_records_a_finished_event` (`scheduled_tests.rs`),
+`attach_joins_the_digest_to_the_brief_in_one_system_msg` and
+`the_last_detach_stamps_last_seen` (`chat_presence.rs`), and wrote the README and
+CLAUDE.md docs. Three pre-existing test bugs surfaced on the first green compile and
+were fixed before evidence capture: the `ignores_events_outside…` record used
+`action: "script"` with no `outcome` (a shape the emitter never writes — now
+`action: "command"`, matching its assertion), the `log_event_helper` wrote pinned-2023
+records into today's segment so the `[2023-11-14, 2023-11-15)` window never read them
+(now the helper picks the segment from the record's own `ts`, exactly how production's
+records land), and `an_attach_with_another_chat_present…` registered only the *other*
+chat so the gate saw one connection and delivered (now it registers the attaching
+connection too, production order). Mutation checks, run then reverted:
+
+Mutation 1 — the post-delivery `stamp_last_seen(now)` removed from
+`take_away_digest_on_attach`:
+
+```
+test daemon::away_digest::tests::a_later_attach_delivers_the_digest_once ... FAILED
+thread '…' panicked at src/daemon/away_digest.rs:571:9:
+assertion `left == right` failed: the stamp is now, whether or not a digest was produced
+  left: Some(1700000000)
+ right: Some(1700027600)
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2907 filtered out; finished in 0.00s
+```
+
+Mutation 2 — the `severity` rule dropped from the `webhook_alert` count (every
+`firing` alert counts):
+
+```
+test daemon::away_digest::tests::counts_only_alerts_that_reach_the_operator ... FAILED
+thread '…' panicked at src/daemon/away_digest.rs:427:9:
+a firing info below a warning threshold does not
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2907 filtered out; finished in 0.00s
+```
+
+End-to-end block, verbatim:
+
+```
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 2897 filtered out; finished in 0.01s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2907 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2907 filtered out; finished in 0.01s
+emit_sites=2
+mark_done_sites=0
+build_warnings=0
+passed=2998 failed=0
+```
+
+Both mutations reverted and re-run green before the block. Hygiene: no
+`tests/hygiene_allowlist.txt` change (`run_scheduled_job_inner` still allowlisted at
+193, body untouched); `handle_chat_attach` is 136 lines. `cargo test --test hygiene`
+16 passed, `--test doc_truth` 19 passed, `--test bug_tracker` 6 passed, build 0
+warnings, fmt clean, clippy `-D warnings` clean.

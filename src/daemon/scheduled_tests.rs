@@ -141,6 +141,72 @@ fn scheduled_state_succeeded_is_complete() {
 }
 
 #[test]
+fn a_script_run_records_a_finished_event() {
+    // Pure: the record shape the event log will hold for one run. `Complete`
+    // is `succeeded`; any other terminal state is `failed`. A Ghost job
+    // injects its own lifecycle events and a deprecated Command job is
+    // refused before it runs, so neither emits anything.
+    let ok = scheduled_finished_record(
+        "tmp-cast-purge",
+        &ActionOn::Script("tmp-cast-purge".to_string()),
+        &RunState::Complete,
+    )
+    .expect("a script run emits a record");
+    assert_eq!(ok["action"], "script", "the record names the action");
+    assert_eq!(
+        ok["outcome"], "succeeded",
+        "RunState::Complete reads as succeeded"
+    );
+    assert_eq!(ok["job_name"], "tmp-cast-purge", "the record names the job");
+
+    let hard_fail = scheduled_finished_record(
+        "backup",
+        &ActionOn::Script("backup".to_string()),
+        &RunState::HardFail(Briefing {
+            blocker: Some("disk full".to_string()),
+            goal: "back up".to_string(),
+            attempts: Vec::new(),
+            working_files: Vec::new(),
+            criteria: None,
+            budget_left: None,
+        }),
+    )
+    .expect("a failed script run still emits a record");
+    assert_eq!(
+        hard_fail["outcome"], "failed",
+        "any non-Complete end state reads as failed"
+    );
+
+    let alert = scheduled_finished_record("disk-high", &ActionOn::Alert, &RunState::Complete)
+        .expect("an alert job run emits a record");
+    assert_eq!(
+        alert["action"], "alert",
+        "an Alert job records action alert"
+    );
+
+    assert!(
+        scheduled_finished_record(
+            "ghost-job",
+            &ActionOn::Ghost {
+                runbook: "rb".to_string()
+            },
+            &RunState::Complete,
+        )
+        .is_none(),
+        "a Ghost job injects its own lifecycle events and emits nothing"
+    );
+    assert!(
+        scheduled_finished_record(
+            "old-cmd",
+            &ActionOn::Command("echo hi".to_string()),
+            &RunState::Complete,
+        )
+        .is_none(),
+        "a deprecated Command job is refused and never runs, so emits nothing"
+    );
+}
+
+#[test]
 fn scheduled_state_pending_is_complete_because_every_jobs_reschedule() {
     let state = scheduled_terminal_state(Some(&(JobStatus::Pending, None)), "disk-check");
     assert_eq!(

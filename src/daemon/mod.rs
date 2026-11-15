@@ -21,6 +21,7 @@ pub fn daemon_uptime_secs() -> u64 {
 }
 
 pub mod auto_name;
+pub mod away_digest;
 pub mod briefing;
 pub mod context;
 pub mod counters;

@@ -397,6 +397,7 @@ Long sessions don't get truncated at an arbitrary message count — DaemonEye ma
 - **Failure Isolation** — Each job runs in its own scheduler-owned PTY shell with a real exit code recorded in the shell's log; the shell is swept when the job is done.
 - **Restart Recovery** — If the daemon restarts while a recurring job is running, the job skips to its next slot instead of staying stuck; a `once` job interrupted this way is marked failed.
 - **Failures Don't End Recurring Jobs** — A failed run of an interval or cron job is logged and the job is rescheduled to its next slot; only a permanent refusal (or a failed `once` job) ends a job.
+- **While You Were Away** — A scheduled script or alert that fires while no chat is attached leaves no live message behind. Instead of queueing each message, the *first* chat to attach after the gap gets one away digest in its attach message: how many times each script job ran (ok / failed) and how many alerts fired, per name. Nothing is shown when nothing happened, and a window is never reported twice.
 
 ---
 

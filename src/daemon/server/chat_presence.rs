@@ -39,6 +39,18 @@ pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Opt
     })
 }
 
+/// Join the catch-up brief and the away digest into the one `SystemMsg` the
+/// attach parser accepts, separated by a blank line. Whichever exists is
+/// alone; when neither exists nothing is sent.
+fn join_brief_and_digest(brief: Option<String>, digest: Option<String>) -> Option<String> {
+    match (brief, digest) {
+        (Some(b), Some(d)) => Some(format!("{b}\n\n{d}")),
+        (Some(b), None) => Some(b),
+        (None, Some(d)) => Some(d),
+        (None, None) => None,
+    }
+}
+
 /// Handle `ChatAttach { session_id }`.
 ///
 /// Registers the connection as present for the session, replies with the
@@ -78,14 +90,20 @@ where
             store.entry(session_id.clone()).or_insert(built);
         }
     });
+    // The away digest reads files and must not run under the session lock —
+    // the same rule `from_disk` above follows. The attaching connection is
+    // already registered, so the gate inside sees every live connection.
+    let digest = crate::daemon::away_digest::take_away_digest_on_attach(
+        crate::daemon::away_digest::now_unix(),
+    );
     log::info!("chat presence attached for session {session_id}");
 
     // One fallible step: reply, then hold until EOF or error. Nothing after
     // `presence_register` may skip the unregister, so this runs to completion
     // (either way) before the bookkeeping below.
     let held = async {
-        if let Some(brief) = attach_brief_for(&sessions, &session_id) {
-            send_response_split(tx, Response::SystemMsg(brief)).await?;
+        if let Some(msg) = join_brief_and_digest(attach_brief_for(&sessions, &session_id), digest) {
+            send_response_split(tx, Response::SystemMsg(msg)).await?;
         }
         send_response_split(tx, Response::Ok).await?;
         // M37 phase 01: a chat attaching while alerts are already firing
@@ -147,6 +165,9 @@ where
 
     let was_last = presence_unregister(&session_id, &conn);
     log::info!("chat presence detached for session {session_id} (last={was_last})");
+    // Not only when `was_last`: the stamp is daemon-wide, so any close that
+    // leaves no presence connection anywhere bounds the digest window.
+    crate::daemon::away_digest::stamp_on_last_detach();
     if was_last {
         crate::daemon::counters::forget_session_counters(&session_id);
         record_chat_detach(&session_id, &sessions);
@@ -1084,6 +1105,129 @@ mod tests {
         assert!(
             crate::daemon::session::presence_unregister(sid, &conn),
             "the presence connection is released"
+        );
+    }
+
+    // ── M37 phase 08: the away digest rides the attach message ──────────────
+
+    /// Append one `scheduled_job_finished` record with a pinned `ts` into the
+    /// segment its own date names — the seam `for_each_event_between` reads,
+    /// mirroring how `log_event`'s records land in the segment of their day.
+    fn seed_finished_event(job: &str, outcome: &str, ts: chrono::DateTime<chrono::Utc>) {
+        let path =
+            crate::config::events_dir().join(format!("events-{}.jsonl", ts.format("%Y%m%d")));
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("the events dir");
+        }
+        let record = serde_json::json!({
+            "ts": ts.to_rfc3339(),
+            "event": "scheduled_job_finished",
+            "job_name": job,
+            "action": "script",
+            "outcome": outcome,
+        });
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("opening the segment");
+        use std::io::Write;
+        writeln!(f, "{}", record).expect("appending");
+    }
+
+    #[tokio::test]
+    async fn attach_joins_the_digest_to_the_brief_in_one_system_msg() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+
+        let stamp = 1_700_000_000u64; // 2023-11-14 22:13:20 UTC
+        let from = chrono::DateTime::from_timestamp(stamp as i64, 0).unwrap();
+        crate::daemon::away_digest::stamp_last_seen(stamp);
+        seed_finished_event(
+            "tmp-cast-purge",
+            "succeeded",
+            from + chrono::Duration::minutes(5),
+        );
+
+        // A catch-up brief is pending too: the digest must join it in the
+        // ONE SystemMsg the attach parser accepts.
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            let mut e = entry(vec![
+                msg("user question"),
+                msg("[Background Task Completed] apt upgrade finished (exit 0)"),
+            ]);
+            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+            e.messages_at_detach = 1;
+            store.insert("away-1".to_string(), e);
+        });
+
+        let (mut rx, mut client_w, task) = drive(sessions.clone(), "away-1").await;
+        let replies = read_responses(&mut rx, 2).await;
+        match replies.as_slice() {
+            [Response::SystemMsg(msg), Response::Ok] => {
+                assert!(
+                    msg.contains("[Catch-up]"),
+                    "the brief is first in the joined message: {msg}"
+                );
+                assert!(
+                    msg.contains("[Away digest]"),
+                    "the digest rides the same message: {msg}"
+                );
+                assert!(
+                    msg.contains("tmp-cast-purge"),
+                    "the digest carries the job's counts: {msg}"
+                );
+                let brief_end = msg.find("[Catch-up]").unwrap();
+                assert!(
+                    msg[brief_end..].contains("\n\n"),
+                    "brief and digest are separated by a blank line: {msg}"
+                );
+            }
+            other => panic!("expected one joined SystemMsg + Ok, got {other:?}"),
+        }
+        close(&mut client_w, task).await;
+        let restamped = crate::daemon::away_digest::read_last_seen()
+            .expect("delivery writes the stamp even when the digest was produced");
+        assert!(
+            restamped > stamp,
+            "the stamp moved past the window, so the same events are never reported twice: \
+             {restamped} <= {stamp}"
+        );
+        // A second attach over the same events reports nothing new: the
+        // window's lower bound moved past them.
+        let (mut rx2, mut client_w2, task2) = drive(sessions.clone(), "away-1").await;
+        let replies2 = read_responses(&mut rx2, 1).await;
+        assert!(
+            matches!(replies2.as_slice(), [Response::Ok]),
+            "the window is never reported twice, got {replies2:?}"
+        );
+        close(&mut client_w2, task2).await;
+    }
+
+    #[tokio::test]
+    async fn the_last_detach_stamps_last_seen() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+
+        let before = crate::daemon::away_digest::now_unix();
+        crate::daemon::away_digest::stamp_last_seen(before.saturating_sub(3600));
+
+        let sessions = SessionStore::new();
+        let (mut rx, mut client_w, task) = drive(sessions.clone(), "away-detach-1").await;
+        let _ = read_responses(&mut rx, 1).await;
+        close(&mut client_w, task).await;
+
+        let after =
+            crate::daemon::away_digest::read_last_seen().expect("the last close stamps last seen");
+        assert!(
+            after >= before,
+            "the stamp moved forward to the close time: {after} < {before}"
         );
     }
 }

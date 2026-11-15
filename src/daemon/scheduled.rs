@@ -150,6 +150,33 @@ pub(crate) fn due_jobs_for_tick(store: &ScheduleStore, _session: &str) -> Vec<Sc
     store.take_due()
 }
 
+/// The `scheduled_job_finished` record one scheduled job's run emits, or
+/// `None` when the job emits nothing: a `Ghost` job injects its own
+/// lifecycle events, and a deprecated `Command` job is refused and never
+/// runs. Pure: takes the job's name, action and terminal run state, so its
+/// test needs no filesystem.
+fn scheduled_finished_record(
+    job_name: &str,
+    action: &ActionOn,
+    state: &RunState,
+) -> Option<serde_json::Value> {
+    let action = match action {
+        ActionOn::Script(_) => "script",
+        ActionOn::Alert => "alert",
+        ActionOn::Ghost { .. } | ActionOn::Command(_) => return None,
+    };
+    let outcome = if matches!(state, RunState::Complete) {
+        "succeeded"
+    } else {
+        "failed"
+    };
+    Some(serde_json::json!({
+        "job_name": job_name,
+        "action": action,
+        "outcome": outcome,
+    }))
+}
+
 /// Run a single scheduled job.
 ///
 /// - `ActionOn::Ghost`: spawns a full Ghost Shell session using the named runbook.
@@ -170,6 +197,7 @@ pub async fn run_scheduled_job(
 ) -> Result<(), String> {
     let job_id = job.id.clone();
     let job_name = job.name.clone();
+    let action = job.action.clone();
     let mut run_log = RunLogGuard::start(
         RunId::new(),
         RunKind::Scheduled {
@@ -195,6 +223,9 @@ pub async fn run_scheduled_job(
     // place of the state the job status alone would give — the job itself
     // still ran and is still marked done as now.
     let state = scheduled_run_state(refusal, record.as_ref(), &job_name);
+    if let Some(finished) = scheduled_finished_record(&job_name, &action, &state) {
+        log_event("scheduled_job_finished", finished);
+    }
     run_log.finish(state);
     Ok(())
 }
