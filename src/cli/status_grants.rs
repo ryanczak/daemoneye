@@ -165,8 +165,8 @@ pub(super) fn grants_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette)
             g.grant_hosts,
             format!(
                 "{} {}",
-                word::plural(s.hosts, word::HOST, word::HOSTS),
-                s.hosts
+                s.hosts,
+                word::plural(s.hosts, word::HOST, word::HOSTS)
             ),
             s.hosts.to_string(),
         ));

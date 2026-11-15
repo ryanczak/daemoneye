@@ -189,13 +189,13 @@ fn status_line_hides_zero_counters_and_shows_nonzero_ones() {
         );
     }
 
-    // Wide: the pluralised word replaces the glyph, count after it.
+    // Wide: count-then-word, the word replacing the glyph.
     let mut m = full_model();
     m.ghosts = 2;
     let text = line_at(&m, now, 400);
     assert!(
-        text.contains("ghosts 2"),
-        "the wide ghost counter carries the word: {text:?}"
+        text.contains("👻 2 ghosts"),
+        "the wide ghost counter carries the word after the count: {text:?}"
     );
 }
 

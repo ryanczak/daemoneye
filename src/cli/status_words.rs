@@ -115,9 +115,9 @@ pub(super) fn one_form(spans: Vec<Span<'static>>, rank: u16) -> TwoFormPart {
 }
 
 /// One counter slot: glyph and count, hidden at zero. The wide form is the
-/// glyph, a space, then the pluralised word — or, when the glyph already
-/// spells an abbreviation of it (the ascii `bg`), the word replaces the
-/// glyph.
+/// count, a space, then the pluralised word (`🐚 2 shells`), word replacing
+/// the glyph; where the glyph already spells an abbreviation of the word
+/// (the ascii `bg`), count-then-word never doubles it either.
 pub(super) fn counter_parts(
     glyph: &str,
     count: u32,
@@ -133,7 +133,7 @@ pub(super) fn counter_parts(
         gray(),
         glyph,
         count.to_string(),
-        Some((format!("{w} {count}"), true)),
+        Some((format!("{count} {w}"), false)),
         rank,
     )]
 }
