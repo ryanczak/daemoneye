@@ -1,7 +1,7 @@
 # Phase 08 — away-digest
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-15
 **Depends on:** nothing in M37
 **Estimated diff:** ~300 lines, about half of it tests
@@ -580,3 +580,141 @@ mid-session full-suite run failed `daemon_installs_no_tmux_hooks` with
 and prior phases' suites (2179 `de_test_*.json` files are a pre-existing
 `scheduler.rs` `tmp_store()` leak — 10 of its 15 test callers never delete —
 out of scope here). The same run repeated immediately after: green, failed=0.
+
+### Update — 2026-11-15 06:11 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 08's bounce (bug-08-1) is fixed and committed (`75688cc4` code, `5f99e66c` docs); working tree clean, phase doc still `in-progress` for the server's completion tail. I traced the two hermeticity defects to one root: tests that drive the real `handle_chat_attach` ran with the ambient `$HOME` (the strace showed the `push-dead` hold task stamping `/home/<user>/.daemoneye/var/run/chat_last_seen`), and because those unguarded neighbours hold live connections in the process-global presence map, the new tests' digest gate and detach stamp were suppressed when run alongside them — the failing assertion's `1794714872 < 1794718472` is exactly the test's own pre-stamp surviving. The fix gives every attach-driving test a throwaway `$HOME` under `TEST_HOME_LOCK`: seven daemon `chat_presence` tests, the scheduled and webhook presence tests, and four `integration.rs` attach tests (which already held the guard but never redirected `$HOME`); serialization by the lock then guarantees no other chat is ever live during another test's window.
+
+**Notes for review**
+
+- Both acceptance criteria from the bug doc pass mechanically: the full suite ran four times end-to-end after `rm -f ~/.daemoneye/var/run/chat_last_seen` and the file was never recreated (`ls` exit 2, `passed=2998 failed=0`), and `cargo test --lib chat_presence` printed `test result: ok. 25 passed` on three consecutive runs. All evidence is pasted verbatim in the phase doc's new end-to-end entry.
+- One deviation to flag: `tests/hygiene_allowlist.txt`'s `test tests/integration.rs` count moved 2553 → 2572. The phase constraint "no new allowlist line" holds — it is a count move on an existing entry forced by the four HOME redirects; `run_scheduled_job_inner 193` and `handle_chat_attach` (135 lines, cap 150) are untouched, and hygiene/doc_truth/bug_tracker all pass.
+- One environment note: a mid-session full-suite run failed once with `Disk quota exceeded` acquiring an instance lock — `/tmp` (tmpfs) held ~6000 entries including 2179 `de_test_*.json` from a pre-existing `scheduler.rs` `tmp_store()` leak (10 of 15 test callers never delete, out of scope here); the immediate re-run was green with `failed=0`, and the quoted evidence block is from a clean run.
+- Both mutation checks were re-run on the fixed tree and re-reverted (each failed its pinned test, as the approved transcripts pinned); production code carries zero diff from the approved state.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (3803199): No such process
+kill: (-3803910): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/scheduled_tests.rs` — +4 -0
+- `src/daemon/server/chat_presence.rs` — +10 -0
+- `src/webhook/process.rs` — +1 -0
+- `tests/hygiene_allowlist.txt` — +4 -2
+- `tests/integration.rs` — +22 -0
+
+**Commit:** 5f99e66c8577f6ae8cb9d58bd6cb89339582233e
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
