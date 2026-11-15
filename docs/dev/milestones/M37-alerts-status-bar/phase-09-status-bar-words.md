@@ -1,7 +1,7 @@
 # Phase 09 — status-bar-words
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced on [bug-09-2](bugs/bug-09-2.md))
 **Drafted:** 2026-11-15
 **Depends on:** phases 02a, 02b and 02c (the bar, the counters, the grants segment)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -141,17 +141,28 @@ In `src/cli/status_bar_tests.rs`, calling `status_bar_line`:
 - [ ] fmt, build (0 warnings), clippy and `cargo test` (under `timeout 600`)
       are green with `failed=0`; hygiene, `doc_truth` and `bug_tracker` ok.
 
-- [ ] **(bug-09-1, open) The ten test-plan tests exist and pass.** For each
+- [x] **(bug-09-1, fixed) The ten test-plan tests exist and pass.** For each
       name in § Test plan, `grep -rlw "fn <name>" src` prints a file; today
       all ten print nothing.
-- [ ] **(bug-09-1, open) The suite grew:** `timeout 600 cargo test` prints
+- [x] **(bug-09-1, fixed) The suite grew:** `timeout 600 cargo test` prints
       `failed=0` with passed greater than 2998 (today exactly 2998).
-- [ ] **(bug-09-1, open) Counters read count-then-word in the wide form:**
+- [x] **(bug-09-1, fixed) Counters read count-then-word in the wide form:**
       `🐚 2 shells`, `👻 1 ghost`, `🛠 3 tools`, `⏳ 2 bg`, `🌐 2 hosts`,
       pinned by `plural_forms_follow_the_count`. Today `counter_parts`
       renders `shells 2`.
-- [ ] **(bug-09-1, open) Evidence pasted:** the mutation check's failing
+- [x] **(bug-09-1, fixed) Evidence pasted:** the mutation check's failing
       `test result:` line and the § End-to-end block's output, verbatim.
+
+- [ ] **(bug-09-2, open) The alert severity word has one form:** a test
+      `the_alert_severity_word_has_one_form` asserts `⚠ warn` at the
+      words-drop width and at 50 columns, and `⚠ 2 warn` with two warnings.
+      Today `grep -rlw "fn the_alert_severity_word_has_one_form" src` prints
+      nothing, and the compact alert part renders `⚠1`.
+- [ ] **(bug-09-2, open) No test pins the drop of the severity word:**
+      `words_drop_all_at_once_before_any_rank_drop` asserts `warn` present
+      after the drop (today it asserts it absent).
+- [ ] **(bug-09-2, open) Mutation check pasted** for the new test, and
+      `cargo test` passed greater than 3008.
 
 ## Pre-flight
 
@@ -509,3 +520,17 @@ kill: (-53545): No such process
 **Commit:** c209c2b6fc8e5c1c86dfc362e6b26e868c3e5798
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-15 (bounced, second)
+
+Bounced on [bug-09-2](bugs/bug-09-2.md). bug-09-1 is fixed:
+- the ten test-plan tests exist;
+- counters read count-then-word;
+- the mutation check failed `words_drop_all_at_once_before_any_rank_drop`
+  as pinned.
+
+Independent gates: fmt exit 0, build 0 warnings, clippy clean, `cargo test`
+passed=3008 failed=0. The one remaining defect is the alert severity part.
+Its compact form is today's `⚠1`, so the severity word drops with the
+others. Tasks 1–3 and PE decision 7 make it exempt, and two tests pin the
+drop.
