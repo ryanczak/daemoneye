@@ -42,6 +42,10 @@ async fn read_one(rx: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream
 
 #[tokio::test]
 async fn scheduled_job_result_is_pushed_to_attached_clients() {
+    // A throwaway HOME: the attach path stamps `chat_last_seen`, and the
+    // guard serializes every attach-driving test so no other chat is live in
+    // the process-global presence map while this one runs.
+    let (_home, _dir) = crate::test_home();
     let (mut rx, mut client_w, task) = drive_sched_presence("sched-notify-1").await;
     let replies = read_one(&mut rx).await;
     assert!(

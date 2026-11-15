@@ -902,6 +902,7 @@ mod tests {
 
     #[tokio::test]
     async fn notify_chat_panes_pushes_over_presence() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         let (mut rx, _client_w, task) = drive_presence(sessions.clone(), "webhook-notify-1").await;
         let replies = read_presence_responses(&mut rx, 1).await;

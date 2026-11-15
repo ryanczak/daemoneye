@@ -339,6 +339,10 @@ mod tests {
 
     #[tokio::test]
     async fn pushed_alert_reaches_every_attached_client() {
+        // A throwaway HOME: the attach path now stamps `chat_last_seen`, and
+        // the guard serializes every attach-driving test so no other chat is
+        // live in the process-global presence map while this one runs.
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         let (mut rx1, mut client1, task1) = drive(sessions.clone(), "push-1").await;
         let _ = read_responses(&mut rx1, 1).await;
@@ -372,6 +376,7 @@ mod tests {
 
     #[tokio::test]
     async fn last_presence_disconnect_records_detach_state() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
             store.insert("s1".to_string(), entry(vec![msg("hello")]));
@@ -398,6 +403,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_to_a_dead_client_unregisters_it() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         let (rx1, _client1, task1) = drive(sessions.clone(), "push-dead").await;
         let (mut rx2, mut client2, task2) = drive(sessions.clone(), "push-dead").await;
@@ -502,6 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn presence_with_two_clients_detaches_only_on_last() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
             store.insert("s2".to_string(), entry(vec![msg("hello")]));
@@ -532,6 +539,7 @@ mod tests {
 
     #[tokio::test]
     async fn reattach_after_30s_returns_catchup_brief() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
             let mut e = entry(vec![
@@ -574,6 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn reattach_within_30s_returns_no_brief() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
             let mut e = entry(vec![
@@ -607,6 +616,7 @@ mod tests {
 
     #[tokio::test]
     async fn presence_unregisters_when_the_hold_ends_in_error() {
+        let (_home, _dir) = crate::test_home();
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
             store.insert("s-io".to_string(), entry(vec![msg("hello")]));

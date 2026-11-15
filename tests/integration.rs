@@ -1383,6 +1383,13 @@ async fn presence_attach_sends_alert_state_when_alerts_are_active() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     let _lock = daemoneye::test_home_guard();
+    // A throwaway HOME: the attach path stamps `chat_last_seen`, and an
+    // unredirected HOME would leave the stamp in the developer's
+    // `~/.daemoneye` (bug-08-1a).
+    let home = temp_daemoneye_home();
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().ok();
 
     // Empty registry → the attach reply is `Ok` alone (no brief, no
@@ -1486,6 +1493,11 @@ async fn presence_attach_sends_ok_before_alert_state() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     let _lock = daemoneye::test_home_guard();
+    // A throwaway HOME: the attach path stamps `chat_last_seen` (bug-08-1a).
+    let home = temp_daemoneye_home();
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().ok();
 
     let now = std::time::SystemTime::now()
@@ -1551,6 +1563,11 @@ async fn attach_sends_session_counters_after_ok() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     let _lock = daemoneye::test_home_guard();
+    // A throwaway HOME: the attach path stamps `chat_last_seen` (bug-08-1a).
+    let home = temp_daemoneye_home();
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().ok();
 
     let sessions = daemoneye::daemon::session::SessionStore::new();
@@ -1626,6 +1643,11 @@ async fn a_second_connection_gets_session_counters_at_attach() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     let _lock = daemoneye::test_home_guard();
+    // A throwaway HOME: the attach path stamps `chat_last_seen` (bug-08-1a).
+    let home = temp_daemoneye_home();
+    unsafe {
+        std::env::set_var("HOME", home.to_str().unwrap());
+    }
     daemoneye::config::Config::ensure_dirs().ok();
 
     let sid = "m37-attach-second";
