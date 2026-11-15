@@ -203,6 +203,81 @@ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passe
 
 <!-- entries below this line -->
 
+### Update — 2026-11-15 03:10 (end-to-end verification, bug-07-1 fix)
+
+The bug-07-1 test change: the fired slot in
+`recover_interrupted_skips_a_running_every_job_to_its_next_slot` is now
+`Utc::now() - (6 days + 10 s)` (a 300 s interval), the six-days-down shape of
+`deadman-watchdog`, instead of 10 s in the past. No new test;
+`passed=2984` unchanged.
+
+Mutation 1 — remove the `skip_to_future` call from the `Every`/`Cron` arm of
+`recover_interrupted` (reverted afterwards):
+
+```
+$ timeout 600 cargo test --lib recover_interrupted_skips_a_running_every_job_to_its_next_slot 2>&1 | tail -8
+
+failures:
+    scheduler::tests::recover_interrupted_skips_a_running_every_job_to_its_next_slot
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2893 filtered out; finished in 0.04s
+
+error: test failed, to rerun pass `--lib`
+```
+
+Reverted, the test is green:
+
+```
+$ timeout 600 cargo test --lib recover_interrupted_skips_a_running_every_job_to_its_next_slot 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2893 filtered out; finished in 0.04s
+```
+
+Mutation 2 — `scheduled_terminal_state`'s `Pending` arm maps to `Complete`
+unconditionally, dropping the `last_error` branch (reverted afterwards):
+
+```
+$ timeout 600 cargo test --lib a_failed_recurring_run 2>&1 | grep -E '^(test |test result)'
+test daemon::scheduled::tests::a_failed_recurring_run_still_ends_hard_fail_with_its_error ... FAILED
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2893 filtered out; finished in 0.00s
+```
+
+Reverted, the test is green:
+
+```
+$ timeout 600 cargo test --lib a_failed_recurring_run 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2893 filtered out; finished in 0.00s
+```
+
+§ End-to-end block, run verbatim (with `timeout 600` on the cargo invocations
+as the architect directed):
+
+```
+$ cargo test --lib recover_interrupted 2>&1 | grep -E '^test result'
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 2890 filtered out; finished in 0.13s
+
+$ cargo test --lib mark_done_failure 2>&1 | grep -E '^test result'
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2892 filtered out; finished in 0.00s
+
+$ cargo test --lib a_failed_recurring_run 2>&1 | grep -E '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2893 filtered out; finished in 0.00s
+
+$ grep -c 'recover_interrupted' src/daemon/startup.rs | sed 's/^/startup_calls=/'
+startup_calls=1
+
+$ grep -c 'recover_interrupted' src/cli/local_cmds.rs | sed 's/^/cli_calls=/'
+cli_calls=0
+
+$ cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+build_warnings=0
+
+$ cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=2984 failed=0
+```
+
+`cargo fmt --all -- --check` exit 0; `cargo clippy --all-targets --all-features
+-- -D warnings` clean; `grep -c 'recover_interrupted' src/scheduler.rs` = 11
+(≥ 2). Committed as `f9258cd0`; working tree clean.
+
 ### Notes for executor — 2026-11-14
 
 The first run used its 1000-turn budget; its last ~100 turns re-ran the same
