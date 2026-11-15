@@ -150,3 +150,89 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 | 08 | away-digest ([phase-08-away-digest.md](phase-08-away-digest.md)): the first chat to attach after a gap gets one summary — script runs per job (ok/failed) and alerts fired per name — delivered once, joined to the attach brief | issue #5 (pre-close bug fix; PE: first-attach, once, counts since the last interactive chat, 2026-11-15) | done        |
 
 ## Notes
+
+## Retrospective — 2026-11-15
+
+**Outcome:** all 10 phases are `done`. That is the 5 phases planned at
+scoping (01, 02a, 02b, 03 and 02c, added 2026-11-14), plus five pre-close bug
+fixes: 04 (#6), 05 (#2), 06 (#8), 07 (#9) and 08 (#5). Issues #2, #3, #5, #6,
+#8 and #9 are closed. #4 (cron time zones) and #7 (a close action in `top`)
+stay open and are not in M37. `cargo test` passed=2998 failed=0, against the
+2894 at scoping.
+
+| Phase | Verdict | Note |
+|---|---|---|
+| 01 daemon-alert-state | approved_after_1 | bug-01-1 (blocker): attach failed whenever an alert was firing |
+| 02a chat-status-bar | escalated | two bounces, then a takeover; spec used `## Behaviour`, so no task list |
+| 02b session-counters | approved_after_1 | first M37 phase with a seeded task list |
+| 02c grants-segment | approved_after_1 | three spec errors were the architect's |
+| 03 top-alerts-panel | approved_first_try | 430 turns for ~300 lines |
+| 04 local-provider-pricing | approved_first_try | |
+| 05 adopted-shell-close | escalated | takeover of the module wiring |
+| 06 self-host-refusal | approved_first_try | |
+| 07 scheduler-recovery | approved_after_1 | a 1000-turn budget run, then a network `hard_fail` |
+| 08 away-digest | approved_after_1 | an `IdenticalToolCallRepetition` resume, then bug-08-1 |
+
+Totals over 10 phases: 3 first try, 5 after one bounce, 2 escalated. Every
+phase ran on GLM-5.3-Flash.
+
+**Behaviour shipped:**
+- A webhook alert below `severity_threshold` stays out of every chat
+  session's history. It goes to the event log and to a daemon-wide registry
+  of active alerts.
+- The registry reaches clients as an `AlertState` frame on the presence
+  connection and at attach, and through `Request::AlertList`.
+- The chat status bar is glyph-led:
+  - three dialects, set by `[chat] glyphs`;
+  - zero-valued items are hidden;
+  - the alert slot is coloured by severity;
+  - session counters come from the daemon's `SessionCounters` push;
+  - a grants segment.
+- `top` has an Alerts panel and an alerts section in `--once`.
+- A user-set `*_cost_per_mtok` rate now applies to ollama and lmstudio
+  models.
+- Any chat session can close an adopted shell. The maintenance tick sweeps
+  files left by dead shell hosts.
+- A `[hosts.*]` entry that names the daemon's own machine is warned about at
+  startup and refused by every host-taking tool.
+- A recurring job left `Running` by a restart skips to its next slot. A
+  failed recurring run no longer ends the job.
+- The first chat to attach after a gap gets one away digest: script runs per
+  job and alerts fired per name.
+
+**Live check: not yet run.** The exit criteria call for one on pinky
+(throwaway HOME, private tmux):
+- an `info` alert stays out of the session jsonl and shows on the bar and in
+  `top`;
+- a `critical` alert is injected into history and leads the bar in red;
+- a resolve clears both;
+- the bar at 120 and 80 columns, through a turn and an approval;
+- `glyphs = "symbols"` after a reload;
+- `💀 daemon down` with the daemon stopped.
+
+Not in the exit criteria, but worth seeing once: the away digest at the first
+attach after a scheduled script ran with no chat attached. The 2.9.0 release
+waits on this check and the PE's sign-off.
+
+**Calibration, for PE decision (none folded yet):**
+1. **A test fixture that does not model the real shape.**
+   - Phase 05: the fence test held the lock, which skipped the branch under
+     test.
+   - Phase 07: a 10 s past slot left `skip_to_future` dead in the test.
+   - Phase 01: the attach tests checked the server's frames but not the order
+     the client's parser accepts.
+
+   This makes three occurrences. A fold would be one drafting rule: for each
+   test the spec names, the spec says which production branch it must reach,
+   and the mutation check removes that branch.
+2. **Hermeticity when a shared path gains I/O.** In phase 08, adding file
+   writes to `handle_chat_attach` leaked from every existing attach test,
+   not from the new ones. This is the first occurrence; noted only. The
+   bug's "run the filtered module alone" criterion caught it, and is worth
+   reusing.
+3. **`## Spec` seeds the task list.** Folded at the time as the memory note
+   and caught at review since phase 02b. No WORKFLOW change is proposed: the
+   template already says `## Spec`.
+4. **Executor turn burn.** Phase 03 took 430 turns, 07 hit the 1000-turn
+   budget and 08 hit an identical-repetition stall. This is data for the
+   GLM-5.3-Flash scorecard, not a WORKFLOW fold.

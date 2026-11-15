@@ -5,7 +5,10 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** [phase-08-away-digest](milestones/M37-alerts-status-bar/phase-08-away-digest.md) — GitHub issue #5 (script-job results for an operator who is not attached): one digest at the first attach after a gap. Phases 01 through 07 are done.
+**Active phase:** none. All 10 M37 phases are done and the retrospective is
+written in the milestone README. The close waits on the exit-criteria live
+check on pinky, then the PE's sign-off and the 2.9.0 release (`REXYMCP.md`
+§ Versioning).
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
