@@ -524,7 +524,7 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
         vec![
             Span::styled(severity_glyph(worst_rank).to_string(), style),
             Span::styled(
-                format!(" {} {worst_count}", severity_word(worst_rank)),
+                format!(" {worst_count} {}", severity_word(worst_rank)),
                 style,
             ),
         ]
@@ -629,12 +629,12 @@ fn context_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Pa
                 style,
                 g.context_growth,
                 shown.clone(),
-                // The growth word is a sign, not a name: `+` in the wide
-                // form, the bare value in the compact form.
+                // The growth word is a sign, not a name: `📈 +3.1k` wide,
+                // the bare value compact.
                 if g.context_growth.is_empty() {
                     None
                 } else {
-                    Some((format!("+{shown}"), true))
+                    Some((format!("+{shown}"), false))
                 },
                 RANK_GROWTH,
             ));
@@ -663,9 +663,9 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
             }
         ),
         if dollar_glyph {
-            None
+            Some((spend.clone(), false))
         } else {
-            Some((format!("${spend}"), true))
+            Some((format!("${spend}"), false))
         },
         RANK_COST,
     );

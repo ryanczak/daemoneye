@@ -1274,3 +1274,433 @@ fn no_status_line_mentions_ctrl_c() {
         }
     }
 }
+
+// ── Phase 09: the words (M37 decision 7) ─────────────────────────────────────
+
+/// A busy model: the full model minus the grants segment, so the wide bar
+/// carries only the task-3 table's items.
+fn busy_model() -> StatusModel {
+    let mut m = full_model();
+    m.grants = GrantSummary::default();
+    m
+}
+
+#[test]
+fn wide_form_carries_the_words() {
+    let now = Instant::now();
+    let m = busy_model();
+    let text = line_at(&m, now, 400);
+
+    // State: the word beside the glyph; `thinking` names the seconds.
+    assert!(text.contains("💤 idle"), "state idle: {text:?}");
+    let mut working = m.clone();
+    working.state = ChatState::Working;
+    working.turn_started_at = Some(now - Duration::from_secs(12));
+    assert!(
+        line_at(&working, now, 400).contains("🧠 thinking 12s"),
+        "state working with elapsed seconds: {text:?}"
+    );
+    let mut approving = m.clone();
+    approving.state = ChatState::AwaitingApproval;
+    assert!(
+        line_at(&approving, now, 400).contains("✋ approve?"),
+        "state awaiting approval: {text:?}"
+    );
+    let mut down = m.clone();
+    down.state = ChatState::DaemonDown;
+    assert!(
+        line_at(&down, now, 400).contains("💀 daemon down"),
+        "state daemon down: {text:?}"
+    );
+    let mut reconnecting = m.clone();
+    reconnecting.state = ChatState::Reconnecting;
+    assert!(
+        line_at(&reconnecting, now, 400).contains("📡 reconnecting"),
+        "state reconnecting: {text:?}"
+    );
+
+    // Alert: the severity word; the count at two or more of that severity.
+    assert!(text.contains("⚠ warn"), "alert severity word: {text:?}");
+    let mut two = m.clone();
+    two.alerts.push(AlertBadge {
+        fingerprint: "fp-warn-2".to_string(),
+        name: "DiskLow".to_string(),
+        severity: "warning".to_string(),
+        first_seen_unix: 1_700_000_000,
+        last_seen_unix: 1_700_000_000,
+    });
+    let two_text = line_at(&two, now, 400);
+    assert!(
+        two_text.contains("⚠ 2 warn"),
+        "the count at two or more of the worst severity: {two_text:?}"
+    );
+
+    // Resolved flash: the word `resolved` beside the glyph.
+    let mut flash = m.clone();
+    flash.set_alerts(Vec::new(), now);
+    assert!(
+        line_at(&flash, now, 400).contains("🧯 resolved DiskFull"),
+        "the resolved flash's word: {text:?}"
+    );
+
+    // Context, growth, cost, burn, turn, throughput.
+    assert!(text.contains("🌓 ctx 20%"), "context word: {text:?}");
+    assert!(text.contains("📈 +3.1k"), "growth word: {text:?}");
+    assert!(text.contains("💸 $0.42"), "cost word: {text:?}");
+    assert!(text.contains("⛽ $0.4/h burn"), "burn word: {text:?}");
+    assert!(text.contains("↻ turn 12"), "turn word: {text:?}");
+    assert!(text.contains("🐇 38 tok/s"), "throughput word: {text:?}");
+
+    // Counters: count-then-word.
+    assert!(text.contains("⏳ 2 bg"), "background word: {text:?}");
+    assert!(text.contains("👻 1 ghost"), "ghosts singular: {text:?}");
+    assert!(text.contains("🛠 7 tools"), "tools: {text:?}");
+    assert!(text.contains("🐚 3 shells"), "shells: {text:?}");
+
+    // Grants (task 4): lead, per-kind words, `all`, hosts.
+    let mut granted = m.clone();
+    granted.grants = GrantSummary {
+        cmds: CmdGrant::Gated,
+        scripts: Scope::Named(2),
+        runbooks: Scope::All,
+        files: Scope::All,
+        agents: Scope::Named(1),
+        schedules: true,
+        deletes: true,
+        hosts: 2,
+    };
+    let g = line_at(&granted, now, 400);
+    for part in [
+        "⚡ grants 8",
+        "🔒 gated",
+        "📜 scripts 2",
+        "📖 runbooks all",
+        "📄 files all",
+        "📅 schedules",
+        "🤖 agents 1",
+        "🗑 deletes",
+        "🌐 2 hosts",
+    ] {
+        assert!(g.contains(part), "grants wide part {part}: {g:?}");
+    }
+    assert!(
+        !g.contains("sudo"),
+        "gated commands say gated, not sudo: {g:?}"
+    );
+    let mut sudo = granted.clone();
+    sudo.grants.cmds = CmdGrant::Sudo;
+    assert!(
+        line_at(&sudo, now, 400).contains("🔑 sudo"),
+        "sudo kind word: {g:?}"
+    );
+    let mut one_host = granted.clone();
+    one_host.grants.hosts = 1;
+    assert!(
+        line_at(&one_host, now, 400).contains("🌐 1 host"),
+        "hosts singular: {g:?}"
+    );
+}
+
+#[test]
+fn words_drop_all_at_once_before_any_rank_drop() {
+    let now = Instant::now();
+    let m = busy_model();
+
+    // The widest width where the wide bar does not fit (the words dropped):
+    // scan down until a counter's word is gone, then check the one before.
+    let mut width = 200usize;
+    while width > 20 {
+        let text = line_at(&m, now, width as u16);
+        if !text.contains(" ghost") {
+            break;
+        }
+        width -= 1;
+    }
+    assert!(width > 20, "no width under 200 drops the words");
+    let text = line_at(&m, now, width as u16);
+    for word in [
+        "warn", "ctx", "burn", "turn", "tok/s", " ghost", " tool", " shell", " bg",
+    ] {
+        assert!(
+            !text.contains(word),
+            "no word survives the drop: {word} in {text:?}"
+        );
+    }
+    for part in [
+        "⏳2",
+        "👻1",
+        "🛠7",
+        "🐚3",
+        "🌓20%",
+        "💸0.42",
+        "↻12",
+        "🐇38t/s",
+    ] {
+        assert!(
+            text.contains(part),
+            "compact form intact: {part} in {text:?}"
+        );
+    }
+    // One column wider and the words are all present: the step is all at once.
+    let wide = line_at(&m, now, (width + 1) as u16);
+    assert!(
+        wide.contains("idle") && wide.contains(" bg") && wide.contains(" shell"),
+        "one column wider every word is back: {wide:?}"
+    );
+    assert!(
+        line_width(&m, now, (width + 1) as u16) <= width + 1,
+        "the wide bar fits at width+1"
+    );
+}
+
+#[test]
+fn state_and_alert_words_survive_every_drop() {
+    let now = Instant::now();
+    let m = busy_model();
+    let text = line_at(&m, now, 50);
+    assert!(
+        text.contains("daemon down") || text.contains("idle") || text.contains("warn"),
+        "the state and severity words are on the line: {text:?}"
+    );
+    // The rank drops took the droppable parts: no name, no age, no counters.
+    assert!(
+        !text.contains("DiskFull") && !text.contains("incident-42"),
+        "the rank drops took name and session: {text:?}"
+    );
+    assert!(
+        !text.contains("🐚") && !text.contains("🛠"),
+        "the rank drops took the shells and tools: {text:?}"
+    );
+    assert!(
+        text.contains("idle") && text.contains("⚠"),
+        "the state and severity words are still there: {text:?}"
+    );
+    assert!(!text.contains("⏱"), "the elapsed mark stays gone: {text:?}");
+}
+
+#[test]
+fn an_idle_default_bar_has_no_grants_and_reads_idle() {
+    let now = Instant::now();
+    let m = StatusModel {
+        model: "test-model".to_string(),
+        ..Default::default()
+    };
+    let text = line_at(&m, now, 120);
+    assert!(
+        text.contains("💤 idle"),
+        "the default bar reads idle: {text:?}"
+    );
+    assert!(
+        !text.contains('⚡') && !text.contains("grants"),
+        "no grants segment in the default state: {text:?}"
+    );
+}
+
+#[test]
+fn plural_forms_follow_the_count() {
+    let now = Instant::now();
+
+    // Shells.
+    let mut m = busy_model();
+    m.shells = 1;
+    assert!(
+        line_at(&m, now, 400).contains("🐚 1 shell"),
+        "1 shell: {text}",
+        text = line_at(&m, now, 400)
+    );
+    m.shells = 2;
+    assert!(
+        line_at(&m, now, 400).contains("🐚 2 shells"),
+        "2 shells: {text}",
+        text = line_at(&m, now, 400)
+    );
+
+    // Ghosts.
+    m.ghosts = 1;
+    assert!(
+        line_at(&m, now, 400).contains("👻 1 ghost"),
+        "1 ghost: {text}",
+        text = line_at(&m, now, 400)
+    );
+    m.ghosts = 2;
+    assert!(
+        line_at(&m, now, 400).contains("👻 2 ghosts"),
+        "2 ghosts: {text}",
+        text = line_at(&m, now, 400)
+    );
+
+    // Tools.
+    m.tools_total = 1;
+    assert!(
+        line_at(&m, now, 400).contains("🛠 1 tool"),
+        "1 tool: {text}",
+        text = line_at(&m, now, 400)
+    );
+    m.tools_total = 3;
+    assert!(
+        line_at(&m, now, 400).contains("🛠 3 tools"),
+        "3 tools: {text}",
+        text = line_at(&m, now, 400)
+    );
+
+    // Background: one word for every count.
+    m.background = 2;
+    assert!(
+        line_at(&m, now, 400).contains("⏳ 2 bg"),
+        "2 bg: {text}",
+        text = line_at(&m, now, 400)
+    );
+
+    // Hosts in the grants segment.
+    let mut g = busy_model();
+    g.grants = GrantSummary {
+        hosts: 1,
+        ..GrantSummary::default()
+    };
+    assert!(
+        line_at(&g, now, 400).contains("🌐 1 host"),
+        "1 host: {text}",
+        text = line_at(&g, now, 400)
+    );
+    g.grants.hosts = 2;
+    assert!(
+        line_at(&g, now, 400).contains("🌐 2 hosts"),
+        "2 hosts: {text}",
+        text = line_at(&g, now, 400)
+    );
+
+    // `scripts 2` stays a label then a count.
+    g.grants = GrantSummary {
+        cmds: CmdGrant::Auto,
+        scripts: Scope::Named(2),
+        ..GrantSummary::default()
+    };
+    let text = line_at(&g, now, 400);
+    assert!(
+        text.contains("📜 scripts 2"),
+        "scripts stays label-then-count: {text:?}"
+    );
+    assert!(
+        !text.contains("2 scripts"),
+        "the count never leads a scope kind: {text:?}"
+    );
+}
+
+#[test]
+fn scope_all_reads_all_wide_and_star_compact() {
+    let now = Instant::now();
+    let mut m = busy_model();
+    m.grants = GrantSummary {
+        cmds: CmdGrant::Auto,
+        files: Scope::All,
+        ..GrantSummary::default()
+    };
+
+    let wide = line_at(&m, now, 400);
+    assert!(
+        wide.contains("📄 files all"),
+        "the wide `all` word: {wide:?}"
+    );
+    assert!(!wide.contains('∗'), "no star in the wide form: {wide:?}");
+
+    // Narrow until the words drop: the compact form is today's `∗`.
+    let mut width = 200usize;
+    loop {
+        let text = line_at(&m, now, width as u16);
+        if !text.contains("files") {
+            assert!(text.contains("📄∗"), "the compact all mark: {text:?}");
+            break;
+        }
+        width -= 1;
+        assert!(width > 10, "the grants word never dropped: {text:?}");
+    }
+}
+
+#[test]
+fn the_symbols_and_ascii_dialects_use_the_same_words() {
+    let now = Instant::now();
+    let m = busy_model();
+
+    for set in [&SYMBOLS, &ASCII] {
+        let mut d = m.clone();
+        d.glyphs = set;
+        let text = line_at(&d, now, 400);
+        for word in ["idle", "burn", "turn", "ghost", "shell", "bg"] {
+            assert!(
+                text.contains(word),
+                "{set:?} speaks the same words: {word} in {text:?}"
+            );
+        }
+        // The ascii cost never doubles the dollar.
+        assert!(
+            !text.contains("$$"),
+            "{set:?} cost never doubles $: {text:?}"
+        );
+    }
+
+    let mut a = m.clone();
+    a.glyphs = &ASCII;
+    let text = line_at(&a, now, 400);
+    assert!(
+        !text.contains("ctx ctx"),
+        "ascii context never doubles: {text:?}"
+    );
+    assert!(
+        !text.contains("bg 2 bg"),
+        "ascii background never doubles: {text:?}"
+    );
+}
+
+#[test]
+fn no_dialect_doubles_a_word_or_a_dollar() {
+    let now = Instant::now();
+    let m = busy_model();
+    for set in [&EMOJI, &SYMBOLS, &ASCII] {
+        let mut d = m.clone();
+        d.glyphs = set;
+        let text = line_at(&d, now, 160);
+        assert!(!text.contains("ctx ctx"), "{set:?}: {text:?}");
+        assert!(!text.contains("bg 2 bg"), "{set:?}: {text:?}");
+        assert!(!text.contains("$$"), "{set:?}: {text:?}");
+    }
+}
+
+#[test]
+fn an_unrankable_severity_reads_alert() {
+    let now = Instant::now();
+    let mut m = busy_model();
+    m.alerts = vec![AlertBadge {
+        fingerprint: "fp-odd".to_string(),
+        name: "OddSev".to_string(),
+        severity: "catastrophic".to_string(),
+        first_seen_unix: 1_700_000_000,
+        last_seen_unix: 1_700_000_000,
+    }];
+    let text = line_at(&m, now, 400);
+    assert!(
+        text.contains("alert"),
+        "an unrankable severity's word is `alert`: {text:?}"
+    );
+    assert!(
+        text.contains("❔ alert"),
+        "the unknown glyph leads it: {text:?}"
+    );
+}
+
+#[test]
+fn a_line_never_exceeds_the_pane_width() {
+    let m = busy_model();
+    let now = Instant::now();
+    for set in [&EMOJI, &SYMBOLS, &ASCII] {
+        let mut d = m.clone();
+        d.glyphs = set;
+        for width in 30..=200u16 {
+            let measured = line_width(&d, now, width);
+            assert!(
+                measured <= width as usize,
+                "{set:?} at {width} measures {measured}: {text}",
+                text = line_at(&d, now, width)
+            );
+        }
+    }
+}
