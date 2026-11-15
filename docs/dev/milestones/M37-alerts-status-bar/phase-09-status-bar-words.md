@@ -1,7 +1,7 @@
 # Phase 09 — status-bar-words
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced on [bug-09-1](bugs/bug-09-1.md))
+**Status:** review
 **Drafted:** 2026-11-15
 **Depends on:** phases 02a, 02b and 02c (the bar, the counters, the grants segment)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -348,3 +348,164 @@ exit 0, build 0 warnings, clippy clean, `cargo test` passed=2998 failed=0,
 test-plan tests exist (the suite count did not move), the mutation check and
 the end-to-end block were never run, and the wide counters read
 word-then-count (`shells 2`) where task 3 pins `2 shells`.
+
+### Update — 2026-11-15 20:15 (complete, server-authored)
+
+**Summary:** **Summary**
+
+bug-09-1's three defects are closed in two commits (`6b68be3c`, `c209c2b6`); the tree is clean and the phase doc's status remains `in-progress` for the server's completion tail.
+
+**(c) Counters read count-then-word.** `counter_parts` now builds `{count} {word}` (`🐚 2 shells`, `👻 1 ghost`), and the grants hosts kind follows the same order (`🌐 2 hosts`); `scripts 2`, `grants 3`, `turn 7` and `ctx 2%` stay label-then-value as the table pins.
+
+**(a) The ten test-plan tests exist and pass.** All ten names grep under `src/cli/`, and the suite grew 2998 → **3008 passed, failed=0**. Writing them surfaced three wide-form defects in the earlier round, which I fixed rather than adapted the tests to: the alert count read `warn 2` where the table pins `⚠ 2 warn`; the growth word dropped its emoji glyph (`+3.1k` alone, now `📈 +3.1k`); and the symbols/ascii cost rendered glyph-then-`$`-value so `$ 0.42` lost the glyph's wide word (now `$ 0.42` with the glyph kept and no `$$`). Counters whose ascii glyph spells an abbreviation (`bg`, `gh`, `tl`, `sh`) drop the glyph in the wide form (`2 bg`), so `bg 2 bg` never renders — that is the "word replaces the glyph" choice from the constraint.
+
+**(b) Evidence, captured mechanically and pasted below.** The mutation check (`let wide = true` → test fails → reverted → passes) and the § End-to-end block both ran against the real tree:
+
+```
+== timeout 600 cargo test --lib status_bar ==
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 2869 filtered out; finished in 0.06s
+
+== grep -rn 'elapsed' src/cli/status_glyphs.rs | wc -l ==
+elapsed_refs=0
+
+== cargo build warnings ==
+build_warnings=0
+
+== mutation check (wide=true, never switch to compact) ==
+thread 'cli::status_bar::tests::words_drop_all_at_once_before_any_rank_drop' (38918) panicked at src/cli/status_bar_tests.rs:1424:9:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2917 filtered out; finished in 0.01s
+
+== full suite ==
+passed=3008 failed=0
+```
+
+**Notes for review**
+
+- fmt, clippy (`-D warnings`), hygiene, `doc_truth` and `bug_tracker` are all green; `status_bar.rs` stays at 774 production lines.
+- The wide-form assertions pin at 400 columns where the phase said 160: at 160 the full busy model's wide bar does not fit, so it renders compact and the wide forms are unreachable there. The words-drop test scans down from 200 for the exact drop width instead of a fixed pin.
+- The earlier round's count-then-word fix (commit `6b68be3c`) was re-cut once mid-run: my first patch introduced a `BACKGROUND_PLURAL` constant the verifier caught; I reverted to the pre-existing `word::BACKGROUND` pair before building on it.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Checking daemoneye v2.8.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.00s
+
+
+TEST
+policy_runbook_precedence_over_agent ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.28s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (52832): No such process
+kill: (-53545): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/cli/status_bar.rs` — +6 -6
+- `src/cli/status_bar_tests.rs` — +433 -3
+- `src/cli/status_grants.rs` — +2 -2
+- `src/cli/status_words.rs` — +6 -4
+
+**Commit:** c209c2b6fc8e5c1c86dfc362e6b26e868c3e5798
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
