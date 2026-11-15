@@ -1,7 +1,7 @@
 # Phase 10 — chat-panel-polish
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced: [bug-10-1](bugs/bug-10-1.md))
+**Status:** done
 **Drafted:** 2026-11-15
 **Depends on:** phase 09 (the tree at `bff5abc2`)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -225,34 +225,37 @@ Client (in `stream.rs`'s `tool_call_panel_tests`): update
 
 ## Acceptance criteria
 
-- [ ] Every test named in the test plan exists and passes:
+- [x] Every test named in the test plan exists and passes:
       `grep -rlw "fn <name>" src` prints a file for each name. Today none
       of them do.
-- [ ] `grep -n 'Color::Gray' src/cli/render_ratatui.rs` no longer matches
+- [x] `grep -n 'Color::Gray' src/cli/render_ratatui.rs` no longer matches
       inside `input_box_block`.
-- [ ] `grep -rn 'ℹ\|💸' src README.md CLAUDE.md` prints nothing.
-- [ ] `grep -rn '"terminal · visible to you"' src` matches only the
+- [x] `grep -rn 'ℹ\|💸' src README.md CLAUDE.md` prints nothing.
+      (Review: the only hits are the five lines in `status_bar_tests.rs`
+      asserting the old glyphs are *absent*, which is the criterion's
+      intent; no production or doc line carries either glyph.)
+- [x] `grep -rn '"terminal · visible to you"' src` matches only the
       older-daemon fallback and its test.
-- [ ] Mutation check, pasted with its `test result:` lines. Make the pick
+- [x] Mutation check, pasted with its `test result:` lines. Make the pick
       always return `None`. Confirm `the_prompt_names_the_shell_the_run_lands_in`
       fails, then revert. Separately, drop the corner overwrite. Confirm
       `the_input_box_has_rounded_corners` fails, then revert.
-- [ ] fmt, build (0 warnings) and clippy are green. `cargo test` (under
+- [x] fmt, build (0 warnings) and clippy are green. `cargo test` (under
       `timeout 600`) reports `failed=0` and passed greater than 3008. The
       hygiene, `doc_truth` and `bug_tracker` tests pass.
 
-- [ ] **(bug-10-1)** `an_unparseable_shell_target_is_refused_without_asking`
+- [x] **(bug-10-1)** `an_unparseable_shell_target_is_refused_without_asking`
       exists and passes: `shell: "bogus"` sends no `ToolCallPrompt` and
       returns `unknown shell target`, and nothing runs. Today
       `grep -rlw "fn an_unparseable_shell_target_is_refused_without_asking" src`
       prints nothing, and the call is asked and runs.
-- [ ] **(bug-10-1)** `an_unpicked_run_is_pinned_to_a_new_shell` exists and
+- [x] **(bug-10-1)** `an_unpicked_run_is_pinned_to_a_new_shell` exists and
       passes: a `None` pick gives the run `shell: "new"`. Today `run_shell` is
       `None`. Its mutation check is pasted.
-- [ ] **(bug-10-1)** `grep -c getpwuid_r src/daemon/executor/shell_label.rs`
+- [x] **(bug-10-1)** `grep -c getpwuid_r src/daemon/executor/shell_label.rs`
       prints at least 1 (today 0). The `mod.rs 866` allowlist line has a
       reason comment.
-- [ ] **(bug-10-1)** `timeout 600 cargo test` reports `failed=0` with passed
+- [x] **(bug-10-1)** `timeout 600 cargo test` reports `failed=0` with passed
       greater than 3025.
 
 ## Pre-flight
@@ -539,3 +542,65 @@ an unparseable `shell` value into a silent default-shell run, where it used to
 be the `unknown shell target` refusal. Also in the bug: `getpwuid_r` (minor)
 and a reason comment for the new `mod.rs` allowlist line (nit; the entry
 itself is accepted).
+
+### Update — 2026-11-15 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the re-dispatch for bug-10-1 ran 513 turns with zero edits
+(352 `bash`, 109 `read_file`, 0 writes; the same `grep -rn "passwd"` over
+libc's source 32 times) and was stopped on the PE's instruction. The fix was
+small and fully specified, so the architect made it directly.
+
+Architect's edits (`80bba720`):
+- `pick_shell_for_run` goes through `resolve_shell_target`, so an
+  unparseable `shell` value is `Err` with that function's own wording and is
+  refused before the prompt, as a malformed host is. `"new"`, an id and the
+  reuse rule are unchanged.
+- `pinned_shell(picked)` is the run's `shell` argument: the picked id, or
+  `"new"`. The run never gets `None`.
+- `local_username` reads the passwd entry through `getpwuid_r` into a local
+  buffer (`passwd_name`), not `getpwuid`'s static one.
+- The three pre-prompt refusals in `dispatch` share `refuse_before_prompt`;
+  `dispatch` is 126 lines (it had reached 155, over the cap, with the new
+  arm inline).
+- The `file src/daemon/executor/mod.rs 866` allowlist line has its reason
+  comment. The entry itself was accepted at the bounce.
+- Tests `an_unparseable_shell_target_is_refused_without_asking` (no
+  `ToolCallPrompt`, `unknown shell target`, no shell opened) and
+  `an_unpicked_run_is_pinned_to_a_new_shell`.
+
+Evidence, run by the architect:
+
+```text
+== mutated (pinned_shell falls back to "" instead of "new")
+  left: ""
+ right: "new"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2936 filtered out; finished in 0.00s
+== reverted
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2936 filtered out; finished in 0.00s
+getpwuid_r refs in shell_label.rs: 4
+fmt clean · build 0 warnings · clippy clean
+passed=3027 failed=0   (3025 at the bounce)
+hygiene 16 passed · doc_truth 19 passed · bug_tracker 6 passed
+```
+
+### Review verdict — 2026-11-15
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-10-1)
+- **Executor:** GLM-5.3-Flash, then Claude (direct) for bug-10-1
+- **Scope deviations:** `refuse_before_prompt` helper in
+  `dispatch_foreground.rs` (needed to keep `dispatch` under the function
+  cap); `tool_call_panel_body` / `tool_call_panel_label` /
+  `approval_session_label` moved to `stream.rs` and `prompt_and_await_approval`
+  split, both anticipated by the spec; one new allowlist line
+  (`executor/mod.rs 866`) with a stated reason.
+- **Calibration:** the first run folded "explicitly new", "nothing idle" and
+  "unparseable" into one `None`, so the pin and the pre-existing refusal both
+  fell out — a spec that says "pinned to the picked id or `"new"`" was read
+  as "pass the argument through when it says new". Second data point for
+  "spec the negative case explicitly": the Constraints named what the pick
+  must not do (create, connect) but not what the run must never receive
+  (`None`). The re-dispatch is the fourth GLM read-paralysis run (M36 16, 16
+  again, 18; M37 10): zero edits over hundreds of turns on a small, fully
+  specified bounce.
