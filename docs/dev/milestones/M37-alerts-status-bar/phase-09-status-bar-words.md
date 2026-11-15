@@ -1,7 +1,7 @@
 # Phase 09 — status-bar-words
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced on [bug-09-1](bugs/bug-09-1.md))
 **Drafted:** 2026-11-15
 **Depends on:** phases 02a, 02b and 02c (the bar, the counters, the grants segment)
 **Estimated diff:** ~400 lines, about half of it tests
@@ -140,6 +140,18 @@ In `src/cli/status_bar_tests.rs`, calling `status_bar_line`:
 - [ ] `grep -rn 'elapsed' src/cli/status_glyphs.rs` prints nothing.
 - [ ] fmt, build (0 warnings), clippy and `cargo test` (under `timeout 600`)
       are green with `failed=0`; hygiene, `doc_truth` and `bug_tracker` ok.
+
+- [ ] **(bug-09-1, open) The ten test-plan tests exist and pass.** For each
+      name in § Test plan, `grep -rlw "fn <name>" src` prints a file; today
+      all ten print nothing.
+- [ ] **(bug-09-1, open) The suite grew:** `timeout 600 cargo test` prints
+      `failed=0` with passed greater than 2998 (today exactly 2998).
+- [ ] **(bug-09-1, open) Counters read count-then-word in the wide form:**
+      `🐚 2 shells`, `👻 1 ghost`, `🛠 3 tools`, `⏳ 2 bg`, `🌐 2 hosts`,
+      pinned by `plural_forms_follow_the_count`. Today `counter_parts`
+      renders `shells 2`.
+- [ ] **(bug-09-1, open) Evidence pasted:** the mutation check's failing
+      `test result:` line and the § End-to-end block's output, verbatim.
 
 ## Pre-flight
 
@@ -325,3 +337,14 @@ kill: (-4087553): No such process
 **Commit:** 2da83ad1d3631f3cf4ce376166fabc010c91f3f9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-15 (bounced)
+
+Bounced on [bug-09-1](bugs/bug-09-1.md). The implementation is approved:
+the two-form part, the all-at-once words-drop step, `status_words.rs`, the
+`elapsed` removal, the grants words and the docs. Independent gates: fmt
+exit 0, build 0 warnings, clippy clean, `cargo test` passed=2998 failed=0,
+`grep elapsed src/cli/status_glyphs.rs` empty. Outstanding: none of the ten
+test-plan tests exist (the suite count did not move), the mutation check and
+the end-to-end block were never run, and the wide counters read
+word-then-count (`shells 2`) where task 3 pins `2 shells`.
