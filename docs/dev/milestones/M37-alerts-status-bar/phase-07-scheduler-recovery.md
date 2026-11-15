@@ -1,7 +1,7 @@
 # Phase 07 — scheduler-recovery
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~200 lines, about two thirds of it tests
@@ -148,10 +148,15 @@ In `src/daemon/scheduled_tests.rs`, following
       (today 0), and `grep -c 'recover_interrupted' src/daemon/startup.rs
       src/cli/local_cmds.rs` prints a non-zero count for `startup.rs` and 0
       for `local_cmds.rs`.
-- [ ] Mutation check, pasted with its `test result:` line: remove the
-      `skip_to_future` call from the `Every` arm of `recover_interrupted`,
-      confirm `recover_interrupted_skips_a_running_every_job_to_its_next_slot`
-      fails, then revert.
+- [ ] **(bug-07-1, open)** Mutation check, pasted with its `test result:`
+      line: remove the `skip_to_future` call from the `Every` arm of
+      `recover_interrupted`, confirm
+      `recover_interrupted_skips_a_running_every_job_to_its_next_slot` prints
+      `test result: FAILED`, then revert. Today the mutated run prints `ok`,
+      because the test's fired slot is only 10 s in the past and one
+      `advance()` already reaches the future. The slot must be several
+      intervals in the past, the shape of a daemon that was down for days.
+      `cargo test` stays at passed=2984, **not** 2985.
 - [ ] Second mutation, pasted: make `mark_done` return the recurring job to
       `Pending` **without** the failure reaching the run state, confirm
       `a_failed_recurring_run_still_ends_hard_fail_with_its_error` fails,
@@ -502,3 +507,11 @@ kill: (-3508544): No such process
 **Commit:** d7b2c7ae831af7e0f0fcaf6e6876f72bf60694f4
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-14 (bounced)
+
+Bounced on [bug-07-1](bugs/bug-07-1.md). The independent gates are green:
+fmt, build with 0 warnings, clippy, and `cargo test` passed=2984 failed=0.
+The production code, the docs and mutation 2 are approved. Mutation 1 is
+unmet: its own pasted run is green, and the `panic!` probe that stood in for
+it does not test what the criterion asks. Only that one test changes.
