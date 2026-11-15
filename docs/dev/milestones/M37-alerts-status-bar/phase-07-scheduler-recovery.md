@@ -1,7 +1,7 @@
 # Phase 07 — scheduler-recovery
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-14
 **Depends on:** nothing in M37
 **Estimated diff:** ~200 lines, about two thirds of it tests
@@ -141,14 +141,14 @@ In `src/daemon/scheduled_tests.rs`, following
 
 ## Acceptance criteria
 
-- [ ] Every test in the test plan passes, and the existing
+- [x] Every test in the test plan passes, and the existing
       `take_due_persists_running_state` and
       `store_mark_done_success_reschedules_every` pass unchanged.
-- [ ] `grep -c 'recover_interrupted' src/scheduler.rs` prints at least 2
+- [x] `grep -c 'recover_interrupted' src/scheduler.rs` prints at least 2
       (today 0), and `grep -c 'recover_interrupted' src/daemon/startup.rs
       src/cli/local_cmds.rs` prints a non-zero count for `startup.rs` and 0
       for `local_cmds.rs`.
-- [ ] **(bug-07-1, open)** Mutation check, pasted with its `test result:`
+- [x] **(bug-07-1, fixed)** Mutation check, pasted with its `test result:`
       line: remove the `skip_to_future` call from the `Every` arm of
       `recover_interrupted`, confirm
       `recover_interrupted_skips_a_running_every_job_to_its_next_slot` prints
@@ -157,11 +157,11 @@ In `src/daemon/scheduled_tests.rs`, following
       `advance()` already reaches the future. The slot must be several
       intervals in the past, the shape of a daemon that was down for days.
       `cargo test` stays at passed=2984, **not** 2985.
-- [ ] Second mutation, pasted: make `mark_done` return the recurring job to
+- [x] Second mutation, pasted: make `mark_done` return the recurring job to
       `Pending` **without** the failure reaching the run state, confirm
       `a_failed_recurring_run_still_ends_hard_fail_with_its_error` fails,
       then revert.
-- [ ] fmt, build (0 warnings), clippy and `cargo test` are green, with
+- [x] fmt, build (0 warnings), clippy and `cargo test` are green, with
       `failed=0` and more than the baseline passed. Hygiene (`run_daemon`'s
       count not grown), `doc_truth` and `bug_tracker` are ok.
 
@@ -724,3 +724,13 @@ kill: (-3533599): No such process
 **Commit:** a84f6f70ca0ef9350614d7fab73b4574be60ed1d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-15
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-07-1](bugs/bug-07-1.md): the recovery test could not see `skip_to_future`)
+- **Executor:** GLM-5.3-Flash (one dispatch, two resumes: a 1000-turn budget run, then a network `hard_fail`)
+- **Scope deviations:** none. Task 4b, a permanent refusal stays terminal, was added by the architect at the first escalation.
+- **Calibration:** a test fixture should model the incident's real shape (days down, many slots missed), not a convenient minimal offset; a 10 s past slot made the line under test dead in the test. Separately, a test helper that takes the non-reentrant `test_home_guard` deadlocked every caller that already held it, and two hung test binaries ran unnoticed for 80+ minutes. A `timeout` on executor test runs would have exposed the hang at once.
+
+Independent gates (reviewer, 2026-11-15): fmt exit 0, build 0 warnings, clippy clean, `cargo test` passed=2984 failed=0 (baseline 2975), hygiene/doc_truth/bug_tracker ok.
