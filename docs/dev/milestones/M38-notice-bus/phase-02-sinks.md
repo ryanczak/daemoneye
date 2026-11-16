@@ -1,7 +1,7 @@
 # Phase 02 — sinks
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-16
 **Depends on:** phase-01
 **Estimated diff:** ~450 lines, about half of it tests
@@ -301,3 +301,28 @@ kill: (-127701): No such process
 **Commit:** 0cf8f3b98da6ee0cf9701b863729d6a056399889
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-16
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (263 turns)
+- **Scope deviations:** `src/daemon/startup.rs` beyond the one authorized
+  call: the pipe-log / stop-sentinel sweep moved verbatim into
+  `sweep_stale_var_run_artifacts()` so `run_daemon` stays within its
+  allowlisted line count — a pure extraction, accepted. The targeted-history
+  test uses a ghost notice (routed to history by default) rather than an
+  unroutable one — correct, since the sink sits behind its routes.
+- **Review checks:** gates re-run once each — fmt, build, clippy clean;
+  full suite 3075 passed, 0 failed. Production code free of
+  unwrap/expect/allow/TODO. Preservation files unchanged since the draft.
+  Config is installed (`startup.rs`) before the sinks register, so the
+  command sink's `config::current()` reads the live handle. Spot-checked:
+  `history_sink_skips_unrouted_notice` fails if the route check is removed;
+  `history_sink_targeted_reaches_only_its_session` fails if `Some(id)`
+  falls through to the broadcast branch.
+- **Nit (not bounced):** `source_name` restates `Source`'s serde names;
+  fold it into a `Source::as_str` when phase 03 touches `notice.rs`.
+- **Calibration:** the "run each gate once; green ends the task" line in
+  Spec task 8 held — no IdenticalToolCallRepetition this time, against two
+  in phase 01. One data point for the fold candidate noted there.
