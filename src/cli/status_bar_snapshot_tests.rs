@@ -126,7 +126,7 @@ fn snapshot_emoji_full_at_160_140_120_80_40() {
     // gone; the alert name and age survive, and every word shows.
     assert_eq!(
         line_at(&m, now, 160),
-        "💤 idle · ⚠ warn 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model: deepseek-v4 · 📌 incident-42        🔒 grants 8"
+        "💤 idle · ⚠ warn 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model deepseek-v4 · 📌 incident-42         🔒 grants 8"
     );
     // 140: the wide form does not fit, so the words drop — and the detail,
     // the velocities, the name and the age all come back in compact form.
@@ -177,11 +177,11 @@ fn snapshot_emoji_info_alert_no_grants_unnamed_at_160_120_and_80() {
     let (m, now) = pe_model();
     assert_eq!(
         line_at(&m, now, 160),
-        "💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 💸 ?0.2/h · 🔄 turn 12 🐇 38 tok/s · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model: deepseek-v4"
+        "💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 💸 ?0.2/h · 🔄 turn 12 🐇 38 tok/s · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model deepseek-v4"
     );
     assert_eq!(
         line_at(&m, now, 120),
-        "💤 idle · ⚠1 heartbeat 0s · 🌓20% 📈3.1k · 💰?0.42 💸?0.2/h · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4"
+        "💤 idle · ⚠ info · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model deepseek-v4"
     );
     assert_eq!(
         line_at(&m, now, 80),
@@ -195,7 +195,7 @@ fn snapshot_symbols_full_at_160_and_80() {
     m.glyphs = &SYMBOLS;
     assert_eq!(
         line_at(&m, now, 160),
-        "○ idle · ● warn DiskFull 0s · ◕ ctx 20% · ?0.42 · ↻ turn 12 » 38 tok/s · ⧖ 2 bg ⚒ 7 tools ◆ 1 ghost ⌨ 3 shells · model: deepseek-v4 · ▣ incident-42  ⚡ grants 8"
+        "○ idle · ● warn DiskFull 0s · ◕ ctx 20% · ?0.42 · ↻ turn 12 » 38 tok/s · ⧖ 2 bg ⚒ 7 tools ◆ 1 ghost ⌨ 3 shells · model deepseek-v4 · ▣ incident-42   ⚡ grants 8"
     );
     assert_eq!(
         line_at(&m, now, 80),
@@ -209,7 +209,7 @@ fn snapshot_ascii_full_at_160_and_80() {
     m.glyphs = &ASCII;
     assert_eq!(
         line_at(&m, now, 160),
-        "- idle · ! warn DiskFull 0s · ctx20% · ?0.42 ?0.2/h · turn 12 38 tok/s · 2 bg 7 tools 1 ghost 3 shells · model: deepseek-v4 · @ incident-42           A grants 8"
+        "- idle · ! warn DiskFull 0s · ctx20% · ?0.42 ?0.2/h · turn 12 38 tok/s · 2 bg 7 tools 1 ghost 3 shells · model deepseek-v4 · @ incident-42            A grants 8"
     );
     assert_eq!(
         line_at(&m, now, 80),
@@ -231,7 +231,7 @@ fn snapshot_words_survive_the_grants_detail_and_velocities() {
         );
     }
     for word in [
-        "idle", "warn", "ctx", "turn", "bg", "ghost", "tools", "shells", "model:", "grants",
+        "idle", "warn", "ctx", "turn", "bg", "ghost", "tools", "shells", "model ", "grants",
     ] {
         assert!(text.contains(word), "the word survives: {word} in {text:?}");
     }

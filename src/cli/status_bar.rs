@@ -619,7 +619,7 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
 }
 
 /// The model slot: the vendor mark and the short name. Wide carries the
-/// word (`🦙 model: deepseek-v4`); compact is byte-for-byte the pre-words
+/// word (`🦙 model deepseek-v4`); compact is byte-for-byte the pre-words
 /// bar (`🦙 deepseek-v4`). The ascii dialect has no vendor mark, so the
 /// word starts the slot there — no leading space in either form.
 fn model_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {

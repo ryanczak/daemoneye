@@ -1628,7 +1628,7 @@ fn the_symbols_and_ascii_dialects_use_the_same_words() {
         let mut d = m.clone();
         d.glyphs = set;
         let text = line_at(&d, now, 400);
-        for word in ["idle", "turn", "ghost", "shell", "bg", "model:"] {
+        for word in ["idle", "turn", "ghost", "shell", "bg", "model "] {
             assert!(
                 text.contains(word),
                 "{set:?} speaks the same words: {word} in {text:?}"
@@ -1814,10 +1814,10 @@ fn the_model_slot_carries_the_model_word() {
     let text = line_at(&m, now, 400);
     let mark_at = text.find("🦙").expect("the local vendor mark shows");
     let word_at = text
-        .find("model: deepseek-v4")
+        .find("model deepseek-v4")
         .expect("the model word shows");
     assert!(
-        mark_at < word_at && text[mark_at..].starts_with("🦙 model: deepseek-v4"),
+        mark_at < word_at && text[mark_at..].starts_with("🦙 model deepseek-v4"),
         "the word follows the vendor mark: {text:?}"
     );
 
@@ -1825,7 +1825,7 @@ fn the_model_slot_carries_the_model_word() {
     let mut width = 200usize;
     while width > 20 {
         let text = line_at(&m, now, width as u16);
-        if !text.contains("model:") {
+        if !text.contains("model ") {
             assert!(
                 text.contains("🦙 deepseek-v4"),
                 "the compact form is glyph and name: {text:?}"
@@ -1870,14 +1870,14 @@ fn the_ascii_dialect_starts_the_model_slot_with_the_word() {
     m.glyphs = &ASCII;
     let text = line_at(&m, now, 400);
     let at = text
-        .find("model: sonnet-4-6")
+        .find("model sonnet-4-6")
         .expect("the ascii model word shows");
     let prev = text[..at].chars().next_back();
     assert!(
         prev.is_none_or(|c| c == ' '),
         "one space between slots, never two, beside the word: {text:?}"
     );
-    let after = &text[at + "model: sonnet-4-6".len()..];
+    let after = &text[at + "model sonnet-4-6".len()..];
     assert!(
         !after.trim_start().starts_with(' '),
         "no doubled space after the model slot: {text:?}"

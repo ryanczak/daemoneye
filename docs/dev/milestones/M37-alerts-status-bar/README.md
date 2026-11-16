@@ -78,7 +78,7 @@ while the user still sees it in chat.
 7. **Status bar words** (PE, 2026-11-15, amending decision 3). Decision 3's
    "every segment is a glyph and a number" gives way: each item carries a
    word (`idle`, `thinking 12s`, `ctx 2%`, `turn 7`, `2 shells`, `grants 3`,
-   `scripts 2`, `model: deepseek-v4`), in all three dialects. When the line
+   `scripts 2`, `model deepseek-v4`), in all three dialects. When the line
    does not fit, the words drop first, all at once, back to the
    glyph-and-number form; the state word never drops (the alert severity
    word does drop, to `⚠1`; PE, 2026-11-15). Phase 09; the model word is
@@ -107,6 +107,8 @@ while the user still sees it in chat.
      counters sit in the order background, tools, ghosts, shells
      (`⏳2 🔧7 👻1 🐚3`); their drop ranks are unchanged. The burn part has
      no word: `/h` is its word, so wide is `💸 $0.4/h` (PE, 2026-11-15).
+     The model word is `model`, no colon: `🦙 model deepseek-v4` (PE,
+     2026-11-15).
    - **Counter grouping.** The four counters (`⏳2 🔧7 👻1 🐚3`) are one
      slot, single spaces inside it, ` · ` between slots; each keeps its own
      rank and drops alone.

@@ -28,7 +28,7 @@ pub(super) mod word {
     pub const CONTEXT: &str = "ctx";
     pub const TURN: &str = "turn";
     pub const TOK_PER_S: &str = "tok/s";
-    pub const MODEL: &str = "model:";
+    pub const MODEL: &str = "model";
 
     pub const BACKGROUND: &str = "bg";
     pub const GHOST: &str = "ghost";
