@@ -1,11 +1,15 @@
 # NEXT
 
-**Active milestone:** M37 — Alerts out of history, onto the status bar and
-`top` ([`README.md`](milestones/M37-alerts-status-bar/README.md)). Scoped
-2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
-surface (M38), then Knowledge (M39).
+**Active milestone:** M38 — The notice bus
+([`README.md`](milestones/M38-notice-bus/README.md)). Scoped 2026-11-16,
+target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
+(M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none — milestone boundary. Every M37 phase (01 through 12) is `done`, and the retrospective is in the milestone README (refreshed 2026-11-15). Waiting on the PE for: the live check on pinky (exit criteria plus the close-time additions), sign-off, and the 2.9.0 release. The calibration folds proposed in the retrospective (items 1, 5 and 6) are held for PE approval. Held for a PE decision: the alert registry is in-memory, so a daemon restart blanks the bar and `top` for up to one Alertmanager `repeat_interval`; a startup replay of the event log's last 6 h of `webhook_alert`/`webhook_resolved` records would close it.
+**Active phase:** none drafted — 01 (bus-core) is `done` (escalated,
+2026-11-16). Next: `/rexymcp:architect next` drafts 02 (sinks).
+
+**Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
+from the journal at start, phase 08).
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn
