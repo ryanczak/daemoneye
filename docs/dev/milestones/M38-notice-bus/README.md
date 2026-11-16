@@ -99,7 +99,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 |----|-------|--------|
 | 01 | bus-core ([phase-01-bus-core.md](phase-01-bus-core.md)) | done |
 | 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | done |
-| 03 | webhook producer | planned |
+| 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | todo |
 | 04 | scheduler and watchdog producers | planned |
 | 05 | ghost lifecycle and background producers | planned |
 | 06 | terminal producer (OSC 7501) | planned |
