@@ -1,7 +1,7 @@
 # Phase 11 — status-bar-model-word
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-15
 **Depends on:** phase 09 (the two-form parts) and phase 10 (the tree at `c176348c`)
 **Estimated diff:** ~90 lines, half of it tests
@@ -242,3 +242,146 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2939 filtered out; f
 hygiene ok (16 passed; `status_bar.rs` back inside the 800 cap at 803
 production lines, no allowlist line added), `doc_truth` ok (19 passed),
 `bug_tracker` ok (6 passed).
+
+### Update — 2026-11-16 02:07 (complete, server-authored)
+
+**Summary:** The phase is complete. Final state verified: all six spec tasks done and marked, every commit in, working tree clean (only the next phase's pre-seeded doc is untracked, as dispatched).
+
+**Summary**
+
+Phase 11 is implemented and verified end-to-end. `word::MODEL` = `model:` was added to `status_words.rs`; `model_parts` in `status_bar.rs` now builds a two-form part — wide `<mark> model: <name>`, compact byte-for-byte today's `<mark> <name>`, no leading or doubled space in any dialect (the ascii slot starts with the word, no mark) — dropping with all the other words under the existing words-drop step; `short_model_name` cuts at the last `-`/`.`/`_` leaving ≥ 6 columns and never ends on a separator, keeping the 12-column hard clip and the 12-column constant otherwise. Three new tests and an extension of the dialects test live in `status_bar_tests.rs`; both mutation checks ran red and reverted green. Docs updated: the M37 README's decision 7 word list and `README.md`'s status-bar sentence. End-to-end (mechanically captured, pasted in the phase's Update Log): `cargo test --lib status_bar` → 55 passed/0 failed; `model_word_refs=1`; `build_warnings=0`; full `cargo test` → **passed=3030 failed=0** (baseline 3027); fmt, clippy `-D warnings`, hygiene (16 ok, `status_bar.rs` at 803 production lines, no allowlist growth), `doc_truth` (19 ok) and `bug_tracker` (6 ok) all green.
+
+**Notes for review**
+
+- One deviation, made after the gate's test failure: `render_ratatui_tests::status_bar_shows_turn_on_every_panel` pinned the wide `↻ turn 6` at a 60-column pane, but the model word widens the wide bar 56 → 63 columns there, so the spec'd words-drop correctly takes every word at once and the buffer shows the compact `↻6`. The Authorizations list did not include that file, so I first filed a blocker (`4ce5e0e5`) rather than editing around it; on re-dispatch I applied the blocker's stated remedy — the assertion now also accepts the compact `↻6`, which is the drop behaviour working, not a regression (`140df3a4`). That file edit is outside the original authorization and needs a reviewer's nod.
+- The clip never leaves a trailing separator; the ascii dialect test asserts the word directly follows the ` · ` separator with no doubled space.
+- Task list, status (`in-progress`), and the two Update Log evidence entries are in the phase doc; the server owns the `in-progress → review` flip and the completion entry.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ol_policy_deny_merged_and_enforced ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ghost_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_entry_format ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test g4_briefing_injects_on_next_run ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.14s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-e4eaed9c20b7817e)
+kill: (299003): No such process
+kill: (-299713): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-84596a3046ce91b6)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-61684e0b51107e5b)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-c69cc98b7b8dfe7a)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-1cb80d9fbff8faf7)
+     Running tests/integration.rs (target/debug/deps/integration-9d0880a1c76a698b)
+     Running tests/isolation.rs (target/debug/deps/isolation-882adad6d3253c89)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-bad9d4ccd89b2daf)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-3f0be99859fd1842)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +1 -1
+- `docs/dev/NEXT.md` — +1 -1
+- `docs/dev/milestones/M37-alerts-status-bar/README.md` — +9 -6
+- `docs/dev/milestones/M37-alerts-status-bar/phase-11-status-bar-model-word.md` — +101 -1
+- `docs/dev/milestones/M37-alerts-status-bar/phase-12-status-bar-final-form.md` — +194 -0
+- `src/cli/render_ratatui_tests.rs` — +3 -1
+- `src/cli/status_bar.rs` — +49 -20
+- `src/cli/status_bar_tests.rs` — +90 -5
+- `src/cli/status_words.rs` — +1 -0
+
+**Commit:** 140df3a4d1fa0555c58ca1016f45a30c772b2f7d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
