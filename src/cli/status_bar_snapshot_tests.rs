@@ -126,21 +126,21 @@ fn snapshot_emoji_full_at_160_140_120_80_40() {
     // gone; the alert name and age survive, and every word shows.
     assert_eq!(
         line_at(&m, now, 160),
-        "💤 idle · ⚠ warn 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 · ⏳ 2 bg 👻 1 ghost 🔧 7 tools 🐚 3 shells · 🦙 model: deepseek-v4 · 📌 incident-42        🔒 grants 8"
+        "💤 idle · ⚠ warn 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model: deepseek-v4 · 📌 incident-42        🔒 grants 8"
     );
     // 140: the wide form does not fit, so the words drop — and the detail,
     // the velocities, the name and the age all come back in compact form.
     assert_eq!(
         line_at(&m, now, 140),
-        "💤 idle · ⚠1 DiskFull 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42             🔒8"
+        "💤 idle · ⚠1 DiskFull 0s · 🌓20% 📈3.1k · 💰?0.42 💸?0.2/h · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4 · 📌 incident-42            🔒8"
     );
     assert_eq!(
         line_at(&m, now, 120),
-        "💤 idle · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42        🔒8"
+        "💤 idle · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4 · 📌 incident-42        🔒8"
     );
     assert_eq!(
         line_at(&m, now, 80),
-        "💤 idle · ⚠1 · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4     🔒8"
+        "💤 idle · ⚠1 · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4     🔒8"
     );
     assert_eq!(
         line_at(&m, now, 40),
@@ -155,18 +155,18 @@ fn snapshot_emoji_working_approval_and_down_at_120() {
     m.turn_started_at = Some(now - Duration::from_secs(12));
     assert_eq!(
         line_at(&m, now, 120),
-        "🧠 thinking 12s · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42        🔒8"
+        "🧠 thinking 12s · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4 · 📌 incident-42        🔒8"
     );
     m.state = ChatState::AwaitingApproval;
     m.turn_started_at = None;
     assert_eq!(
         line_at(&m, now, 120),
-        "✋ approve? · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42    🔒8"
+        "✋ approve? · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4 · 📌 incident-42    🔒8"
     );
     m.state = ChatState::DaemonDown;
     assert_eq!(
         line_at(&m, now, 120),
-        "💀 daemon down · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42 🔒8"
+        "💀 daemon down · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4 · 📌 incident-42 🔒8"
     );
 }
 
@@ -177,15 +177,15 @@ fn snapshot_emoji_info_alert_no_grants_unnamed_at_160_120_and_80() {
     let (m, now) = pe_model();
     assert_eq!(
         line_at(&m, now, 160),
-        "💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 🐇 38 tok/s · ⏳ 2 bg 👻 1 ghost 🔧 7 tools 🐚 3 shells · 🦙 model: deepseek-v4"
+        "💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 🐇 38 tok/s · ⏳ 2 bg 🔧 7 tools 👻 1 ghost 🐚 3 shells · 🦙 model: deepseek-v4"
     );
     assert_eq!(
         line_at(&m, now, 120),
-        "💤 idle · ⚠1 heartbeat 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4"
+        "💤 idle · ⚠1 heartbeat 0s · 🌓20% 📈3.1k · 💰?0.42 💸?0.2/h · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4"
     );
     assert_eq!(
         line_at(&m, now, 80),
-        "💤 idle · ⚠1 0s · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4"
+        "💤 idle · ⚠1 0s · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 🔧7 👻1 🐚3 · 🦙 deepseek-v4"
     );
 }
 
@@ -195,11 +195,11 @@ fn snapshot_symbols_full_at_160_and_80() {
     m.glyphs = &SYMBOLS;
     assert_eq!(
         line_at(&m, now, 160),
-        "○ idle · ● warn DiskFull 0s · ◕ ctx 20% · ?0.42 · ↻ turn 12 » 38 tok/s · ⧖ 2 bg ◆ 1 ghost ⚒ 7 tools ⌨ 3 shells · model: deepseek-v4 · ▣ incident-42  ⚡ grants 8"
+        "○ idle · ● warn DiskFull 0s · ◕ ctx 20% · ?0.42 · ↻ turn 12 » 38 tok/s · ⧖ 2 bg ⚒ 7 tools ◆ 1 ghost ⌨ 3 shells · model: deepseek-v4 · ▣ incident-42  ⚡ grants 8"
     );
     assert_eq!(
         line_at(&m, now, 80),
-        "○ idle · ●1 · ◕20% · ?0.42 · ↻12 · ⧖2 ◆1 ⚒7 ⌨3 · deepseek-v4 · ▣ incident-42 ⚡8"
+        "○ idle · ●1 · ◕20% · ?0.42 · ↻12 · ⧖2 ⚒7 ◆1 ⌨3 · deepseek-v4 · ▣ incident-42 ⚡8"
     );
 }
 
@@ -209,11 +209,11 @@ fn snapshot_ascii_full_at_160_and_80() {
     m.glyphs = &ASCII;
     assert_eq!(
         line_at(&m, now, 160),
-        "- idle · ! warn DiskFull 0s · ctx20% · ?0.42 $0.2/h burn · turn 12 38 tok/s · 2 bg 1 ghost 7 tools 3 shells · model: deepseek-v4 · @ incident-42      A grants 8"
+        "- idle · ! warn DiskFull 0s · ctx20% · ?0.42 ?0.2/h burn · turn 12 38 tok/s · 2 bg 7 tools 1 ghost 3 shells · model: deepseek-v4 · @ incident-42      A grants 8"
     );
     assert_eq!(
         line_at(&m, now, 80),
-        "- idle · !1 · ctx20% · ?0.42 · t12 · bg2 gh1 tl7 sh3 · deepseek-v4            A8"
+        "- idle · !1 · ctx20% · ?0.42 · t12 · bg2 tl7 gh1 sh3 · deepseek-v4            A8"
     );
 }
 
@@ -224,7 +224,7 @@ fn snapshot_ascii_full_at_160_and_80() {
 fn snapshot_words_survive_the_grants_detail_and_velocities() {
     let (m, now) = full_model();
     let text = line_at(&m, now, 160);
-    for gone in ["🔑", "📜", "📈", "⛽", "🐇"] {
+    for gone in ["🔑", "📜", "📈", "💸", "🐇"] {
         assert!(
             !text.contains(gone),
             "the grants detail and the velocities are gone: {gone} in {text:?}"

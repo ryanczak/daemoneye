@@ -572,7 +572,7 @@ fn context_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Pa
 /// The cost slot: the cost glyph and `cost_usd` to two decimals, the
 /// currency sign before the value (`$` where known pricing shows one, `?`
 /// when any call had unknown pricing), then — droppable — the burn rate over
-/// the session's hours.
+/// the session's hours, carrying the same sign.
 fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
     let spend = format!("{:.2}", model.cost_usd);
     // The currency sign sits where the known-pricing `$` sits today: before
@@ -599,21 +599,18 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
         .as_secs_f64()
         / 3600.0;
     if model.cost_usd > 0.0 && hours >= 0.01 && !g.cost_burn.is_empty() {
-        // The symbols and ascii glyphs already say `$/h`: the signed rate
-        // stands alone there, `$0.4/h` compact and `$0.4/h burn` wide —
-        // never a second `$` or `/h`.
+        // The rate carries the same currency sign as the spend in both
+        // forms: `💸$0.4/h` compact, `💸 $0.4/h burn` wide. The symbols and
+        // ascii glyphs already say `$/h`, so the signed rate stands alone
+        // there — never a second `$` or `/h`.
         let burn_glyph = g.cost_burn.contains('$');
-        let rate = format!("{:.1}/h", model.cost_usd / hours);
-        let (glyph, compact) = if burn_glyph {
-            ("", format!("${rate}"))
-        } else {
-            (g.cost_burn, rate.clone())
-        };
+        let rate = format!("{sign}{:.1}/h", model.cost_usd / hours);
+        let glyph = if burn_glyph { "" } else { g.cost_burn };
         parts.push(part_two_form(
             gray(),
             glyph,
-            compact,
-            Some((format!("${rate} {}", word::BURN), burn_glyph)),
+            rate.clone(),
+            Some((format!("{rate} {}", word::BURN), burn_glyph)),
             RANK_BURN,
         ));
     }

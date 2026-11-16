@@ -76,7 +76,7 @@ pub static EMOJI: GlyphSet = GlyphSet {
     context_full: "🌕",
     context_growth: "📈",
     cost: "💰",
-    cost_burn: "⛽",
+    cost_burn: "💸",
     turn: "🔄",
     throughput_fast: "🐇",
     throughput_slow: "🐢",

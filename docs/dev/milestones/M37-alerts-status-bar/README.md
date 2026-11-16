@@ -48,7 +48,7 @@ while the user still sees it in chat.
    | state | 💤 🧠 ✋ 💀 📡 | ○ ◐ ⏸ ✖ ⟳ | `-` `*` `?` `X` `~` | idle · working (with `⏱` elapsed) · awaiting approval · daemon down · reconnecting |
    | alerts | 🔥 ⚠ ⚠ ❔ · 🧯 | ● red/amber/gray/dim · ✓ | `!!` `!` `i` `?` | the worst firing alert's severity, then the count of all firing; name and age when room; `🧯` flashes 10 s on a resolve |
    | context | 🌑 🌒 🌓 🌔 🌕 | ◔ ◑ ◕ ● | `ctx` | the window's fill, `%` after it (amber ≥ 75 %, red ≥ 90 %); `📈`/`↗` growth since last turn when room |
-   | cost | 💰 · ⛽ | `$` · `$/h` | `$` | session spend with its currency sign (`$`, or `?` when any call had unknown pricing) before the value; burn rate when room |
+   | cost | 💰 · 💸 | `$` · `$/h` | `$` | session spend with its currency sign (`$`, or `?` when any call had unknown pricing) before the value; burn rate when room |
    | turn | 🔄 | ↻ | `t` | turn count; `🐇`/`🐢` (symbols `»`/`›`) last-turn tokens per second when room (fast ≥ 30 t/s) |
    | background | ⏳ | ⧖ | `bg` | this session's running `wait: false` commands |
    | ghosts | 👻 | ◆ | `gh` | active ghost runs |
@@ -61,15 +61,15 @@ while the user still sees it in chat.
    Gone from the bar: the unnamed session id and the uptime.
 
    **Fitting:** three tiers, dropped from the lowest up, never truncated
-   mid-segment. Tier 3 first: the velocities (`📈`, `⛽`, `🐇`), the alert
+   mid-segment. Tier 3 first: the velocities (`📈`, `💸`, `🐇`), the alert
    name and age, the session name, the model. Tier 2: shells, tools,
    ghosts, background, in that order. Tier 1 always: state, alerts,
    context, cost, turn. The grant hint goes after tier 2 and before tier
    1. Below 36 columns, separators become single spaces.
 
    ```
-   120:  💤 · 🔥2 DiskFull 3m · 🌓 20% 📈3.1k · 💰0.42 ⛽1.9/h · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · ⟡ sonnet-5.5 · 📌 incident-42   🔒4
-    80:  💤 · 🔥2 3m · 🌓 20% · 💰0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · ⟡ sonnet-5.5        🔒4
+   120:  💤 · 🔥2 DiskFull 3m · 🌓 20% 📈3.1k · 💰0.42 💸$1.9/h · 🔄12 🐇38t/s · ⏳2 🔧7 👻1 🐚3 · ⟡ sonnet-5.5 · 📌 incident-42   🔒4
+    80:  💤 · 🔥2 3m · 🌓 20% · 💰0.42 · 🔄12 · ⏳2 🔧7 👻1 🐚3 · ⟡ sonnet-5.5        🔒4
     80:  🧠 ⏱12s · 🌓 20% 📈3.1k · 💰0.42 · 🔄12 · 🔧7 🐚1 · ⟡ sonnet-5.5              🔒4
    120 (grants detail):  … · ⟡ sonnet-5.5 · 📌 incident-42            🔒4 🔑 📜2 📄∗ 🗑
     40:  💤 🔥2 🌓20% 💰0.42 🔄12 ⏳2
@@ -102,7 +102,11 @@ while the user still sees it in chat.
      and the grants lead is `🔒` (was `⚡`; symbols keep `⚡`, ascii `A`).
      The `gated` detail glyph is gone in every dialect — the lead already
      carries it, green when commands are gated — so no lock is doubled.
-   - **Counter grouping.** The four counters (`⏳2 👻1 🔧7 🐚3`) are one
+     Burn is `💸` (was `⛽`) and its rate carries the spend's currency sign
+     in both forms (`💸$0.4/h`, `💸?0.4/h` under unknown pricing). The
+     counters sit in the order background, tools, ghosts, shells
+     (`⏳2 🔧7 👻1 🐚3`); their drop ranks are unchanged.
+   - **Counter grouping.** The four counters (`⏳2 🔧7 👻1 🐚3`) are one
      slot, single spaces inside it, ` · ` between slots; each keeps its own
      rank and drops alone.
    - **Unknown pricing is a currency sign.** `?` sits where known pricing's

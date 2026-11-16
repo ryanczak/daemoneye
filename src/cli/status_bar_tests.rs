@@ -348,7 +348,7 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
     // The grants detail is the lowest rank of all, so it may already be gone
     // here; the other tier-3 items must show.
     let wide = line_at(&m, now, top as u16);
-    for item in ["📈", "⛽", "🐇", "DiskFull", "incident-42", "sonnet-4-6"] {
+    for item in ["📈", "💸", "🐇", "DiskFull", "incident-42", "sonnet-4-6"] {
         assert!(
             wide.contains(item),
             "tier 3 shows at {top}: {item} in {wide:?}"
@@ -371,7 +371,7 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
         let text = line_at(&m, now, width as u16);
         let missing: Vec<&str> = [
             "📈",
-            "⛽",
+            "💸",
             "🐇",
             "DiskFull",
             "incident-42",
@@ -622,7 +622,7 @@ fn status_line_cost_shows_spend_untracked_and_burn() {
         "the spend to two decimals with the `?` sign: {text:?}"
     );
     assert!(!text.contains("❔"), "no `❔` suffix anywhere: {text:?}");
-    assert!(text.contains("⛽"), "the burn glyph: {text:?}");
+    assert!(text.contains("💸"), "the burn glyph: {text:?}");
     assert!(text.contains("0.4/h"), "the burn rate: {text:?}");
 
     m.has_untracked = false;
@@ -1352,7 +1352,7 @@ fn wide_form_carries_the_words() {
     assert!(text.contains("🌓 ctx 20%"), "context word: {text:?}");
     assert!(text.contains("📈 +3.1k"), "growth word: {text:?}");
     assert!(text.contains("💰 ?0.42"), "cost word: {text:?}");
-    assert!(text.contains("⛽ $0.4/h burn"), "burn word: {text:?}");
+    assert!(text.contains("💸 ?0.4/h burn"), "burn word: {text:?}");
     assert!(text.contains("🔄 turn 12"), "turn word: {text:?}");
     assert!(text.contains("🐇 38 tok/s"), "throughput word: {text:?}");
 
@@ -1768,15 +1768,22 @@ fn the_cost_glyph_is_a_money_bag() {
     let now = Instant::now();
     let m = full_model();
 
-    // Compact and wide: `💰`, never `💸`. Unknown pricing speaks `?` in the
-    // sign's position and never appends a mark.
+    // Compact and wide: the spend is `💰`, the burn `💸`. Unknown pricing
+    // speaks `?` in the sign's position of both and never appends a mark.
     let text = compact_line(&m, now);
     assert!(text.contains("💰?0.42"), "compact cost: {text:?}");
-    assert!(!text.contains("💸"), "no flying money glyph: {text:?}");
+    // 💸 is the burn glyph now, never the spend's: it follows the money bag.
+    assert!(
+        !text.contains("💸?0.42") && text.contains("💰?0.42 💸?"),
+        "the flying money leads the burn rate, not the spend: {text:?}"
+    );
     assert!(!text.contains("❔"), "no `❔` suffix: {text:?}");
     let wide = line_at(&m, now, 400);
     assert!(wide.contains("💰 ?0.42"), "wide cost: {wide:?}");
-    assert!(!wide.contains("💸"), "no flying money glyph wide: {wide:?}");
+    assert!(
+        wide.contains("💰 ?0.42 💸 ?0.4/h burn"),
+        "the burn follows the spend with the same sign: {wide:?}"
+    );
     assert!(!wide.contains("❔"), "no `❔` suffix wide: {wide:?}");
 }
 

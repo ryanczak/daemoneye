@@ -39,7 +39,8 @@ pub(super) const RANK_CONTEXT: u16 = 17;
 pub(super) const RANK_ALERTS: u16 = 18;
 pub(super) const RANK_STATE: u16 = 19;
 
-/// The four counters (background, ghosts, tools, shells) as one slot: the
+/// The four counters (background, tools, ghosts, shells — the PE's order) as
+/// one slot: the
 /// parts joined by single spaces inside it, ` · ` between slots. Each keeps
 /// its own rank and drops alone; a counter at zero is still absent, and a
 /// slot with no parts is skipped by `join_slots` as before.
@@ -53,18 +54,18 @@ pub(super) fn counters_slot(model: &StatusModel, g: &GlyphSet) -> Vec<TwoFormPar
         word::BACKGROUND,
     ));
     parts.extend(counter_parts(
-        g.ghosts,
-        model.ghosts,
-        RANK_GHOSTS,
-        word::GHOST,
-        word::GHOSTS,
-    ));
-    parts.extend(counter_parts(
         g.tools,
         model.tools_total,
         RANK_TOOLS,
         word::TOOL,
         word::TOOLS,
+    ));
+    parts.extend(counter_parts(
+        g.ghosts,
+        model.ghosts,
+        RANK_GHOSTS,
+        word::GHOST,
+        word::GHOSTS,
     ));
     parts.extend(counter_parts(
         g.shells,
