@@ -126,25 +126,25 @@ fn snapshot_emoji_full_at_160_140_120_80_40() {
     // gone; the alert name and age survive, and every word shows.
     assert_eq!(
         line_at(&m, now, 160),
-        "💤 idle · ⚠ warn DiskFull 0s · 🌓 ctx 20% · 💰 ?0.42 · ↻ turn 12 · ⏳ 2 bg 👻 1 ghost 🛠 7 tools 🐚 3 shells · 🦙 model: deepseek-v4 · 📌 incident-42 ⚡ grants 8"
+        "💤 idle · ⚠ warn 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 · ⏳ 2 bg 👻 1 ghost 🔧 7 tools 🐚 3 shells · 🦙 model: deepseek-v4 · 📌 incident-42        🔒 grants 8"
     );
     // 140: the wide form does not fit, so the words drop — and the detail,
     // the velocities, the name and the age all come back in compact form.
     assert_eq!(
         line_at(&m, now, 140),
-        "💤 idle · ⚠1 DiskFull 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42               ⚡8"
+        "💤 idle · ⚠1 DiskFull 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42             🔒8"
     );
     assert_eq!(
         line_at(&m, now, 120),
-        "💤 idle · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 ⛽0.2/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42  ⚡8"
+        "💤 idle · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42        🔒8"
     );
     assert_eq!(
         line_at(&m, now, 80),
-        "💤 idle · ⚠1 · 🌓20% · 💰?0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4       ⚡8"
+        "💤 idle · ⚠1 · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4     🔒8"
     );
     assert_eq!(
         line_at(&m, now, 40),
-        "💤 idle · ⚠1 · 🌓20% · 💰?0.42 · ↻12 ⚡8"
+        "💤 idle · ⚠1 · 🌓20% · 💰?0.42 · 🔄12"
     );
 }
 
@@ -155,18 +155,18 @@ fn snapshot_emoji_working_approval_and_down_at_120() {
     m.turn_started_at = Some(now - Duration::from_secs(12));
     assert_eq!(
         line_at(&m, now, 120),
-        "🧠 thinking 12s · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42  ⚡8"
+        "🧠 thinking 12s · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42        🔒8"
     );
     m.state = ChatState::AwaitingApproval;
     m.turn_started_at = None;
     assert_eq!(
         line_at(&m, now, 120),
-        "✋ approve? · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42      ⚡8"
+        "✋ approve? · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42    🔒8"
     );
     m.state = ChatState::DaemonDown;
     assert_eq!(
         line_at(&m, now, 120),
-        "💀 daemon down · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42   ⚡8"
+        "💀 daemon down · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42 🔒8"
     );
 }
 
@@ -177,15 +177,15 @@ fn snapshot_emoji_info_alert_no_grants_unnamed_at_160_120_and_80() {
     let (m, now) = pe_model();
     assert_eq!(
         line_at(&m, now, 160),
-        "💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 ⛽ $0.2/h burn · ↻ turn 12 🐇 38 tok/s · ⏳ 2 bg 👻 1 ghost 🛠 7 tools 🐚 3 shells · 🦙 model: deepseek-v4"
+        "💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 · 🔄 turn 12 🐇 38 tok/s · ⏳ 2 bg 👻 1 ghost 🔧 7 tools 🐚 3 shells · 🦙 model: deepseek-v4"
     );
     assert_eq!(
         line_at(&m, now, 120),
-        "💤 idle · ⚠ info · 🌓 ctx 20% · 💰 ?0.42 · ↻ turn 12 · ⏳ 2 bg 👻 1 ghost 🛠 7 tools 🐚 3 shells · 🦙 model: deepseek-v4"
+        "💤 idle · ⚠1 heartbeat 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4"
     );
     assert_eq!(
         line_at(&m, now, 80),
-        "💤 idle · ⚠1 0s · 🌓20% · 💰?0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4"
+        "💤 idle · ⚠1 0s · 🌓20% · 💰?0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · 🦙 deepseek-v4"
     );
 }
 
@@ -217,8 +217,9 @@ fn snapshot_ascii_full_at_160_and_80() {
     );
 }
 
-/// At 160 the full emoji bar has lost the grants detail and the velocities
-/// to the wide form, and keeps every word: the words outlive those ranks.
+/// At 160 the full emoji bar has lost the grants detail, the velocities and
+/// the alert name to the wide form, and keeps every word: the words outlive
+/// those ranks, and the alert age outlives them too.
 #[test]
 fn snapshot_words_survive_the_grants_detail_and_velocities() {
     let (m, now) = full_model();
@@ -235,7 +236,7 @@ fn snapshot_words_survive_the_grants_detail_and_velocities() {
         assert!(text.contains(word), "the word survives: {word} in {text:?}");
     }
     assert!(
-        text.contains("DiskFull 0s"),
-        "the alert name and age outlive the velocities: {text:?}"
+        text.contains("warn 0s"),
+        "the alert age outlives the velocities: {text:?}"
     );
 }

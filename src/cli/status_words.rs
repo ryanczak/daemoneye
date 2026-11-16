@@ -39,7 +39,6 @@ pub(super) mod word {
     pub const SHELL: &str = "shell";
     pub const SHELLS: &str = "shells";
 
-    pub const GATED: &str = "gated";
     pub const SUDO: &str = "sudo";
     pub const SCRIPTS: &str = "scripts";
     pub const RUNBOOKS: &str = "runbooks";

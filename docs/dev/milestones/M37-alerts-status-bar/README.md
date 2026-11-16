@@ -49,14 +49,14 @@ while the user still sees it in chat.
    | alerts | 🔥 ⚠ ⚠ ❔ · 🧯 | ● red/amber/gray/dim · ✓ | `!!` `!` `i` `?` | the worst firing alert's severity, then the count of all firing; name and age when room; `🧯` flashes 10 s on a resolve |
    | context | 🌑 🌒 🌓 🌔 🌕 | ◔ ◑ ◕ ● | `ctx` | the window's fill, `%` after it (amber ≥ 75 %, red ≥ 90 %); `📈`/`↗` growth since last turn when room |
    | cost | 💰 · ⛽ | `$` · `$/h` | `$` | session spend with its currency sign (`$`, or `?` when any call had unknown pricing) before the value; burn rate when room |
-   | turn | ↻ | ↻ | `t` | turn count; `🐇`/`🐢` (symbols `»`/`›`) last-turn tokens per second when room (fast ≥ 30 t/s) |
+   | turn | 🔄 | ↻ | `t` | turn count; `🐇`/`🐢` (symbols `»`/`›`) last-turn tokens per second when room (fast ≥ 30 t/s) |
    | background | ⏳ | ⧖ | `bg` | this session's running `wait: false` commands |
    | ghosts | 👻 | ◆ | `gh` | active ghost runs |
-   | tools | 🛠 | ⚒ | `tl` | silent tool calls this session |
+   | tools | 🔧 | ⚒ | `tl` | silent tool calls this session |
    | shells | 🐚 | ⌨ | `sh` | this session's open PTY shells |
    | model | ⟡ ◎ ♊ 🦙 | ⟡ ◎ ♊ | none | vendor mark (Anthropic, OpenAI, Gemini, local) and the short name, ≤ 12 columns |
    | session | 📌 · 📌✎ | ▣ | `@` | saved name; `✎` when dirty; nothing when unnamed |
-   | grants | ⚡ · 🔒 🔑 📜 📖 📄 📅 🤖 🗑 🌐 | ⚡ · ⊘ # § ¶ ▤ ◷ ⚉ ⌫ ⌂ | `A` · `! # s r f c g d h` | the lead glyph coloured by the riskiest grant (red: sudo, deletes or any class-wide grant; amber: per-name grants; green: commands gated), then the count of active kinds; per-kind glyph + count (`∗` for all) when room; hidden in the default state; flush right (PE, 2026-11-14, amending the original "today's approval hint") |
+   | grants | 🔒 · 🔑 📜 📖 📄 📅 🤖 🗑 🌐 | ⚡ · # § ¶ ▤ ◷ ⚉ ⌫ ⌂ | `A` · `# s r f c g d h` | the lead glyph coloured by the riskiest grant (red: sudo, deletes or any class-wide grant; amber: per-name grants; green: commands gated), then the count of active kinds; per-kind glyph + count (`∗` for all) when room; hidden in the default state; flush right (PE, 2026-11-14, amending the original "today's approval hint") |
 
    Gone from the bar: the unnamed session id and the uptime.
 
@@ -68,12 +68,12 @@ while the user still sees it in chat.
    1. Below 36 columns, separators become single spaces.
 
    ```
-   120:  💤 · 🔥2 DiskFull 3m · 🌓 20% 📈3.1k · 💰0.42 ⛽1.9/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · ⟡ sonnet-5.5 · 📌 incident-42   ⚡4
-    80:  💤 · 🔥2 3m · 🌓 20% · 💰0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · ⟡ sonnet-5.5        ⚡4
-    80:  🧠 ⏱12s · 🌓 20% 📈3.1k · 💰0.42 · ↻12 · 🛠7 🐚1 · ⟡ sonnet-5.5              ⚡4
-   120 (grants detail):  … · ⟡ sonnet-5.5 · 📌 incident-42            ⚡4 🔑 📜2 📄∗ 🗑
-    40:  💤 🔥2 🌓20% 💰0.42 ↻12 ⏳2
-   down: 💀 daemon down · 💰0.42 · ↻12 · ⟡ sonnet-5.5
+   120:  💤 · 🔥2 DiskFull 3m · 🌓 20% 📈3.1k · 💰0.42 ⛽1.9/h · 🔄12 🐇38t/s · ⏳2 👻1 🔧7 🐚3 · ⟡ sonnet-5.5 · 📌 incident-42   🔒4
+    80:  💤 · 🔥2 3m · 🌓 20% · 💰0.42 · 🔄12 · ⏳2 👻1 🔧7 🐚3 · ⟡ sonnet-5.5        🔒4
+    80:  🧠 ⏱12s · 🌓 20% 📈3.1k · 💰0.42 · 🔄12 · 🔧7 🐚1 · ⟡ sonnet-5.5              🔒4
+   120 (grants detail):  … · ⟡ sonnet-5.5 · 📌 incident-42            🔒4 🔑 📜2 📄∗ 🗑
+    40:  💤 🔥2 🌓20% 💰0.42 🔄12 ⏳2
+   down: 💀 daemon down · 💰0.42 · 🔄12 · ⟡ sonnet-5.5
    ```
 7. **Status bar words** (PE, 2026-11-15, amending decision 3). Decision 3's
    "every segment is a glyph and a number" gives way: each item carries a
@@ -97,7 +97,12 @@ while the user still sees it in chat.
      (architect, phase-12 takeover, 2026-11-15). The ascii dialect's letter
      glyphs (`t`, `bg`, `tl`) are replaced by their word in the wide form,
      never doubled (`turn 12`, `7 tools`).
-   - **Counter grouping.** The four counters (`⏳2 👻1 🛠7 🐚3`) are one
+   - **Glyphs** (PE, 2026-11-15, after the phase-12 review): the emoji turn
+     glyph is `🔄` (was `↻`; symbols keep `↻`), tools is `🔧` (was `🛠`),
+     and the grants lead is `🔒` (was `⚡`; symbols keep `⚡`, ascii `A`).
+     The `gated` detail glyph is gone in every dialect — the lead already
+     carries it, green when commands are gated — so no lock is doubled.
+   - **Counter grouping.** The four counters (`⏳2 👻1 🔧7 🐚3`) are one
      slot, single spaces inside it, ` · ` between slots; each keeps its own
      rank and drops alone.
    - **Unknown pricing is a currency sign.** `?` sits where known pricing's

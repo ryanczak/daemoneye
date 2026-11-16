@@ -855,11 +855,14 @@ fn status_bar_shows_turn_on_every_panel() {
             .flat_map(|c| c.symbol().chars())
             .collect();
         assert!(
-            all_text.contains("↻ turn 6")
+            all_text.contains("🔄 turn 6")
                 || all_text.contains("t turn 6")
                 // The model word widens the wide bar; at a 60-column pane the
-                // words drop all at once and the compact `↻6` form is the pass.
-                || all_text.contains("↻6"),
+                // words drop all at once and the compact `🔄6` form is the pass.
+                // The buffer pads a two-column glyph with an empty cell, so the
+                // compact form reads `🔄 6` there.
+                || all_text.contains("🔄6")
+                || all_text.contains("🔄 6"),
             "draw path {draw} must put the turn 6 on its status row: {all_text:?}"
         );
     }
@@ -1022,7 +1025,7 @@ fn renderer_draws_the_status_bar_from_the_model() {
         .collect();
     // The bar is the model's glyph-led line: the turn segment shows.
     assert!(
-        all_text.contains('↻') && all_text.contains('3'),
+        all_text.contains('🔄') && all_text.contains('3'),
         "the bar row shows the turn segment: {all_text:?}"
     );
     // The old bar's session id and uptime labels are gone.

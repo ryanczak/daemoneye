@@ -130,7 +130,6 @@ fn glyph_sets_contain_no_variation_selectors() {
             set.session,
             set.session_dirty,
             set.grants,
-            set.grant_gated,
             set.grant_sudo,
             set.grant_scripts,
             set.grant_runbooks,
@@ -188,7 +187,7 @@ fn status_line_hides_zero_counters_and_shows_nonzero_ones() {
     let now = Instant::now();
     let mut m = full_model();
     let text = compact_line(&m, now);
-    for slot in ["⏳2", "👻1", "🛠7", "🐚3"] {
+    for slot in ["⏳2", "👻1", "🔧7", "🐚3"] {
         assert!(text.contains(slot), "a live counter shows: {text:?}");
     }
 
@@ -197,7 +196,7 @@ fn status_line_hides_zero_counters_and_shows_nonzero_ones() {
     m.tools_total = 0;
     m.shells = 0;
     let text = compact_line(&m, now);
-    for slot in ["⏳", "👻", "🛠", "🐚"] {
+    for slot in ["⏳", "👻", "🔧", "🐚"] {
         assert!(
             !text.contains(slot),
             "a zero counter is hidden entirely: {slot} in {text:?}"
@@ -355,14 +354,14 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
             "tier 3 shows at {top}: {item} in {wide:?}"
         );
     }
-    for item in ["⏳2", "👻1", "🛠7", "🐚3"] {
+    for item in ["⏳2", "👻1", "🔧7", "🐚3"] {
         assert!(
             wide.contains(item),
             "tier 2 shows at {top}: {item} in {wide:?}"
         );
     }
     assert!(
-        wide.contains("⚡8"),
+        wide.contains("🔒8"),
         "the grants core shows at {top}: {wide:?}"
     );
 
@@ -390,14 +389,14 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
         .filter(|i| !text.contains(i))
         .collect();
         if !missing.is_empty() {
-            for item in ["⏳2", "👻1", "🛠7", "🐚3"] {
+            for item in ["⏳2", "👻1", "🔧7", "🐚3"] {
                 assert!(
                     text.contains(item),
                     "tier 2 outlives the first tier-3 drop ({missing:?}): {item} gone from {text:?}"
                 );
             }
             assert!(
-                text.contains("⚡8"),
+                text.contains("🔒8"),
                 "the grants core outlives the first tier-3 drop: {text:?}"
             );
             break;
@@ -411,13 +410,13 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
     let mut width = width - 1;
     loop {
         let text = line_at(&m, now, width as u16);
-        let missing: Vec<&str> = ["⏳2", "👻1", "🛠7", "🐚3"]
+        let missing: Vec<&str> = ["⏳2", "👻1", "🔧7", "🐚3"]
             .into_iter()
             .filter(|i| !text.contains(i))
             .collect();
         if !missing.is_empty() {
             assert!(
-                text.contains("⚡8"),
+                text.contains("🔒8"),
                 "the grants core drops after tier 2, not before: {text:?}"
             );
             break;
@@ -430,12 +429,12 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
     let mut width = width - 1;
     loop {
         let text = line_at(&m, now, width as u16);
-        if !text.contains("⚡8") {
+        if !text.contains("🔒8") {
             assert!(text.contains("💤"), "state is tier 1: {text:?}");
             assert!(text.contains("⚠"), "alerts are tier 1: {text:?}");
             assert!(text.contains("🌓20%"), "context is tier 1: {text:?}");
             assert!(text.contains("💰?0.42"), "cost is tier 1: {text:?}");
-            assert!(text.contains("↻12"), "turn is tier 1: {text:?}");
+            assert!(text.contains("🔄12"), "turn is tier 1: {text:?}");
             break;
         }
         width -= 1;
@@ -978,7 +977,7 @@ fn grants_hidden_in_the_default_state() {
     m.grants = GrantSummary::default();
 
     let text = line_at(&m, now, 160);
-    for mark in ["⚡", "🔒", "🔑", "📜", "📖", "📄", "📅", "🤖", "🗑", "🌐"] {
+    for mark in ["🔒", "🔑", "📜", "📖", "📄", "📅", "🤖", "🗑", "🌐"] {
         assert!(
             !text.contains(mark),
             "the default state hides the segment: {mark} in {text:?}"
@@ -989,7 +988,7 @@ fn grants_hidden_in_the_default_state() {
     m.grants.deletes = true;
     let text = compact_line(&m, now);
     assert!(
-        text.contains("⚡ grants 1") || text.contains("⚡1"),
+        text.contains("🔒 grants 1") || text.contains("🔒1"),
         "deletes alone shows the core: {text:?}"
     );
     assert!(text.contains("🗑"), "the deletes detail shows: {text:?}");
@@ -1076,7 +1075,7 @@ fn grants_lead_colour_follows_the_riskiest_grant() {
     let lead = line
         .spans
         .iter()
-        .find(|s| s.content.contains('⚡'))
+        .find(|s| s.content.contains('🔒'))
         .expect("the lead glyph is in the line");
     assert_eq!(
         lead.style.fg,
@@ -1108,11 +1107,11 @@ fn grants_count_active_kinds_and_show_detail_when_room() {
     // Core: the lead glyph, the word and the count of active kinds (sudo,
     // scripts, files all, deletes = 4).
     let text = line_at(&m, now, 160);
-    assert!(text.contains("⚡ grants 4"), "four active kinds: {text:?}");
+    assert!(text.contains("🔒 grants 4"), "four active kinds: {text:?}");
 
     // Detail at 160: each kind glyph, its word, the count or `all`, in the
     // table's order and after the lead.
-    let lead_at = text.find('⚡').expect("the lead glyph shows");
+    let lead_at = text.find('🔒').expect("the lead glyph shows");
     let mut last = lead_at;
     for part in ["🔑 sudo", "📜 scripts 2", "📄 files all", "🗑 deletes"] {
         let at = text
@@ -1150,7 +1149,7 @@ fn grants_detail_drops_before_the_core() {
                 );
             }
             assert!(
-                text.contains("⚡4"),
+                text.contains("🔒4"),
                 "the core outlives the detail: {text:?}"
             );
             break;
@@ -1164,8 +1163,8 @@ fn grants_detail_drops_before_the_core() {
     let mut width = width - 1;
     loop {
         let text = line_at(&m, now, width as u16);
-        if !text.contains("⚡4") {
-            assert!(text.contains("↻12"), "tier 1 outlives the core: {text:?}");
+        if !text.contains("🔒4") {
+            assert!(text.contains("🔄12"), "tier 1 outlives the core: {text:?}");
             break;
         }
         width -= 1;
@@ -1193,14 +1192,13 @@ fn grants_speak_each_dialect() {
     m.glyphs = &ASCII;
     let text = line_at(&m, now, 120);
     assert!(
-        !text.contains('⚡'),
+        !text.contains('🔒'),
         "ascii never speaks the emoji lead: {text:?}"
     );
     assert!(
         text.contains("A grants 1"),
         "ascii lead with the count: {text:?}"
     );
-    assert!(text.contains("! gated"), "ascii gated mark: {text:?}");
 
     m.glyphs = &SYMBOLS;
     let text = line_at(&m, now, 120);
@@ -1208,7 +1206,6 @@ fn grants_speak_each_dialect() {
         text.contains("⚡ grants 1"),
         "symbols speak the same lead: {text:?}"
     );
-    assert!(text.contains("⊘ gated"), "symbols gated mark: {text:?}");
 }
 
 #[test]
@@ -1356,13 +1353,13 @@ fn wide_form_carries_the_words() {
     assert!(text.contains("📈 +3.1k"), "growth word: {text:?}");
     assert!(text.contains("💰 ?0.42"), "cost word: {text:?}");
     assert!(text.contains("⛽ $0.4/h burn"), "burn word: {text:?}");
-    assert!(text.contains("↻ turn 12"), "turn word: {text:?}");
+    assert!(text.contains("🔄 turn 12"), "turn word: {text:?}");
     assert!(text.contains("🐇 38 tok/s"), "throughput word: {text:?}");
 
     // Counters: count-then-word.
     assert!(text.contains("⏳ 2 bg"), "background word: {text:?}");
     assert!(text.contains("👻 1 ghost"), "ghosts singular: {text:?}");
-    assert!(text.contains("🛠 7 tools"), "tools: {text:?}");
+    assert!(text.contains("🔧 7 tools"), "tools: {text:?}");
     assert!(text.contains("🐚 3 shells"), "shells: {text:?}");
 
     // Grants (task 4): lead, per-kind words, `all`, hosts.
@@ -1379,8 +1376,7 @@ fn wide_form_carries_the_words() {
     };
     let g = line_at(&granted, now, 400);
     for part in [
-        "⚡ grants 8",
-        "🔒 gated",
+        "🔒 grants 8",
         "📜 scripts 2",
         "📖 runbooks all",
         "📄 files all",
@@ -1437,11 +1433,11 @@ fn words_drop_all_at_once_at_their_rank() {
     for part in [
         "⏳2",
         "👻1",
-        "🛠7",
+        "🔧7",
         "🐚3",
         "🌓20%",
         "💰?0.42",
-        "↻12",
+        "🔄12",
         "🐇38t/s",
     ] {
         assert!(
@@ -1495,7 +1491,7 @@ fn an_idle_default_bar_has_no_grants_and_reads_idle() {
         "the default bar reads idle: {text:?}"
     );
     assert!(
-        !text.contains('⚡') && !text.contains("grants"),
+        !text.contains('🔒') && !text.contains("grants"),
         "no grants segment in the default state: {text:?}"
     );
 }
@@ -1536,13 +1532,13 @@ fn plural_forms_follow_the_count() {
     // Tools.
     m.tools_total = 1;
     assert!(
-        line_at(&m, now, 400).contains("🛠 1 tool"),
+        line_at(&m, now, 400).contains("🔧 1 tool"),
         "1 tool: {text}",
         text = line_at(&m, now, 400)
     );
     m.tools_total = 3;
     assert!(
-        line_at(&m, now, 400).contains("🛠 3 tools"),
+        line_at(&m, now, 400).contains("🔧 3 tools"),
         "3 tools: {text}",
         text = line_at(&m, now, 400)
     );

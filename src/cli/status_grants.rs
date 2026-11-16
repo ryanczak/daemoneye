@@ -112,9 +112,6 @@ pub(super) fn grants_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette)
         )
     };
     let mut parts = vec![core];
-    if s.cmds == CmdGrant::Gated {
-        parts.push(detail(g.grant_gated, word::GATED.into(), String::new()));
-    }
     if s.cmds == CmdGrant::Sudo || s.cmds == CmdGrant::All {
         parts.push(detail(g.grant_sudo, word::SUDO.into(), String::new()));
     }
