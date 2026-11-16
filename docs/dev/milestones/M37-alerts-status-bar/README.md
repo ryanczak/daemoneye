@@ -202,11 +202,14 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 
 ## Retrospective — 2026-11-15
 
-**Outcome:** all 10 phases are `done`. That is the 5 phases planned at
-scoping (01, 02a, 02b, 03 and 02c, added 2026-11-14), plus five pre-close bug
-fixes: 04 (#6), 05 (#2), 06 (#8), 07 (#9) and 08 (#5). Issues #2, #3, #5, #6,
-#8 and #9 are closed. #4 (cron time zones) and #7 (a close action in `top`)
-stay open and are not in M37. `cargo test` passed=2998 failed=0, against the
+**Outcome:** all 14 phases are `done`. That is the 5 phases planned at
+scoping (01, 02a, 02b, 03 and 02c, added 2026-11-14), five pre-close bug
+fixes — 04 (#6), 05 (#2), 06 (#8), 07 (#9) and 08 (#5) — and four PE-driven
+status-bar and chat-panel phases added at close: 09 (the words), 10 (the
+chat panel's borders and the `user@host:sN` approval title), 11 (the model
+word and clip) and 12 (the bar's final form). Issues #2, #3, #5, #6, #8 and
+#9 are closed. #4 (cron time zones) and #7 (a close action in `top`) stay
+open and are not in M37. `cargo test` passed=3036 failed=0, against the
 2894 at scoping.
 
 | Phase | Verdict | Note |
@@ -221,9 +224,19 @@ stay open and are not in M37. `cargo test` passed=2998 failed=0, against the
 | 06 self-host-refusal | approved_first_try | |
 | 07 scheduler-recovery | approved_after_1 | a 1000-turn budget run, then a network `hard_fail` |
 | 08 away-digest | approved_after_1 | an `IdenticalToolCallRepetition` resume, then bug-08-1 |
+| 09 status-bar-words | approved_after_1 | bug-09-1 (the test plan's tests missing), bug-09-2 (the severity word dropped) |
+| 10 chat-panel-polish | escalated | bug-10-1; the re-dispatch read for 513 turns with no edit, then a takeover |
+| 11 status-bar-model-word | approved_first_try | an executor-filed blocker on a render-test pin outside scope |
+| 12 status-bar-final-form | escalated | bug-12-1: the snapshot tests pinned the bugs they were meant to catch; takeover |
 
-Totals over 10 phases: 3 first try, 5 after one bounce, 2 escalated. Every
+Totals over 14 phases: 4 first try, 6 after one bounce, 4 escalated. Every
 phase ran on GLM-5.3-Flash.
+
+After phase 12, the PE adjusted the bar's glyphs and words directly in
+review (no phase doc; recorded under decision 8): `🔄` turn, `🔧` tools,
+`🔒` grants lead (the `gated` detail glyph removed), `💸` burn carrying the
+spend's currency sign with no word, the counters ordered
+`⏳ 🔧 👻 🐚`, and the model word `model` with no colon.
 
 **Behaviour shipped:**
 - A webhook alert below `severity_threshold` stays out of every chat
@@ -248,6 +261,16 @@ phase ran on GLM-5.3-Flash.
   failed recurring run no longer ends the job.
 - The first chat to attach after a gap gets one away digest: script runs per
   job and alerts fired per name.
+- The status bar speaks a word with every glyph when there is room
+  (`🌓 ctx 20%`, `🔄 turn 12`, `🦙 model deepseek-v4`). When it is narrow,
+  the grants detail, the velocities and the alert name and age drop first,
+  then every word at once, restoring what was dropped for them. The counters
+  are one slot. Unknown pricing is a `?` currency sign (`💰?0.42 💸?0.2/h`).
+  Whole-line snapshot tests pin the bar at fixed widths in all three
+  dialects.
+- The chat input box has the history panel's red border and rounded
+  corners. The terminal approval panel is titled `user@host:sN`: the
+  daemon picks the shell before the prompt and pins the run to it.
 
 **Live check: not yet run.** The exit criteria call for one on pinky
 (throwaway HOME, private tmux):
@@ -258,6 +281,9 @@ phase ran on GLM-5.3-Flash.
 - the bar at 120 and 80 columns, through a turn and an approval;
 - `glyphs = "symbols"` after a reload;
 - `💀 daemon down` with the daemon stopped.
+- Added at close: the words at 120 columns, the
+  `user@host:sN` approval title (local and over a `[hosts.*]` host) and the
+  red input-box border.
 
 Not in the exit criteria, but worth seeing once: the away digest at the first
 attach after a scheduled script ran with no chat attached. The 2.9.0 release
@@ -285,3 +311,25 @@ waits on this check and the PE's sign-off.
 4. **Executor turn burn.** Phase 03 took 430 turns, 07 hit the 1000-turn
    budget and 08 hit an identical-repetition stall. This is data for the
    GLM-5.3-Flash scorecard, not a WORKFLOW fold.
+5. **Golden strings derived by the executor are not checked.** In phase 12
+   the executor ran the code, pasted its output into six snapshot tests and
+   reported complete; the tests pinned all three bugs. Phase 09's bug-09-1
+   is a near relative (tests the plan named were never written, and the
+   report said done). This makes two occurrences. A fold would be one
+   drafting rule: a spec that asks for derived strings also names literal
+   substrings each must and must not contain, as acceptance-criterion
+   greps.
+6. **Bounce re-dispatches to this model.** Phase 10's bounce read for 513
+   turns with no edit; phase 12's bounce was taken over without a second
+   dispatch. With M36's four occurrences, this is a trend. A fold would say:
+   with GLM-5.3-Flash, a bounce whose fix is under ~100 lines goes to an
+   architect takeover by default.
+7. **Rendering a design proposal before recommending it.** The phase-12
+   drop order, as recommended, discarded the alert name and velocities and
+   then the words too at 160 columns with full grants; the takeover added a
+   "restore what was dropped" rule. One occurrence, noted only.
+
+**Held for PE decision, not in M37:** the active-alert registry is
+in-memory, so a daemon restart blanks the bar and `top` for up to one
+Alertmanager `repeat_interval`. A startup replay of the event log's last 6 h
+of `webhook_alert` / `webhook_resolved` records would close it.
