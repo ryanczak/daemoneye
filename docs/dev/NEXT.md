@@ -5,7 +5,7 @@
 2026-11-12 for GitHub issue #3, target `2.9.0`. After M37 comes the MCP
 surface (M38), then Knowledge (M39).
 
-**Active phase:** [phase-12-status-bar-final-form](milestones/M37-alerts-status-bar/phase-12-status-bar-final-form.md) — the bar's final form (drop order, counter grouping, `?0.42`, the dialect fixes, whole-line snapshot tests; PE decision 8, 2026-11-15). Phases 01 through 11 are done; phase 11 (the model word and its token-boundary clip) was approved 2026-11-15 at passed=3030. Held for a PE decision: the alert registry is in-memory, so a daemon restart blanks the bar and `top` for up to one Alertmanager `repeat_interval`; a startup replay of the event log's last 6 h of `webhook_alert`/`webhook_resolved` records would close it.
+**Active phase:** none — every M37 phase (01 through 12) is `done`; phase 12 (the bar's final form) closed 2026-11-15 by architect takeover after one bounce. Next: the M37 live check on pinky, the retrospective and the 2.9.0 release. Held for a PE decision: the alert registry is in-memory, so a daemon restart blanks the bar and `top` for up to one Alertmanager `repeat_interval`; a startup replay of the event log's last 6 h of `webhook_alert`/`webhook_resolved` records would close it.
 
 **Held by PE decision (2026-11-01):** the WORKFLOW fold candidate A (count
 criteria) and the closing of GitHub issue #1 — M36 phase 12 (mid-turn

@@ -1,7 +1,7 @@
 # Phase 12 — status-bar-final-form
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** in-progress (bounced — [bug-12-1](bugs/bug-12-1.md))
+**Status:** done
 **Drafted:** 2026-11-15
 **Depends on:** phase 11 (the model word and clip; both phases edit the same files, so this one runs after it)
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -20,7 +20,10 @@ a named session the words are never seen. New order, lowest drops first:
 grants detail → the velocities (growth, burn, throughput) → alert name → alert
 age → **the words, all at once** → session → model → shells → tools → ghosts
 → background → grants lead → turn → cost → context → alerts → state. The
-state word and the alert glyph stay, as today.
+state word and the alert glyph stay, as today. *Added at the takeover:* when
+the words drop, every part dropped to make room for them comes back, and the
+compact drops run from the lowest rank again — otherwise a 160-column bar
+with full grants lost its alert name and velocities and then its words too.
 
 **B. Counter grouping.** The four counters (`⏳2 👻1 🛠7 🐚3`) form **one**
 slot with single spaces inside it, as decision 3's examples show, not four
@@ -96,9 +99,9 @@ the `two_form` call in `turn_parts`.
    and a fixed alert `first_seen` so ages are stable; model
    `deepseek-v4.1-flash` so the phase-11 clip shows. Tests, one per
    scenario, each asserting the exact string:
-   - `snapshot_emoji_full_at_160_120_80_40`
+   - `snapshot_emoji_full_at_160_140_120_80_40`
    - `snapshot_emoji_working_approval_and_down_at_120`
-   - `snapshot_emoji_info_alert_no_grants_unnamed_at_160_and_80` (the PE's
+   - `snapshot_emoji_info_alert_no_grants_unnamed_at_160_120_and_80` (the PE's
      own setup: here the words must be present at 160 **and** at 120)
    - `snapshot_symbols_full_at_160_and_80`
    - `snapshot_ascii_full_at_160_and_80`
@@ -124,7 +127,7 @@ the `two_form` call in `turn_parts`.
 9. **Evidence.** Mutation checks: (a) restore the pre-step words drop and
    confirm `snapshot_words_survive_the_grants_detail_and_velocities` fails;
    (b) put the four counters back in separate slots and confirm
-   `snapshot_emoji_full_at_160_120_80_40` fails. Revert both. Paste the
+   `snapshot_emoji_full_at_160_140_120_80_40` fails. Revert both. Paste the
    `test result:` lines and the § End-to-end output into one Update Log
    entry.
 
@@ -150,28 +153,28 @@ fixed `now`, the palette and a width.
 
 ## Acceptance criteria
 
-- [ ] `grep -rlw "fn snapshot_words_survive_the_grants_detail_and_velocities" src`
+- [x] `grep -rlw "fn snapshot_words_survive_the_grants_detail_and_velocities" src`
       prints a file (today nothing), and the six snapshot tests exist.
-- [ ] `grep -c 'cost_untracked' src/cli/status_glyphs.rs` prints 0 (today 4).
-- [ ] `grep -c '🐇\|🐢\|⚦' src/cli/status_glyphs.rs` prints 2 (the emoji
+- [x] `grep -c 'cost_untracked' src/cli/status_glyphs.rs` prints 0 (today 4).
+- [x] `grep -c '🐇\|🐢\|⚦' src/cli/status_glyphs.rs` prints 2 (the emoji
       table only; today 5).
-- [ ] At 120 columns, the emoji bar for the PE's setup (info alert, no
+- [x] At 120 columns, the emoji bar for the PE's setup (info alert, no
       grants, unnamed) contains `idle`, `ctx`, `turn` and `shells`; today it
       contains none of them. Pinned by the snapshot test.
-- [ ] Both mutation checks pasted with their failing and passing
+- [x] Both mutation checks pasted with their failing and passing
       `test result:` lines.
-- [ ] fmt, build (0 warnings), clippy and `timeout 600 cargo test` with
+- [x] fmt, build (0 warnings), clippy and `timeout 600 cargo test` with
       `failed=0` and passed greater than 3030; hygiene,
       `doc_truth` and `bug_tracker` ok.
 
-- [ ] **(bug-12-1)** `grep -c 'ctx 20%' src/cli/status_bar_snapshot_tests.rs`
+- [x] **(bug-12-1)** `grep -c 'ctx 20%' src/cli/status_bar_snapshot_tests.rs`
       prints at least 2 (today 0): the PE-setup snapshot pins the wide words
       at 160 **and** 120.
-- [ ] **(bug-12-1)** `grep -cE '\$\?|/h[0-9]|t/s[0-9]' src/cli/status_bar_snapshot_tests.rs`
+- [x] **(bug-12-1)** `grep -cE '\$\?|/h[0-9]|t/s[0-9]' src/cli/status_bar_snapshot_tests.rs`
       prints 0 (today 4).
-- [ ] **(bug-12-1)** `snapshot_words_survive_the_grants_detail_and_velocities`
-      asserts `ctx`, `turn` and `model:`. Mutation check: seed `wide` from
-      `line_fits(…, true, …)` again and the test fails. Paste both `test result:` lines.
+- [x] **(bug-12-1)** `snapshot_words_survive_the_grants_detail_and_velocities`
+      asserts `ctx`, `turn` and `model:`. Mutation check: make the compact
+      pass run first again and the test fails. Paste both `test result:` lines.
 
 ## Pre-flight
 
@@ -275,7 +278,7 @@ full `cargo test` passed=3036 failed=0 (baseline 3030).
 
 Phase 12 is implemented and verified end-to-end. The words now drop at their rank (`RANK_WORDS` between alert age and session) instead of as a pre-step — the drop loop moved into `status_bar_fit.rs` (with `counters_slot`, `drop_loop` and `grants_width`) so `status_bar.rs` stays inside the 800-line cap at 738 production lines. The four counters are one slot with single spaces inside it, each keeping its own rank; unknown pricing speaks `?` in the sign's position in every form (`💰?0.42`, `💰 ?0.42`, `?0.42`) and `cost_untracked`/`❔` is gone; burn and ascii throughput no longer double their suffixes (`$0.4/h`, `38t/s`); symbols throughput is `»`/`›` and agents is `⚽`→`⚉`. A new `status_bar_snapshot_tests.rs` (212 lines, six whole-line snapshot tests) pins the bar at 160/120/80/40 in three dialects plus the PE's info-alert setup; the touched existing tests were updated, none deleted, and `no_dialect_doubles_a_word_or_a_dollar` gained `/h/h`, `t/s38` and `❔` to its forbidden list. Docs: M37 decision 8 added, the decision-3 table's cost/turn rows amended, and `README.md`'s status-bar paragraph rewritten.
 
-**End-to-end verification** (mechanically captured, pasted in the phase's Update Log): `cargo test --lib status_bar` → 61 passed/0 failed; `untracked_refs=0`; `emoji_in_tables=2` (🐇, 🐢 — emoji table only; ⚦ 0); `build_warnings=0`; full `cargo test` → **passed=3036 failed=0** (baseline 3030). fmt, clippy `-D warnings`, hygiene (16 ok), `doc_truth` (19 ok) and `bug_tracker` (6 ok) all green. Both mutation checks ran red and reverted green: restoring the pre-step words drop failed `snapshot_words_survive_the_grants_detail_and_velocities`, and splitting the counters into four slots failed `snapshot_emoji_full_at_160_120_80_40`.
+**End-to-end verification** (mechanically captured, pasted in the phase's Update Log): `cargo test --lib status_bar` → 61 passed/0 failed; `untracked_refs=0`; `emoji_in_tables=2` (🐇, 🐢 — emoji table only; ⚦ 0); `build_warnings=0`; full `cargo test` → **passed=3036 failed=0** (baseline 3030). fmt, clippy `-D warnings`, hygiene (16 ok), `doc_truth` (19 ok) and `bug_tracker` (6 ok) all green. Both mutation checks ran red and reverted green: restoring the pre-step words drop failed `snapshot_words_survive_the_grants_detail_and_velocities`, and splitting the counters into four slots failed `snapshot_emoji_full_at_160_140_120_80_40`.
 
 **Notes for review**
 
@@ -427,3 +430,105 @@ named down to the function. Before pasting any snapshot, check the line by eye
 against the Goal's examples: a 160-column emoji line with velocities present
 must contain `🌓 ctx 20%` and `↻ turn 12`, and no line contains `$?`, `/h`
 followed by a digit, or `t/s` followed by a digit.
+
+### Update — 2026-11-15 (architect takeover after bug-12-1)
+
+**Executor:** Claude Code (direct). The re-dispatch's snapshot tests had
+pinned the bugs; the takeover fixed the code and re-derived every string.
+
+What changed beyond the bug's two root causes:
+
+- `drop_loop` (`status_bar_fit.rs`) now runs two passes: the wide form with
+  the ranks below the words dropped lowest-first; if that never fits, it
+  **restores everything** and runs the compact drops from rank 1. Without
+  the restore, a 160-column bar with full grants lost its alert name and
+  velocities to make room for the words and then lost the words too. It
+  returns the `wide` flag; `status_bar_line` no longer seeds it.
+- `RANK_GRANT_DETAIL` moved to 1, as decision 8 orders it (the executor had
+  left it at 9, after the words). The other low ranks shift up by one.
+- The sign dialects: `cost_parts` and the burn part pass an empty glyph when
+  the dialect's glyph is the sign, so the signed value stands alone
+  (`?0.42`, `$0.2/h`); `turn_parts` does the same for the ascii `t/s`.
+- The ascii dialect's letter glyphs are replaced by their word in the wide
+  form (`spells_its_word`): `turn 12`, `7 tools`, not `t turn 12`, `tl 7 tools`.
+- `status_bar_tests.rs`: a `compact_top` helper (the widest width at which
+  the words are gone) replaces the fixed 160 in the tests that pin compact
+  items, since 160 now renders wide for the full-grants model; the tier test
+  no longer expects the grants detail at the band top (it is the lowest rank).
+- Snapshot tests renamed to the widths they pin:
+  `snapshot_emoji_full_at_160_140_120_80_40` and
+  `snapshot_emoji_info_alert_no_grants_unnamed_at_160_120_and_80`.
+
+The derived lines, read against the Goal:
+
+- emoji, full grants, 160 — the wide form with the grants detail and the
+  velocities gone, the alert name and age kept:
+  `💤 idle · ⚠ warn DiskFull 0s · 🌓 ctx 20% · 💰 ?0.42 · ↻ turn 12 · ⏳ 2 bg 👻 1 ghost 🛠 7 tools 🐚 3 shells · 🦙 model: deepseek-v4 · 📌 incident-42 ⚡ grants 8`
+- emoji, full grants, 140 — the words drop and everything comes back compact:
+  `💤 idle · ⚠1 DiskFull 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42               ⚡8`
+- emoji, full grants, 120: `💤 idle · ⚠1 DiskFull 0s · 🌓20% · 💰?0.42 ⛽0.2/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42  ⚡8`
+- emoji, full grants, 80: `💤 idle · ⚠1 · 🌓20% · 💰?0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4       ⚡8`
+- emoji, full grants, 40: `💤 idle · ⚠1 · 🌓20% · 💰?0.42 · ↻12 ⚡8`
+- the PE's setup, 160: `💤 idle · ⚠ info heartbeat 0s · 🌓 ctx 20% · 💰 ?0.42 ⛽ $0.2/h burn · ↻ turn 12 🐇 38 tok/s · ⏳ 2 bg 👻 1 ghost 🛠 7 tools 🐚 3 shells · 🦙 model: deepseek-v4`
+- the PE's setup, 120: `💤 idle · ⚠ info · 🌓 ctx 20% · 💰 ?0.42 · ↻ turn 12 · ⏳ 2 bg 👻 1 ghost 🛠 7 tools 🐚 3 shells · 🦙 model: deepseek-v4`
+- the PE's setup, 80: `💤 idle · ⚠1 0s · 🌓20% · 💰?0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4`
+- symbols, 160: `○ idle · ● warn DiskFull 0s · ◕ ctx 20% · ?0.42 · ↻ turn 12 » 38 tok/s · ⧖ 2 bg ◆ 1 ghost ⚒ 7 tools ⌨ 3 shells · model: deepseek-v4 · ▣ incident-42  ⚡ grants 8`
+- symbols, 80: `○ idle · ●1 · ◕20% · ?0.42 · ↻12 · ⧖2 ◆1 ⚒7 ⌨3 · deepseek-v4 · ▣ incident-42 ⚡8`
+- ascii, 160: `- idle · ! warn DiskFull 0s · ctx20% · ?0.42 $0.2/h burn · turn 12 38 tok/s · 2 bg 1 ghost 7 tools 3 shells · model: deepseek-v4 · @ incident-42      A grants 8`
+- ascii, 80: `- idle · !1 · ctx20% · ?0.42 · t12 · bg2 gh1 tl7 sh3 · deepseek-v4            A8`
+
+Mutation checks (each red, then reverted and green):
+
+```sh
+# (a) the compact pass runs first again (the pre-phase words-first drop):
+$ timeout 600 cargo test --lib snapshot_words_survive 2>&1 | grep -E '^test result'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+# reverted:
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+
+# (b) the four counters back in separate slots:
+$ timeout 600 cargo test --lib snapshot_emoji_full 2>&1 | grep -E '^test result'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+# reverted:
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+```
+
+End-to-end:
+
+```sh
+$ timeout 600 cargo test --lib status_bar 2>&1 | grep -E '^test result'
+test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 2885 filtered out; finished in 0.10s
+$ grep -c 'cost_untracked' src/cli/status_glyphs.rs | sed 's/^/untracked_refs=/'
+untracked_refs=0
+$ grep -c '🐇\|🐢\|⚦' src/cli/status_glyphs.rs | sed 's/^/emoji_in_tables=/'
+emoji_in_tables=2
+$ grep -c 'ctx 20%' src/cli/status_bar_snapshot_tests.rs
+4
+$ grep -cE '\$\?|/h[0-9]|t/s[0-9]' src/cli/status_bar_snapshot_tests.rs
+0
+$ cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+build_warnings=0
+$ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=3036 failed=0
+```
+
+fmt and clippy `-D warnings` clean; hygiene, `doc_truth` and `bug_tracker`
+ok. `status_bar.rs` 745 lines, `status_bar_fit.rs` 229, the snapshot file 241.
+
+### Review verdict — 2026-11-15
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-12-1: the re-dispatch's snapshot tests pinned the
+  bugs; architect takeover rather than a second dispatch, per the model's
+  record on bounces)
+- **Executor:** GLM-5.3-Flash (first pass), Claude Code (direct) for the fix
+- **Scope deviations:** the words-drop restore and the ascii spelling rule
+  were not in the spec; both are in the Goal's spirit and recorded in
+  decision 8. `status_bar_tests.rs` gained the `compact_top` helper.
+- **Calibration:** "derive the strings by running the code and read them
+  back against the Goal" was not followed; the next spec that asks for
+  snapshots names two or three literal substrings each line must contain,
+  so the executor's own check is mechanical. Decision 8's drop order needed
+  the restore rule to be workable; the architect's rendered pass should have
+  rendered the full-grants model at 160 under the proposed order before
+  recommending it.
