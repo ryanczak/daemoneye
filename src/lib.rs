@@ -4,6 +4,7 @@
 
 pub mod agents;
 pub mod ai;
+pub mod bus;
 pub mod cli;
 pub mod config;
 pub mod cost;
