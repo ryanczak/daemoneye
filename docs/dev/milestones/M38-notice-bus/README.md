@@ -98,7 +98,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | bus-core ([phase-01-bus-core.md](phase-01-bus-core.md)) | done |
-| 02 | sinks — today's outputs as consumers, default routes in code | planned |
+| 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | todo |
 | 03 | webhook producer | planned |
 | 04 | scheduler and watchdog producers | planned |
 | 05 | ghost lifecycle and background producers | planned |
@@ -113,3 +113,9 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 - Held items that this milestone absorbs: the M37 registry-restart gap
   (phase 08).
 - Held items it does not: issue #4 (cron time zones), #7, #10, #11.
+- **Known delivery deltas from 2.9.0, accepted at phase-02 drafting:**
+  scheduler and watchdog notices gain the tmux overlay (2.9.0 pushed them
+  over presence only), and `on_alert` gains `DAEMONEYE_SEVERITY` /
+  `DAEMONEYE_SOURCE`. History text is `title` or `title\nbody`; the chat
+  line is the title's first line — producers (03–05) choose title/body so
+  the catch-up brief's prefixes still match until phase 08 retires them.

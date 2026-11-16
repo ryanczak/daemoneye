@@ -5,8 +5,9 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none drafted — 01 (bus-core) is `done` (escalated,
-2026-11-16). Next: `/rexymcp:architect next` drafts 02 (sinks).
+**Active phase:** 02 — sinks
+([`phase-02-sinks.md`](milestones/M38-notice-bus/phase-02-sinks.md)),
+`todo`, ready to dispatch. 01 (bus-core) is `done` (escalated, 2026-11-16).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
