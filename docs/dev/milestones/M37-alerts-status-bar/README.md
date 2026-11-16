@@ -160,8 +160,10 @@ while the user still sees it in chat.
   a firing alert leads with its severity glyph, the context moon matches
   the percentage, zero-valued counters are absent, the background and
   shell counts follow a `wait: false` command and `open_shell`, and
-  `[chat] glyphs = "symbols"` swaps every glyph after a reload. With the
-  daemon stopped, the bar shows `💀 daemon down`.
+  `[chat] glyphs = "symbols"` swaps every glyph on the next chat start
+  after a reload (the client reads `[chat]` when it starts; the daemon's
+  reload does not reach a running client). With the daemon stopped, the bar
+  shows `💀 daemon down`.
 - **The four gates pass**, and `cargo test` passes at 2894 tests plus the
   new ones.
 - **`2.9.0` is released** per `REXYMCP.md` § Versioning, and issue #3 is
@@ -200,7 +202,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 
 ## Notes
 
-## Retrospective — 2026-11-15
+## Retrospective — 2026-11-15, live check 2026-11-16
 
 **Outcome:** all 14 phases are `done`. That is the 5 phases planned at
 scoping (01, 02a, 02b, 03 and 02c, added 2026-11-14), five pre-close bug
@@ -271,23 +273,70 @@ spend's currency sign with no word, the counters ordered
 - The chat input box has the history panel's red border and rounded
   corners. The terminal approval panel is titled `user@host:sN`: the
   daemon picks the shell before the prompt and pins the run to it.
+- Three fixes from the live check (`c5bdc1f9`): the resolve flash names the
+  alert once; a `wait: false` command marks its dedicated shell in flight,
+  so ⏳ counts it; a presence reconnect that fails five times announces
+  `daemon down` once, and the bar reads `💀 daemon down` instead of
+  `📡 reconnecting` for the rest of the outage.
 
-**Live check: not yet run.** The exit criteria call for one on pinky
-(throwaway HOME, private tmux):
-- an `info` alert stays out of the session jsonl and shows on the bar and in
-  `top`;
-- a `critical` alert is injected into history and leads the bar in red;
-- a resolve clears both;
-- the bar at 120 and 80 columns, through a turn and an approval;
-- `glyphs = "symbols"` after a reload;
-- `💀 daemon down` with the daemon stopped.
-- Added at close: the words at 120 columns, the
-  `user@host:sN` approval title (local and over a `[hosts.*]` host) and the
-  red input-box border.
+**Live check — run 2026-11-16 on pinky** (throwaway `HOME=/tmp/de37-live`,
+private tmux socket, a headless `script` client at 120 then 80 columns,
+GLM-5.3-Flash over `[models.default]`, the webhook on 127.0.0.1:19437 with
+`severity_threshold = "warning"`). Exit criteria:
+- **info alert** — bar `⚠ info DiskSlowlyFilling 3s` in yellow; not in the
+  session jsonl; `top --once` lists it; events `webhook_alert` then
+  `webhook_discarded reason=below_threshold`. ✓
+- **critical alert** — bar `🔥 crit RootDiskFull 4s` in red; `[Webhook
+  Alert]` in the jsonl; `⚙ [FIRING] RootDiskFull — / at 98%` on screen. ✓
+- **resolve** — a ten-second `🧯 resolved RootDiskFull` flash, then the
+  slot is gone and `top --once` says `none`. ✓ — **after a fix**: the flash
+  read `🧯 resolved RootDiskFull RootDiskFull` (the lead and the rank-5
+  name part both wrote the name).
+- **120 columns, through a turn and an approval** — `🧠 thinking 4s`, `✋
+  approve?`, then `💤 idle · 🌒 ctx 1% 📈 +1.3k · 💰 $0.01 💸 $0.0/h · 🔄
+  turn 2 🐢 21 tok/s · 🐚 1 shell · 🦙 model GLM-5.3    🔒 grants 4`: every
+  item with its word. ✓
+- **80 columns** — `💤 idle · 🌒1% 📈660 · 💰$0.01 💸$0.0/h · 🔄4 🐢11t/s ·
+  🐚3 · 🦙 GLM-5.3     🔒4`, the compact form. ✓
+- **`user@host:sN`** — `matt@pinky:new` for the session's first command,
+  `matt@pinky:s0` for the second (the reused shell), `matt@172.16.50.70:new`
+  with `→ host: zoidberg (configured)` over `[hosts.zoidberg]`, `daemon ·
+  runs silently` for `wait: false`. The input box's border is bold red with
+  rounded corners. ✓
+- **counters** — 🐚 follows `open_shell` and the remote shell (1 → 6);
+  zero-valued counters are absent. ✓ — **after a fix**: ⏳ never showed for
+  `wait: false` — `finish_start` never marked the dedicated shell
+  `in_flight`, and the counter reads `dedicated && in_flight`. Fixed, `⏳ 1
+  bg` shows for the length of the command.
+- **`glyphs = "symbols"`** — `daemoneye reload` reports `applied (1 key):
+  chat.glyphs`, but the running chat keeps its dialect: the client reads
+  `[chat]` at start. The next `chat --resume` read `○ idle · ◑ ctx 1% ·
+  $0.02 · ↻ turn 8 · ⌨ 5 shells · model GLM-5.3    ⚡ grants 4`. ✓ with the
+  exit criterion reworded to "on the next chat start after a reload".
+- **`💀 daemon down`** — ✓ **after a fix**: after `daemoneye stop` the bar
+  read `📡 reconnecting` for over two minutes; the presence task retried
+  every 2 s and never said the daemon was down. Now the fifth failed retry
+  prints `⚙ daemon down — still trying to reconnect` once and the bar
+  reads `💀 daemon down` 8 s after the stop.
+- Not exercised: the away digest.
 
-Not in the exit criteria, but worth seeing once: the away digest at the first
-attach after a scheduled script ran with no chat attached. The 2.9.0 release
-waits on this check and the PE's sign-off.
+The three fixes are `c5bdc1f9`; each new test was run red against its fix
+reverted, and each fix was confirmed live on a rebuilt daemon.
+
+**Observed, not fixed — PE decision:**
+- **The approval deadlines race.** The client and the daemon both wait
+  `APPROVAL_TIMEOUT` (60 s) for the approval reply, and the daemon's wait
+  starts first. A `y` typed without Enter sat until both fired; the
+  client's late reply then hit the closed ask connection — `✗ Broken pipe`
+  and `💀 daemon down` with the daemon alive, until the next turn. Pre-M37
+  (F7). A client deadline a few seconds inside the daemon's would end the
+  race; the panel reading a line (`y` then Enter) is by design.
+- `daemoneye reload` lists `chat.glyphs` under "applied" though the daemon
+  applies nothing for a `[chat]` key.
+- A plain (unsandboxed) `wait: false` shell stays open after its completion
+  message; only the sandbox path closes it. Pre-existing.
+
+The 2.9.0 release waits on the PE's sign-off.
 
 **Calibration, for PE decision (none folded yet):**
 1. **A test fixture that does not model the real shape.**
