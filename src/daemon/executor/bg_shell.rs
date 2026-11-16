@@ -242,6 +242,10 @@ async fn finish_start(
         .map(|m| m.len())
         .ok();
     let handle = spawn_command(&socket, cmd, &marker_name, BACKGROUND_CMD_TIMEOUT).await?;
+    // The dedicated shell carries the command until `await_and_notify` sees
+    // its outcome: the session counters' `background` is `dedicated &&
+    // in_flight` over the registry (M37 live check — ⏳ never showed).
+    crate::shell::set_in_flight(reg, &shell_id, cmd, crate::shell::now_unix());
     Ok((
         BackgroundStart {
             run_id,
@@ -379,6 +383,8 @@ pub(super) async fn await_and_notify(
         },
         Err(_) => Err("the command's reader task ended without delivering an outcome".to_string()),
     };
+    // Whatever the command did, the daemon's run of it is over.
+    crate::shell::clear_in_flight(&reg, &shell_id);
     let state = report_state(&outcome);
     record_command_completion(&session_id, &cmd, &shell_id, &outcome);
 
@@ -751,6 +757,60 @@ mod tests {
             "a real shell id was allocated: {:?}",
             start.shell_id
         );
+    }
+
+    /// M37 live check: the status bar's ⏳ reads `dedicated && in_flight`
+    /// over the registry, and a `wait: false` command never showed — the
+    /// background start did not mark its shell. It does now, until the
+    /// outcome lands.
+    #[tokio::test]
+    async fn bg_start_marks_the_dedicated_shell_in_flight_until_the_outcome_lands() {
+        let (_home, _dir) = crate::test_home();
+        let reg = ShellRegistry::default();
+        let session_id = "bg-in-flight".to_string();
+        let sessions = store_with_entry(&session_id);
+        let cmd = "sleep 1; printf 'FLIGHT\\n'";
+        let (start, handle) = start_background_with(
+            &reg,
+            Owner::Chat(session_id.clone()),
+            cmd,
+            5,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the command starts");
+        let shell_id = start.shell_id.clone();
+
+        let marked = with_shells(&reg, |store| {
+            let record = store
+                .get(shell_id.as_str())
+                .expect("the dedicated shell is registered");
+            (
+                record.dedicated,
+                record.in_flight.as_ref().map(|f| f.cmd.clone()),
+            )
+        });
+        assert_eq!(
+            marked,
+            (true, Some(cmd.to_string())),
+            "a started background command is in flight on its dedicated shell"
+        );
+        let counters = crate::daemon::counters::counters_for_session(&reg, &session_id, 0);
+        assert_eq!(counters.background, 1, "the session's ⏳ counts it");
+
+        await_and_notify(sessions, session_id.clone(), cmd.to_string(), start, handle).await;
+
+        let after = with_shells(&reg, |store| {
+            store
+                .get(shell_id.as_str())
+                .and_then(|r| r.in_flight.clone())
+        });
+        assert!(
+            after.is_none(),
+            "the mark clears once the outcome lands: {after:?}"
+        );
+        let counters = crate::daemon::counters::counters_for_session(&reg, &session_id, 0);
+        assert_eq!(counters.background, 0, "⏳ is back to nothing");
     }
 
     #[tokio::test]

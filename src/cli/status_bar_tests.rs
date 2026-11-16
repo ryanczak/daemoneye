@@ -310,10 +310,8 @@ fn status_line_shows_the_resolve_flash_for_ten_seconds() {
         at_9.contains("🧯"),
         "the resolved glyph shows during the flash: {at_9:?}"
     );
-    assert!(
-        at_9.contains("DiskFull"),
-        "the resolved alert's name shows during the flash: {at_9:?}"
-    );
+    // The name is the rank-5 part, as a firing alert's is: it drops at 160
+    // under the full model and shows at 400 below.
 
     let at_11 = line_at(&m, t0 + Duration::from_secs(11), 160);
     assert!(
@@ -326,6 +324,13 @@ fn status_line_shows_the_resolve_flash_for_ten_seconds() {
     assert!(
         wide_flash.contains("🧯 resolved DiskFull"),
         "the wide flash carries the word: {wide_flash:?}"
+    );
+    // The name is one part, not the lead's suffix as well (M37 live check:
+    // `🧯 resolved RootDiskFull RootDiskFull`).
+    assert_eq!(
+        wide_flash.matches("DiskFull").count(),
+        1,
+        "the resolved name is written once: {wide_flash:?}"
     );
 }
 
@@ -907,6 +912,42 @@ fn begin_turn_marks_a_named_session_dirty_and_keeps_the_growth_baseline() {
     m.session_name = Some("ops".to_string());
     m.begin_turn(Instant::now());
     assert!(m.session_dirty, "a named session goes dirty on a turn");
+}
+
+/// M37 live check: with the daemon stopped, the bar sat at `📡 reconnecting`
+/// for minutes — the reconnect loop never said the daemon was down. The
+/// presence task's "daemon down…" text demotes `Reconnecting` to
+/// `DaemonDown`; a direct `set_daemon_up(false)` does the same; "reconnected"
+/// clears it; a running turn is never overridden.
+#[test]
+fn presence_text_daemon_down_demotes_reconnecting() {
+    let mut m = StatusModel::default();
+    m.presence_text("daemon connection lost — reconnecting…");
+    assert_eq!(m.state, ChatState::Reconnecting);
+    m.presence_text("daemon down — still trying to reconnect");
+    assert_eq!(
+        m.state,
+        ChatState::DaemonDown,
+        "a reconnect that keeps failing is a daemon that stopped answering"
+    );
+    m.presence_text("reconnected");
+    assert_eq!(m.state, ChatState::Idle, "the reconnect clears it");
+
+    m.state = ChatState::Reconnecting;
+    m.set_daemon_up(false);
+    assert_eq!(
+        m.state,
+        ChatState::DaemonDown,
+        "a failed ask while reconnecting demotes to DaemonDown"
+    );
+
+    m.begin_turn(Instant::now());
+    m.presence_text("daemon down — still trying to reconnect");
+    assert_eq!(
+        m.state,
+        ChatState::Working,
+        "a running turn is never overridden by the down text"
+    );
 }
 
 #[test]

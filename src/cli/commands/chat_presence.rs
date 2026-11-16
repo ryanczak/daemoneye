@@ -74,6 +74,23 @@ pub(crate) async fn attach(session_id: &str) -> Result<(Option<String>, HeldPres
     Ok((brief, HeldPresence { rx, tx }))
 }
 
+/// The injectable reconnect step's future: the catch-up brief the new attach
+/// returned, if any, and the new held connection.
+pub(crate) type ReconnectFut = std::pin::Pin<
+    Box<dyn std::future::Future<Output = Result<(Option<String>, HeldPresence)>> + Send>,
+>;
+
+/// How often the parked presence task retries the attach after EOF.
+const RECONNECT_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The failed retry that announces the daemon down — five at 2 s is ten
+/// seconds without a daemon, past any restart the user meant.
+const DOWN_AFTER_FAILURES: u32 = 5;
+
+/// The text pushed once the reconnect has failed [`DOWN_AFTER_FAILURES`]
+/// times. `StatusModel::presence_text` reads its `daemon down` prefix.
+pub(crate) const DAEMON_DOWN_TEXT: &str = "daemon down — still trying to reconnect";
+
 /// The held presence connection. Kept by the caller for the process lifetime;
 /// dropping it closes the connection and stamps detach state daemon-side.
 pub(crate) struct HeldPresence {
@@ -88,12 +105,14 @@ impl HeldPresence {
     /// the screen; rendering happens in the loop that owns it.
     ///
     /// On EOF (F4) the task does **not** end: it pushes the connection-lost
-    /// notice, retries `reconnect` every 2 s until it succeeds, then pushes
-    /// the reconnect notice, forwards any catch-up brief the new attach
-    /// returned, and keeps reading on the new connection. `session_id` is what
-    /// the retry attaches with; `reconnect` is the injectable attach step
-    /// (the production impl is `attach(session_id)`), so tests can fake the
-    /// daemon.
+    /// notice, retries `reconnect` every [`RECONNECT_RETRY`] until it
+    /// succeeds, then pushes the reconnect notice, forwards any catch-up brief
+    /// the new attach returned, and keeps reading on the new connection. The
+    /// [`DOWN_AFTER_FAILURES`]th failed retry pushes [`DAEMON_DOWN_TEXT`]
+    /// once, so the bar reads `daemon down` rather than `reconnecting` for
+    /// the rest of an outage (M37 live check). `session_id` is what the retry
+    /// attaches with; `reconnect` is the injectable attach step (the
+    /// production impl is `attach(session_id)`), so tests can fake the daemon.
     ///
     /// The returned [`ParkedPresence`] bundles the guard with the push
     /// receiver. The chat loop keeps the whole bundle for its lifetime: the
@@ -101,14 +120,23 @@ impl HeldPresence {
     /// connection and stamping detach state daemon-side.
     pub(crate) fn park<F>(self, session_id: String, reconnect: F) -> ParkedPresence
     where
-        F: Fn(
-                String,
-            ) -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<Output = Result<(Option<String>, HeldPresence)>> + Send,
-                >,
-            > + Send
-            + 'static,
+        F: Fn(String) -> ReconnectFut + Send + 'static,
+    {
+        self.park_with(session_id, reconnect, RECONNECT_RETRY, DOWN_AFTER_FAILURES)
+    }
+
+    /// [`park`](Self::park) with the retry interval and the failure count
+    /// that announces the daemon down injected, so a test can drive the
+    /// outage in milliseconds.
+    pub(crate) fn park_with<F>(
+        self,
+        session_id: String,
+        reconnect: F,
+        retry_every: std::time::Duration,
+        down_after_failures: u32,
+    ) -> ParkedPresence
+    where
+        F: Fn(String) -> ReconnectFut + Send + 'static,
     {
         let (mut rx, mut tx) = (self.rx, self.tx);
         let (done_tx, mut done_rx) = tokio::sync::oneshot::channel::<()>();
@@ -154,16 +182,23 @@ impl HeldPresence {
                 }
                 discarded.clear();
 
-                // Retry the attach every 2 s until it succeeds or the chat
-                // loop drops the guard.
+                // Retry the attach every `retry_every` until it succeeds or
+                // the chat loop drops the guard. The `down_after_failures`th
+                // failure announces the daemon down, once.
+                let mut failures = 0u32;
                 let (brief, held) = loop {
                     match reconnect(session_id.clone()).await {
                         Ok(pair) => break pair,
                         Err(_) => {
+                            failures = failures.saturating_add(1);
+                            if failures == down_after_failures {
+                                let _ =
+                                    push_tx.send(PresencePush::Text(DAEMON_DOWN_TEXT.to_string()));
+                            }
                             if done_rx.try_recv().is_ok() {
                                 break 'hold;
                             }
-                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                            tokio::time::sleep(retry_every).await;
                         }
                     }
                 };
@@ -313,6 +348,79 @@ mod tests {
         assert!(
             parked.holds_presence(),
             "the guard is still live after the pushes"
+        );
+    }
+
+    /// M37 live check: `daemoneye stop` left the bar at `📡 reconnecting`
+    /// for minutes. The `down_after_failures`th failed retry pushes the
+    /// daemon-down text once — not on every later failure — and the
+    /// reconnect that finally succeeds still pushes "reconnected".
+    #[tokio::test]
+    async fn parked_presence_announces_the_daemon_down_once_after_failed_retries() {
+        let (a1, b1) = UnixStream::pair().expect("a socketpair");
+        let (a1_r, a1_w) = a1.into_split();
+        drop(b1); // the daemon is gone: the first read sees EOF
+        let (a2, _b2) = UnixStream::pair().expect("a second socketpair");
+        let (a2_r, a2_w) = a2.into_split();
+        let held = HeldPresence {
+            rx: BufReader::new(a1_r),
+            tx: a1_w,
+        };
+        let slot = Arc::new(Mutex::new(Some((a2_r, a2_w))));
+        let attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let seen = Arc::clone(&attempts);
+        let mut parked = held.park_with(
+            "test-session".to_string(),
+            move |_session_id| {
+                let slot = Arc::clone(&slot);
+                let attempts = Arc::clone(&attempts);
+                Box::pin(async move {
+                    // Four failures, then the daemon is back.
+                    if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 4 {
+                        return Err(anyhow::anyhow!("connection refused"));
+                    }
+                    let halves = slot.lock().expect("the reconnect slot").take();
+                    let Some((a2_r, a2_w)) = halves else {
+                        return Err(anyhow::anyhow!("the fixture was spent"));
+                    };
+                    Ok((
+                        None,
+                        HeldPresence {
+                            rx: BufReader::new(a2_r),
+                            tx: a2_w,
+                        },
+                    ))
+                })
+            },
+            std::time::Duration::from_millis(10),
+            2,
+        );
+        let pushes = parked.pushes();
+        let mut got = Vec::new();
+        for _ in 0..3 {
+            let push = tokio::time::timeout(std::time::Duration::from_secs(5), pushes.recv())
+                .await
+                .expect("a push within 5 s")
+                .expect("the task is alive");
+            got.push(push);
+        }
+        assert_eq!(
+            got,
+            vec![
+                PresencePush::Text("daemon connection lost — reconnecting…".to_string()),
+                PresencePush::Text(DAEMON_DOWN_TEXT.to_string()),
+                PresencePush::Text("reconnected".to_string()),
+            ],
+            "lost, then down once on the second failure, then reconnected — the third and fourth failures announce nothing"
+        );
+        assert_eq!(
+            seen.load(std::sync::atomic::Ordering::SeqCst),
+            5,
+            "the reconnect ran four failing times and once succeeding"
+        );
+        assert!(
+            parked.holds_presence(),
+            "the hold is live on the new connection"
         );
     }
 

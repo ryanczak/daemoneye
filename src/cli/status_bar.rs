@@ -222,14 +222,17 @@ impl StatusModel {
     }
 
     /// Fold the session's daemon liveness into the chat state. A liveness
-    /// report only ever demotes an idle-looking state — it never overrides a
+    /// report only ever demotes an idle-looking state — `Idle`, or a
+    /// `Reconnecting` whose reconnect keeps failing — it never overrides a
     /// running turn or a waiting prompt.
     pub fn set_daemon_up(&mut self, up: bool) {
         match (up, self.state) {
             (true, ChatState::DaemonDown | ChatState::Reconnecting) => {
                 self.state = ChatState::Idle;
             }
-            (false, ChatState::Idle) => self.state = ChatState::DaemonDown,
+            (false, ChatState::Idle | ChatState::Reconnecting) => {
+                self.state = ChatState::DaemonDown;
+            }
             _ => {}
         }
     }
@@ -273,12 +276,15 @@ impl StatusModel {
     }
 
     /// A text push from the parked presence task: "daemon connection lost…"
-    /// means `Reconnecting`, and "reconnected" clears it (or a stale
-    /// `DaemonDown`) to `Idle`. A running turn or open prompt is never
-    /// overridden by the reconnect.
+    /// means `Reconnecting`, "daemon down…" (the reconnect has kept failing)
+    /// demotes that to `DaemonDown`, and "reconnected" clears either to
+    /// `Idle`. A running turn or open prompt is never overridden by any of
+    /// them.
     pub fn presence_text(&mut self, msg: &str) {
         if msg.starts_with("daemon connection lost") {
             self.state = ChatState::Reconnecting;
+        } else if msg.starts_with("daemon down") {
+            self.set_daemon_up(false);
         } else if msg == "reconnected" {
             self.set_daemon_up(true);
         }
@@ -402,16 +408,13 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
             return Vec::new();
         };
         let rank = active_severity_rank(&resolved.severity);
-        // Wide: `🧯 resolved Watchdog`; compact: `🧯 Watchdog` (today).
-        let resolved_text = format!("{} {}", g.alert_resolved, word::RESOLVED);
-        let wide = if resolved.name.is_empty() {
-            vec![Span::styled(resolved_text, severity_style(rank))]
-        } else {
-            vec![
-                Span::styled(resolved_text, severity_style(rank)),
-                Span::styled(format!(" {}", resolved.name), gray()),
-            ]
-        };
+        // Wide: `🧯 resolved`; compact: `🧯`. The name is the rank-5 part
+        // below, written once — the M37 live check caught the lead carrying
+        // it too (`🧯 resolved RootDiskFull RootDiskFull`).
+        let wide = vec![Span::styled(
+            format!("{} {}", g.alert_resolved, word::RESOLVED),
+            severity_style(rank),
+        )];
         let compact = vec![Span::styled(
             g.alert_resolved.to_string(),
             severity_style(rank),
