@@ -327,34 +327,7 @@ pub fn status_bar_line(
         context_parts(model, g, palette),
         cost_parts(model, now, g),
         turn_parts(model, g),
-        counter_parts(
-            g.background,
-            model.background,
-            RANK_BACKGROUND,
-            word::BACKGROUND,
-            word::BACKGROUND,
-        ),
-        counter_parts(
-            g.ghosts,
-            model.ghosts,
-            RANK_GHOSTS,
-            word::GHOST,
-            word::GHOSTS,
-        ),
-        counter_parts(
-            g.tools,
-            model.tools_total,
-            RANK_TOOLS,
-            word::TOOL,
-            word::TOOLS,
-        ),
-        counter_parts(
-            g.shells,
-            model.shells,
-            RANK_SHELLS,
-            word::SHELL,
-            word::SHELLS,
-        ),
+        counters_slot(model, g),
         model_parts(model, g),
         session_parts(model, g),
     ];
@@ -368,50 +341,13 @@ pub fn status_bar_line(
     };
 
     // Wide first: every part carries its word. If the whole line (slots plus
-    // the grants segment) does not fit, every part drops to its compact form
-    // at once — never a mixed bar — and stays there: the rank drops then run
-    // over the compact parts only. The state and severity words are one-form,
-    // so they survive at every width the drops leave them.
-    let wide = line_fits(&slots, grants_width(&grants), sep, true, width);
-
-    // The ranks that exist right now, lowest first; each drop re-measures.
-    let mut ranks: Vec<u16> = slots
-        .iter()
-        .flat_map(|slot| slot.iter().map(|p| p.rank))
-        .chain(grants.iter().flatten().map(|p| p.rank))
-        .collect();
-    ranks.sort_unstable();
-    ranks.dedup();
-    for rank in ranks {
-        if line_fits(&slots, grants_width_compact(&grants), sep, wide, width) {
-            break;
-        }
-        for slot in &mut slots {
-            slot.retain(|p| p.rank != rank);
-        }
-        if let Some(parts) = grants.as_mut() {
-            parts.retain(|p| p.rank != rank);
-            if parts.iter().all(|p| p.rank != RANK_GRANTS) {
-                grants = None;
-            }
-        }
-    }
+    // the grants segment) does not fit, the rank drops run — lowest first,
+    // each re-measuring — and the words drop at their rank, all at once,
+    // after the lower ranks have gone. The state and severity words are
+    // one-form, so they survive at every width the drops leave them.
+    let mut wide = line_fits(&slots, fit::grants_width(&grants, true), sep, true, width);
+    drop_loop(&mut slots, &mut grants, &mut wide, sep, width);
     join_slots(&slots, &mut grants, sep, wide, width)
-}
-
-/// The grants segment's columns: its parts plus their internal joins.
-fn grants_width(grants: &Option<Vec<Part>>) -> Option<usize> {
-    grants.as_ref().map(|parts| {
-        parts.iter().map(|p| p.width(true)).sum::<usize>() + parts.len().saturating_sub(1)
-    })
-}
-
-/// The columns the grants segment measures in the compact form, once the
-/// words have dropped.
-fn grants_width_compact(grants: &Option<Vec<Part>>) -> Option<usize> {
-    grants.as_ref().map(|parts| {
-        parts.iter().map(|p| p.width(false)).sum::<usize>() + parts.len().saturating_sub(1)
-    })
 }
 
 /// The state segment: the state glyph and the state word, one form — the
@@ -634,30 +570,24 @@ fn context_parts(model: &StatusModel, g: &GlyphSet, palette: &Palette) -> Vec<Pa
     parts
 }
 
-/// The cost slot: the cost glyph and `cost_usd` to two decimals, the unknown
-/// glyph after it when any call had unknown pricing, then — droppable — the
-/// burn rate over the session's hours.
+/// The cost slot: the cost glyph and `cost_usd` to two decimals, the
+/// currency sign before the value (`$` where known pricing shows one, `?`
+/// when any call had unknown pricing), then — droppable — the burn rate over
+/// the session's hours.
 fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
     let spend = format!("{:.2}", model.cost_usd);
-    // The symbols and ascii glyphs already say `$`: their wide form is the
-    // glyph followed by the value, never `$$`.
-    let dollar_glyph = g.cost.contains('$');
+    // The currency sign sits where the known-pricing `$` sits today: before
+    // the value, inside the glyph dialects' wide word, too. Unknown pricing
+    // speaks `?` there and never appends a mark. In every dialect, both
+    // forms carry the sign — the wide `💰 ?0.42`, the compact `💰?0.42`,
+    // and the sign-glyph dialects' `?0.42` / `$0.42` with no doubling.
+    let sign = if model.has_untracked { "?" } else { "$" };
+    let signed = format!("{sign}{spend}");
     let cost = part_two_form(
         gray(),
         g.cost,
-        format!(
-            "{spend}{}",
-            if model.has_untracked {
-                g.cost_untracked
-            } else {
-                ""
-            }
-        ),
-        if dollar_glyph {
-            Some((spend.clone(), false))
-        } else {
-            Some((format!("${spend}"), false))
-        },
+        signed.clone(),
+        Some((signed, false)),
         RANK_COST,
     );
     let mut parts = vec![cost];
@@ -666,8 +596,10 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
         .as_secs_f64()
         / 3600.0;
     if model.cost_usd > 0.0 && hours >= 0.01 && !g.cost_burn.is_empty() {
-        let rate = format!("{:.1}/h", model.cost_usd / hours);
+        // The symbols and ascii glyphs already say `$/h`: the rate joins the
+        // glyph bare, so `$0.4/h` — never a second `/h`.
         let burn_glyph = g.cost_burn.contains('$');
+        let rate = format!("{:.1}/h", model.cost_usd / hours);
         parts.push(part_two_form(
             gray(),
             g.cost_burn,
@@ -787,17 +719,20 @@ fn session_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
 }
 
 #[path = "status_bar_fit.rs"]
-mod fit;
+pub(crate) mod fit;
 #[path = "status_words.rs"]
 pub(crate) mod words;
 use fit::{
-    NARROW_BELOW, NARROW_SEP, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BACKGROUND,
-    RANK_BURN, RANK_CONTEXT, RANK_COST, RANK_GHOSTS, RANK_GRANTS, RANK_GROWTH, RANK_MODEL,
-    RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_TOOLS, WIDE_SEP, join_slots, line_fits,
+    NARROW_BELOW, NARROW_SEP, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BURN,
+    RANK_CONTEXT, RANK_COST, RANK_GROWTH, RANK_MODEL, RANK_SESSION, RANK_STATE, WIDE_SEP,
+    counters_slot, drop_loop, join_slots, line_fits,
 };
-use words::{TwoFormPart as Part, counter_parts, turn_parts, two_form as part_two_form, word};
+use words::{TwoFormPart as Part, turn_parts, two_form as part_two_form, word};
 use words::{age_str, clip_to_width, compact_tokens};
 
+#[cfg(test)]
+#[path = "status_bar_snapshot_tests.rs"]
+mod snapshot_tests;
 #[cfg(test)]
 #[path = "status_bar_tests.rs"]
 mod tests;

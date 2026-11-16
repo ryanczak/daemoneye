@@ -99,7 +99,6 @@ fn glyph_sets_contain_no_variation_selectors() {
             set.context_full,
             set.context_growth,
             set.cost,
-            set.cost_untracked,
             set.cost_burn,
             set.turn,
             set.throughput_fast,
@@ -427,7 +426,7 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
             assert!(text.contains("💤"), "state is tier 1: {text:?}");
             assert!(text.contains("⚠"), "alerts are tier 1: {text:?}");
             assert!(text.contains("🌓20%"), "context is tier 1: {text:?}");
-            assert!(text.contains("💰0.42"), "cost is tier 1: {text:?}");
+            assert!(text.contains("💰?0.42"), "cost is tier 1: {text:?}");
             assert!(text.contains("↻12"), "turn is tier 1: {text:?}");
             break;
         }
@@ -612,15 +611,19 @@ fn status_line_cost_shows_spend_untracked_and_burn() {
     m.session_started_at = now - Duration::from_secs(3600);
     let text = line_at(&m, now, 160);
     assert!(
-        text.contains("💰0.42"),
-        "the spend to two decimals: {text:?}"
+        text.contains("💰?0.42"),
+        "the spend to two decimals with the `?` sign: {text:?}"
     );
-    assert!(text.contains("❔"), "the unknown-pricing mark: {text:?}");
+    assert!(!text.contains("❔"), "no `❔` suffix anywhere: {text:?}");
     assert!(text.contains("⛽"), "the burn glyph: {text:?}");
     assert!(text.contains("0.4/h"), "the burn rate: {text:?}");
 
     m.has_untracked = false;
     let text = line_at(&m, now, 160);
+    assert!(
+        text.contains("💰$0.42"),
+        "known pricing keeps the `$` sign: {text:?}"
+    );
     assert!(
         !text.contains("❔"),
         "no unknown mark without untracked: {text:?}"
@@ -1342,7 +1345,7 @@ fn wide_form_carries_the_words() {
     // Context, growth, cost, burn, turn, throughput.
     assert!(text.contains("🌓 ctx 20%"), "context word: {text:?}");
     assert!(text.contains("📈 +3.1k"), "growth word: {text:?}");
-    assert!(text.contains("💰 $0.42"), "cost word: {text:?}");
+    assert!(text.contains("💰 ?0.42"), "cost word: {text:?}");
     assert!(text.contains("⛽ $0.4/h burn"), "burn word: {text:?}");
     assert!(text.contains("↻ turn 12"), "turn word: {text:?}");
     assert!(text.contains("🐇 38 tok/s"), "throughput word: {text:?}");
@@ -1398,7 +1401,7 @@ fn wide_form_carries_the_words() {
 }
 
 #[test]
-fn words_drop_all_at_once_before_any_rank_drop() {
+fn words_drop_all_at_once_at_their_rank() {
     let now = Instant::now();
     let m = busy_model();
 
@@ -1428,7 +1431,7 @@ fn words_drop_all_at_once_before_any_rank_drop() {
         "🛠7",
         "🐚3",
         "🌓20%",
-        "💰0.42",
+        "💰?0.42",
         "↻12",
         "🐇38t/s",
     ] {
@@ -1458,14 +1461,10 @@ fn state_and_alert_words_survive_every_drop() {
         text.contains("daemon down") || text.contains("idle") || text.contains("warn"),
         "the state and severity words are on the line: {text:?}"
     );
-    // The rank drops took the droppable parts: no name, no age, no counters.
+    // The rank drops took the droppable parts: no name, no age, no session.
     assert!(
         !text.contains("DiskFull") && !text.contains("incident-42"),
         "the rank drops took name and session: {text:?}"
-    );
-    assert!(
-        !text.contains("🐚") && !text.contains("🛠"),
-        "the rank drops took the shells and tools: {text:?}"
     );
     assert!(
         text.contains("idle") && text.contains("⚠"),
@@ -1664,6 +1663,9 @@ fn no_dialect_doubles_a_word_or_a_dollar() {
         assert!(!text.contains("ctx ctx"), "{set:?}: {text:?}");
         assert!(!text.contains("bg 2 bg"), "{set:?}: {text:?}");
         assert!(!text.contains("$$"), "{set:?}: {text:?}");
+        assert!(!text.contains("/h/h"), "{set:?}: {text:?}");
+        assert!(!text.contains("t/s38"), "{set:?}: {text:?}");
+        assert!(!text.contains("❔"), "{set:?}: {text:?}");
     }
 }
 
@@ -1758,13 +1760,16 @@ fn the_cost_glyph_is_a_money_bag() {
     let now = Instant::now();
     let m = full_model();
 
-    // Compact and wide: `💰`, never `💸`.
+    // Compact and wide: `💰`, never `💸`. Unknown pricing speaks `?` in the
+    // sign's position and never appends a mark.
     let text = line_at(&m, now, 160);
-    assert!(text.contains("💰0.42"), "compact cost: {text:?}");
+    assert!(text.contains("💰?0.42"), "compact cost: {text:?}");
     assert!(!text.contains("💸"), "no flying money glyph: {text:?}");
+    assert!(!text.contains("❔"), "no `❔` suffix: {text:?}");
     let wide = line_at(&m, now, 400);
-    assert!(wide.contains("💰 $0.42"), "wide cost: {wide:?}");
+    assert!(wide.contains("💰 ?0.42"), "wide cost: {wide:?}");
     assert!(!wide.contains("💸"), "no flying money glyph wide: {wide:?}");
+    assert!(!wide.contains("❔"), "no `❔` suffix wide: {wide:?}");
 }
 
 #[test]

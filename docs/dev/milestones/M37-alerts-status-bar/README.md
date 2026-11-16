@@ -48,8 +48,8 @@ while the user still sees it in chat.
    | state | 💤 🧠 ✋ 💀 📡 | ○ ◐ ⏸ ✖ ⟳ | `-` `*` `?` `X` `~` | idle · working (with `⏱` elapsed) · awaiting approval · daemon down · reconnecting |
    | alerts | 🔥 ⚠ ⚠ ❔ · 🧯 | ● red/amber/gray/dim · ✓ | `!!` `!` `i` `?` | the worst firing alert's severity, then the count of all firing; name and age when room; `🧯` flashes 10 s on a resolve |
    | context | 🌑 🌒 🌓 🌔 🌕 | ◔ ◑ ◕ ● | `ctx` | the window's fill, `%` after it (amber ≥ 75 %, red ≥ 90 %); `📈`/`↗` growth since last turn when room |
-   | cost | 💰 · ⛽ | `$` · `$/h` | `$` | session spend; burn rate when room; `❔` suffix when any call had unknown pricing |
-   | turn | ↻ | ↻ | `t` | turn count; `🐇`/`🐢` last-turn tokens per second when room (🐇 ≥ 30 t/s) |
+   | cost | 💰 · ⛽ | `$` · `$/h` | `$` | session spend with its currency sign (`$`, or `?` when any call had unknown pricing) before the value; burn rate when room |
+   | turn | ↻ | ↻ | `t` | turn count; `🐇`/`🐢` (symbols `»`/`›`) last-turn tokens per second when room (fast ≥ 30 t/s) |
    | background | ⏳ | ⧖ | `bg` | this session's running `wait: false` commands |
    | ghosts | 👻 | ◆ | `gh` | active ghost runs |
    | tools | 🛠 | ⚒ | `tl` | silent tool calls this session |
@@ -84,6 +84,25 @@ while the user still sees it in chat.
    word does drop, to `⚠1`; PE, 2026-11-15). Phase 09; the model word is
    phase 11. The working state's `⏱` elapsed mark went with it:
    `thinking 12s` already reads as elapsed.
+8. **The bar's final form** (PE, 2026-11-15, from a rendered pass at
+   `c176348c`). Three changes and the defects they came from:
+   - **Drop order.** The words no longer drop before any rank drop. New
+     order, lowest drops first: grants detail → the velocities (growth,
+     burn, throughput) → alert name → alert age → **the words, all at
+     once** → session → model → shells → tools → ghosts → background →
+     grants lead → turn → cost → context → alerts → state. The state word
+     and the alert glyph stay.
+   - **Counter grouping.** The four counters (`⏳2 👻1 🛠7 🐚3`) are one
+     slot, single spaces inside it, ` · ` between slots; each keeps its own
+     rank and drops alone.
+   - **Unknown pricing is a currency sign.** `?` sits where known pricing's
+     `$` sits — before the value (`💰?0.42` compact, `💰 ?0.42` wide,
+     symbols/ascii `?0.42`); the `❔` suffix is gone in every dialect.
+   Defects fixed with them: the wide cost form lost the unknown mark; burn
+   in symbols/ascii doubled its `/h` (`$/h0.4/h` → `$0.4/h`); ascii
+   throughput doubled its `t/s` (`t/s38t/s` → `38t/s`); symbols used the
+   emoji `🐇`/`🐢` (now `»`/`›`); the symbols agents glyph is `⚉`.
+   Phase 12.
 4. **Many alerts: the worst, plus a count.** The alert glyph is the worst
    firing severity, the number is every firing alert; the name and age
    are the newest alert of that severity.
@@ -160,7 +179,7 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 | 09 | status-bar-words ([phase-09-status-bar-words.md](phase-09-status-bar-words.md)): every bar item and every grants kind gets a pithy word in all three dialects; when the line does not fit the words drop first, all at once, back to the glyph-and-number form | decision 7 (PE, 2026-11-15, amending decision 3) | done           |
 | 10 | chat-panel-polish ([phase-10-chat-panel-polish.md](phase-10-chat-panel-polish.md)): the input box takes the history panels' bold red border and `╭`/`╮` `╰`/`╯` corners; the terminal approval panel is titled `user@host:sN`, the shell picked before the prompt (never created or connected) and pinned for the run; the info alert glyph becomes a yellow `⚠` and the cost glyph `💰` | pre-close polish (PE: pick + pin, user/host from the ssh target, 2026-11-15) | done |
 | 11 | status-bar-model-word ([phase-11-status-bar-model-word.md](phase-11-status-bar-model-word.md)): the model slot's wide form reads `🦙 model: deepseek-v4.1`; the word drops with the others back to the glyph and name; the 12-column clip cuts at a token boundary (`deepseek-v4`, not `deepseek-v4.`) | decision 7 (PE, 2026-11-15) | done |
-| 12 | status-bar-final-form ([phase-12-status-bar-final-form.md](phase-12-status-bar-final-form.md)): the words drop after the grants detail, the velocities and the alert name/age, not before everything; the counters form one slot; unknown pricing is `?0.42` not `0.42❔`; the `/h/h` and `t/s…t/s` doublings, the emoji hare in `symbols` and the `⚦` agents glyph are fixed; whole-line snapshot tests at 160/120/80/40 in three dialects | decision 8 (PE, 2026-11-15) | todo |
+| 12 | status-bar-final-form ([phase-12-status-bar-final-form.md](phase-12-status-bar-final-form.md)): the words drop after the grants detail, the velocities and the alert name/age, not before everything; the counters form one slot; unknown pricing is `?0.42` not `0.42❔`; the `/h/h` and `t/s…t/s` doublings, the emoji hare in `symbols` and the `⚦` agents glyph are fixed; whole-line snapshot tests at 160/120/80/40 in three dialects | decision 8 (PE, 2026-11-15) | in-progress |
 
 ## Notes
 

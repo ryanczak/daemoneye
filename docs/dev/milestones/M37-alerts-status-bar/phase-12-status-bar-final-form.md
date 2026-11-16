@@ -1,7 +1,7 @@
 # Phase 12 — status-bar-final-form
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-15
 **Depends on:** phase 11 (the model word and clip; both phases edit the same files, so this one runs after it)
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -191,3 +191,69 @@ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {
   and the alert-registry restart gap (held for a PE decision).
 
 ## Update Log
+
+### Update — 2026-11-16 02:15 (started)
+
+**Executor:** GLM-5.3-Flash (headless run). Phase flipped to `in-progress`; task 1 (the words rank) begins.
+
+### Update — 2026-11-16 02:50 (end-to-end verification)
+
+All six snapshot tests exist and pass; the derived strings were read back
+against the Goal before pinning (words present with the detail gone at the
+snapshot_words width; one counters slot `⏳2 👻1 🛠7 🐚3` between single
+` · ` slots in every dialect; `?0.42` with no `❔`; no `/h/h`; no
+`t/s…t/s`; no emoji in the symbols line; `⚉`).
+
+```sh
+$ timeout 600 cargo test --lib status_bar 2>&1 | grep -E '^test result'
+test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 2885 filtered out; finished in 0.06s
+
+$ grep -c 'cost_untracked' src/cli/status_glyphs.rs | sed 's/^/untracked_refs=/'
+untracked_refs=0
+
+$ grep -c '🐇\|🐢\|៚' src/cli/status_glyphs.rs | sed 's/^/emoji_in_tables=/'
+emoji_in_tables=2
+
+$ cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+build_warnings=0
+
+$ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=3036 failed=0
+```
+
+(The § End-to-end script's third grep pattern printed `…⚦…` in the phase
+doc; the shell ate the `⚦` in this transcript, so the same check was re-run
+character by character — `🐇` 1, `🐢` 1, `⚦` 0: the two remain in the emoji
+table only, as the criterion pins.)
+
+Snapshot lines pinned by the new tests (derived by running the code):
+
+- emoji 160: `💤 idle · ⚠1 DiskFull 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4 · 📌 incident-42       ⚡8 🔑 📜2 📖∗ 📄∗ 📅 🤖1 🗑 🌐1`
+- emoji 80: `💤 idle · ⚠1 · 🌓20% · 💰?0.42 · ↻12 · ⏳2 👻1 🛠7 🐚3                        ⚡8`
+- emoji 40: `💤 idle · ⚠1 · 🌓20% · 💰?0.42 · ↻12 ⚡8`
+- symbols 160: `○ idle · ●1 DiskFull 0s · ◕20% ↗3.1k · $?0.42 $/h0.2/h · ↻12 »38t/s · ⧖2 ◆1 ⚒7 ⌨3 · deepseek-v4 · ▣ incident-42                         ⚡8 # §2 ¶∗ ▤∗ ◷ ⚉1 ⌫ ⌂1`
+- ascii 160: `- idle · !1 DiskFull 0s · ctx20% · $?0.42 $/h0.2/h · t12 t/s38t/s · bg2 gh1 tl7 sh3 · deepseek-v4 · @ incident-42                        A8 # s2 r* f* c g1 d h1`
+- PE's setup (info alert, no grants, unnamed) at 160: `💤 idle · ⚠1 heartbeat 0s · 🌓20% 📈3.1k · 💰?0.42 ⛽0.2/h · ↻12 🐇38t/s · ⏳2 👻1 🛠7 🐚3 · 🦙 deepseek-v4`
+
+Mutation checks (each red, then reverted and green again):
+
+```sh
+# Mutation 1 — the pre-step words drop restored (before the rank loop):
+$ timeout 600 cargo test --lib snapshot_words_survive 2>&1 | grep -E '^test result'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+# (the words were gone at the snapshot width) — reverted:
+$ timeout 600 cargo test --lib snapshot_words_survive 2>&1 | grep '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+
+# Mutation 2 — the four counters back in separate slots:
+$ timeout 600 cargo test --lib snapshot_emoji_full 2>&1 | grep -E '^test result'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+# (`⏳2 👻1 🛠7 🐚3` split into ` · `-separated slots) — reverted:
+$ timeout 600 cargo test --lib snapshot_emoji_full 2>&1 | grep '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2945 filtered out; finished in 0.00s
+```
+
+hygiene ok (16 passed; `status_bar.rs` inside the 800-line cap after the
+rank loop moved into `status_bar_fit.rs`), `doc_truth` ok (19 passed),
+`bug_tracker` ok (6 passed). fmt, clippy `-D warnings`, build 0 warnings,
+full `cargo test` passed=3036 failed=0 (baseline 3030).

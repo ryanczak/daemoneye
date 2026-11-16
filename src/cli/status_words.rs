@@ -165,11 +165,14 @@ pub(super) fn turn_parts(
                 g.throughput_slow
             };
             let rate = tps.round() as u64;
+            // The ascii throughput glyph is `t/s`: the rate joins it bare, so
+            // `38t/s` compact and `38 tok/s` wide — never a doubled `t/s`.
+            let spelled = glyph.contains("t/s");
             parts.push(two_form(
                 gray(),
                 glyph,
                 format!("{rate}t/s"),
-                Some((format!("{rate} {}", word::TOK_PER_S), false)),
+                Some((format!("{rate} {}", word::TOK_PER_S), spelled)),
                 super::fit::RANK_THROUGHPUT,
             ));
         }
