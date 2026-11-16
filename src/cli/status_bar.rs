@@ -345,8 +345,7 @@ pub fn status_bar_line(
     // each re-measuring — and the words drop at their rank, all at once,
     // after the lower ranks have gone. The state and severity words are
     // one-form, so they survive at every width the drops leave them.
-    let mut wide = line_fits(&slots, fit::grants_width(&grants, true), sep, true, width);
-    drop_loop(&mut slots, &mut grants, &mut wide, sep, width);
+    let wide = drop_loop(&mut slots, &mut grants, sep, width);
     join_slots(&slots, &mut grants, sep, wide, width)
 }
 
@@ -583,11 +582,15 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
     // and the sign-glyph dialects' `?0.42` / `$0.42` with no doubling.
     let sign = if model.has_untracked { "?" } else { "$" };
     let signed = format!("{sign}{spend}");
+    // The symbols and ascii glyphs *are* the sign: the signed value stands
+    // alone there in both forms, never `$?0.42` or `$$0.42`.
+    let sign_glyph = g.cost.contains('$');
+    let glyph = if sign_glyph { "" } else { g.cost };
     let cost = part_two_form(
         gray(),
-        g.cost,
+        glyph,
         signed.clone(),
-        Some((signed, false)),
+        Some((signed, sign_glyph)),
         RANK_COST,
     );
     let mut parts = vec![cost];
@@ -596,19 +599,21 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
         .as_secs_f64()
         / 3600.0;
     if model.cost_usd > 0.0 && hours >= 0.01 && !g.cost_burn.is_empty() {
-        // The symbols and ascii glyphs already say `$/h`: the rate joins the
-        // glyph bare, so `$0.4/h` — never a second `/h`.
+        // The symbols and ascii glyphs already say `$/h`: the signed rate
+        // stands alone there, `$0.4/h` compact and `$0.4/h burn` wide —
+        // never a second `$` or `/h`.
         let burn_glyph = g.cost_burn.contains('$');
         let rate = format!("{:.1}/h", model.cost_usd / hours);
+        let (glyph, compact) = if burn_glyph {
+            ("", format!("${rate}"))
+        } else {
+            (g.cost_burn, rate.clone())
+        };
         parts.push(part_two_form(
             gray(),
-            g.cost_burn,
-            rate.clone(),
-            if burn_glyph {
-                Some((format!("{rate} {}", word::BURN), false))
-            } else {
-                Some((format!("${rate} {}", word::BURN), false))
-            },
+            glyph,
+            compact,
+            Some((format!("${rate} {}", word::BURN), burn_glyph)),
             RANK_BURN,
         ));
     }
@@ -725,7 +730,7 @@ pub(crate) mod words;
 use fit::{
     NARROW_BELOW, NARROW_SEP, RANK_ALERT_AGE, RANK_ALERT_NAME, RANK_ALERTS, RANK_BURN,
     RANK_CONTEXT, RANK_COST, RANK_GROWTH, RANK_MODEL, RANK_SESSION, RANK_STATE, WIDE_SEP,
-    counters_slot, drop_loop, join_slots, line_fits,
+    counters_slot, drop_loop, join_slots,
 };
 use words::{TwoFormPart as Part, turn_parts, two_form as part_two_form, word};
 use words::{age_str, clip_to_width, compact_tokens};

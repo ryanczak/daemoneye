@@ -19,15 +19,15 @@ pub(super) const NARROW_SEP: &str = " ";
 pub(super) const NARROW_BELOW: usize = 36;
 
 // Drop ranks, lowest drops first.
-pub(super) const RANK_GROWTH: u16 = 1;
-pub(super) const RANK_BURN: u16 = 2;
-pub(super) const RANK_THROUGHPUT: u16 = 3;
-pub(super) const RANK_ALERT_NAME: u16 = 4;
-pub(super) const RANK_ALERT_AGE: u16 = 5;
-pub(super) const RANK_WORDS: u16 = 6;
-pub(super) const RANK_SESSION: u16 = 7;
-pub(super) const RANK_MODEL: u16 = 8;
-pub(super) const RANK_GRANT_DETAIL: u16 = 9;
+pub(super) const RANK_GRANT_DETAIL: u16 = 1;
+pub(super) const RANK_GROWTH: u16 = 2;
+pub(super) const RANK_BURN: u16 = 3;
+pub(super) const RANK_THROUGHPUT: u16 = 4;
+pub(super) const RANK_ALERT_NAME: u16 = 5;
+pub(super) const RANK_ALERT_AGE: u16 = 6;
+pub(super) const RANK_WORDS: u16 = 7;
+pub(super) const RANK_SESSION: u16 = 8;
+pub(super) const RANK_MODEL: u16 = 9;
 pub(super) const RANK_SHELLS: u16 = 10;
 pub(super) const RANK_TOOLS: u16 = 11;
 pub(super) const RANK_GHOSTS: u16 = 12;
@@ -77,32 +77,53 @@ pub(super) fn counters_slot(model: &StatusModel, g: &GlyphSet) -> Vec<TwoFormPar
 }
 
 /// The rank drops, lowest first, re-measuring after each: when the whole
-/// line (slots plus the grants segment) fits, the loop stops. The words rank
-/// is not a removable part — reaching it sets `wide = false` (the words drop
-/// all at once) instead of retaining parts, and every measurement before it
-/// uses the wide form. The grants segment dies with its core part.
+/// line (slots plus the grants segment) fits, the drops stop. First pass:
+/// the wide form, dropping the ranks below the words (the grants detail,
+/// the velocities, the alert name and age). If the line still does not fit,
+/// the words drop all at once — and the parts dropped to make room for them
+/// come back, because the words are what cost the columns, not the detail —
+/// then the compact drops run from the lowest rank again. Returns whether
+/// the line kept its words. The grants segment dies with its core part.
 pub(super) fn drop_loop(
     slots: &mut [Vec<TwoFormPart>],
     grants: &mut Option<Vec<TwoFormPart>>,
-    wide: &mut bool,
     sep: &str,
     width: usize,
-) {
+) -> bool {
+    let saved_slots: Vec<Vec<TwoFormPart>> = slots.to_vec();
+    let saved_grants = grants.clone();
+    if drop_ranks_below(slots, grants, RANK_WORDS, true, sep, width) {
+        return true;
+    }
+    for (slot, saved) in slots.iter_mut().zip(saved_slots) {
+        *slot = saved;
+    }
+    *grants = saved_grants;
+    drop_ranks_below(slots, grants, u16::MAX, false, sep, width);
+    false
+}
+
+/// Drop the ranks below `limit`, lowest first, in the form `wide` selects,
+/// until the line fits. `true` when it fits.
+fn drop_ranks_below(
+    slots: &mut [Vec<TwoFormPart>],
+    grants: &mut Option<Vec<TwoFormPart>>,
+    limit: u16,
+    wide: bool,
+    sep: &str,
+    width: usize,
+) -> bool {
     let mut ranks: Vec<u16> = slots
         .iter()
         .flat_map(|slot| slot.iter().map(|p| p.rank))
         .chain(grants.iter().flatten().map(|p| p.rank))
-        .chain(std::iter::once(RANK_WORDS))
+        .filter(|&r| r < limit)
         .collect();
     ranks.sort_unstable();
     ranks.dedup();
     for rank in ranks {
-        if line_fits(slots, grants_width(grants, *wide), sep, *wide, width) {
-            break;
-        }
-        if rank == RANK_WORDS {
-            *wide = false;
-            continue;
+        if line_fits(slots, grants_width(grants, wide), sep, wide, width) {
+            return true;
         }
         for slot in slots.iter_mut() {
             slot.retain(|p| p.rank != rank);
@@ -114,6 +135,7 @@ pub(super) fn drop_loop(
             }
         }
     }
+    line_fits(slots, grants_width(grants, wide), sep, wide, width)
 }
 
 /// The grants segment's columns in the form `wide` selects: its parts plus

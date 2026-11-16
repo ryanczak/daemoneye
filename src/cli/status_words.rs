@@ -65,7 +65,7 @@ pub(super) mod word {
 /// One rendered piece of the bar in its two forms. `wide` is the glyph plus
 /// its word; `compact` is the glyph-and-number form. The two are equal for a
 /// part with no word, and the exempt parts carry only one form.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct TwoFormPart {
     pub wide: Vec<Span<'static>>,
     pub compact: Vec<Span<'static>>,
@@ -104,6 +104,12 @@ pub(super) fn two_form(
     }
 }
 
+/// Is this glyph a letter abbreviation (the ascii dialect's `bg`, `tl`, `t`)
+/// that the wide form's word replaces, rather than a mark the word follows?
+pub(super) fn spells_its_word(glyph: &str) -> bool {
+    !glyph.is_empty() && glyph.chars().all(|c| c.is_ascii_alphabetic())
+}
+
 /// A one-form part: the exempt state and severity words, and every part with
 /// no word (the model, the session, the alert name and age). Dropping to
 /// compact is a no-op — the pre-words builders' `Part::new(spans, rank)`.
@@ -130,8 +136,9 @@ pub(super) fn counter_parts(
         return Vec::new();
     }
     let w = word::plural(count, word_one, word_many);
-    let spelled = !glyph.is_empty()
-        && (glyph == w || word_one.starts_with(glyph) || word_many.starts_with(glyph));
+    // The ascii dialect's glyphs are letters (`bg`, `gh`, `tl`, `sh`): the
+    // word replaces them in the wide form, so `7 tools`, never `tl 7 tools`.
+    let spelled = spells_its_word(glyph);
     vec![two_form(
         gray(),
         glyph,
@@ -147,11 +154,16 @@ pub(super) fn turn_parts(
     model: &crate::cli::status_bar::StatusModel,
     g: &crate::cli::status_glyphs::GlyphSet,
 ) -> Vec<TwoFormPart> {
+    // The ascii turn glyph is `t`: the word replaces it in the wide form,
+    // so `turn 12`, never `t turn 12`.
     let turn = two_form(
         gray(),
         g.turn,
         model.turn.to_string(),
-        Some((format!("{} {}", word::TURN, model.turn), false)),
+        Some((
+            format!("{} {}", word::TURN, model.turn),
+            spells_its_word(g.turn),
+        )),
         super::fit::RANK_TURN,
     );
     let mut parts = vec![turn];
@@ -168,6 +180,7 @@ pub(super) fn turn_parts(
             // The ascii throughput glyph is `t/s`: the rate joins it bare, so
             // `38t/s` compact and `38 tok/s` wide — never a doubled `t/s`.
             let spelled = glyph.contains("t/s");
+            let glyph = if spelled { "" } else { glyph };
             parts.push(two_form(
                 gray(),
                 glyph,

@@ -71,6 +71,22 @@ fn line_at(m: &StatusModel, now: Instant, width: u16) -> String {
         .collect()
 }
 
+/// The widest width at which the words have dropped: the top of the compact
+/// band, where the bar shows every compact item it can. Above it the wide
+/// form fits with its lowest ranks (the grants detail, the velocities, the
+/// alert name and age) gone.
+fn compact_top(m: &StatusModel, now: Instant) -> u16 {
+    let mut width = 400u16;
+    while width > 20 && line_at(m, now, width).contains("turn") {
+        width -= 1;
+    }
+    width
+}
+
+fn compact_line(m: &StatusModel, now: Instant) -> String {
+    line_at(m, now, compact_top(m, now))
+}
+
 fn line_width(m: &StatusModel, now: Instant, width: u16) -> usize {
     status_bar_line(m, now, &palette(), width).width()
 }
@@ -171,7 +187,7 @@ fn status_line_fits_its_width_at_every_width_from_20_to_160() {
 fn status_line_hides_zero_counters_and_shows_nonzero_ones() {
     let now = Instant::now();
     let mut m = full_model();
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     for slot in ["⏳2", "👻1", "🛠7", "🐚3"] {
         assert!(text.contains(slot), "a live counter shows: {text:?}");
     }
@@ -180,7 +196,7 @@ fn status_line_hides_zero_counters_and_shows_nonzero_ones() {
     m.ghosts = 0;
     m.tools_total = 0;
     m.shells = 0;
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     for slot in ["⏳", "👻", "🛠", "🐚"] {
         assert!(
             !text.contains(slot),
@@ -228,7 +244,7 @@ fn status_line_leads_with_the_worst_alert_and_counts_all() {
             last_seen_unix: 1_699_999_950,
         },
     ];
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(
         text.contains("🔥3"),
         "the worst severity's glyph and the count of every firing alert: {text:?}"
@@ -322,44 +338,36 @@ fn status_line_drops_tier_three_before_tier_two_before_the_grants_core() {
     m.state = ChatState::Idle;
 
     // Tier 3 names the velocities, the alert name and age, the session, the
-    // model and the grants detail. Tier 2 names the counters. Find the
-    // narrowest width where every tier-3 item still shows, then step down
-    // one column at a time: the first thing to go must be a tier-3 item.
-    let wide = line_at(&m, now, 160);
-    for item in [
-        "📈",
-        "⛽",
-        "🐇",
-        "DiskFull",
-        "incident-42",
-        "sonnet-4-6",
-        "🔑",
-        "📜",
-        "📖",
-        "📄",
-        "🤖",
-        "📅",
-        "🗑",
-        "🌐",
-    ] {
+    // model and the grants detail. Tier 2 names the counters. Start at the
+    // widest width where the words have dropped (the bar is compact, with
+    // everything back), then step down one column at a time: the first thing
+    // to go must be a tier-3 item.
+    let mut top = 200usize;
+    while top > 20 && line_at(&m, now, top as u16).contains(" ghost") {
+        top -= 1;
+    }
+    // The grants detail is the lowest rank of all, so it may already be gone
+    // here; the other tier-3 items must show.
+    let wide = line_at(&m, now, top as u16);
+    for item in ["📈", "⛽", "🐇", "DiskFull", "incident-42", "sonnet-4-6"] {
         assert!(
             wide.contains(item),
-            "tier 3 shows at 160: {item} in {wide:?}"
+            "tier 3 shows at {top}: {item} in {wide:?}"
         );
     }
     for item in ["⏳2", "👻1", "🛠7", "🐚3"] {
         assert!(
             wide.contains(item),
-            "tier 2 shows at 160: {item} in {wide:?}"
+            "tier 2 shows at {top}: {item} in {wide:?}"
         );
     }
     assert!(
         wide.contains("⚡8"),
-        "the grants core shows at 160: {wide:?}"
+        "the grants core shows at {top}: {wide:?}"
     );
 
     // Narrow until one tier-3 item drops; the tier-2 items must all survive.
-    let mut width = 159usize;
+    let mut width = top - 1;
     loop {
         let text = line_at(&m, now, width as u16);
         let missing: Vec<&str> = [
@@ -609,7 +617,7 @@ fn status_line_cost_shows_spend_untracked_and_burn() {
     m.has_untracked = true;
     // The session has run for an hour: burn 0.42/h.
     m.session_started_at = now - Duration::from_secs(3600);
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(
         text.contains("💰?0.42"),
         "the spend to two decimals with the `?` sign: {text:?}"
@@ -619,7 +627,7 @@ fn status_line_cost_shows_spend_untracked_and_burn() {
     assert!(text.contains("0.4/h"), "the burn rate: {text:?}");
 
     m.has_untracked = false;
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(
         text.contains("💰$0.42"),
         "known pricing keeps the `$` sign: {text:?}"
@@ -637,11 +645,11 @@ fn status_line_throughput_says_fast_or_slow() {
     m.turn_started_at = None;
     m.last_output_tokens = 1_140;
     m.last_turn_duration = Some(Duration::from_secs(30));
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(text.contains("🐇38t/s"), "30 t/s or more is fast: {text:?}");
 
     m.last_turn_duration = Some(Duration::from_secs(60));
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(text.contains("🐢19t/s"), "below 30 t/s is slow: {text:?}");
 }
 
@@ -930,7 +938,7 @@ fn status_model_applies_session_counters() {
 
     // A nonzero frame shows all three counters.
     m.set_session_counters(2, 1, 3);
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     for slot in ["⏳2", "👻1", "🐚3"] {
         assert!(
             text.contains(slot),
@@ -940,7 +948,7 @@ fn status_model_applies_session_counters() {
 
     // A zero frame hides them entirely.
     m.set_session_counters(0, 0, 0);
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     for slot in ["⏳", "👻", "🐚"] {
         assert!(
             !text.contains(slot),
@@ -950,7 +958,7 @@ fn status_model_applies_session_counters() {
 
     // A later nonzero frame shows them again.
     m.set_session_counters(1, 0, 2);
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(text.contains("⏳1"), "background shows again: {text:?}");
     assert!(
         !text.contains("👻"),
@@ -979,9 +987,9 @@ fn grants_hidden_in_the_default_state() {
 
     // Any one non-default field brings the segment back.
     m.grants.deletes = true;
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(
-        text.contains("⚡1"),
+        text.contains("⚡ grants 1") || text.contains("⚡1"),
         "deletes alone shows the core: {text:?}"
     );
     assert!(text.contains("🗑"), "the deletes detail shows: {text:?}");
@@ -1129,8 +1137,9 @@ fn grants_detail_drops_before_the_core() {
         ..GrantSummary::default()
     };
 
-    // Narrow until the last detail part is gone: the core must still show.
-    let mut width = 160usize;
+    // From the top of the compact band, narrow until the last detail part is
+    // gone: the core must still show.
+    let mut width = compact_top(&m, now) as usize;
     loop {
         let text = line_at(&m, now, width as u16);
         if !text.contains('🔑') {
@@ -1215,7 +1224,7 @@ fn grants_sit_flush_right() {
         ..GrantSummary::default()
     };
 
-    for width in [120u16, 160] {
+    for width in [compact_top(&m, now), 400] {
         let line = status_bar_line(&m, now, &palette(), width);
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert_eq!(
@@ -1225,7 +1234,7 @@ fn grants_sit_flush_right() {
         );
         let trimmed = text.trim_end();
         assert!(
-            trimmed.ends_with("🤖1"),
+            trimmed.ends_with("🤖1") || trimmed.ends_with("🤖 agents 1"),
             "the grants segment's last glyph ends the line at {width}: {text:?}"
         );
     }
@@ -1244,7 +1253,7 @@ fn grants_detail_orders_schedules_before_agents() {
         ..GrantSummary::default()
     };
 
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     let schedules = text.find('📅').expect("the schedules glyph shows");
     let agents = text.find('🤖').expect("the agents glyph shows");
     assert!(
@@ -1599,10 +1608,10 @@ fn scope_all_reads_all_wide_and_star_compact() {
     assert!(!wide.contains('∗'), "no star in the wide form: {wide:?}");
 
     // Narrow until the words drop: the compact form is today's `∗`.
-    let mut width = 200usize;
+    let mut width = 400usize;
     loop {
         let text = line_at(&m, now, width as u16);
-        if !text.contains("files") {
+        if !text.contains("turn") {
             assert!(text.contains("📄∗"), "the compact all mark: {text:?}");
             break;
         }
@@ -1663,6 +1672,9 @@ fn no_dialect_doubles_a_word_or_a_dollar() {
         assert!(!text.contains("ctx ctx"), "{set:?}: {text:?}");
         assert!(!text.contains("bg 2 bg"), "{set:?}: {text:?}");
         assert!(!text.contains("$$"), "{set:?}: {text:?}");
+        assert!(!text.contains("$?"), "{set:?}: {text:?}");
+        assert!(!text.contains("t turn"), "{set:?}: {text:?}");
+        assert!(!text.contains("tl 7"), "{set:?}: {text:?}");
         assert!(!text.contains("/h/h"), "{set:?}: {text:?}");
         assert!(!text.contains("t/s38"), "{set:?}: {text:?}");
         assert!(!text.contains("❔"), "{set:?}: {text:?}");
@@ -1762,7 +1774,7 @@ fn the_cost_glyph_is_a_money_bag() {
 
     // Compact and wide: `💰`, never `💸`. Unknown pricing speaks `?` in the
     // sign's position and never appends a mark.
-    let text = line_at(&m, now, 160);
+    let text = compact_line(&m, now);
     assert!(text.contains("💰?0.42"), "compact cost: {text:?}");
     assert!(!text.contains("💸"), "no flying money glyph: {text:?}");
     assert!(!text.contains("❔"), "no `❔` suffix: {text:?}");
