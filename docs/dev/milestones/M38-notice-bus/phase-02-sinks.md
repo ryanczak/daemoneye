@@ -1,7 +1,7 @@
 # Phase 02 — sinks
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-16
 **Depends on:** phase-01
 **Estimated diff:** ~450 lines, about half of it tests
@@ -163,3 +163,141 @@ registered but no producer publishes until phase 03.
 **Executor:** phase-02 run, headless.
 
 Flipped the phase to `in-progress`; implementing the Spec tasks in order.
+
+### Update — 2026-11-16 22:58 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 02 (sinks) is implemented and committed (`0cf8f3b9`). `src/bus/notice.rs` gained `history_text()` and `line()`. The new `src/daemon/notice_sinks.rs` holds `SinkRoutes`, `routes_match`, `default_routes(threshold)` (reproducing 2.9.0 delivery), `threshold_from_config`, `command_env`, and `register_default_sinks` — the inline history sink (broadcast via `inject_into_sessions`, targeted via `append_session_message` + resident `push_event`, with the doc-commented no-publish-under-`SessionStore`-lock constraint), plus the queued chat-notice and command sinks (capacity 256, subscriber names `history`/`chat_notice`/`command`). `run_daemon` calls it once on `crate::bus::global()` right after the `SessionStore` is created; CLAUDE.md gained the Key-files row. No producer, and no file in the preservation set, was touched.
+
+**Notes for review**
+
+- All 10 spec tests exist and pass, including `command_sink_runs_on_alert_with_notice_env` (writes `error scheduler` via the real `sh -c` path against the uninstalled `config::current()`). Gates: `cargo fmt`/`build`/`clippy -D warnings` clean; full `cargo test` 3075 passed / 0 failed (lib 2975, hygiene 16 including no new allowlist line); `grep -n register_default_sinks src/daemon/startup.rs` shows the one call; `git diff` against the four preservation files is empty. End-to-end verification is N/A per the phase doc (no producers yet).
+- Two adaptations worth knowing: the spec's `notice_history_text_joins_title_and_body` sketch assumed `Notice::new`'s 4th arg was the body — it's the title (`name, title`), so the test builds titles through `new(.., title)` and exercises the empty-body case directly; and `history_sink_targeted_reaches_only_its_session` uses `Source::Ghost` rather than an unroutable source, since the inline sink runs behind the route filter and default routes deliver ghost notices to history (behavior the test plan itself pins for broadcast). To keep `run_daemon` inside its allowlisted 622-line hygiene cap, the existing pipe-log/stop-sentinel sweep moved verbatim into `sweep_stale_var_run_artifacts()` in the same file — a pure extraction, no behavior change.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+spawn_ghost_shell_with_agent_merge ... ok
+test g4_briefing_injection_block_format ... ok
+test g5_child_inherits_depth_and_parent ... ok
+test g5_depth_limit_enforced ... ok
+test g6_tool_policy_enforced_in_ghost ... ok
+test ipc_ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 40 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (127039): No such process
+kill: (-127701): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M38-notice-bus/README.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/phase-02-sinks.md` — +7 -1
+- `src/bus/notice.rs` — +47 -0
+- `src/daemon/mod.rs` — +1 -0
+- `src/daemon/notice_sinks.rs` — +491 -0
+- `src/daemon/startup.rs` — +38 -23
+
+**Commit:** 0cf8f3b98da6ee0cf9701b863729d6a056399889
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
