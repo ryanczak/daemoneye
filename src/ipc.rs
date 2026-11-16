@@ -5,17 +5,14 @@ use std::time::Duration;
 /// background tool call before it treats the silence as a denial.
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// How far inside [`APPROVAL_TIMEOUT`] the client's own panel deadline sits.
+/// How far inside [`APPROVAL_TIMEOUT`] the client's panel deadline sits.
 pub const APPROVAL_CLIENT_MARGIN: Duration = Duration::from_secs(5);
 
-/// The client's bound on an approval panel (F7): [`APPROVAL_TIMEOUT`] less
-/// [`APPROVAL_CLIENT_MARGIN`], so the panel always closes — and its denial
-/// reaches the daemon — while the daemon is still waiting for the line. The
-/// daemon's timer starts when it sends the prompt and the client's when it
-/// receives it, so two equal deadlines made the daemon's fire first: it
-/// denied the call, finished the turn and closed the ask connection, and the
-/// client's late reply failed with `Broken pipe` and showed `daemon down`
-/// with the daemon alive (the M37 live check, 2026-11-16).
+/// The client's bound on an approval panel (F7), a margin inside the daemon's
+/// wait so the panel's timeout denial lands on a daemon still reading. The
+/// daemon's timer starts at send and the client's at receipt, so equal
+/// deadlines let the daemon's fire first and close the ask connection:
+/// `Broken pipe`, then a false `daemon down` (M37 live check, 2026-11-16).
 pub const CLIENT_APPROVAL_TIMEOUT: Duration =
     APPROVAL_TIMEOUT.saturating_sub(APPROVAL_CLIENT_MARGIN);
 
