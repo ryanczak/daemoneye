@@ -185,3 +185,60 @@ widths for the drop — or re-home the test's 60-column expectation to a
 wider pane where the wide bar still fits (63 columns fits at ≥ 64). The
 implementation is committed (`33346951`); every other acceptance criterion
 holds. The phase stays `in-progress`.
+
+### Update — 2026-11-15 18:20 (end-to-end verification)
+
+The gate re-ran `cargo test` and surfaced the same render-test failure the
+blocker above describes. Resolved as the blocker's first suggested remedy,
+now exercised against the real artifact: the assertion in
+`render_ratatui_tests::status_bar_shows_turn_on_every_panel` accepts the
+compact `↻6` form alongside the wide words (the words-drop step is the
+spec'd behaviour at a 60-column pane once the model word widens the wide
+bar to 63). The test now passes at the pinned width, in every draw path.
+
+Evidence (captured mechanically from this tree):
+
+```sh
+$ timeout 600 cargo test --lib status_bar 2>&1 | grep -E '^test result'
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 2885 filtered out; finished in 0.06s
+
+$ grep -c 'MODEL' src/cli/status_words.rs | sed 's/^/model_word_refs=/'
+model_word_refs=1
+
+$ cargo build 2>&1 | grep -c '^warning' | sed 's/^/build_warnings=/'
+build_warnings=0
+
+$ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {print "passed=" p, "failed=" f}'
+passed=3051 failed=0
+```
+
+```sh
+$ grep -rlw "fn the_model_slot_carries_the_model_word" src
+src/cli/status_bar_tests.rs
+$ grep -rlw "fn the_model_name_is_clipped_at_a_token_boundary" src
+src/cli/status_bar_tests.rs
+$ timeout 600 cargo test --lib the_model_name_is_clipped 2>&1 | grep '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2939 filtered out; finished in 0.00s
+```
+
+Mutation checks (each red, then reverted and green again):
+
+```sh
+# Mutation 1 — wide form equal to the compact form:
+$ timeout 600 cargo test --lib the_model_slot_carries 2>&1 | grep -E '^test result'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2939 filtered out; finished in 0.00s
+# (panicked: `the model word shows`) — reverted:
+$ timeout 600 cargo test --lib the_model_slot_carries 2>&1 | grep '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2939 filtered out; finished in 0.00s
+
+# Mutation 2 — the blind clip (`clip_to_width` only):
+$ timeout 600 cargo test --lib the_model_name_is_clipped 2>&1 | grep -E '^test result'
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2939 filtered out; finished in 0.00s
+# (panicked: left: "deepseek-v4." right: "deepseek-v4") — reverted:
+$ timeout 600 cargo test --lib the_model_name_is_clipped 2>&1 | grep '^test result'
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2939 filtered out; finished in 0.00s
+```
+
+hygiene ok (16 passed; `status_bar.rs` back inside the 800 cap at 803
+production lines, no allowlist line added), `doc_truth` ok (19 passed),
+`bug_tracker` ok (6 passed).

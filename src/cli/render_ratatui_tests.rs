@@ -857,7 +857,9 @@ fn status_bar_shows_turn_on_every_panel() {
         assert!(
             all_text.contains("↻ turn 6")
                 || all_text.contains("t turn 6")
-                || all_text.contains("t6"),
+                // The model word widens the wide bar; at a 60-column pane the
+                // words drop all at once and the compact `↻6` form is the pass.
+                || all_text.contains("↻6"),
             "draw path {draw} must put the turn 6 on its status row: {all_text:?}"
         );
     }
