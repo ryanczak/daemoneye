@@ -8,6 +8,55 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.9.0] — 2026-11-16 — M37 Alerts out of history, onto the status bar and `top`
+
+Fixes GitHub issue #3. A webhook alert below `[webhook] severity_threshold`
+no longer enters any chat session's history; every firing alert shows on
+the chat status bar and in a `top` Alerts panel instead, and the status bar
+is redesigned to say the most important things in the fewest columns. The
+retrospective and the live check are in
+`docs/dev/milestones/M37-alerts-status-bar/README.md`.
+
+- **Alerts out of history** — an alert below the threshold goes to the
+  event log and to a daemon-wide registry of active alerts, never to a
+  session. An at-threshold alert is delivered as before and also leads the
+  status bar in its severity colour. A resolve clears it from the bar and
+  from `top` after a ten-second `🧯 resolved <name>` flash.
+- **Status bar redesign** — glyph-led, with a word beside every glyph when
+  there is room (`💤 idle · 🌓 ctx 20% 📈 +1.3k · 💰 $0.01 💸 $0.0/h ·
+  🔄 turn 2 🐢 21 tok/s · ⏳ 1 bg 🐚 1 shell · 🦙 model GLM-5.3    🔒 grants 4`).
+  Narrow bars drop the grants detail, the velocities and the alert name
+  first, then every word at once. Zero-valued counters are absent. Three
+  dialects via `[chat] glyphs = "emoji" | "symbols" | "ascii"`, read at
+  chat start; `ascii` is forced on a non-UTF-8 locale. Unknown pricing shows
+  as a `?` currency sign. The state glyph runs `💤 idle` → `🧠 thinking` →
+  `✋ approve?` → `📡 reconnecting` → `💀 daemon down`.
+- **Session counters** — the daemon pushes each session's shell, background
+  and ghost counts once a second; a `wait: false` command counts under ⏳
+  until its outcome lands.
+- **`top` Alerts panel** — every active alert with severity, name and age,
+  also in `top --once`.
+- **Away digest** — the first chat to attach after a gap gets one digest of
+  the script runs per job and the alerts fired per name while nobody was
+  attached.
+- **Approval panel** — titled `user@host:sN` with the shell the command
+  will run in, picked before the prompt and pinned to the run;
+  `daemon · runs silently` for `wait: false`. The chat input box has the
+  history panel's red border and rounded corners. The panel's own deadline
+  now sits five seconds inside the daemon's 60 s wait, so an unanswered
+  prompt ends as `⏱ approval timed out` instead of a `Broken pipe` and a
+  false `💀 daemon down`.
+- **Presence** — a reconnect that fails five times announces `daemon down`
+  once and the bar reads `💀 daemon down` for the rest of the outage.
+- **Scheduler** — a recurring job left `Running` by a restart skips to its
+  next slot, and a failed recurring run no longer ends the job.
+- **Hosts and shells** — a `[hosts.*]` entry that names the daemon's own
+  machine is warned about at startup and refused by every host-taking tool.
+  Any chat session can close an adopted shell; the maintenance tick sweeps
+  the files dead shell hosts leave behind.
+- **Pricing** — a user-set `*_cost_per_mtok` rate applies to ollama and
+  lmstudio models.
+
 ## [2.8.0] — 2026-11-12 — M36 Chat UX and audit fixes
 
 The four chat and `top` improvements from `docs/design/2.7.0-UX-improvements.md`

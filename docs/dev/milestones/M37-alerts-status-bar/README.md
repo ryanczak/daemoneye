@@ -6,7 +6,7 @@ firing alert shows on the chat status bar and in a `top` Alerts panel
 instead. The chat status bar is redesigned to say the most important
 things in the fewest columns.
 
-**Status:** active
+**Status:** done — released as 2.9.0 (2026-11-16)
 
 **Release:** 2.9.0
 
@@ -323,20 +323,25 @@ GLM-5.3-Flash over `[models.default]`, the webhook on 127.0.0.1:19437 with
 The three fixes are `c5bdc1f9`; each new test was run red against its fix
 reverted, and each fix was confirmed live on a rebuilt daemon.
 
+**The approval deadlines raced — fixed before the release (`b791b890`, PE
+decision 2026-11-16).** The client and the daemon both waited
+`APPROVAL_TIMEOUT` (60 s) for the approval reply, and the daemon's wait
+started first. A `y` typed without Enter sat until both fired; the client's
+late reply then hit the closed ask connection — `✗ Broken pipe` and `💀
+daemon down` with the daemon alive, until the next turn. Pre-M37 (F7). The
+panel now reads against `CLIENT_APPROVAL_TIMEOUT`, five seconds inside the
+daemon's wait. Live on the rebuilt binary: the panel closed at 55 s with
+`⏱ approval timed out — the command was not run`, the daemon logged
+`command denied`, and the bar returned to `💤 idle`. The panel reading a
+line (`y` then Enter) is by design.
+
 **Observed, not fixed — PE decision:**
-- **The approval deadlines race.** The client and the daemon both wait
-  `APPROVAL_TIMEOUT` (60 s) for the approval reply, and the daemon's wait
-  starts first. A `y` typed without Enter sat until both fired; the
-  client's late reply then hit the closed ask connection — `✗ Broken pipe`
-  and `💀 daemon down` with the daemon alive, until the next turn. Pre-M37
-  (F7). A client deadline a few seconds inside the daemon's would end the
-  race; the panel reading a line (`y` then Enter) is by design.
 - `daemoneye reload` lists `chat.glyphs` under "applied" though the daemon
   applies nothing for a `[chat]` key.
 - A plain (unsandboxed) `wait: false` shell stays open after its completion
   message; only the sandbox path closes it. Pre-existing.
 
-The 2.9.0 release waits on the PE's sign-off.
+**Signed off 2026-11-16; released as 2.9.0.**
 
 **Calibration, for PE decision (none folded yet):**
 1. **A test fixture that does not model the real shape.**
