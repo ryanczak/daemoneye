@@ -1,7 +1,7 @@
 # Phase 11 — status-bar-model-word
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-15
 **Depends on:** phase 09 (the two-form parts) and phase 10 (the tree at `c176348c`)
 **Estimated diff:** ~90 lines, half of it tests
@@ -385,3 +385,25 @@ kill: (-299713): No such process
 **Commit:** 140df3a4d1fa0555c58ca1016f45a30c772b2f7d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-15
+
+- **Verdict:** approved_first_try
+- **Bounces:** none (one executor-filed blocker, resolved on re-dispatch)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** `src/cli/render_ratatui_tests.rs` was outside the
+  Authorizations. `status_bar_shows_turn_on_every_panel` pinned the wide
+  `↻ turn 6` at 60 columns; the model word widens that bar to 63, so the
+  words drop and the assertion now also accepts the compact `↻6`. Accepted:
+  the drop is the spec'd behaviour, and the executor filed a blocker before
+  it touched the file. Phase 12 moves the words drop anyway. To fit
+  `status_bar.rs` under the 800-line cap, the executor also compacted two
+  unrelated spots (`locale_is_utf8`'s helper, the `resolved_text` binding)
+  without changing behaviour.
+- **Calibration:** the 18:20 evidence entry says `passed=3051`, and the
+  completion entry and the reviewer re-run say 3030. 3030 is the real count.
+  The entry also calls 803 production lines "inside the 800 cap", but
+  hygiene is green, so the 803 is the evidence's own miscount. The spec
+  missed the wide-bar pin in the render tests: it named only compact pins
+  as protected. Reviewer re-run: fmt ok, build 0 warnings, clippy ok,
+  `cargo test` passed=3030 failed=0.
