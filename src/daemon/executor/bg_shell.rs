@@ -1106,17 +1106,21 @@ mod tests {
 
     /// Hang the run's shell up before its outcome is awaited: the reader task
     /// then ends without an end marker and the handle resolves to `Err`, the
-    /// shape of a completion that failed.
+    /// shape of a completion that failed. The command sleeps first so it is
+    /// still running when the hang-up lands — a bare `printf` finished
+    /// before `close_shell_in_process` two runs in five, and the record then
+    /// read `completed`.
     #[tokio::test]
     async fn bg_completion_on_a_failed_outcome_records_status_failed() {
         let (_home, _dir) = crate::test_home();
         let reg = ShellRegistry::default();
         let session_id = "bg-record-failed-session".to_string();
         let sessions = store_with_entry(&session_id);
+        let cmd = "sleep 30; printf 'ORPHAN\\n'";
         let (start, handle) = start_background_with(
             &reg,
             Owner::Chat(session_id.clone()),
-            "printf 'ORPHAN\\n'",
+            cmd,
             5,
             spawn_in_process_host,
         )
@@ -1130,7 +1134,7 @@ mod tests {
         await_and_notify(
             sessions.clone(),
             session_id.clone(),
-            "printf 'ORPHAN\\n'".to_string(),
+            cmd.to_string(),
             start,
             handle,
         )
