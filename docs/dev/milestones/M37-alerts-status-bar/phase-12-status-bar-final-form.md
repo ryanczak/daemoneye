@@ -1,7 +1,7 @@
 # Phase 12 — status-bar-final-form
 
 **Milestone:** M37 — Alerts out of history, onto the status bar and `top`
-**Status:** review
+**Status:** in-progress (bounced — [bug-12-1](bugs/bug-12-1.md))
 **Drafted:** 2026-11-15
 **Depends on:** phase 11 (the model word and clip; both phases edit the same files, so this one runs after it)
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -163,6 +163,15 @@ fixed `now`, the palette and a width.
 - [ ] fmt, build (0 warnings), clippy and `timeout 600 cargo test` with
       `failed=0` and passed greater than 3030; hygiene,
       `doc_truth` and `bug_tracker` ok.
+
+- [ ] **(bug-12-1)** `grep -c 'ctx 20%' src/cli/status_bar_snapshot_tests.rs`
+      prints at least 2 (today 0): the PE-setup snapshot pins the wide words
+      at 160 **and** 120.
+- [ ] **(bug-12-1)** `grep -cE '\$\?|/h[0-9]|t/s[0-9]' src/cli/status_bar_snapshot_tests.rs`
+      prints 0 (today 4).
+- [ ] **(bug-12-1)** `snapshot_words_survive_the_grants_detail_and_velocities`
+      asserts `ctx`, `turn` and `model:`. Mutation check: seed `wide` from
+      `line_fits(…, true, …)` again and the test fails. Paste both `test result:` lines.
 
 ## Pre-flight
 
@@ -403,3 +412,18 @@ kill: (-392714): No such process
 **Commit:** e3270ff5c4119ce6ffaa2719650f329489401385
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-15 (bounced)
+
+Bounced on [bug-12-1](bugs/bug-12-1.md) (blocker). The snapshot strings were
+pasted from the code, not read against the Goal. No word except the state
+word renders at any width: `wide` is still seeded by a whole-line fit, so the
+words drop before any rank. The symbols/ascii lines still read `$?0.42`,
+`$/h0.2/h` and `t/s38t/s`. Reviewer re-run of the gates is green
+(passed=3036), but criterion 4 fails, and so do Goal items A, C and defect 2.
+
+**Notes for executor:** start from bug-12-1 § Root cause. Both causes are
+named down to the function. Before pasting any snapshot, check the line by eye
+against the Goal's examples: a 160-column emoji line with velocities present
+must contain `🌓 ctx 20%` and `↻ turn 12`, and no line contains `$?`, `/h`
+followed by a digit, or `t/s` followed by a digit.
