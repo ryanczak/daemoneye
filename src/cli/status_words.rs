@@ -29,6 +29,7 @@ pub(super) mod word {
     pub const BURN: &str = "burn";
     pub const TURN: &str = "turn";
     pub const TOK_PER_S: &str = "tok/s";
+    pub const MODEL: &str = "model:";
 
     pub const BACKGROUND: &str = "bg";
     pub const GHOST: &str = "ghost";

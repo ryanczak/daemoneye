@@ -652,10 +652,6 @@ fn short_model_name_strips_vendor_and_date_and_picks_the_mark() {
     assert_eq!(short_model_name("gemini-2.5-pro"), "2.5-pro");
     assert_eq!(short_model_name("openai/gpt-4o-mini"), "4o-mini");
     assert_eq!(short_model_name("ollama/llama3:8b"), "llama3:8b");
-    assert_eq!(
-        short_model_name("claude-sonnet-4-6").chars().count(),
-        short_model_name("claude-sonnet-4-6").chars().count()
-    );
 
     let m = |model: &str| vendor_mark(model, &EMOJI);
     assert_eq!(m("claude-sonnet-4-6"), "⟡");
@@ -1625,12 +1621,18 @@ fn the_symbols_and_ascii_dialects_use_the_same_words() {
         let mut d = m.clone();
         d.glyphs = set;
         let text = line_at(&d, now, 400);
-        for word in ["idle", "burn", "turn", "ghost", "shell", "bg"] {
+        for word in ["idle", "burn", "turn", "ghost", "shell", "bg", "model:"] {
             assert!(
                 text.contains(word),
                 "{set:?} speaks the same words: {word} in {text:?}"
             );
         }
+        // No dialect doubles a space around the model word: the mark leads
+        // it in the glyph dialects, and the word starts the ascii slot.
+        assert!(
+            !text.contains("  "),
+            "{set:?} never doubles a space: {text:?}"
+        );
         // The ascii cost never doubles the dollar.
         assert!(
             !text.contains("$$"),
@@ -1774,4 +1776,87 @@ fn the_symbols_and_ascii_alert_glyphs_are_unchanged() {
     // And the warning/critical glyphs in the emoji dialect are untouched.
     assert_eq!(EMOJI.alert_critical, "🔥");
     assert_eq!(EMOJI.alert_warning, "⚠");
+}
+
+// ── Phase 11 (M37): the model slot's word and its clean clip ────────────────
+
+#[test]
+fn the_model_slot_carries_the_model_word() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.session_name = None;
+    m.model = "ollama/deepseek-v4.1-flash".to_string();
+
+    // Wide: the word sits between the vendor mark and the name.
+    let text = line_at(&m, now, 400);
+    let mark_at = text.find("🦙").expect("the local vendor mark shows");
+    let word_at = text
+        .find("model: deepseek-v4")
+        .expect("the model word shows");
+    assert!(
+        mark_at < word_at && text[mark_at..].starts_with("🦙 model: deepseek-v4"),
+        "the word follows the vendor mark: {text:?}"
+    );
+
+    // Compact (the words have dropped): the glyph and the name, no word.
+    let mut width = 200usize;
+    while width > 20 {
+        let text = line_at(&m, now, width as u16);
+        if !text.contains("model:") {
+            assert!(
+                text.contains("🦙 deepseek-v4"),
+                "the compact form is glyph and name: {text:?}"
+            );
+            break;
+        }
+        width -= 1;
+    }
+    assert!(width > 20, "the model word never dropped");
+}
+
+#[test]
+fn the_model_name_is_clipped_at_a_token_boundary() {
+    assert_eq!(short_model_name("deepseek-v4.1-flash"), "deepseek-v4");
+    assert_eq!(short_model_name("qwen3.8-27b-instruct"), "qwen3.8-27b");
+    assert_eq!(
+        short_model_name("llama3.3-70b-instruct-q4_K_M"),
+        "llama3.3-70b"
+    );
+    assert_eq!(short_model_name("abcdefghijklmnop"), "abcdefghijkl");
+    assert_eq!(short_model_name("sonnet-4-6"), "sonnet-4-6");
+
+    // Never end on a separator; a name of exactly 12 columns is untouched.
+    for name in ["a.b.c.d.e.fgh", "x-y_z.w-v", "abcdefghijkl"] {
+        let short = short_model_name(name);
+        assert!(
+            !short.ends_with(['-', '.', '_']),
+            "the clip never ends on a separator: {name} → {short}"
+        );
+    }
+    assert_eq!(short_model_name("abcdefghijkl"), "abcdefghijkl");
+}
+
+#[test]
+fn the_ascii_dialect_starts_the_model_slot_with_the_word() {
+    let now = Instant::now();
+    let mut m = full_model();
+    m.turn_started_at = None;
+    m.state = ChatState::Idle;
+    m.alerts.clear();
+    m.session_name = None;
+    m.glyphs = &ASCII;
+    let text = line_at(&m, now, 400);
+    let at = text
+        .find("model: sonnet-4-6")
+        .expect("the ascii model word shows");
+    let prev = text[..at].chars().next_back();
+    assert!(
+        prev.is_none_or(|c| c == ' '),
+        "one space between slots, never two, beside the word: {text:?}"
+    );
+    let after = &text[at + "model: sonnet-4-6".len()..];
+    assert!(
+        !after.trim_start().starts_with(' '),
+        "no doubled space after the model slot: {text:?}"
+    );
 }

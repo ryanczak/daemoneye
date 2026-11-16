@@ -78,10 +78,12 @@ while the user still sees it in chat.
 7. **Status bar words** (PE, 2026-11-15, amending decision 3). Decision 3's
    "every segment is a glyph and a number" gives way: each item carries a
    word (`idle`, `thinking 12s`, `ctx 2%`, `turn 7`, `2 shells`, `grants 3`,
-   `scripts 2`), in all three dialects. When the line does not fit, the words
-   drop first, all at once, back to the glyph-and-number form; the state word
-   never drops (the alert severity word does drop, to `⚠1`; PE, 2026-11-15). Phase 09. The working state's
-   `⏱` elapsed mark went with it: `thinking 12s` already reads as elapsed.
+   `scripts 2`, `model: deepseek-v4`), in all three dialects. When the line
+   does not fit, the words drop first, all at once, back to the
+   glyph-and-number form; the state word never drops (the alert severity
+   word does drop, to `⚠1`; PE, 2026-11-15). Phase 09; the model word is
+   phase 11. The working state's `⏱` elapsed mark went with it:
+   `thinking 12s` already reads as elapsed.
 4. **Many alerts: the worst, plus a count.** The alert glyph is the worst
    firing severity, the number is every firing alert; the name and age
    are the newest alert of that severity.
@@ -141,7 +143,7 @@ while the user still sees it in chat.
 
 ## Phases
 
-Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 02 split into 02a/02b at scoping; 02c added 2026-11-14 for the grants slot; 09 added 2026-11-15 for the status-bar words; 10 added 2026-11-15 for chat panel polish before the live check).
+Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 02 split into 02a/02b at scoping; 02c added 2026-11-14 for the grants slot; 09 added 2026-11-15 for the status-bar words; 10 added 2026-11-15 for chat panel polish before the live check; 11 added 2026-11-15 for the model word; 12 added 2026-11-15 for the bar's final form).
 
 | #  | Phase | Scope | Status |
 |----|-------|-------|--------|
@@ -157,6 +159,8 @@ Drafted one at a time with `/rexymcp:architect next`. Expected count: 5 (phase 0
 | 08 | away-digest ([phase-08-away-digest.md](phase-08-away-digest.md)): the first chat to attach after a gap gets one summary — script runs per job (ok/failed) and alerts fired per name — delivered once, joined to the attach brief | issue #5 (pre-close bug fix; PE: first-attach, once, counts since the last interactive chat, 2026-11-15) | done        |
 | 09 | status-bar-words ([phase-09-status-bar-words.md](phase-09-status-bar-words.md)): every bar item and every grants kind gets a pithy word in all three dialects; when the line does not fit the words drop first, all at once, back to the glyph-and-number form | decision 7 (PE, 2026-11-15, amending decision 3) | done           |
 | 10 | chat-panel-polish ([phase-10-chat-panel-polish.md](phase-10-chat-panel-polish.md)): the input box takes the history panels' bold red border and `╭`/`╮` `╰`/`╯` corners; the terminal approval panel is titled `user@host:sN`, the shell picked before the prompt (never created or connected) and pinned for the run; the info alert glyph becomes a yellow `⚠` and the cost glyph `💰` | pre-close polish (PE: pick + pin, user/host from the ssh target, 2026-11-15) | done |
+| 11 | status-bar-model-word ([phase-11-status-bar-model-word.md](phase-11-status-bar-model-word.md)): the model slot's wide form reads `🦙 model: deepseek-v4.1`; the word drops with the others back to the glyph and name; the 12-column clip cuts at a token boundary (`deepseek-v4`, not `deepseek-v4.`) | decision 7 (PE, 2026-11-15) | in-progress |
+| 12 | status-bar-final-form ([phase-12-status-bar-final-form.md](phase-12-status-bar-final-form.md)): the words drop after the grants detail, the velocities and the alert name/age, not before everything; the counters form one slot; unknown pricing is `?0.42` not `0.42❔`; the `/h/h` and `t/s…t/s` doublings, the emoji hare in `symbols` and the `⚦` agents glyph are fixed; whole-line snapshot tests at 160/120/80/40 in three dialects | decision 8 (PE, 2026-11-15) | todo |
 
 ## Notes
 

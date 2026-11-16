@@ -65,8 +65,7 @@ pub fn glyph_set_name(g: &GlyphSet) -> &'static str {
 /// included — is not UTF-8.
 pub fn locale_is_utf8(lang: Option<&str>, lc_all: Option<&str>, lc_ctype: Option<&str>) -> bool {
     fn utf8(v: &str) -> bool {
-        let lower = v.to_ascii_lowercase();
-        lower.contains("utf-8") || lower.contains("utf8")
+        v.to_ascii_lowercase().contains("utf-8") || v.to_ascii_lowercase().contains("utf8")
     }
     [lang, lc_all, lc_ctype]
         .into_iter()
@@ -322,7 +321,6 @@ pub fn status_bar_line(
     } else {
         NARROW_SEP
     };
-
     let mut slots: Vec<Vec<Part>> = vec![
         vec![state_part(model, now, g)],
         alert_parts(model, now, g, palette),
@@ -470,17 +468,12 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
         };
         let rank = active_severity_rank(&resolved.severity);
         // Wide: `🧯 resolved Watchdog`; compact: `🧯 Watchdog` (today).
+        let resolved_text = format!("{} {}", g.alert_resolved, word::RESOLVED);
         let wide = if resolved.name.is_empty() {
-            vec![Span::styled(
-                format!("{} {}", g.alert_resolved, word::RESOLVED),
-                severity_style(rank),
-            )]
+            vec![Span::styled(resolved_text, severity_style(rank))]
         } else {
             vec![
-                Span::styled(
-                    format!("{} {}", g.alert_resolved, word::RESOLVED),
-                    severity_style(rank),
-                ),
+                Span::styled(resolved_text, severity_style(rank)),
                 Span::styled(format!(" {}", resolved.name), gray()),
             ]
         };
@@ -563,8 +556,6 @@ fn alert_parts(model: &StatusModel, now: Instant, g: &GlyphSet, palette: &Palett
     }
     parts
 }
-
-pub(super) use words::{age_str, clip_to_width, compact_tokens};
 
 /// The context slot: the fill glyph for `prompt_tokens / context_window` in
 /// five steps, then the percentage — amber at ≥ 75 %, red at ≥ 90 % — then,
@@ -692,19 +683,31 @@ fn cost_parts(model: &StatusModel, now: Instant, g: &GlyphSet) -> Vec<Part> {
     parts
 }
 
-/// The model slot: the vendor mark and the short name.
+/// The model slot: the vendor mark and the short name. Wide carries the
+/// word (`🦙 model: deepseek-v4`); compact is byte-for-byte the pre-words
+/// bar (`🦙 deepseek-v4`). The ascii dialect has no vendor mark, so the
+/// word starts the slot there — no leading space in either form.
 fn model_parts(model: &StatusModel, g: &GlyphSet) -> Vec<Part> {
     let name = short_model_name(&model.model);
     if name.is_empty() {
         return Vec::new();
     }
     let mark = vendor_mark(&model.model, g);
-    let text = if mark.is_empty() {
-        name
+    let lead = if mark.is_empty() {
+        String::new()
     } else {
-        format!("{mark} {name}")
+        format!("{mark} ")
     };
-    vec![Part::new(vec![Span::styled(text, gray())], RANK_MODEL)]
+    let wide = vec![Span::styled(
+        format!("{lead}{} {name}", word::MODEL),
+        gray(),
+    )];
+    let compact = vec![Span::styled(format!("{lead}{name}"), gray())];
+    vec![Part {
+        wide,
+        compact,
+        rank: RANK_MODEL,
+    }]
 }
 
 /// The vendor mark for a model id: Anthropic, OpenAI, Gemini, otherwise the
@@ -724,7 +727,9 @@ fn vendor_mark(model: &str, g: &GlyphSet) -> &'static str {
 
 /// Shorten a model id for the bar: a `vendor/` path and the vendor prefix
 /// (`claude-`, `gpt-`, `gemini-`) removed, a trailing `-YYYYMMDD` snapshot
-/// date removed, then clipped to 12 columns.
+/// date removed, then clipped to 12 columns — at a `-`/`.`/`_` token
+/// boundary when one leaves at least 6 columns, so the clip never leaves a
+/// stray separator or a mid-token fragment on the end.
 fn short_model_name(model: &str) -> String {
     let mut name = model.rsplit('/').next().unwrap_or(model).to_string();
     for prefix in ["claude-", "gpt-", "gemini-"] {
@@ -740,7 +745,30 @@ fn short_model_name(model: &str) -> String {
     {
         name.truncate(name.len() - 9);
     }
-    clip_to_width(&name, 12)
+    if unicode_width::UnicodeWidthStr::width(name.as_str()) <= 12 {
+        return name;
+    }
+    let seps = ['-', '.', '_'];
+    let mut best: Option<usize> = None;
+    let mut used = 0usize;
+    for (i, ch) in name.char_indices() {
+        if used >= 6 && seps.contains(&ch) {
+            best = Some(i);
+        }
+        used += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used > 12 {
+            break;
+        }
+    }
+    // A separator cut never leaves a separator on the end; the hard clip can.
+    let mut cut = match best {
+        Some(i) => name[..i].to_string(),
+        None => clip_to_width(&name, 12),
+    };
+    while cut.chars().next_back().is_some_and(|c| seps.contains(&c)) {
+        cut.pop();
+    }
+    cut
 }
 
 /// The session slot: hidden when unnamed; the session glyph, the dirty mark
@@ -768,6 +796,7 @@ use fit::{
     RANK_SESSION, RANK_SHELLS, RANK_STATE, RANK_TOOLS, WIDE_SEP, join_slots, line_fits,
 };
 use words::{TwoFormPart as Part, counter_parts, turn_parts, two_form as part_two_form, word};
+use words::{age_str, clip_to_width, compact_tokens};
 
 #[cfg(test)]
 #[path = "status_bar_tests.rs"]
