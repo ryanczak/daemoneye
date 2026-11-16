@@ -147,3 +147,41 @@ timeout 600 cargo test 2>&1 | grep -E '^test result' | awk '{p+=$4; f+=$6} END {
 
 **Executor:** GLM-5.3-Flash (headless run). Phase flipped to `in-progress`;
 task 1 (the word) begins.
+
+### Update — 2026-11-15 17:55 (blocker)
+
+**Blocked on:** one existing render test pins a wide-bar string that the
+model word pushes past its pane width, and that test file is outside this
+phase's Authorizations.
+
+**What I tried:**
+- Implemented all six spec tasks. `word::MODEL` added; the clip cuts at a
+  token boundary; `model_parts` builds the two-form part; the task-4 tests
+  written in `status_bar_tests.rs` (all green); docs updated; both mutation
+  checks run (red then reverted, green again). fmt/build (0 warnings)/clippy
+  pass. `cargo test --lib`: 2929 passed, 1 failed.
+- The failure is `render_ratatui_tests::status_bar_shows_turn_on_every_panel`
+  (`src/cli/render_ratatui_tests.rs:857`). It draws at a 60-column pane and
+  asserts the buffer contains `↻ turn 6`, `t turn 6` or `t6`. Baseline
+  (tree at `c176348c`, verified in a scratch clone): the wide bar is
+  56 columns, fits, and the assertion matches `↻ turn 6`. With the phase's
+  wide form the bar is 63 columns (`🦙` + ` model:` adds 7), does not fit,
+  and the existing words-drop step correctly drops every word at once —
+  the line becomes compact (`↻6`), which matches none of the three
+  accepted strings. Verified by copying only the two changed files into a
+  scratch clone of `c176348c`: fail reproduces; reverting either file
+  restores green. The phase's negative criterion ("no existing test that
+  pins a compact bar string changes") covers compact pins only; this test
+  pins a wide string at a fixed width, which the spec did not anticipate.
+- Considered and rejected within scope: making the wide form anything other
+  than `<mark> model: <name>` (the spec pins it byte-for-byte), exempting
+  the model word from the drop (out of scope), and shrinking `RANK_MODEL`'s
+  drop position (drop ranks are out of scope).
+
+**What I need:** a decision on `render_ratatui_tests.rs`. Either authorize
+this phase (or the reviewer pass) to update that one assertion to accept
+the compact `↻6` form — matching how the existing `status_bar` tests scan
+widths for the drop — or re-home the test's 60-column expectation to a
+wider pane where the wide bar still fits (63 columns fits at ≥ 64). The
+implementation is committed (`33346951`); every other acceptance criterion
+holds. The phase stays `in-progress`.
