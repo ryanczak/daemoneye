@@ -105,7 +105,8 @@ while the user still sees it in chat.
      Burn is `💸` (was `⛽`) and its rate carries the spend's currency sign
      in both forms (`💸$0.4/h`, `💸?0.4/h` under unknown pricing). The
      counters sit in the order background, tools, ghosts, shells
-     (`⏳2 🔧7 👻1 🐚3`); their drop ranks are unchanged.
+     (`⏳2 🔧7 👻1 🐚3`); their drop ranks are unchanged. The burn part has
+     no word: `/h` is its word, so wide is `💸 $0.4/h` (PE, 2026-11-15).
    - **Counter grouping.** The four counters (`⏳2 🔧7 👻1 🐚3`) are one
      slot, single spaces inside it, ` · ` between slots; each keeps its own
      rank and drops alone.

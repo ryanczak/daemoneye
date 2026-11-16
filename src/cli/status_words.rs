@@ -26,7 +26,6 @@ pub(super) mod word {
     pub const RESOLVED: &str = "resolved";
 
     pub const CONTEXT: &str = "ctx";
-    pub const BURN: &str = "burn";
     pub const TURN: &str = "turn";
     pub const TOK_PER_S: &str = "tok/s";
     pub const MODEL: &str = "model:";

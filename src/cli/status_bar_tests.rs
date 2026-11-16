@@ -1352,7 +1352,10 @@ fn wide_form_carries_the_words() {
     assert!(text.contains("🌓 ctx 20%"), "context word: {text:?}");
     assert!(text.contains("📈 +3.1k"), "growth word: {text:?}");
     assert!(text.contains("💰 ?0.42"), "cost word: {text:?}");
-    assert!(text.contains("💸 ?0.4/h burn"), "burn word: {text:?}");
+    assert!(
+        text.contains("💸 ?0.4/h"),
+        "burn wide form, no word: {text:?}"
+    );
     assert!(text.contains("🔄 turn 12"), "turn word: {text:?}");
     assert!(text.contains("🐇 38 tok/s"), "throughput word: {text:?}");
 
@@ -1423,7 +1426,7 @@ fn words_drop_all_at_once_at_their_rank() {
     assert!(width > 20, "no width under 200 drops the words");
     let text = line_at(&m, now, width as u16);
     for word in [
-        "warn", "ctx", "burn", "turn", "tok/s", " ghost", " tool", " shell", " bg",
+        "warn", "ctx", "turn", "tok/s", " ghost", " tool", " shell", " bg",
     ] {
         assert!(
             !text.contains(word),
@@ -1625,7 +1628,7 @@ fn the_symbols_and_ascii_dialects_use_the_same_words() {
         let mut d = m.clone();
         d.glyphs = set;
         let text = line_at(&d, now, 400);
-        for word in ["idle", "burn", "turn", "ghost", "shell", "bg", "model:"] {
+        for word in ["idle", "turn", "ghost", "shell", "bg", "model:"] {
             assert!(
                 text.contains(word),
                 "{set:?} speaks the same words: {word} in {text:?}"
@@ -1781,7 +1784,7 @@ fn the_cost_glyph_is_a_money_bag() {
     let wide = line_at(&m, now, 400);
     assert!(wide.contains("💰 ?0.42"), "wide cost: {wide:?}");
     assert!(
-        wide.contains("💰 ?0.42 💸 ?0.4/h burn"),
+        wide.contains("💰 ?0.42 💸 ?0.4/h"),
         "the burn follows the spend with the same sign: {wide:?}"
     );
     assert!(!wide.contains("❔"), "no `❔` suffix wide: {wide:?}");
