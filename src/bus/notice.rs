@@ -124,6 +124,22 @@ impl Notice {
         self.labels.insert(key.into(), value.into());
         self
     }
+
+    /// The text the history sink appends to a session: the title, or
+    /// `title + "\n" + body` when the body is non-empty.
+    pub fn history_text(&self) -> String {
+        if self.body.is_empty() {
+            self.title.clone()
+        } else {
+            format!("{}\n{}", self.title, self.body)
+        }
+    }
+
+    /// The one-line form the chat-notice overlay shows: the title's first
+    /// line.
+    pub fn line(&self) -> &str {
+        self.title.lines().next().unwrap_or(&self.title)
+    }
 }
 
 #[cfg(test)]
@@ -176,5 +192,36 @@ mod tests {
         assert_eq!(n.session.as_deref(), Some("sess-1"));
         assert_eq!(n.body, "disk full");
         assert_eq!(n.labels.get("host").map(String::as_str), Some("pinky"));
+    }
+
+    #[test]
+    fn notice_history_text_joins_title_and_body() {
+        let bare = Notice::new(Severity::Info, Source::Webhook, "HighCPU", "CPU at 95%");
+        assert_eq!(
+            bare.history_text(),
+            "CPU at 95%",
+            "an empty body gives the title alone"
+        );
+        let full = Notice::new(Severity::Info, Source::Webhook, "HighCPU", "CPU at 95%")
+            .body("check node exporter");
+        assert_eq!(
+            full.history_text(),
+            "CPU at 95%\ncheck node exporter",
+            "a non-empty body is joined under the title"
+        );
+    }
+
+    #[test]
+    fn notice_line_is_the_titles_first_line() {
+        let n = Notice::new(
+            Severity::Info,
+            Source::Webhook,
+            "HighCPU",
+            "CPU at 95%\nnode2",
+        )
+        .body("body");
+        assert_eq!(n.line(), "CPU at 95%");
+        let single = Notice::new(Severity::Info, Source::Ghost, "clean exit", "one line");
+        assert_eq!(single.line(), "one line");
     }
 }

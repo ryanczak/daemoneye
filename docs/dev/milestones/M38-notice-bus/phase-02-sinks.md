@@ -1,7 +1,7 @@
 # Phase 02 — sinks
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-16
 **Depends on:** phase-01
 **Estimated diff:** ~450 lines, about half of it tests
@@ -157,3 +157,9 @@ registered but no producer publishes until phase 03.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-16 22:21 (started, executor)
+
+**Executor:** phase-02 run, headless.
+
+Flipped the phase to `in-progress`; implementing the Spec tasks in order.

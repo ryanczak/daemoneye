@@ -82,6 +82,31 @@ fn recover_schedules(store: &ScheduleStore) {
     }
 }
 
+/// Remove pipe logs and stop sentinels left behind by a previous daemon run:
+/// stale pipe content must never be shown to the AI, and a `daemoneye stop
+/// <run>` from a terminal whose daemon died would otherwise still be honoured
+/// on restart. Only `stop-*` entries are removed — everything else in
+/// var/run (pid, socket, schedules, pane prefs, the shells subtree) survives.
+fn sweep_stale_var_run_artifacts() {
+    if let Ok(entries) = std::fs::read_dir(crate::config::pipe_log_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("de-pipe-") && name_str.ends_with(".log") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    if let Ok(entries) = std::fs::read_dir(crate::config::var_run_dir()) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if crate::daemon::run::is_stop_sentinel_name(&name.to_string_lossy()) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
 /// Start the daemon process.
 ///
 /// Lifecycle:
@@ -221,29 +246,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // R1: clean up any pipe log files left behind by a previous daemon run so
     // stale content from a different session is never shown to the AI.
-    if let Ok(entries) = std::fs::read_dir(crate::config::pipe_log_dir()) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with("de-pipe-") && name_str.ends_with(".log") {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
-
-    // Remove stop sentinels left behind by a previous daemon run: a
-    // `daemoneye stop <run>` from a terminal whose daemon died would
-    // otherwise still be honoured on restart. Only `stop-*` entries are
-    // removed — everything else in var/run (pid, socket, schedules,
-    // pane prefs, the shells subtree) must survive.
-    if let Ok(entries) = std::fs::read_dir(crate::config::var_run_dir()) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            if crate::daemon::run::is_stop_sentinel_name(&name.to_string_lossy()) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-    }
+    sweep_stale_var_run_artifacts();
 
     let default_model = startup_config.resolve_model(None);
     let api_key = default_model.resolve_api_key();
@@ -414,6 +417,18 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     ));
 
     let sessions: SessionStore = SessionStore::new();
+
+    // M38 phase 02: the notice bus's three sinks subscribe on the global bus
+    // right after the store exists, with 2.9.0's default routes. No producer
+    // publishes yet (phases 03–05), so this changes no runtime behaviour.
+    let threshold = crate::daemon::notice_sinks::threshold_from_config(
+        &crate::config::current().webhook.severity_threshold,
+    );
+    crate::daemon::notice_sinks::register_default_sinks(
+        crate::bus::global(),
+        sessions.clone(),
+        crate::daemon::notice_sinks::default_routes(threshold),
+    );
 
     // Load or create the schedule store.
     let schedules_path = Config::schedules_path();

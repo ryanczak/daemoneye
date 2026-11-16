@@ -98,7 +98,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | #  | Phase | Status |
 |----|-------|--------|
 | 01 | bus-core ([phase-01-bus-core.md](phase-01-bus-core.md)) | done |
-| 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | todo |
+| 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | in-progress |
 | 03 | webhook producer | planned |
 | 04 | scheduler and watchdog producers | planned |
 | 05 | ghost lifecycle and background producers | planned |
