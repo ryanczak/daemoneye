@@ -1373,3 +1373,18 @@ fn ipc_reload_round_trip() {
         _ => panic!("wrong variant"),
     }
 }
+
+// ── Approval deadlines ───────────────────────────────────────────────────
+
+/// The client's panel deadline sits a whole margin inside the daemon's wait,
+/// so the client's timeout denial always lands on a daemon still reading
+/// (F7; the M37 live check saw equal deadlines race into `Broken pipe`).
+#[test]
+fn client_approval_deadline_sits_inside_the_daemons() {
+    assert!(APPROVAL_CLIENT_MARGIN >= std::time::Duration::from_secs(2));
+    assert_eq!(
+        APPROVAL_TIMEOUT - CLIENT_APPROVAL_TIMEOUT,
+        APPROVAL_CLIENT_MARGIN
+    );
+    assert!(CLIENT_APPROVAL_TIMEOUT >= std::time::Duration::from_secs(30));
+}

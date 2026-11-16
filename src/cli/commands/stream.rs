@@ -9,7 +9,7 @@ use tokio::io::BufReader;
 
 use crate::cli::input::*;
 use crate::cli::markdown::MarkdownRenderer;
-use crate::ipc::{APPROVAL_TIMEOUT, Request, Response};
+use crate::ipc::{CLIENT_APPROVAL_TIMEOUT, Request, Response};
 
 use super::approval::SessionApproval;
 use super::interrupt::{InterruptAction, InterruptState};

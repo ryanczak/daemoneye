@@ -1,12 +1,23 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-/// How long a user has to approve or deny a foreground/background tool call.
-///
-/// Both sides of the approval exchange bound themselves with this: the daemon
-/// gives up on the user after it, and the client's read (F7) gives up on the
-/// panel at the same instant so the panel never outlives the daemon's wait.
+/// How long the daemon waits for a user to approve or deny a foreground or
+/// background tool call before it treats the silence as a denial.
 pub const APPROVAL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How far inside [`APPROVAL_TIMEOUT`] the client's own panel deadline sits.
+pub const APPROVAL_CLIENT_MARGIN: Duration = Duration::from_secs(5);
+
+/// The client's bound on an approval panel (F7): [`APPROVAL_TIMEOUT`] less
+/// [`APPROVAL_CLIENT_MARGIN`], so the panel always closes — and its denial
+/// reaches the daemon — while the daemon is still waiting for the line. The
+/// daemon's timer starts when it sends the prompt and the client's when it
+/// receives it, so two equal deadlines made the daemon's fire first: it
+/// denied the call, finished the turn and closed the ask connection, and the
+/// client's late reply failed with `Broken pipe` and showed `daemon down`
+/// with the daemon alive (the M37 live check, 2026-11-16).
+pub const CLIENT_APPROVAL_TIMEOUT: Duration =
+    APPROVAL_TIMEOUT.saturating_sub(APPROVAL_CLIENT_MARGIN);
 
 #[path = "ipc_types.rs"]
 mod types;

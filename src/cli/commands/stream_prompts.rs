@@ -150,9 +150,11 @@ async fn read_key_by(deadline: tokio::time::Instant, stdin: &AsyncStdin) -> Opti
 }
 
 /// Read the approval line through `read_key`, rendering the prompt and input
-/// in the live region (not scrollback). Bounded by `deadline`: past it the
-/// function returns `None` (F7) so the caller commits the timeout before the
-/// daemon's own wait lands and the next line typed never fails `Broken pipe`.
+/// in the live region (not scrollback). Bounded by `deadline` — the callers
+/// set it from [`CLIENT_APPROVAL_TIMEOUT`], a margin inside the daemon's
+/// wait: past it the function returns `None` (F7) so the caller commits the
+/// timeout and its denial reaches a daemon still waiting, and the next line
+/// typed never fails `Broken pipe`.
 async fn read_approval_input(
     renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
     stdin: &AsyncStdin,
@@ -339,7 +341,7 @@ async fn prompt_with_session_approve_view(
     prompt_text: &str,
     view: &crate::cli::diff::DiffView,
 ) -> (bool, bool, Option<String>) {
-    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + CLIENT_APPROVAL_TIMEOUT;
     loop {
         match read_approval_input_with_view(renderer, stdin, deadline, |r, line| {
             let _ = r.draw_prompt(prompt_text, line, status);
@@ -399,7 +401,7 @@ pub(super) async fn prompt_tool_call_ratatui(
         classification,
         crate::ipc::Classification::Command | crate::ipc::Classification::RemoteShell { .. }
     );
-    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + CLIENT_APPROVAL_TIMEOUT;
     let Some(input) = read_approval_input_panel(
         renderer,
         stdin,
@@ -501,7 +503,7 @@ pub(super) async fn prompt_pane_select_ratatui(
         ));
     }
     let prompt_text = "  Select pane › ";
-    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + CLIENT_APPROVAL_TIMEOUT;
     let input = read_approval_input(renderer, stdin, prompt_text, status, deadline)
         .await
         .unwrap_or_default();
@@ -522,7 +524,7 @@ pub(super) async fn prompt_yes_no_ratatui(
 ) -> bool {
     let _ = renderer.commit(&format!("\n  ⚙ {}\n", info));
     let full_prompt = format!("  {} [y/N] › ", prompt_text);
-    let deadline = tokio::time::Instant::now() + APPROVAL_TIMEOUT;
+    let deadline = tokio::time::Instant::now() + CLIENT_APPROVAL_TIMEOUT;
     let input = read_approval_input(renderer, stdin, &full_prompt, status, deadline)
         .await
         .unwrap_or_default();
