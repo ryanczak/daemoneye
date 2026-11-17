@@ -246,3 +246,20 @@ test result: ok. 0 passed; 0 failed; ...
 removed 13 production lines from `src/daemon/utils/response.rs` and
 added 88 test lines to `src/daemon/scheduled_tests.rs`, which stays
 within the 2000-line test cap (no `test` entry exists for it).
+
+### Update — 2026-11-17 (escalation)
+
+**Chosen lever:** none — route to `/rexymcp:review phase-04`
+**Rationale:** the `budget_exceeded` is not a failure of the phase: all 4
+tasks were done and both commits (`b0350535`, `119fc397`) landed by turn
+183 with four green gates; turns 184–1000 chased an intermittent
+`renaming /tmp/daemoneye_schedules_<pid>.tmp → … .json: No such file`
+panic in `daemon::scheduled` tests. That flake predates this phase:
+`ScheduleStore::new_empty()` (`src/scheduler.rs:281`) names its file by
+`process::id()` only, so every parallel test in the lib binary that uses
+it (8 call sites, including the 2026-10-25 `test_store` helper) shares
+one path and renames it out from under the others. This phase's new
+`fail_job_publishes_one_error_notice` adds one more user, raising the odds,
+but did not create the race. Review should judge the delivered diff on
+its own and handle the flake separately (a per-call counter in
+`new_empty`'s file name — its doc already promises a "unique temp file").
