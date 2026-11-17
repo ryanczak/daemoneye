@@ -562,7 +562,8 @@ pub struct WebhookConfig {
     /// Run runbook-based AI analysis when a matching runbook is found.
     #[serde(default = "default_true")]
     pub auto_analyze: bool,
-    /// Minimum severity to trigger AI analysis and fire_notification.
+    /// Minimum severity to trigger AI analysis; the notice-bus command sink
+    /// applies the same threshold to its webhook route.
     /// "info" | "warning" | "critical"
     #[serde(default = "default_severity_threshold")]
     pub severity_threshold: String,

@@ -468,9 +468,16 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             // The refusal is already recorded on the run's
                             // log; a tick-level caller has nothing to do
                             // with it.
-                            let _ =
-                                run_scheduled_job(job, store2, sn2, sessions2, cfg2, cache2, None)
-                                    .await;
+                            let _ = run_scheduled_job(
+                                job,
+                                store2,
+                                sn2,
+                                sessions2,
+                                cfg2,
+                                cache2,
+                                crate::bus::global(),
+                            )
+                            .await;
                         });
                     }
                 }

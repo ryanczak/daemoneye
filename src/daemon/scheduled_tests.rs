@@ -54,13 +54,14 @@ async fn scheduled_job_result_is_pushed_to_attached_clients() {
     );
     assert_eq!(presence_count("sched-notify-1"), 1);
 
-    let config = Config::default();
-    let notify_tx: Option<tokio::sync::mpsc::UnboundedSender<IpcResponse>> = None;
+    let sessions = SessionStore::new();
+    let bus = crate::daemon::notice_sinks::test_bus(sessions, crate::bus::Severity::Warning);
     notify_job_result(
-        "nightly-backup",
-        "Watchdog alert: nightly-backup".to_string(),
-        &config,
-        &notify_tx,
+        bus,
+        alert_job_notice(
+            &test_job("nightly-backup", ActionOn::Alert, "job-notify-1"),
+            "Watchdog alert: nightly-backup",
+        ),
     )
     .await;
 
@@ -595,8 +596,6 @@ fn test_store(job: &ScheduledJob) -> Arc<ScheduleStore> {
 }
 
 async fn run_refusal_arm(job: &ScheduledJob, store: &Arc<ScheduleStore>) -> (String, i32) {
-    let config = Config::default();
-    let notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>> = None;
     let reason = format!("refused: {COMMAND_REFUSAL_REASON}");
     crate::daemon::utils::log_event(
         "scheduled_job_refused",
@@ -606,7 +605,9 @@ async fn run_refusal_arm(job: &ScheduledJob, store: &Arc<ScheduleStore>) -> (Str
             "reason": COMMAND_REFUSAL_REASON,
         }),
     );
-    fail_job_terminal(job, store, &config, &notify_tx, reason.clone()).await;
+    let bus = crate::bus::Bus::with_journal(|_| {});
+    let leaked: &'static crate::bus::Bus = Box::leak(Box::new(bus));
+    fail_job_terminal(job, store, leaked, reason.clone()).await;
     (reason, 1)
 }
 
@@ -640,4 +641,152 @@ fn fake_runner() -> (crate::shell::SbxRunner, Calls, Canned) {
         })
     };
     (runner, calls, canned)
+}
+
+// ── M38 phase 04: the job notices the bus producers publish ───────────────
+
+/// A recording journal's sink, so a test can read the notices a producer
+/// published without registering any consumer. Leaked to `&'static Bus`,
+/// the shape `run_scheduled_job` and every helper take.
+fn recording_bus() -> (
+    &'static crate::bus::Bus,
+    std::sync::Arc<std::sync::Mutex<Vec<crate::bus::Notice>>>,
+) {
+    let journal: std::sync::Arc<std::sync::Mutex<Vec<crate::bus::Notice>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = std::sync::Arc::clone(&journal);
+    let bus: &'static crate::bus::Bus =
+        Box::leak(Box::new(crate::bus::Bus::with_journal(move |n| {
+            sink.lock().unwrap().push(n.clone())
+        })));
+    (bus, journal)
+}
+
+#[test]
+fn alert_job_notice_is_a_scheduler_warning() {
+    let job = test_job("disk-high", ActionOn::Alert, "job-alert-1");
+    let n = alert_job_notice(&job, "Watchdog alert: disk-high");
+    assert_eq!(n.source, crate::bus::Source::Scheduler);
+    assert_eq!(n.severity, crate::bus::Severity::Warning);
+    assert_eq!(n.name, "disk-high");
+    assert_eq!(n.source_id, "job-alert-1");
+    assert_eq!(n.labels.get("kind").map(String::as_str), Some("alert"));
+    assert_eq!(n.title, "Watchdog alert: disk-high");
+    assert_eq!(n.body, "", "a one-line alert message has no body");
+}
+
+#[test]
+fn script_job_notice_severity_follows_the_exit_code() {
+    let job = test_job(
+        "nightly-backup",
+        ActionOn::Script("backup.sh".into()),
+        "job-scr-1",
+    );
+    let msg = "`backup.sh` failed (exit 1)\n<output>\nboom\n</output>";
+    let failed = script_job_notice(&job, "backup.sh", msg, 1);
+    assert_eq!(
+        failed.severity,
+        crate::bus::Severity::Error,
+        "a non-zero exit is an Error"
+    );
+    assert_eq!(failed.title, "`backup.sh` failed (exit 1)");
+    assert_eq!(failed.body, "<output>\nboom\n</output>");
+    assert_eq!(failed.source, crate::bus::Source::Scheduler);
+    assert_eq!(failed.source_id, "job-scr-1");
+    assert_eq!(failed.name, "nightly-backup");
+    assert_eq!(
+        failed.labels.get("kind").map(String::as_str),
+        Some("script")
+    );
+
+    let ok = script_job_notice(
+        &job,
+        "backup.sh",
+        "`backup.sh` succeeded (exit 0)\n<output>\n\n</output>",
+        0,
+    );
+    assert_eq!(ok.severity, crate::bus::Severity::Info, "exit 0 is Info");
+    assert_eq!(ok.title, "`backup.sh` succeeded (exit 0)");
+}
+
+#[test]
+fn failure_notice_is_a_scheduler_error() {
+    let job = test_job(
+        "nightly-backup",
+        ActionOn::Script("backup.sh".into()),
+        "job-fail-1",
+    );
+    let n = failure_notice(&job, "refused: the command action moved to scripts");
+    assert_eq!(n.source, crate::bus::Source::Scheduler);
+    assert_eq!(n.severity, crate::bus::Severity::Error);
+    assert_eq!(n.name, "nightly-backup");
+    assert_eq!(n.source_id, "job-fail-1");
+    assert_eq!(n.labels.get("kind").map(String::as_str), Some("failure"));
+    assert_eq!(n.title, "refused: the command action moved to scripts");
+}
+
+#[test]
+fn watchdog_notice_is_a_watchdog_warning() {
+    let job = test_job(
+        "disk-check",
+        ActionOn::Script("check.sh".into()),
+        "job-wd-1",
+    );
+    let n = watchdog_notice(&job, "Disk at 92%\nGHOST_TRIGGER: NO");
+    assert_eq!(n.source, crate::bus::Source::Watchdog);
+    assert_eq!(n.severity, crate::bus::Severity::Warning);
+    assert_eq!(n.name, "disk-check");
+    assert_eq!(n.source_id, "job-wd-1");
+    assert_eq!(n.labels.get("kind").map(String::as_str), Some("watchdog"));
+    assert_eq!(n.title, "[Watchdog] disk-check: Disk at 92%");
+    assert_eq!(n.body, "GHOST_TRIGGER: NO");
+}
+
+#[tokio::test]
+async fn fail_job_publishes_one_error_notice() {
+    let job = test_job(
+        "nightly-backup",
+        ActionOn::Script("backup.sh".into()),
+        "job-fj-1",
+    );
+    let store = test_store(&job);
+    let (bus, journal) = recording_bus();
+    fail_job(&job, &store, bus, "boom: exit 7".to_string()).await;
+
+    let notices = journal.lock().unwrap();
+    assert_eq!(
+        notices.len(),
+        1,
+        "a failed job publishes exactly one notice: {notices:?}"
+    );
+    let n = &notices[0];
+    assert_eq!(n.source, crate::bus::Source::Scheduler);
+    assert_eq!(n.severity, crate::bus::Severity::Error);
+    assert_eq!(n.name, "nightly-backup");
+    assert_eq!(n.source_id, "job-fj-1");
+    assert_eq!(n.labels.get("kind").map(String::as_str), Some("failure"));
+    drop(notices);
+
+    let status = store
+        .list()
+        .into_iter()
+        .find(|j| j.id == "job-fj-1")
+        .map(|j| j.status);
+    assert!(
+        matches!(
+            status,
+            Some(JobStatus::Failed(_)) | Some(JobStatus::Pending)
+        ),
+        "the failed run is recorded: {status:?}"
+    );
+    let last_error = store
+        .list()
+        .into_iter()
+        .find(|j| j.id == "job-fj-1")
+        .and_then(|j| j.last_error);
+    assert_eq!(
+        last_error.as_deref(),
+        Some("boom: exit 7"),
+        "the job's failure reason is recorded"
+    );
 }

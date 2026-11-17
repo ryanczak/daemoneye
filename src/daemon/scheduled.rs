@@ -4,7 +4,6 @@ use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_tur
 use crate::daemon::run::{Briefing, RunId, RunKind, RunLogGuard, RunState};
 use crate::daemon::session::*;
 use crate::daemon::utils::*;
-use crate::ipc::Response;
 use crate::scheduler::{ActionOn, JobStatus, ScheduleStore, ScheduledJob};
 use crate::scripts;
 use crate::shell::{Owner, ShellRegistry};
@@ -91,54 +90,115 @@ fn resolve_failure(job_name: &str, reason: &str) -> String {
     format!("Scheduled job '{job_name}' failed: {reason}")
 }
 
-/// Send the job's result to any listening chat client and fire
-/// `[notifications] on_alert`. The one notify tail a scheduled job has, so
-/// the success, failure and refusal paths cannot diverge on it. The message
-/// is also broadcast to every attached chat over the presence connection
-/// (M27 phase 03b); delivering to nobody is the normal no-chat case.
-async fn notify_job_result(
-    job_name: &str,
-    msg: String,
-    config: &Config,
-    notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
-) {
-    if let Some(tx) = notify_tx.as_ref()
-        && let Err(e) = tx.send(Response::SystemMsg(msg.clone()))
-    {
-        log::debug!(
-            "scheduled job '{}': dropped notification (no receiver): {}",
-            job_name,
-            e
-        );
+/// Split a message into its first line and the rest: the notice's title and
+/// body. The remaining lines keep their newlines.
+fn split_first_line(text: &str) -> (String, String) {
+    match text.split_once('\n') {
+        Some((first, rest)) => (first.to_string(), rest.to_string()),
+        None => (text.to_string(), String::new()),
     }
-    presence_broadcast(&msg);
-    fire_notification(job_name, &msg, config);
 }
 
-/// Mark the job failed, notify, and return. The one failure tail, shared by
-/// every path that cannot run the script.
+/// The `Scheduler` notice the `ActionOn::Alert` arm publishes: `Warning`,
+/// kind `alert`, title the message's first line, body the rest.
+fn alert_job_notice(job: &ScheduledJob, msg: &str) -> crate::bus::Notice {
+    let (title, body) = split_first_line(msg);
+    crate::bus::Notice::new(
+        crate::bus::Severity::Warning,
+        crate::bus::Source::Scheduler,
+        &job.name,
+        title,
+    )
+    .source_id(&job.id)
+    .body(body)
+    .label("kind", "alert")
+}
+
+/// The `Scheduler` notice a script run publishes: `Info` on exit 0, `Error`
+/// otherwise, kind `script`, title the `` `<script>` … (exit N) `` line,
+/// body the `<output>` block.
+fn script_job_notice(
+    job: &ScheduledJob,
+    script_name: &str,
+    msg: &str,
+    exit_code: i32,
+) -> crate::bus::Notice {
+    let severity = if exit_code == 0 {
+        crate::bus::Severity::Info
+    } else {
+        crate::bus::Severity::Error
+    };
+    let (title, body) = split_first_line(msg);
+    crate::bus::Notice::new(severity, crate::bus::Source::Scheduler, &job.name, title)
+        .source_id(&job.id)
+        .body(body)
+        .label("kind", "script")
+        .label("exit_code", exit_code.to_string())
+        .label("script", script_name)
+}
+
+/// The `Scheduler` notice `fail_job` / `fail_job_terminal` publish: `Error`,
+/// kind `failure`, title the reason's first line, body the rest.
+fn failure_notice(job: &ScheduledJob, reason: &str) -> crate::bus::Notice {
+    let (title, body) = split_first_line(reason);
+    crate::bus::Notice::new(
+        crate::bus::Severity::Error,
+        crate::bus::Source::Scheduler,
+        &job.name,
+        title,
+    )
+    .source_id(&job.id)
+    .body(body)
+    .label("kind", "failure")
+}
+
+/// The `Watchdog` notice a runbook watchdog's response publishes: `Warning`,
+/// kind `watchdog`, title `"[Watchdog] <name>: "` + the response's first
+/// line, body the rest.
+fn watchdog_notice(job: &ScheduledJob, response: &str) -> crate::bus::Notice {
+    let (title, body) = split_first_line(response.trim());
+    crate::bus::Notice::new(
+        crate::bus::Severity::Warning,
+        crate::bus::Source::Watchdog,
+        &job.name,
+        format!("[Watchdog] {}: {}", job.name, title),
+    )
+    .source_id(&job.id)
+    .body(body)
+    .label("kind", "watchdog")
+}
+
+/// Publish the job's result notice on the bus. The one notify tail a
+/// scheduled job has, so the success, failure and refusal paths cannot
+/// diverge on it. The bus fans the notice out to the sinks — the chat
+/// notice, the `on_alert` command — each behind its own routes; delivering
+/// to nobody is the normal no-chat case.
+async fn notify_job_result(bus: &'static crate::bus::Bus, notice: crate::bus::Notice) {
+    bus.publish(notice);
+}
+
+/// Mark the job failed, publish its failure notice, and return. The one
+/// failure tail, shared by every path that cannot run the script.
 async fn fail_job(
     job: &ScheduledJob,
     store: &Arc<ScheduleStore>,
-    config: &Config,
-    notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    bus: &'static crate::bus::Bus,
     reason: String,
 ) {
     store.mark_done(&job.id, false, Some(reason.clone()));
-    notify_job_result(&job.name, reason, config, notify_tx).await;
+    notify_job_result(bus, failure_notice(job, &reason)).await;
 }
 
 /// Mark the job failed terminally — it can never run, so it must not be
-/// re-fired at every slot — then notify and return.
+/// re-fired at every slot — then publish its failure notice and return.
 async fn fail_job_terminal(
     job: &ScheduledJob,
     store: &Arc<ScheduleStore>,
-    config: &Config,
-    notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    bus: &'static crate::bus::Bus,
     reason: String,
 ) {
     store.mark_failed_terminal(&job.id, reason.clone());
-    notify_job_result(&job.name, reason, config, notify_tx).await;
+    notify_job_result(bus, failure_notice(job, &reason)).await;
 }
 
 /// Jobs due this tick, whatever the daemon's adopted session name is.
@@ -193,7 +253,7 @@ pub async fn run_scheduled_job(
     sessions: SessionStore,
     config: Config,
     cache: Arc<crate::tmux::cache::SessionCache>,
-    notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    bus: &'static crate::bus::Bus,
 ) -> Result<(), String> {
     let job_id = job.id.clone();
     let job_name = job.name.clone();
@@ -204,16 +264,8 @@ pub async fn run_scheduled_job(
             job: job_name.clone(),
         },
     );
-    let refusal = run_scheduled_job_inner(
-        job,
-        store.clone(),
-        session,
-        sessions,
-        config,
-        cache,
-        notify_tx,
-    )
-    .await;
+    let refusal =
+        run_scheduled_job_inner(job, store.clone(), session, sessions, config, cache, bus).await;
     let record = store
         .list()
         .into_iter()
@@ -237,7 +289,7 @@ async fn run_scheduled_job_inner(
     sessions: SessionStore,
     config: Config,
     cache: Arc<crate::tmux::cache::SessionCache>,
-    notify_tx: Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    bus: &'static crate::bus::Bus,
 ) -> Option<String> {
     crate::daemon::stats::inc_schedules_executed();
 
@@ -372,7 +424,7 @@ async fn run_scheduled_job_inner(
             // Pure alert: no command to run.
             store.mark_done(&job.id, true, None);
             let msg = format!("Watchdog alert: {}", job.name);
-            notify_job_result(&job.name, msg, &config, &notify_tx).await;
+            notify_job_result(bus, alert_job_notice(&job, &msg)).await;
         }
         ActionOn::Command(_) => {
             // Removed: the job still loads from old schedules.json files but
@@ -394,8 +446,7 @@ async fn run_scheduled_job_inner(
             fail_job_terminal(
                 &job,
                 &store,
-                &config,
-                &notify_tx,
+                bus,
                 format!("refused: {}", COMMAND_REFUSAL_REASON),
             )
             .await;
@@ -406,18 +457,11 @@ async fn run_scheduled_job_inner(
                 Err(e) => {
                     let msg = resolve_failure(&job.name, &format!("{e:#}"));
                     log::error!("{}", msg);
-                    fail_job(&job, &store, &config, &notify_tx, msg).await;
+                    fail_job(&job, &store, bus, msg).await;
                     return None;
                 }
             };
-            run_script_job(
-                &job,
-                &host_path.to_string_lossy(),
-                &store,
-                &config,
-                &notify_tx,
-            )
-            .await;
+            run_script_job(&job, &host_path.to_string_lossy(), &store, &config, bus).await;
         }
         ActionOn::Ghost { .. } => {}
     }
@@ -433,7 +477,7 @@ async fn run_script_job(
     host_path: &str,
     store: &Arc<ScheduleStore>,
     config: &Config,
-    notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    bus: &'static crate::bus::Bus,
 ) -> Option<String> {
     let owner = Owner::Scheduler(job.id.clone());
     let reg = crate::shell::registry();
@@ -486,7 +530,7 @@ async fn run_script_job(
 
     let normalized = normalize_output(&output);
     let success = exit_code == 0;
-    let watchdog_refusal = run_watchdog(job, &normalized, config, notify_tx).await;
+    let watchdog_refusal = run_watchdog(job, &normalized, config, bus).await;
     store.mark_done(
         &job.id,
         success,
@@ -501,7 +545,7 @@ async fn run_script_job(
         "`{}` {} (exit {})\n<output>\n{}\n</output>",
         script_name, status_word, exit_code, normalized
     );
-    notify_job_result(&job.name, msg, config, notify_tx).await;
+    notify_job_result(bus, script_job_notice(job, &script_name, &msg, exit_code)).await;
     watchdog_refusal.err()
 }
 
@@ -607,7 +651,7 @@ async fn run_watchdog(
     job: &ScheduledJob,
     output: &str,
     config: &Config,
-    notify_tx: &Option<tokio::sync::mpsc::UnboundedSender<Response>>,
+    bus: &'static crate::bus::Bus,
 ) -> Result<(), String> {
     let Some(rb_name) = job.runbook.as_ref() else {
         return Ok(());
@@ -671,8 +715,7 @@ async fn run_watchdog(
         trigger_reason
     );
     if should_act {
-        let msg = format!("[Watchdog] {}: {}", job.name, ai_response.trim());
-        notify_job_result(&job.name, msg, config, notify_tx).await;
+        notify_job_result(bus, watchdog_notice(job, &ai_response)).await;
     }
     Ok(())
 }

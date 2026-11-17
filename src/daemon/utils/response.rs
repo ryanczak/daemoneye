@@ -18,16 +18,3 @@ where
     tx.write_all(&data).await?;
     Ok(())
 }
-
-pub fn fire_notification(job_name: &str, msg: &str, config: &crate::config::Config) {
-    let cmd = &config.notifications.on_alert;
-    if cmd.is_empty() {
-        return;
-    }
-    let _ = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .env("DAEMONEYE_JOB", job_name)
-        .env("DAEMONEYE_MSG", msg)
-        .spawn();
-}
