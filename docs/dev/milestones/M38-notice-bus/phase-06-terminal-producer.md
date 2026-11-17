@@ -1,7 +1,7 @@
 # Phase 06 — terminal-producer
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-17
 **Depends on:** phase-05
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -178,7 +178,7 @@ milestone close's live check covers it: a terminal `blocked` report shows in
 
 ## Update Log
 
-<!-- entries below this line -->
+<!-- entries appended below this line -->
 
 ### Update — 2026-11-17 18:30 (started, executor)
 
@@ -352,3 +352,23 @@ kill: (-376823): No such process
 **Commit:** fc0a72cfa2d985e8dd67c4e50612b3390dbc45f9
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** one, harmless. `program_notices_tick` publishes
+  through `crate::bus::publish` instead of taking the spec's `bus:
+  &'static Bus` parameter. Production passed the global bus anyway, and the
+  tick has no test that needed the seam. Also, the Update Log anchor comment
+  was reworded (restored at review).
+- **Calibration:** independent re-run green: fmt, build, clippy, `cargo
+  test` 2997 lib passed (2989 + the 8 planned tests), hygiene 16 passed
+  with no allowlist change. `spawn_program_notices_task` is defined and
+  called in `startup.rs`; `Source::Shell` is absent from
+  `notice_sinks.rs` (2.9.0 parity held). The tests pin exact severity,
+  source, labels and session targeting, plus each edge case (first sight,
+  `None` probe, `retain`). Additive phases with a closed file list ran clean
+  on the first dispatch; the last two bounces both came from edits that
+  deleted or rewrote existing code.
