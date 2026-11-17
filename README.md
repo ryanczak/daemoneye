@@ -883,10 +883,23 @@ extra_patterns = [
 |---|---|---|---|
 | `default_routes` | bool | `true` | Whether the built-in default routes stay on. Set to `false` to keep only the `[[notifications.route]]` tables you configure. |
 
-> **Removed in 2.10.0:** both keys below. A config file that still sets
-> either fails to load with an error showing the equivalent routes. Webhook
-> alerts route by default at `warning` and above; the old alert command
-> moves into a `[[notifications.route]]` with `sink = "command"`.
+> **Removed in 2.10.0:** `[notifications] on_alert` and `[webhook] severity_threshold`.
+> A config file that still sets either fails to load with an error showing
+> the equivalent routes. Webhook alerts route by default at `warning` and
+> above. The old alert command becomes two `command` routes:
+>
+> ```toml
+> [[notifications.route]]
+> sink = "command"
+> command = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+> sources = ["scheduler", "watchdog"]
+>
+> [[notifications.route]]
+> sink = "command"
+> command = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+> sources = ["webhook"]
+> min_severity = "warning"
+> ```
 
 ```toml
 [notifications]

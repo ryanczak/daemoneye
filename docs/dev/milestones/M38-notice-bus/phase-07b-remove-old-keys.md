@@ -1,7 +1,7 @@
 # Phase 07b — remove-old-keys
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-17
 **Depends on:** phase-07a
 **Estimated diff:** ~350 lines, mostly deletions and test edits
@@ -391,3 +391,23 @@ kill: (-530978): No such process
 **Commit:** 739564a1f9b5b0543ec38d74d0b3bf3fec00d661
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-17
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (172 turns)
+- **Scope deviations:** prose-only comment edits in `src/webhook/process.rs`
+  and `src/daemon/scheduled.rs` that drop stale `on_alert` mentions.
+  Accepted.
+- **Reviewer fixup:** the README's `[notifications]` removal note said
+  "both keys below" without naming them, and showed no migration. It now
+  names both keys and shows the two `command` routes that replace
+  `on_alert`. Doc only; `doc_truth` passes.
+- **Must-stays held:** every other `startup_config.*.validate()` call,
+  `chat.validate()`, `warn_host_problems`, and the five `routes.history`
+  and five `routes.chat_notice` checks in `default_routes_reproduce_2_9_0`.
+  Closed file list plus per-step green builds: the deletion-heavy phase that
+  had bounced twice before (04/05) landed first try.
+- **Calibration:** none.
+
