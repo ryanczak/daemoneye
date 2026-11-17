@@ -100,7 +100,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 01 | bus-core ([phase-01-bus-core.md](phase-01-bus-core.md)) | done |
 | 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | done |
 | 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | done |
-| 04 | scheduler and watchdog producers | planned |
+| 04 | scheduler-producers ([phase-04-scheduler-producers.md](phase-04-scheduler-producers.md)) | todo |
 | 05 | ghost lifecycle and background producers | planned |
 | 06 | terminal producer (OSC 7501) | planned |
 | 07 | route config; the two old keys become load errors | planned |

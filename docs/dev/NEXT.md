@@ -5,9 +5,9 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none drafted — 03 (webhook-producer) is `done` (first
-try, 2026-11-16); 01 `done` (escalated), 02 `done` (first try). Next:
-`/rexymcp:architect next` drafts 04 (scheduler and watchdog producers).
+**Active phase:** 04 — scheduler-producers
+([`phase-04-scheduler-producers.md`](milestones/M38-notice-bus/phase-04-scheduler-producers.md)),
+`todo`, ready to dispatch. 01 `done` (escalated), 02–03 `done` (first try).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
