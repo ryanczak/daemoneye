@@ -1,7 +1,7 @@
 # Phase 07a — route-config
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-17
 **Depends on:** phase-06
 **Estimated diff:** ~350 lines, about half of it tests
@@ -450,3 +450,136 @@ restore it, and paste both runs. Finish condition: all three bug greps in
 the Acceptance criteria hold, and `cargo test` reports **3007** lib tests
 passed, **not** 3006 and not 3008.
 
+### Update — 2026-11-17 21:26 (complete, server-authored)
+
+**Summary:** **Summary:** Both bounce bugs are fixed and committed on `master` (`2e25075e`). **Bug 07a-1:** `command_targets` now requires `route.filter().matches(n)` before a configured `command` route contributes its command; `command_targets_order_and_dedup` expects exactly `["echo alert", "echo route-a"]` (the third route's `sources = ["watchdog"]` filter rejects the `Scheduler` notice), and the new `command_targets_skip_a_route_whose_filter_does_not_match` pins a `Watchdog` notice → `["echo watchdog-only"]` and a `Scheduler` notice → `[]`. **Bug 07a-2:** the field is renamed to `NotificationsConfig.route` with no serde rename (the field name *is* the TOML key), so `grep -n 'rename = "route"' src/config/types.rs`, `grep -n '^# routes = \[\]' assets/etc/config.toml` and `grep -n 'notifications.routes' assets/memory/knowledge/config-reference.md` all print nothing; the template's `routes = []` line and its explaining sentence are deleted and the config-reference row is renamed to `notifications.route`. The doc-truth gate (`seeded_config_template_documents_every_config_field`) then demanded a literal `route =` key example in the template, satisfied with a commented `route = []` line inside the `[[notifications.route]]` block — the real key, not a phantom one.
+
+**Notes for review:**
+- **Mutation check (edit 1, as instructed):** with `route.filter().matches(n)` removed, exactly 2 lib tests fail (`command_targets_skip_a_route_whose_filter_does_not_match`, `command_targets_order_and_dedup` — `test result: FAILED. 2 passed; 2 failed`); restored, both pass. Deriving the dedup test's expectation from the spec sentence (not from running the function) matched the implementation.
+- **Small judgment call:** rather than a mechanical `sed`-style sweep I first did a targeted rename; one stale `.routes` in `sink_routed` was caught by grep and patched, and the compiler-verified field rename (`NotificationsConfig.route`) greens `cargo build --tests`.
+- All three bug greps in the Acceptance criteria hold; `cargo fmt --all -- --check` passes; full `cargo test` reports **3007** lib tests passed (0 failed), plus 105 across integration binaries; clippy `-D warnings` exits 0; `tests/hygiene.rs` passes with no allowlist change. Preservation greps still hold (`default_routes`/`default_routes_reproduce_2_9_0`/`command_sink_runs_on_alert` diff count `0`; `pub struct RouteConfig` at `src/config/types.rs:580`). Status remains `in-progress` per the lifecycle split; working tree is clean.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+t_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_injects_on_next_run ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (481514): No such process
+kill: (-482212): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `assets/etc/config.toml` — +2 -4
+- `assets/memory/knowledge/config-reference.md` — +1 -1
+- `src/config/load.rs` — +1 -1
+- `src/config/tests.rs` — +4 -4
+- `src/config/types.rs` — +3 -3
+- `src/daemon/notice_sinks.rs` — +34 -8
+
+**Commit:** 2e25075ec9786fa525b3fb00ca1642e9e356baba
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
