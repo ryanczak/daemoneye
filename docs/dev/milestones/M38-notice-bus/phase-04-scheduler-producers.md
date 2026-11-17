@@ -167,3 +167,82 @@ four steps are complete without it.
 **Executor:** phase-04 run, headless.
 
 Flipped the phase to `in-progress`; implementing the Spec tasks in order.
+
+### Update — 2026-11-17 03:35 (end-to-end verification)
+
+The four acceptance-criterion greps and the Test-plan tests, captured
+mechanically:
+
+```
+$ cat /tmp/ac-greps.txt
+== AC: grep -rn 'notify_tx' src/ ==
+exit=1
+
+== AC: grep -nE 'presence_broadcast\(|fire_notification\(' src/daemon/scheduled.rs ==
+exit=1
+
+== AC: grep -rn 'fn fire_notification' src/ ==
+exit=1
+```
+
+Every grep exits 1 — zero matches — which is the criterion. The `kind`
+labels land where the Spec pins them:
+
+```
+$ grep -n '"kind", "alert"\|"kind", "script"\|"kind", "failure"\|"kind", "watchdog"' src/daemon/scheduled.rs
+114:    .label("kind", "alert")
+135:        .label("kind", "script")
+152:    .label("kind", "failure")
+168:    .label("kind", "watchdog")
+```
+
+The Test-plan tests, run by name (6 passed, 0 failed):
+
+```
+$ cat /tmp/plan-tests.log | tail -14
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+
+running 6 tests
+test daemon::scheduled::tests::alert_job_notice_is_a_scheduler_warning ... ok
+test daemon::scheduled::tests::failure_notice_is_a_scheduler_error ... ok
+test daemon::scheduled::tests::watchdog_notice_is_a_watchdog_warning ... ok
+test daemon::scheduled::tests::script_job_notice_severity_follows_the_exit_code ... ok
+test daemon::scheduled::tests::fail_job_publishes_one_error_notice ... ok
+test daemon::scheduled::tests::scheduled_job_result_is_pushed_to_attached_clients ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 2986 filtered out; finished in 0.04s
+```
+
+The existing `scheduled_job_result_is_pushed_to_attached_clients` passes
+with its assertion byte-identical (the `SystemMsg` match on
+`"Watchdog alert: nightly-backup"`); only its setup moved from a dead
+`notify_tx` to a `test_bus` built inside the runtime.
+
+Gates, each run once after the edits were done (§ Spec task 4):
+
+```
+$ cargo fmt --all
+fmt exit=0
+$ cargo clippy --all-targets --all-features -- -D warnings
+clippy exit=0
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+$ cargo test
+test exit=0
+test result: ok. 2982 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 141.66s
+test result: ok. 2 passed; 0 failed; ... (integration)
+test result: ok. 6 passed; 0 failed; ... (integration)
+test result: ok. 19 passed; 0 failed; ... (integration)
+test result: ok. 16 passed; 0 failed; ... (tests/hygiene.rs — includes
+    allowlist_has_no_stale_entries, production_files_fit_the_cap,
+    test_files_fit_the_cap, functions_fit_the_cap: no new allowlist line)
+test result: ok. 45 passed; 0 failed; 2 ignored; ...
+test result: ok. 11 passed; 0 failed; 1 ignored; ...
+test result: ok. 2 passed; 0 failed; ...
+test result: ok. 4 passed; 0 failed; ...
+test result: ok. 0 passed; 0 failed; ...
+```
+
+`tests/hygiene.rs` passes all 16 with no new allowlist line — the phase
+removed 13 production lines from `src/daemon/utils/response.rs` and
+added 88 test lines to `src/daemon/scheduled_tests.rs`, which stays
+within the 2000-line test cap (no `test` entry exists for it).
