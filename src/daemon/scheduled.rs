@@ -359,6 +359,7 @@ async fn run_scheduled_job_inner(
                                 job.name, e
                             ),
                         );
+                        store.mark_done(&job.id, false, Some(msg));
                     }
                     Ok(sid) => {
                         let session_log = crate::daemon::session::session_file(&sid)
