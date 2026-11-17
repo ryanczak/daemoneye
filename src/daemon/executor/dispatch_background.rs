@@ -143,6 +143,7 @@ where
             if sandboxed {
                 let close_owner = owner.clone();
                 tokio::spawn(bg_shell::await_notify_and_close(
+                    crate::bus::global(),
                     sessions.clone(),
                     session_id.map(|s| s.to_string()).unwrap_or_default(),
                     cmd.to_string(),
@@ -161,6 +162,7 @@ where
                 ));
             } else {
                 tokio::spawn(bg_shell::await_and_notify(
+                    crate::bus::global(),
                     sessions.clone(),
                     session_id.map(|s| s.to_string()).unwrap_or_default(),
                     cmd.to_string(),

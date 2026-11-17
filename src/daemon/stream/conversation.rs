@@ -676,14 +676,15 @@ where
                                     .await
                                     {
                                         Ok(()) => {
-                                            crate::webhook::inject_ghost_event(
-                                                &ghost_sessions,
+                                            crate::webhook::publish_ghost_event(
+                                                crate::bus::global(),
+                                                crate::webhook::GhostEvent::Completed,
+                                                &ghost_rb2,
                                                 &format!(
                                                     "[Ghost Shell Completed] AI-requested ghost shell finished for runbook: {} — session log: {}",
                                                     ghost_rb2, session_log
                                                 ),
-                                            )
-                                            .await;
+                                            );
                                         }
                                         Err(e) => {
                                             log::error!(
@@ -691,14 +692,15 @@ where
                                                 ghost_sid2,
                                                 e
                                             );
-                                            crate::webhook::inject_ghost_event(
-                                                &ghost_sessions,
+                                            crate::webhook::publish_ghost_event(
+                                                crate::bus::global(),
+                                                crate::webhook::GhostEvent::Failed,
+                                                &ghost_rb2,
                                                 &format!(
                                                     "[Ghost Shell Failed] AI-requested ghost shell error for runbook: {} — {} — session log: {}",
                                                     ghost_rb2, e, session_log
                                                 ),
-                                            )
-                                            .await;
+                                            );
                                         }
                                     }
                                 });

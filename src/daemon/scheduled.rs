@@ -7,7 +7,7 @@ use crate::daemon::utils::*;
 use crate::scheduler::{ActionOn, JobStatus, ScheduleStore, ScheduledJob};
 use crate::scripts;
 use crate::shell::{Owner, ShellRegistry};
-use crate::webhook::inject_ghost_event;
+use crate::webhook::{GhostEvent, publish_ghost_event};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -301,14 +301,15 @@ async fn run_scheduled_job_inner(
                 job.name,
                 config.ghost.max_concurrent_ghosts
             );
-            inject_ghost_event(
-                &sessions,
+            publish_ghost_event(
+                bus,
+                GhostEvent::Skipped,
+                &job.name,
                 &format!(
                     "[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached",
                     job.name
                 ),
-            )
-            .await;
+            );
             store.mark_done(
                 &job.id,
                 false,
@@ -349,28 +350,29 @@ async fn run_scheduled_job_inner(
                             job.name, e
                         );
                         log::error!("{}", msg);
-                        inject_ghost_event(
-                            &sessions,
+                        publish_ghost_event(
+                            bus,
+                            GhostEvent::Failed,
+                            &job.name,
                             &format!(
                                 "[Ghost Shell Failed] Scheduled job '{}' could not start: {}",
                                 job.name, e
                             ),
-                        )
-                        .await;
-                        store.mark_done(&job.id, false, Some(msg));
+                        );
                     }
                     Ok(sid) => {
                         let session_log = crate::daemon::session::session_file(&sid)
                             .display()
                             .to_string();
-                        inject_ghost_event(
-                            &sessions,
+                        publish_ghost_event(
+                            bus,
+                            GhostEvent::Started,
+                            &job.name,
                             &format!(
                                 "[Ghost Shell Started] Scheduled job '{}' started autonomous session — session log: {}",
                                 job.name, session_log
                             ),
-                        )
-                        .await;
+                        );
                         let result = trigger_ghost_turn(
                             &sid,
                             &sessions,
@@ -381,26 +383,28 @@ async fn run_scheduled_job_inner(
                         .await;
                         match result {
                             Ok(()) => {
-                                inject_ghost_event(
-                                    &sessions,
+                                publish_ghost_event(
+                                    bus,
+                                    GhostEvent::Completed,
+                                    &job.name,
                                     &format!(
                                         "[Ghost Shell Completed] Scheduled job '{}' finished — session log: {}",
                                         job.name, session_log
                                     ),
-                                )
-                                .await;
+                                );
                                 store.mark_done(&job.id, true, None);
                             }
                             Err(e) => {
                                 log::error!("Scheduled ghost job '{}' failed: {}", job.name, e);
-                                inject_ghost_event(
-                                    &sessions,
+                                publish_ghost_event(
+                                    bus,
+                                    GhostEvent::Failed,
+                                    &job.name,
                                     &format!(
                                         "[Ghost Shell Failed] Scheduled job '{}' error: {} — session log: {}",
                                         job.name, e, session_log
                                     ),
-                                )
-                                .await;
+                                );
                                 store.mark_done(
                                     &job.id,
                                     false,

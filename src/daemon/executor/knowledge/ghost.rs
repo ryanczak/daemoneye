@@ -143,7 +143,7 @@ async fn start_spawn_session(
     agent_name: Option<&str>,
 ) -> anyhow::Result<ToolCallOutcome> {
     use crate::daemon::ghost::GhostManager;
-    use crate::webhook::inject_ghost_event;
+    use crate::webhook::{GhostEvent, publish_ghost_event};
 
     match GhostManager::start_session_with_config(
         sessions.clone(),
@@ -167,14 +167,15 @@ async fn start_spawn_session(
                     entry.ghost_task_message = Some(task_message);
                 }
             });
-            inject_ghost_event(
-                sessions,
+            publish_ghost_event(
+                crate::bus::global(),
+                GhostEvent::Started,
+                &rb_name,
                 &format!(
                     "[Ghost Shell Started] AI-requested ghost shell started for runbook: {} (job_id: {})",
                     rb_name, job_id
                 ),
-            )
-            .await;
+            );
             let tool_result = format!(
                 "Ghost shell started (session: {}, job_id: {}, agent: {}). It will run autonomously in the background \
                  and inject [Ghost Shell Completed] or [Ghost Shell Failed] events when done. \

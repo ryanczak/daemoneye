@@ -13,11 +13,10 @@ use anyhow::Context;
 use std::time::Duration;
 
 use super::shell_exec;
-use crate::ai::Message;
 use crate::daemon::run::{
     RunId, RunKind, RunState, TurnLogEvent, TurnLogRecord, append_turn_event,
 };
-use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
+use crate::daemon::session::{SessionStore, with_sessions};
 use crate::daemon::utils::log_shell_command;
 use crate::shell::{
     CommandHandle, CommandOutcome, Owner, ShellId, ShellRegistry, login_shell, spawn_command,
@@ -336,19 +335,53 @@ pub(super) fn completion_message(
     format!("{head}\n{body}")
 }
 
-/// Await the run's outcome, write `RunFinished` to its turn log, and inject
-/// the completion into its session. Runs detached; never returns to the turn.
+/// The `Background` notice a finished background run publishes: severity
+/// follows the outcome (`Info` on exit 0, `Error` otherwise), the session
+/// field targets the run's own chat, the title is the `[Background Task
+/// Completed]` literal `build_catchup_brief` scans for, and the body is the
+/// completion or interrupted message, so `history_text()` equals the content
+/// 2.9.0 delivered. Pure so the mapping is testable without a bus.
+pub(super) fn background_notice(
+    session_id: &str,
+    run_id: &RunId,
+    shell_id: &ShellId,
+    body: String,
+    exit_code: Option<i32>,
+) -> crate::bus::Notice {
+    let severity = if exit_code == Some(0) {
+        crate::bus::Severity::Info
+    } else {
+        crate::bus::Severity::Error
+    };
+    let mut notice = crate::bus::Notice::new(
+        severity,
+        crate::bus::Source::Background,
+        run_id.as_str(),
+        "[Background Task Completed]",
+    )
+    .source_id(run_id.as_str())
+    .session(session_id)
+    .body(body)
+    .label("shell", shell_id.as_str());
+    if let Some(code) = exit_code {
+        notice = notice.label("exit_code", code.to_string());
+    }
+    notice
+}
+
+/// Await the run's outcome, write `RunFinished` to its turn log, and publish
+/// the completion on the bus. Runs detached; never returns to the turn.
 ///
 /// `RunFinished` is `Complete` whenever the handle delivered an outcome —
 /// whatever the exit code, a command that ran and exited 1 *completed* — and
 /// `HardFail` when the handle resolved to `Err`.
 ///
-/// `with_sessions` is not reentrant and must never be held across `.await`
-/// and never nested: the lock discipline below is `notify_session`'s four
-/// phases, minus the tmux `bg_windows` bookkeeping there is no window for. A
-/// session entry that has disappeared before the await is a silent return,
-/// exactly as `notify_session` does.
+/// **A producer must not publish while holding the `SessionStore` lock**: the
+/// history sink takes that lock, and the bus lock is held across inline
+/// delivery — the two would deadlock. The session-gone check runs under the
+/// lock; the publish happens after it is released.
 pub(super) async fn await_and_notify(
+    bus: &'static crate::bus::Bus,
     sessions: SessionStore,
     session_id: String,
     cmd: String,
@@ -394,36 +427,28 @@ pub(super) async fn await_and_notify(
     if !existed {
         append_turn_event(&TurnLogRecord {
             timestamp: chrono::Utc::now().to_rfc3339(),
-            run_id,
+            run_id: run_id.clone(),
             event: TurnLogEvent::RunFinished { state },
         });
         return;
     }
 
-    // Phase 2 (unlocked): pure formatting and the file append.
-    let completion_msg = Message {
-        role: "user".to_string(),
-        content: format!(
-            "[Background Task Completed]\n{}",
-            match &interrupted {
-                Some(o) => interrupted_message(&cmd, &run_id, &shell_id, o),
-                None => completion_message(&cmd, &run_id, &shell_id, &outcome),
-            }
-        ),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
+    // Phase 2 (unlocked): pure formatting, then the publish — the history
+    // sink takes the SessionStore lock, so the publish must happen after the
+    // lock is released.
+    let body = match &interrupted {
+        Some(o) => interrupted_message(&cmd, &run_id, &shell_id, o),
+        None => completion_message(&cmd, &run_id, &shell_id, &outcome),
     };
-    append_session_message(&session_id, &completion_msg);
+    bus.publish(background_notice(
+        &session_id,
+        &run_id,
+        &shell_id,
+        body,
+        outcome.as_ref().ok().map(|o| o.exit_code),
+    ));
 
-    // Phase 3 (locked): push the message into the in-memory history.
-    with_sessions(&sessions, |store| {
-        if let Some(entry) = store.get_mut(&session_id) {
-            entry.push_event(completion_msg);
-        }
-    });
-
-    // Phase 4 (unlocked): the run's own record.
+    // Phase 3 (unlocked): the run's own record.
     append_turn_event(&TurnLogRecord {
         timestamp: chrono::Utc::now().to_rfc3339(),
         run_id,
@@ -463,6 +488,7 @@ fn record_command_completion(
 /// comes **after** the message lands — closing first would hang the command
 /// up before its reader has drained it.
 pub(super) async fn await_notify_and_close<F, Fut>(
+    bus: &'static crate::bus::Bus,
     sessions: SessionStore,
     session_id: String,
     cmd: String,
@@ -474,7 +500,7 @@ pub(super) async fn await_notify_and_close<F, Fut>(
     Fut: std::future::Future<Output = ()>,
 {
     let shell_id = start.shell_id.clone();
-    await_and_notify(sessions, session_id, cmd, start, handle).await;
+    await_and_notify(bus, sessions, session_id, cmd, start, handle).await;
     close(shell_id).await;
 }
 
@@ -496,6 +522,8 @@ fn report_state(outcome: &Result<CommandOutcome, String>) -> RunState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bus::Severity;
+    use crate::daemon::notice_sinks;
     use crate::daemon::session::SessionEntry;
     use crate::shell::{Nonce, PtyBackend, bind, lock_path, serve, socket_path};
     use anyhow::Context;
@@ -798,7 +826,15 @@ mod tests {
         let counters = crate::daemon::counters::counters_for_session(&reg, &session_id, 0);
         assert_eq!(counters.background, 1, "the session's ⏳ counts it");
 
-        await_and_notify(sessions, session_id.clone(), cmd.to_string(), start, handle).await;
+        await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
+            sessions,
+            session_id.clone(),
+            cmd.to_string(),
+            start,
+            handle,
+        )
+        .await;
 
         let after = with_shells(&reg, |store| {
             store
@@ -901,6 +937,7 @@ mod tests {
         .expect("the command starts");
 
         await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             "printf 'DONE\\n'; sh -c 'exit 4'".to_string(),
@@ -963,6 +1000,7 @@ mod tests {
         };
 
         await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             "trap 'exit 130' INT; sleep 30".to_string(),
@@ -1014,6 +1052,7 @@ mod tests {
         .expect("the command starts");
 
         await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             "printf 'DONE\\n'; sh -c 'exit 4'".to_string(),
@@ -1063,6 +1102,7 @@ mod tests {
         .expect("the command starts");
 
         await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             "echo hi".to_string(),
@@ -1132,6 +1172,7 @@ mod tests {
         close_shell_in_process(start.shell_id.clone()).await;
 
         await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             cmd.to_string(),
@@ -1176,6 +1217,7 @@ mod tests {
         });
 
         await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             "printf 'ORPHAN\\n'".to_string(),
@@ -1281,6 +1323,7 @@ mod tests {
         let closed: Arc<Mutex<Vec<(String, bool)>>> = Arc::new(Mutex::new(Vec::new()));
         let close_log = Arc::clone(&closed);
         await_notify_and_close(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
             sessions.clone(),
             session_id.clone(),
             "echo DONE".to_string(),
@@ -1325,5 +1368,151 @@ mod tests {
             "the [Background Task Completed] message must already be in the \
              session when the close runs: {log:?}"
         );
+    }
+
+    #[test]
+    fn background_notice_targets_its_session() {
+        let run_id = RunId::new();
+        let shell_id = ShellId::from_index(3);
+        let body =
+            "Background command `sleep 2` (run r, shell s) finished with exit code 0.".to_string();
+        let n = background_notice("bg-session", &run_id, &shell_id, body.clone(), Some(0));
+        assert_eq!(
+            n.session.as_deref(),
+            Some("bg-session"),
+            "the session field"
+        );
+        assert_eq!(n.source, crate::bus::Source::Background, "the source");
+        assert_eq!(n.title, "[Background Task Completed]", "the title");
+        assert_eq!(
+            n.history_text(),
+            format!("[Background Task Completed]\n{body}"),
+            "history_text equals the content 2.9.0 delivered"
+        );
+        assert_eq!(n.name, run_id.as_str(), "the name is the run id");
+        assert_eq!(n.source_id, run_id.as_str(), "the source_id is the run id");
+        assert_eq!(
+            n.labels.get("shell").map(String::as_str),
+            Some(shell_id.as_str()),
+            "the shell label"
+        );
+        assert_eq!(
+            n.labels.get("exit_code").map(String::as_str),
+            Some("0"),
+            "the exit_code label when known"
+        );
+    }
+
+    #[test]
+    fn background_notice_severity_follows_the_outcome() {
+        let run_id = RunId::new();
+        let shell_id = ShellId::from_index(1);
+        let ok = background_notice("s", &run_id, &shell_id, "done".to_string(), Some(0));
+        assert_eq!(ok.severity, crate::bus::Severity::Info, "exit 0 is Info");
+        assert_eq!(
+            ok.labels.get("exit_code").map(String::as_str),
+            Some("0"),
+            "exit 0 keeps its label"
+        );
+        let failed = background_notice("s", &run_id, &shell_id, "boom".to_string(), Some(1));
+        assert_eq!(
+            failed.severity,
+            crate::bus::Severity::Error,
+            "exit 1 is Error"
+        );
+        assert_eq!(
+            failed.labels.get("exit_code").map(String::as_str),
+            Some("1"),
+            "exit 1 keeps its label"
+        );
+        let unknown = background_notice("s", &run_id, &shell_id, "interrupted".to_string(), None);
+        assert_eq!(
+            unknown.severity,
+            crate::bus::Severity::Error,
+            "an interrupted run (no exit code) is Error"
+        );
+        assert!(
+            !unknown.labels.contains_key("exit_code"),
+            "no exit code label when the code is unknown"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_completion_skips_other_sessions() {
+        let (_home, _dir) = crate::test_home();
+        let session_id = "bg-only-session".to_string();
+        let other = "bg-other-session".to_string();
+        let sessions = store_with_entry(&session_id);
+        with_sessions(&sessions, |store| {
+            store.insert(
+                other.clone(),
+                SessionEntry {
+                    messages: Vec::new(),
+                    last_accessed: std::time::Instant::now(),
+                    chat_pane: None,
+                    default_target_pane: None,
+                    bg_windows: Vec::new(),
+                    last_prompt_tokens: 0,
+                    tmux_session: String::new(),
+                    last_detach: None,
+                    detach_time_utc: None,
+                    messages_at_detach: 0,
+                    is_ghost: false,
+                    ghost_config: None,
+                    ghost_runbook_name: None,
+                    ghost_bg_prefix: "",
+                    started_at: chrono::Utc::now(),
+                    turn_count: 0,
+                    tool_calls_this_session: 0,
+                    active_model: None,
+                    last_snapshot_activity: 0,
+                    saved_name: None,
+                    dirty: false,
+                    artifacts_created: Vec::new(),
+                    auto_name_suggested: false,
+                    ghost_task_message: None,
+                    loaded_tools: std::collections::HashSet::new(),
+                    cost_usd: 0.0,
+                    cost_by_agent: std::collections::HashMap::new(),
+                    has_untracked_cost: false,
+                    token_scale: 1.5,
+                    compaction_in_flight: false,
+                    pending_compaction_notice: None,
+                    turn_inbox: None,
+                },
+            );
+        });
+        let reg = ShellRegistry::default();
+        let (start, handle) = start_background_with(
+            &reg,
+            Owner::Chat(session_id.clone()),
+            "echo DONE",
+            5,
+            spawn_in_process_host,
+        )
+        .await
+        .expect("the command starts");
+
+        await_and_notify(
+            notice_sinks::test_bus(sessions.clone(), Severity::Warning),
+            sessions.clone(),
+            session_id.clone(),
+            "echo DONE".to_string(),
+            start,
+            handle,
+        )
+        .await;
+
+        let count = |id: &str| {
+            with_sessions(&sessions, |store| {
+                store.get(id).map(|e| e.messages.len()).unwrap_or(0)
+            })
+        };
+        assert_eq!(
+            count(&session_id),
+            1,
+            "the run's session gains the completion"
+        );
+        assert_eq!(count(&other), 0, "the other session does not");
     }
 }

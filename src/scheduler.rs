@@ -5,6 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
 /// Parse a cron expression, accepting both the standard 5-field format
@@ -279,8 +280,13 @@ impl ScheduleStore {
     /// Saves will succeed but the file is not preserved across daemon restarts.
     /// Used as a last-resort fallback when all persistent paths fail.
     pub fn new_empty() -> Self {
-        let path =
-            std::env::temp_dir().join(format!("daemoneye_schedules_{}.json", std::process::id()));
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "daemoneye_schedules_{}_{}.json",
+            std::process::id(),
+            seq
+        ));
         ScheduleStore {
             path,
             jobs: RwLock::new(Vec::new()),
@@ -650,6 +656,41 @@ fn describe_secs(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_empty_stores_never_share_a_file() {
+        let a = ScheduleStore::new_empty();
+        let b = ScheduleStore::new_empty();
+        assert_ne!(a.path, b.path);
+        let job_a = ScheduledJob::new(
+            "a".into(),
+            ScheduleKind::Every {
+                interval_secs: 60,
+                next_run: Utc::now(),
+            },
+            ActionOn::Alert,
+            None,
+        );
+        let job_b = ScheduledJob::new(
+            "b".into(),
+            ScheduleKind::Every {
+                interval_secs: 60,
+                next_run: Utc::now(),
+            },
+            ActionOn::Alert,
+            None,
+        );
+        let id_a = job_a.id.clone();
+        assert!(a.add(job_a).is_ok());
+        assert!(b.add(job_b).is_ok());
+        assert_eq!(a.jobs.read().unwrap_or_log().len(), 1);
+        assert_eq!(b.jobs.read().unwrap_or_log().len(), 1);
+        assert_eq!(a.jobs.read().unwrap_or_log()[0].id, id_a);
+        assert_ne!(
+            a.jobs.read().unwrap_or_log()[0].name,
+            b.jobs.read().unwrap_or_log()[0].name
+        );
+    }
 
     #[test]
     fn parse_iso_pt5m() {

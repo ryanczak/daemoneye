@@ -126,29 +126,3 @@ criterion was run in the context it would actually execute in — a `bash -c`
 wrapper whose own command line contained the pattern. The practice works when
 applied; it is not reliably applied by hand, which is the argument for
 mechanising it rather than restating it.
-
----
-
-## 2. `ScheduleStore::new_empty()` temp-file race in parallel tests
-
-**Status:** open — logged 2026-11-17 at the M38 phase-04 review.
-
-`ScheduleStore::new_empty()` (`src/scheduler.rs:281`) names its backing
-file `daemoneye_schedules_<pid>.json` in the temp dir, although its doc
-comment promises a "unique temp file". Every lib test that calls it (8
-sites, including `test_store` in `src/daemon/scheduled_tests.rs`) shares
-one path within the test binary, so a parallel `save` renames another
-test's `.tmp` out from under it:
-
-```
-panicked at src/daemon/scheduled_tests.rs:594:24:
-the temp store accepts the job: renaming /tmp/daemoneye_schedules_235900.tmp → /tmp/daemoneye_schedules_235900.json
-Caused by: No such file or directory (os error 2)
-```
-
-Intermittent: `cargo test --lib -- daemon::scheduled` failed in several
-of ~30 runs in the M38 phase-04 executor session (turns 573–1000), which
-burned ~800 executor turns chasing it after the phase was committed. Also
-the daemon's own last-resort fallback. Fix constraint: each call gets a
-distinct path (e.g. pid + a process-wide counter); no test should need a
-lock to use it.

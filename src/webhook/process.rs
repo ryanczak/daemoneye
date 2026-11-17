@@ -263,29 +263,46 @@ pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
     presence_broadcast(msg);
 }
 
-/// Inject a ghost shell lifecycle event into all active user sessions and
-/// send a tmux display-message notification to every open chat pane.
-///
-/// The `content` string is stored in session history so it shows up in the
-/// N15 catch-up brief when the user re-attaches after being away.
-pub(crate) async fn inject_ghost_event(sessions: &SessionStore, content: &str) {
-    let msg = crate::ai::Message {
-        role: "user".to_string(),
-        content: content.to_string(),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
+/// The kind of ghost shell lifecycle event a caller reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GhostEvent {
+    Started,
+    Completed,
+    Failed,
+    Skipped,
+}
+
+/// The `Ghost` notice for a ghost shell lifecycle event: severity follows the
+/// kind, the title is the content's first line and the body the rest, so
+/// `history_text()` equals the content byte for byte. Pure so the mapping is
+/// testable without a bus.
+pub fn ghost_event_notice(kind: GhostEvent, name: &str, content: &str) -> crate::bus::Notice {
+    let severity = match kind {
+        GhostEvent::Started | GhostEvent::Completed => crate::bus::Severity::Info,
+        GhostEvent::Failed => crate::bus::Severity::Error,
+        GhostEvent::Skipped => crate::bus::Severity::Warning,
     };
-    inject_into_sessions(sessions, &msg);
-    // One-liner for the tmux display-message overlay (strip newlines).
-    let one_liner = content.lines().next().unwrap_or(content);
-    let s_ncp = sessions.clone();
-    let line = one_liner.to_string();
-    let _ = crate::process::off_runtime("notify-chat-panes", move || {
-        notify_chat_panes(&s_ncp, &line)
-    })
-    .await;
-    // Always mirror ghost lifecycle events to events.jsonl for troubleshooting.
+    let kind_label = match kind {
+        GhostEvent::Started => "started",
+        GhostEvent::Completed => "completed",
+        GhostEvent::Failed => "failed",
+        GhostEvent::Skipped => "skipped",
+    };
+    let (title, body) = split_first_line(content);
+    crate::bus::Notice::new(severity, crate::bus::Source::Ghost, name, title)
+        .body(body)
+        .label("kind", kind_label)
+}
+
+/// Publish a ghost shell lifecycle event on the bus and mirror it to
+/// `ghost_lifecycle` in events.jsonl for troubleshooting.
+pub fn publish_ghost_event(
+    bus: &'static crate::bus::Bus,
+    kind: GhostEvent,
+    name: &str,
+    content: &str,
+) {
+    bus.publish(ghost_event_notice(kind, name, content));
     crate::daemon::utils::log_event("ghost_lifecycle", serde_json::json!({ "content": content }));
 }
 
@@ -501,14 +518,15 @@ async fn maybe_analyze_alert(
                     alert.alert_name,
                     state.config.ghost.max_concurrent_ghosts
                 );
-                inject_ghost_event(
-                    &state.sessions,
+                publish_ghost_event(
+                    state.bus,
+                    GhostEvent::Skipped,
+                    &alert.alert_name,
                     &format!(
                         "[Ghost Shell Skipped] Concurrency limit reached for alert: {}",
                         alert.alert_name
                     ),
-                )
-                .await;
+                );
                 return None;
             }
             log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
@@ -518,6 +536,7 @@ async fn maybe_analyze_alert(
             let config_clone = state.config.clone();
             let cache_clone = state.cache.clone();
             let schedule_store_clone = state.schedule_store.clone();
+            let bus = state.bus;
 
             let handle = tokio::spawn(async move {
                 let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
@@ -535,14 +554,15 @@ async fn maybe_analyze_alert(
                         let session_log = crate::daemon::session::session_file(&sid)
                             .display()
                             .to_string();
-                        inject_ghost_event(
-                            &sessions,
+                        publish_ghost_event(
+                            bus,
+                            GhostEvent::Started,
+                            &rb_clone.name,
                             &format!(
                                 "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
                                 rb_clone.name, session_log
                             ),
-                        )
-                        .await;
+                        );
 
                         match crate::daemon::ghost::trigger_ghost_turn(
                             &sid,
@@ -554,25 +574,27 @@ async fn maybe_analyze_alert(
                         .await
                         {
                             Ok(()) => {
-                                inject_ghost_event(
-                                    &sessions,
+                                publish_ghost_event(
+                                    bus,
+                                    GhostEvent::Completed,
+                                    &rb_clone.name,
                                     &format!(
                                         "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
                                         rb_clone.name, session_log
                                     ),
-                                )
-                                .await;
+                                );
                             }
                             Err(e) => {
                                 log::error!("Ghost Turn: failed for {}: {}", sid, e);
-                                inject_ghost_event(
-                                    &sessions,
+                                publish_ghost_event(
+                                    bus,
+                                    GhostEvent::Failed,
+                                    &rb_clone.name,
                                     &format!(
                                         "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
                                         rb_clone.name, e, session_log
                                     ),
-                                )
-                                .await;
+                                );
                             }
                         }
                     }
@@ -987,6 +1009,141 @@ mod tests {
             if hit {
                 return out;
             }
+        }
+    }
+
+    // ── ghost notice builder (M38 phase 05) ──────────────────────────────
+
+    fn resident_entry() -> SessionEntry {
+        SessionEntry {
+            messages: Vec::new(),
+            last_accessed: std::time::Instant::now(),
+            chat_pane: None,
+            default_target_pane: None,
+            bg_windows: Vec::new(),
+            last_prompt_tokens: 0,
+            tmux_session: String::new(),
+            last_detach: None,
+            detach_time_utc: None,
+            messages_at_detach: 0,
+            is_ghost: false,
+            ghost_config: None,
+            ghost_runbook_name: None,
+            ghost_bg_prefix: "",
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            last_snapshot_activity: 0,
+            saved_name: None,
+            dirty: false,
+            artifacts_created: Vec::new(),
+            auto_name_suggested: false,
+            ghost_task_message: None,
+            loaded_tools: std::collections::HashSet::new(),
+            cost_usd: 0.0,
+            cost_by_agent: std::collections::HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+            turn_inbox: None,
+        }
+    }
+
+    #[test]
+    fn ghost_event_notice_maps_kind_to_severity() {
+        let cases = [
+            (GhostEvent::Started, "started", crate::bus::Severity::Info),
+            (
+                GhostEvent::Completed,
+                "completed",
+                crate::bus::Severity::Info,
+            ),
+            (GhostEvent::Failed, "failed", crate::bus::Severity::Error),
+            (
+                GhostEvent::Skipped,
+                "skipped",
+                crate::bus::Severity::Warning,
+            ),
+        ];
+        for (kind, label, severity) in cases {
+            let n = ghost_event_notice(kind, "rotate-logs", "[Ghost Shell X] body");
+            assert_eq!(n.severity, severity, "{label} severity");
+            assert_eq!(n.source, crate::bus::Source::Ghost, "{label} source");
+            assert_eq!(
+                n.labels.get("kind").map(String::as_str),
+                Some(label),
+                "{label} kind label"
+            );
+            assert_eq!(n.name, "rotate-logs", "{label} name");
+        }
+    }
+
+    #[test]
+    fn ghost_event_notice_history_text_is_the_content() {
+        let one_line = ghost_event_notice(
+            GhostEvent::Started,
+            "rotate-logs",
+            "[Ghost Shell Started] Autonomous remediation triggered",
+        );
+        assert_eq!(
+            one_line.history_text(),
+            "[Ghost Shell Started] Autonomous remediation triggered",
+            "a one-line content round-trips unchanged"
+        );
+        assert_eq!(
+            one_line.title, "[Ghost Shell Started] Autonomous remediation triggered",
+            "a one-line content is all title"
+        );
+
+        let content = "[Ghost Shell Failed] Autonomous remediation failed for alert: disk-full — exit 1 — session log: /tmp/s.jsonl";
+        let multi = ghost_event_notice(GhostEvent::Failed, "disk-full", content);
+        assert_eq!(
+            multi.history_text(),
+            content,
+            "the multi-line content round-trips byte for byte"
+        );
+        assert_eq!(
+            multi.title,
+            "[Ghost Shell Failed] Autonomous remediation failed for alert: disk-full — exit 1 — session log: /tmp/s.jsonl"
+                .lines()
+                .next()
+                .expect("at least one line"),
+            "the title is the content's first line"
+        );
+    }
+
+    #[tokio::test]
+    async fn publish_ghost_event_reaches_every_session() {
+        let _guard = crate::test_home();
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("a".to_string(), resident_entry());
+            store.insert("b".to_string(), resident_entry());
+        });
+
+        let content =
+            "[Ghost Shell Completed] Autonomous remediation finished for alert: disk-full";
+        let bus =
+            crate::daemon::notice_sinks::test_bus(sessions.clone(), crate::bus::Severity::Warning);
+        publish_ghost_event(bus, GhostEvent::Completed, "disk-full", content);
+
+        for id in ["a", "b"] {
+            let content_there = with_sessions(&sessions, |store| {
+                store.get(id).map(|e| e.messages.len()).unwrap_or(0)
+            });
+            assert_eq!(content_there, 1, "session {id} gains exactly one message");
+            let last = with_sessions(&sessions, |store| {
+                store
+                    .get(id)
+                    .and_then(|e| e.messages.last().map(|m| m.content.clone()))
+            });
+            assert_eq!(
+                last.as_deref(),
+                Some(content),
+                "session {id}'s message is the published string"
+            );
         }
     }
 }

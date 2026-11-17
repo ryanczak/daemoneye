@@ -1,7 +1,7 @@
 # Phase 05 — ghost-background-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-04
 **Estimated diff:** ~400 lines, about half of it tests
@@ -211,3 +211,14 @@ close's live check (a background command landing in its chat).
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-17 (resumed run started)
+
+Resuming after the escalation: fixed the E0521 by replacing the two
+`state.bus` references inside the `tokio::spawn` with the pre-spawn `bus`
+copy and deleting the unused `alert_name` clone. Continued with steps 3–6:
+all 13 callers moved to `publish_ghost_event`, `inject_ghost_event`
+deleted, the background producer rewritten around `background_notice` +
+a bus publish after the session lock is released, CLAUDE.md bullet
+updated, and the Test-plan tests added. Gates: fmt, clippy -D warnings
+and the full `cargo test` (2989 lib + integration suites) green.
