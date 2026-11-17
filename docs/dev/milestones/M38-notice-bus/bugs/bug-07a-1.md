@@ -1,7 +1,7 @@
 # Bug 1 on phase-07a: a command route runs for every notice, whatever its filter
 
 **Severity:** major
-**Status:** open
+**Status:** fixed (2e25075e)
 **Filed:** 2026-11-17
 
 ## What's wrong

@@ -1,7 +1,7 @@
 # Phase 07a — route-config
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-17
 **Depends on:** phase-06
 **Estimated diff:** ~350 lines, about half of it tests
@@ -583,3 +583,31 @@ kill: (-482212): No such process
 **Commit:** 2e25075ec9786fa525b3fb00ca1642e9e356baba
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-17
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-07a-1 major: command routes ignored their filter, and
+  the test pinned the unfiltered output; bug-07a-2 minor: a phantom
+  `routes` key in the template and the config reference). The re-dispatch
+  fixed both in 70 turns and pasted its mutation check (2 tests fail with
+  `matches(n)` removed).
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** the first run touched
+  `assets/memory/knowledge/config-reference.md`, which was not on the list.
+  It had to: `config_reference_documents_every_config_field` holds that file
+  to the `Config` structs. Accepted.
+- **Reviewer fixup:** the re-dispatch satisfied the template gate with a
+  `# route = []` line **inside** the first `[[notifications.route]]` table.
+  Uncommented, `deny_unknown_fields` refuses that line, and it can't go
+  anywhere else because TOML forbids a static `route = []` next to
+  `[[notifications.route]]` headers. The real gap was in the gate:
+  `seeded_config_template_documents_every_config_field` didn't recognise
+  `[[section.key]]` array-of-tables headers. I taught the gate those headers
+  (`tests/doc_truth.rs`) and deleted the line. The uncommented
+  `[notifications]` block now parses as TOML into two route tables.
+- **Calibration:** a test whose expected value came from running the
+  function rather than from the spec pinned the bug it should have caught
+  (see the executor-snapshot-strings memory). Spec a filter test by its
+  negative case first: a notice the route must **not** match.
+

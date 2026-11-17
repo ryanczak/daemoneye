@@ -665,12 +665,18 @@ fn seeded_config_template_documents_every_config_field() {
         .into_iter()
         .map(|(_, k)| k)
         .collect();
-    // Free-form maps are rendered as their own `[section.key]` table.
+    // Free-form maps are rendered as their own `[section.key]` table, and
+    // arrays of tables as repeated `[[section.key]]` headers.
     let subtables: std::collections::BTreeSet<String> = template
         .lines()
         .filter_map(|l| {
             let t = l.trim_start().trim_start_matches('#').trim();
-            t.strip_prefix('[')?.strip_suffix(']')?.rsplit('.').next()
+            let t = t.strip_prefix('[')?.strip_suffix(']')?;
+            let t = t
+                .strip_prefix('[')
+                .and_then(|t| t.strip_suffix(']'))
+                .unwrap_or(t);
+            t.rsplit('.').next()
         })
         .map(str::to_string)
         .collect();

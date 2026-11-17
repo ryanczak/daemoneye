@@ -211,7 +211,6 @@ prompt = "sre"
 # min_severity, sources, names, statuses (empty list = any). A "command"
 # route requires its own command key.
 # [[notifications.route]]
-# route = []
 # sink = "command"
 # command = "notify-send 'DaemonEye' '$DAEMONEYE_MSG'"
 # sources = ["scheduler", "watchdog"]

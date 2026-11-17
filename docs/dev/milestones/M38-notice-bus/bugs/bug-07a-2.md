@@ -1,7 +1,7 @@
 # Bug 2 on phase-07a: the docs document a `routes` key that does not exist
 
 **Severity:** minor
-**Status:** open
+**Status:** fixed (2e25075e)
 **Filed:** 2026-11-17
 
 ## What's wrong
