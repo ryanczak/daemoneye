@@ -103,7 +103,8 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 04 | scheduler-producers ([phase-04-scheduler-producers.md](phase-04-scheduler-producers.md)) | done |
 | 05 | ghost-background-producers ([phase-05-ghost-background-producers.md](phase-05-ghost-background-producers.md)) | done |
 | 06 | terminal-producer ([phase-06-terminal-producer.md](phase-06-terminal-producer.md)) | done |
-| 07 | route config; the two old keys become load errors | planned |
+| 07a | route-config ([phase-07a-route-config.md](phase-07a-route-config.md)) | todo |
+| 07b | the two old keys become load errors; fixed `warning` gates until 09 | planned |
 | 08 | journal readers: catch-up, away digest, registry replay | planned |
 | 09 | ghost trigger as a consumer | planned |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
@@ -125,6 +126,14 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
   and the history text's first line is `[Webhook Alert] [FIRING] …`
   instead of a bare `[Webhook Alert]` line — the status tag moves into the
   title so the chat-notice overlay and the catch-up brief carry it.
+- **PE decisions at phase-07 drafting (2026-11-17):** configured
+  `[[notifications.route]]` tables **add to** the default routes, and
+  `[notifications] default_routes = false` turns the defaults off. Once
+  `[webhook] severity_threshold` is a load error, the `auto_analyze` gate
+  and the away digest's alert count use a fixed `warning` until phase 09
+  makes the ghost trigger a routed consumer. Nothing ships between phases,
+  so the interim never reaches a release. Phase 07 split into 07a
+  (additive route config) and 07b (the removals).
 - **Gotcha for producer phases (from phase 03):** `notice_sinks::test_bus`
   spawns the queued sinks, so on a current-thread runtime it must be built
   **after** `rt.enter()` (or inside `block_on`). Built before, the spawned
