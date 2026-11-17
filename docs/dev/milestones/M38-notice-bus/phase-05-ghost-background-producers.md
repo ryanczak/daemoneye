@@ -1,7 +1,7 @@
 # Phase 05 — ghost-background-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-17
 **Depends on:** phase-04
 **Estimated diff:** ~400 lines, about half of it tests
@@ -407,3 +407,138 @@ grep -c '^-.*store.mark_done'` prints `0`. Gates re-run once: fmt clean,
 clippy `-D warnings` exits 0, `cargo test` green — **2989** lib tests
 passed (not 2990), all integration suites pass. Committed as `cc8ba903`;
 tree clean.
+
+### Update — 2026-11-17 18:08 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Applied the bounce's single remaining edit (bug 05-1): in `run_scheduled_job_inner`'s `ActionOn::Ghost` arm, the `Err(e)` branch of `GhostManager::start_session_with_config` now calls `store.mark_done(&job.id, false, Some(msg));` immediately after its `publish_ghost_event(…)` — restoring the line phase 05's caller rewrite dropped. Nothing else in the phase was touched (`webhook/process.rs`, `bg_shell.rs`, `scheduler.rs`, and all tests are untouched).
+
+**Notes for review**
+
+- Finish condition met: `git diff 4df97778 -- src/daemon/scheduled.rs | grep -c '^-.*store.mark_done'` prints `0` (the diff now shows only `+` context around mark_done; no `-` deletions of that call remain).
+- Gates re-run once after the edit: `cargo fmt --all` clean, `cargo clippy --all-targets --all-features -- -D warnings` exits 0, and full `cargo test` is green with **2989** lib tests passed (0 failed, 10 ignored) plus all integration suites (2/6/19/16/45/11/2/4) — matching the expected count, not 2990.
+- `cargo build --tests` was verified green immediately after the one-line edit, before the gates.
+- Committed as `cc8ba903` (`fix: mark the scheduled ghost job done when its session fails to start`) with the phase-doc Update Log entry appended in `94ec3464`; `git status --short` is clean. Phase status left at `in-progress` for the server-authored completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.9.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.51s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.18s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (339800): No such process
+kill: (-340498): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M38-notice-bus/phase-05-ghost-background-producers.md` — +13 -0
+- `src/daemon/scheduled.rs` — +1 -0
+
+**Commit:** 94ec3464401e1494cde2a35fcbdd8f125c80a223
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
