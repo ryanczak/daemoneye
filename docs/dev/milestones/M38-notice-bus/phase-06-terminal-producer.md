@@ -1,7 +1,7 @@
 # Phase 06 — terminal-producer
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-17
 **Depends on:** phase-05
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -220,3 +220,135 @@ hygiene-capped body grows by one line (its call site). The 2 s tick, the 1 s
 probe timeout and the supervised name `"program-notices"` follow
 `spawn_session_counters_task` exactly. End-to-end verification is deferred
 to the milestone close's live check per the phase doc.
+
+### Update — 2026-11-17 18:47 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 06 (terminal-producer) is implemented and committed (`fc0a72cf`). `src/daemon/program_notices.rs` adds `ProgramWatcher` (baseline of `(id, state)` pairs per shell id, first-sight-is-baseline-only, `retain` to forget dropped shells), the pure `program_notice` (Source `Shell`; Warning/Error/Info for blocked/error/done; `state`/`kind`/`program_id` labels; `session` only for `Owner::Chat`; title `[Shell <id>] <program_line>`), `collect_notices` (a `None` probe leaves the baseline untouched, then `retain` over probed ids), and the supervised 2 s tick with a 1 s probe timeout, spawned from `run_daemon` via `spawn_program_notices_task` beside the counters spawn; CLAUDE.md got the one Key-files row. All 8 phase tests pass plus the full gate set: `cargo fmt` clean, `cargo clippy --all-targets --all-features -- -D warnings` exit 0, `cargo test` all suites green (2997 unit; hygiene 16 passed with no new allowlist line), and the two acceptance greps verified (`spawn_program_notices_task` definition + call present; no `Source::Shell` in `notice_sinks.rs`).
+
+**Notes for review:** two small adaptations inside the phase's authorization — the baseline stores `state.as_str()` in a `BTreeSet<(Option<String>, &'static str)>` because `program_status::State` derives neither `Hash` nor `Ord`, and the title reuses the existing `knowledge::program_line` rather than duplicating it; `startup.rs`'s `spawn_program_notices_task` is a one-line delegation so `run_daemon`'s hygiene-capped body grows by exactly one line. The phase status remains `in-progress` with no hand-written complete entry, per the contract; end-to-end verification is deferred to the milestone close's live check as the phase doc specifies.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.9.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.83s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ask_round_trip ... ok
+test ghost_config_parsing ... ok
+test ipc_tool_call_response_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (376109): No such process
+kill: (-376823): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -0
+- `docs/dev/milestones/M38-notice-bus/README.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/phase-06-terminal-producer.md` — +43 -2
+- `src/daemon/mod.rs` — +1 -0
+- `src/daemon/program_notices.rs` — +355 -0
+- `src/daemon/startup.rs` — +9 -0
+
+**Commit:** fc0a72cfa2d985e8dd67c4e50612b3390dbc45f9
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

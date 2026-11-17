@@ -102,7 +102,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | done |
 | 04 | scheduler-producers ([phase-04-scheduler-producers.md](phase-04-scheduler-producers.md)) | done |
 | 05 | ghost-background-producers ([phase-05-ghost-background-producers.md](phase-05-ghost-background-producers.md)) | done |
-| 06 | terminal-producer ([phase-06-terminal-producer.md](phase-06-terminal-producer.md)) | in-progress |
+| 06 | terminal-producer ([phase-06-terminal-producer.md](phase-06-terminal-producer.md)) | review      |
 | 07 | route config; the two old keys become load errors | planned |
 | 08 | journal readers: catch-up, away digest, registry replay | planned |
 | 09 | ghost trigger as a consumer | planned |
