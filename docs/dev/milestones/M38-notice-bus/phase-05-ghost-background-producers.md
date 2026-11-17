@@ -1,7 +1,7 @@
 # Phase 05 — ghost-background-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-17
 **Depends on:** phase-04
 **Estimated diff:** ~400 lines, about half of it tests
@@ -542,3 +542,25 @@ kill: (-340498): No such process
 **Commit:** 94ec3464401e1494cde2a35fcbdd8f125c80a223
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-17
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1. Bug 05-1 (major): the could-not-start branch of a
+  scheduled ghost job dropped `store.mark_done` while its call moved to
+  `publish_ghost_event`. Fixed in `cc8ba903` (one line, 32 turns). Before
+  that, the first run hard-failed on E0521 and was resumed, not bounced.
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** the executor overwrote the escalation Update-Log
+  entry instead of appending below it (restored at the first review).
+- **Calibration:** independent re-run green: fmt, build, clippy, `cargo
+  test` 2989 lib passed (unchanged by the fix, as pinned), hygiene 16
+  passed with no allowlist change. Acceptance greps: `inject_ghost_event`
+  0, `bg_shell.rs` direct delivery 0, `ghost_lifecycle` preserved (1), and
+  the bug-05-1 removed-`mark_done` grep 0. Delivery matches 2.9.0 under the
+  default routes: Ghost goes to history and chat notice; Background goes to
+  its own session's history (`background_completion_skips_other_sessions`).
+  Lesson for caller-migration specs: when a call is replaced, name the
+  statement that follows it as must-stay (here `mark_done`), because a
+  deletion span that runs to the next statement passes every gate when the
+  arm has no test.
