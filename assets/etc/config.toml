@@ -209,11 +209,9 @@ prompt = "sre"
 # Route notices to a sink behind a filter. Configured routes add to the
 # defaults. sink: "history" | "chat_notice" | "command". Filters:
 # min_severity, sources, names, statuses (empty list = any). A "command"
-# route requires its own command key. The `routes` key itself is a list of
-# route tables; the `[[notifications.route]]` tables below are how they are
-# written.
-# routes = []
+# route requires its own command key.
 # [[notifications.route]]
+# route = []
 # sink = "command"
 # command = "notify-send 'DaemonEye' '$DAEMONEYE_MSG'"
 # sources = ["scheduler", "watchdog"]

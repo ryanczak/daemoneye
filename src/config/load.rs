@@ -236,7 +236,7 @@ impl Config {
     /// `parse_config_text` — an `Err` fails the load, so `reload` keeps the
     /// running config.
     pub fn validate_routes(&self) -> Result<()> {
-        for (i, route) in self.notifications.routes.iter().enumerate() {
+        for (i, route) in self.notifications.route.iter().enumerate() {
             let name = format!("[[notifications.route]] #{}", i + 1);
             match route.sink {
                 crate::config::RouteSink::Command => {

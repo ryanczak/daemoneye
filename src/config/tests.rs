@@ -1400,7 +1400,7 @@ fn notifications_default_routes_is_on_by_default() {
         "Config::default() has default_routes on"
     );
     assert!(
-        parsed.notifications.routes.is_empty(),
+        parsed.notifications.route.is_empty(),
         "an empty file has no routes"
     );
 }
@@ -1422,9 +1422,9 @@ fn route_tables_parse_into_filters() {
             sources = ["shell"]
         "#;
     let cfg: Config = toml::from_str(toml).unwrap();
-    assert_eq!(cfg.notifications.routes.len(), 2);
+    assert_eq!(cfg.notifications.route.len(), 2);
 
-    let first = &cfg.notifications.routes[0];
+    let first = &cfg.notifications.route[0];
     assert_eq!(first.sink, crate::config::RouteSink::Command);
     assert_eq!(first.command.as_deref(), Some("echo hi"));
     let f = first.filter();
@@ -1435,7 +1435,7 @@ fn route_tables_parse_into_filters() {
     );
     assert_eq!(f.names, vec!["nightly-backup".to_string()]);
 
-    let second = &cfg.notifications.routes[1];
+    let second = &cfg.notifications.route[1];
     assert_eq!(second.sink, crate::config::RouteSink::History);
     assert_eq!(
         second.filter().sources,

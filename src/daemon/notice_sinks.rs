@@ -42,7 +42,7 @@ pub fn sink_routed(
     let mut routed = cfg.default_routes && routes_match(defaults, n);
     if !routed {
         routed = cfg
-            .routes
+            .route
             .iter()
             .any(|r| r.sink == sink && r.filter().matches(n));
     }
@@ -68,8 +68,9 @@ pub fn command_targets(
     if cfg.default_routes && routes_match(on_alert_defaults, n) && !cfg.on_alert.is_empty() {
         push(cfg.on_alert.clone(), &mut out);
     }
-    for route in &cfg.routes {
+    for route in &cfg.route {
         if route.sink == crate::config::RouteSink::Command
+            && route.filter().matches(n)
             && let Some(cmd) = &route.command
         {
             push(cmd.clone(), &mut out);
@@ -566,12 +567,37 @@ mod tests {
         let targets = command_targets(&cfg.notifications, &defaults.command, &n);
         assert_eq!(
             targets,
-            vec![
-                "echo alert".to_string(),
-                "echo route-a".to_string(),
-                "echo route-b".to_string(),
-            ],
-            "on_alert first, then the routes in order, `echo alert` deduped: {targets:?}"
+            vec!["echo alert".to_string(), "echo route-a".to_string()],
+            "on_alert first, then the matching route; the watchdog-filtered \
+             third route does not fire for a scheduler notice: {targets:?}"
+        );
+    }
+
+    /// A configured `command` route contributes its command only when its
+    /// filter matches the notice.
+    #[test]
+    fn command_targets_skip_a_route_whose_filter_does_not_match() {
+        let cfg: crate::config::Config = toml::from_str(
+            r#"
+            [[notifications.route]]
+            sink = "command"
+            command = "echo watchdog-only"
+            sources = ["watchdog"]
+        "#,
+        )
+        .expect("valid route config");
+
+        let watchdog = Notice::new(Severity::Info, Source::Watchdog, "disk", "t");
+        assert_eq!(
+            command_targets(&cfg.notifications, &[], &watchdog),
+            vec!["echo watchdog-only".to_string()],
+            "the watchdog notice runs the route's command: {watchdog:?}"
+        );
+
+        let scheduler = Notice::new(Severity::Info, Source::Scheduler, "job", "t");
+        assert!(
+            command_targets(&cfg.notifications, &[], &scheduler).is_empty(),
+            "the scheduler notice matches no route: {scheduler:?}"
         );
     }
 

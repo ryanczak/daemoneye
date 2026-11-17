@@ -548,8 +548,8 @@ pub struct NotificationsConfig {
     pub default_routes: bool,
     /// User-configured routes, one `[[notifications.route]]` table each.
     /// Additive to the built-in defaults.
-    #[serde(rename = "route", default)]
-    pub routes: Vec<RouteConfig>,
+    #[serde(default)]
+    pub route: Vec<RouteConfig>,
 }
 
 impl Default for NotificationsConfig {
@@ -557,7 +557,7 @@ impl Default for NotificationsConfig {
         NotificationsConfig {
             on_alert: String::new(),
             default_routes: true,
-            routes: Vec::new(),
+            route: Vec::new(),
         }
     }
 }
