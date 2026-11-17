@@ -104,7 +104,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 05 | ghost-background-producers ([phase-05-ghost-background-producers.md](phase-05-ghost-background-producers.md)) | done |
 | 06 | terminal-producer ([phase-06-terminal-producer.md](phase-06-terminal-producer.md)) | done |
 | 07a | route-config ([phase-07a-route-config.md](phase-07a-route-config.md)) | done |
-| 07b | the two old keys become load errors; fixed `warning` gates until 09 | planned |
+| 07b | remove-old-keys ([phase-07b-remove-old-keys.md](phase-07b-remove-old-keys.md)) | todo |
 | 08 | journal readers: catch-up, away digest, registry replay | planned |
 | 09 | ghost trigger as a consumer | planned |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
