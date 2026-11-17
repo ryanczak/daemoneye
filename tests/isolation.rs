@@ -374,11 +374,21 @@ max_ghost_turns: 1
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config: config.clone(),
         sessions,
         cache,
         schedule_store,
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -586,11 +596,17 @@ ssh_target: e2e-host
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config: config.clone(),
         sessions,
         cache,
         schedule_store,
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),

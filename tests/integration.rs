@@ -761,20 +761,26 @@ fn webhook_alert_to_event_log() {
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions,
         cache,
         schedule_store,
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
     let path = daemoneye::config::current_event_segment_path();
@@ -853,20 +859,26 @@ fn webhook_alert_below_threshold_is_not_injected() {
             daemoneye::daemon::session::SessionEntry::from_disk("gate-sess"),
         );
     });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions: sessions.clone(),
         cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alerts[0].clone(), state));
 
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
@@ -928,20 +940,26 @@ fn webhook_alert_at_threshold_is_injected() {
             daemoneye::daemon::session::SessionEntry::from_disk("at-sess"),
         );
     });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions: sessions.clone(),
         cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alerts[0].clone(), state));
 
     let (count, first_role, first_content) =
@@ -1011,20 +1029,26 @@ fn webhook_alert_below_threshold_is_recorded_active() {
 
     let config = daemoneye::config::Config::default();
     let sessions = daemoneye::daemon::session::SessionStore::default();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions,
         cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alerts[0].clone(), state));
 
     let snapshot = daemoneye::webhook::active_alerts_snapshot();
@@ -1102,20 +1126,26 @@ fn webhook_alert_no_severity_is_below_threshold() {
     });
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions: sessions.clone(),
         cache,
         schedule_store,
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
     // Fail closed: the discarded event carries `reason: below_threshold`.
@@ -1200,20 +1230,26 @@ fn webhook_alert_unrankable_severity_is_below_threshold() {
     });
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions: sessions.clone(),
         cache,
         schedule_store,
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
     // Fail closed: the discarded event carries `reason: below_threshold`.
@@ -1288,20 +1324,26 @@ fn webhook_alert_below_threshold_discarded() {
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+    );
     let state = std::sync::Arc::new(WebhookState {
         config,
         sessions,
         cache,
         schedule_store,
+        bus,
         dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
         rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
         ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
     rt.block_on(process_alert(alert.clone(), state));
 
     let path = daemoneye::config::current_event_segment_path();

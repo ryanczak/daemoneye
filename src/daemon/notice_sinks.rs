@@ -133,21 +133,8 @@ pub fn command_env(notice: &Notice) -> Vec<(&'static str, String)> {
         ("DAEMONEYE_JOB", notice.name.clone()),
         ("DAEMONEYE_MSG", notice.history_text()),
         ("DAEMONEYE_SEVERITY", notice.severity.as_str().to_string()),
-        ("DAEMONEYE_SOURCE", source_name(notice.source).to_string()),
+        ("DAEMONEYE_SOURCE", notice.source.as_str().to_string()),
     ]
-}
-
-/// The lowercase name a `Source` serialises as.
-fn source_name(source: Source) -> &'static str {
-    match source {
-        Source::Webhook => "webhook",
-        Source::Scheduler => "scheduler",
-        Source::Watchdog => "watchdog",
-        Source::Ghost => "ghost",
-        Source::Background => "background",
-        Source::Shell => "shell",
-        Source::Daemon => "daemon",
-    }
 }
 
 /// The command sink's queued delivery: read `[notifications] on_alert`
@@ -165,6 +152,19 @@ async fn deliver_command(notice: Notice) {
         command.env(key, value);
     }
     let _ = command.spawn();
+}
+
+/// A leaked bus with the default sinks registered on it, for tests.
+///
+/// `register_default_sinks` spawns tasks, so this must run inside a Tokio
+/// runtime (inside `rt.block_on(async { .. })` or after `rt.enter()`).
+/// Every test passes its **own** [`SessionStore`]: the sinks on a shared
+/// bus deliver one test's notices into another test's sessions, so tests
+/// never use the global bus.
+pub fn test_bus(sessions: SessionStore, threshold: Severity) -> &'static Bus {
+    let leaked: &'static Bus = Box::leak(Box::new(Bus::with_journal(|_| {})));
+    register_default_sinks(leaked, sessions, default_routes(threshold));
+    leaked
 }
 
 /// Subscribe the three sinks on `bus` and spawn the two queued tasks.

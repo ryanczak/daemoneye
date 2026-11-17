@@ -22,6 +22,21 @@ pub enum Source {
     Daemon,
 }
 
+impl Source {
+    /// The lowercase name this source serialises as.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Source::Webhook => "webhook",
+            Source::Scheduler => "scheduler",
+            Source::Watchdog => "watchdog",
+            Source::Ghost => "ghost",
+            Source::Background => "background",
+            Source::Shell => "shell",
+            Source::Daemon => "daemon",
+        }
+    }
+}
+
 /// What a notice reports: an alert firing, an alert resolving, or a plain
 /// one-off event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
