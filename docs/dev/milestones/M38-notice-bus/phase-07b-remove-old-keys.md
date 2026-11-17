@@ -197,3 +197,50 @@ check is the milestone close's.
 Started phase 07b (executor). Flipped this doc and the milestone README's 07b
 row to `in-progress`. Working the Spec tasks in order: removed-key check →
 fixed `warning` gates → field deletion → command sink → docs → gates.
+
+### Update — 2026-11-17 23:35 (end-to-end verification)
+
+All acceptance-criterion greps captured mechanically to `/tmp/greps-07b.txt`
+(pasted below unmodified), plus the `cargo test --test isolation` result line
+the phase doc's E2E section asks for, from `/tmp/e2e-isolation-07b.txt`. The
+daemon-level tests boot a real daemon on the harness config, so they prove the
+harness config still loads without the removed keys.
+
+```
+== AC1: grep -rnE 'pub (severity_threshold|on_alert)|\.(severity_threshold|on_alert)\b' src tests ==
+(no output — exit 1)
+
+== AC2: grep -nE 'fn threshold_from_config|pub command: Vec<Filter>' src/daemon/notice_sinks.rs ==
+(no output — exit 1)
+
+== AC3: grep -nE 'severity_threshold|on_alert' assets/etc/config.toml assets/memory/knowledge/config-reference.md ==
+(no output — exit 1)
+
+== AC3b: grep -nE 'on_alert|severity_threshold' README.md | grep -vci removed ==
+0
+
+== AC4: grep -c 'routes_match(&routes.history' src/daemon/notice_sinks.rs ==
+5
+
+== AC4: grep -c 'routes_match(&routes.chat_notice' src/daemon/notice_sinks.rs ==
+5
+
+== AC5: the three named preservation tests (from the full cargo test run) ==
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_ghost_e2e_deterministic ... ok
+
+== E2E: cargo test --test isolation ==
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+```
+
+Gates (one run each): `cargo fmt --all` clean; `cargo clippy --all-targets
+--all-features -- -D warnings` exits 0; `cargo test` reports 3006 lib tests
+passed, 0 failed (plus 105 across integration binaries), with the phase's new
+tests `removed_severity_threshold_is_a_load_error`,
+`removed_on_alert_is_a_load_error`, `config_without_removed_keys_still_loads`,
+`command_sink_runs_a_route_command_with_notice_env` and the reworked
+`command_targets_order_and_dedup` all green. Committed as `f522f804`; tree
+clean.
