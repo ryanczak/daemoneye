@@ -1,7 +1,7 @@
 # Phase 07a — route-config
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-06
 **Estimated diff:** ~350 lines, about half of it tests
@@ -137,6 +137,14 @@ and its body, `SinkRoutes`' four fields, `threshold_from_config`,
       line.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `tests/hygiene.rs` passes with no new allowlist line.
+- [ ] Bug 07a-1: `grep -c 'fn command_targets_skip_a_route_whose_filter_does_not_match' src/daemon/notice_sinks.rs`
+      prints `1`; `command_targets_order_and_dedup` expects exactly
+      `["echo alert", "echo route-a"]`; `cargo test` reports 3007 lib tests
+      passed ([bugs/bug-07a-1.md](bugs/bug-07a-1.md)).
+- [ ] Bug 07a-2: `grep -n 'rename = "route"' src/config/types.rs`,
+      `grep -n '^# routes = \[\]' assets/etc/config.toml` and
+      `grep -n 'notifications.routes' assets/memory/knowledge/config-reference.md`
+      each print nothing ([bugs/bug-07a-2.md](bugs/bug-07a-2.md)).
 
 ## Test plan
 
@@ -410,3 +418,35 @@ kill: (-436839): No such process
 **Commit:** 73a2a3089589a61e3132a6b1309cb9a090d7718f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-17 (bounce, bugs 07a-1 and 07a-2)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything else in 07a is reviewed and approved: the
+config types, `validate_routes`, `sink_routed`, the sink wiring and the
+README section. Do not redo them. **There are exactly three edits left:**
+
+1. **`command_targets`** (`src/daemon/notice_sinks.rs`): a configured
+   `command` route contributes its command only when
+   `route.filter().matches(n)`. Then fix `command_targets_order_and_dedup`
+   so it expects **exactly `["echo alert", "echo route-a"]`**. Its third route is filtered
+   to `watchdog` and the notice is a `Scheduler` notice, so `echo route-b`
+   must be absent. Derive the expectation from that sentence, not from
+   running the function. Add `command_targets_skip_a_route_whose_filter_does_not_match`:
+   one command route with `sources = ["watchdog"]`. A `Watchdog` notice
+   gives `["<its command>"]`; a `Scheduler` notice gives `[]`.
+2. **Rename the field** `NotificationsConfig.routes` to `route` and drop
+   its `#[serde(rename = "route")]`. Fix every use; the compiler lists them.
+3. **Docs**: in `assets/etc/config.toml` delete the `# routes = []` line
+   and the sentence above it that explains it. In
+   `assets/memory/knowledge/config-reference.md` rename the
+   `notifications.routes` row to `notifications.route`. If a doc-truth gate
+   then asks for something, satisfy it with the real `[[notifications.route]]`
+   key, never a phantom one.
+
+Before reporting, mutation-check edit 1: remove the `matches(n)` condition,
+confirm `command_targets_skip_a_route_whose_filter_does_not_match` fails,
+restore it, and paste both runs. Finish condition: all three bug greps in
+the Acceptance criteria hold, and `cargo test` reports **3007** lib tests
+passed, **not** 3006 and not 3008.
+
