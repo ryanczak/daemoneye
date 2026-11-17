@@ -1,7 +1,7 @@
 # Phase 05 — ghost-background-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-17
 **Depends on:** phase-04
 **Estimated diff:** ~400 lines, about half of it tests
@@ -222,3 +222,146 @@ deleted, the background producer rewritten around `background_notice` +
 a bus publish after the session lock is released, CLAUDE.md bullet
 updated, and the Test-plan tests added. Gates: fmt, clippy -D warnings
 and the full `cargo test` (2989 lib + integration suites) green.
+
+### Update — 2026-11-17 16:58 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Resumed phase 05 from the escalation point and completed all six spec tasks. The E0521 was fixed by replacing the two `state.bus` references inside the `tokio::spawn` block with the pre-spawn `let bus = state.bus;` copy (Completed and Failed arms) and deleting the unused `alert_name` clone. Steps 3–6 followed: all 13 `inject_ghost_event` callers moved to `publish_ghost_event(bus, GhostEvent::<kind>, <name>, …)` with format strings byte-identical (4 in process.rs, 5 in scheduled.rs via the phase-04 `bus` param, 2 in stream/conversation.rs and 1 in knowledge/ghost.rs via `crate::bus::global()`), then `inject_ghost_event` deleted. The background producer now builds the pure `background_notice` (Source `Background`, `session` targeted, title `[Background Task Completed]`, labels `shell`/`exit_code`) and `await_and_notify`/`await_notify_and_close` take a `&'static Bus` and publish after the session-gone lock check is released; `dispatch_background.rs` passes `crate::bus::global()`. `new_empty` gained the AtomicU64 suffix (step 1 was already on disk), TODO.md item 2 is deleted, and the CLAUDE.md Lifecycle-events bullet names `publish_ghost_event()`.
+
+**Notes for review**
+
+- All Test-plan tests exist and pass: `new_empty_stores_never_share_a_file`, `ghost_event_notice_maps_kind_to_severity`, `ghost_event_notice_history_text_is_the_content`, `publish_ghost_event_reaches_every_session`, `background_notice_targets_its_session`, `background_notice_severity_follows_the_outcome`, `background_completion_skips_other_sessions`. The 8 pre-existing `bg_shell` `await_and_notify`/`await_notify_and_close` tests pass with assertions unchanged — only the `notice_sinks::test_bus(...)` argument was added.
+- Acceptance greps verified: `grep -rn "inject_ghost_event" src/` → nothing; `grep -nE "append_session_message|push_event" src/daemon/executor/bg_shell.rs` → nothing; `grep -rn '"ghost_lifecycle"' src/webhook/process.rs` → the one `log_event` line (process.rs:301). `tests/hygiene.rs` passes with no allowlist change.
+- Gates: `cargo fmt --all` clean, `cargo clippy --all-targets --all-features -- -D warnings` exits 0 (one clippy fix along the way: `get().is_none() ||` → `map().eq()` in a test), full `cargo test` green — 2989 lib tests plus all integration suites, 0 failures, including the previously flaky `daemon::scheduled` set.
+- One adaptation: the phase-04-era comment on `await_and_notify` described a four-phase lock discipline; the rewrite keeps the locked session-gone check and moves the publish into the unlocked section, so the doc comment now states the don't-publish-under-the-lock rule directly. Status left at `in-progress` per the lifecycle split; committed as `28721c7a` with a clean tree.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.9.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.92s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test ghost_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (308284): No such process
+kill: (-308976): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/README.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/phase-05-ghost-background-producers.md` — +10 -8
+- `src/daemon/executor/bg_shell.rs` — +223 -34
+- `src/daemon/executor/dispatch_background.rs` — +2 -0
+- `src/daemon/executor/knowledge/ghost.rs` — +6 -5
+- `src/daemon/scheduled.rs` — +26 -22
+- `src/daemon/stream/conversation.rs` — +10 -8
+- `src/scheduler.rs` — +43 -2
+- `src/webhook/process.rs` — +143 -30
+
+**Commit:** 28721c7a678af469a98e5437a97b7908c4e7245c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
