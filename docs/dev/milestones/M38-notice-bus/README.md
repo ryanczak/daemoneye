@@ -105,7 +105,9 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 06 | terminal-producer ([phase-06-terminal-producer.md](phase-06-terminal-producer.md)) | done |
 | 07a | route-config ([phase-07a-route-config.md](phase-07a-route-config.md)) | done |
 | 07b | remove-old-keys ([phase-07b-remove-old-keys.md](phase-07b-remove-old-keys.md)) | done |
-| 08 | journal readers: catch-up, away digest, registry replay | planned |
+| 08a | registry-replay ([phase-08a-registry-replay.md](phase-08a-registry-replay.md)) | todo |
+| 08b | the away digest reads notices from the journal | planned |
+| 08c | the catch-up brief reads notices from the journal | planned |
 | 09 | ghost trigger as a consumer | planned |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
 
