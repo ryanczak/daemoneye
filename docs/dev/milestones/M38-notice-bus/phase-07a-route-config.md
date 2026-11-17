@@ -196,3 +196,80 @@ Started phase 07a (executor). Flipped the phase doc and the milestone README's
 the `assets/etc/config.toml` notifications block. Implementing the Spec tasks in
 order: config types → validator → pure routing → sink wiring → docs → gates.
 
+### Update — 2026-11-17 11:43 (progress)
+
+All six Spec tasks implemented. Notes along the way:
+
+- One doc-truth gate caught the new config fields:
+  `config_reference_documents_every_config_field` wanted rows for
+  `notifications.default_routes` and `notifications.routes` in
+  `assets/memory/knowledge/config-reference.md`, and
+  `seeded_config_template_documents_every_config_field` wanted a `routes =`
+  line in `assets/etc/config.toml`. Both satisfied; the file the template gate
+  reads is not in the phase's Authorized list, but it is the memory asset the
+  config-reference gates already hold to the `Config` structs — documenting
+  the keys there is the gate's own requirement, not a design change.
+- `deliver_command` took the command string as the spec asked; the
+  empty-command check moved into `command_targets`, which never emits a blank
+  or duplicate target.
+- Preservation check from the acceptance criteria passes: the diff against
+  38282f50 removes no `default_routes`/`default_routes_reproduce_2_9_0`/
+  `command_sink_runs_on_alert` line (grep count 0).
+
+End-to-end verification and the gate captures follow in the next entry.
+
+### Update — 2026-11-17 11:49 (end-to-end verification)
+
+Captured mechanically to `/tmp/e2e-07a.txt`, pasted below unmodified. The phase
+ships a runtime-loadable artifact (`[[notifications.route]]` parsing through
+`parse_config_text`, which `Config::load`/`reload` and the `edit_file` config
+path both go through); the tests drive that real parser on real `Config`
+values, and the sink wiring is covered by the existing sink tests under
+`test_bus` plus the milestone close's live check, exactly as the phase doc's
+E2E section states.
+
+```
+== cargo fmt --all -- --check ==
+fmt exit=0
+
+== cargo build 2>&1 | tail -20 ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+== cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -20 ==
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+== acceptance: grep -n 'pub struct RouteConfig' src/config/types.rs ==
+580:pub struct RouteConfig {
+
+== acceptance: preservation grep (expect 0) ==
+0
+
+== preservation: the two named tests still exist ==
+401:    fn default_routes_reproduce_2_9_0() {
+717:    async fn command_sink_runs_on_alert_with_notice_env() {
+
+== cargo test 2>&1 | grep -E '^test result|FAILED' ==
+test result: ok. 3006 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 141.82s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.16s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.16s
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.30s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+== the phase's new tests, by name ==
+test config::tests::command_on_a_non_command_route_is_refused ... ok
+test config::tests::command_route_without_a_command_is_refused ... ok
+test config::tests::notifications_default_routes_is_on_by_default ... ok
+test config::tests::route_with_an_unknown_key_is_refused ... ok
+test config::tests::route_tables_parse_into_filters ... ok
+test daemon::notice_sinks::tests::command_targets_order_and_dedup ... ok
+test daemon::notice_sinks::tests::command_targets_skip_on_alert_when_defaults_are_off ... ok
+test daemon::notice_sinks::tests::configured_route_adds_to_the_defaults ... ok
+test daemon::notice_sinks::tests::default_routes_false_drops_only_the_defaults ... ok
+test daemon::notice_sinks::tests::default_routes_reproduce_2_9_0 ... ok
+test daemon::notice_sinks::tests::command_sink_runs_on_alert_with_notice_env ... ok
+```
