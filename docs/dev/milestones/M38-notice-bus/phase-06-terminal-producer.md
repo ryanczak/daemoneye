@@ -1,7 +1,7 @@
 # Phase 06 — terminal-producer
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-05
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -178,4 +178,45 @@ milestone close's live check covers it: a terminal `blocked` report shows in
 
 ## Update Log
 
-<!-- entries appended below this line -->
+<!-- entries below this line -->
+
+### Update — 2026-11-17 18:30 (started, executor)
+
+Phase-06 execution started by the executor. Status flipped `todo → in-progress`
+(here and in the milestone README). Plan: build `ProgramWatcher` and its tests,
+then `program_notice` / `collect_notices`, then the tick and spawn, then the
+CLAUDE.md row and the gates.
+
+### Update — 2026-11-17 18:55 (executor, gates)
+
+All five spec tasks done; the three gates ran clean, each once:
+
+- `cargo fmt --all` — exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings` — exit 0, no
+  warnings.
+- `cargo test` — all suites green: 2997 unit tests + every integration suite
+  (`tests/hygiene.rs`: 16 passed, no new allowlist line —
+  `grep -c "daemon/program_notices" tests/hygiene_allowlist.txt` prints 0).
+
+Acceptance-criteria greps:
+
+```
+$ grep -n "spawn_program_notices_task" src/daemon/startup.rs
+61:fn spawn_program_notices_task(shutdown: Arc<AtomicBool>) {
+62:    crate::daemon::program_notices::spawn_program_notices_task(shutdown);
+543:    spawn_program_notices_task(Arc::clone(&shutdown));
+$ grep -n "Source::Shell" src/daemon/notice_sinks.rs
+(no matches — exit 1; default routes still deliver no shell notices)
+```
+
+Notes for review: two small adaptations inside the phase's authorization —
+the baseline uses `BTreeSet<(Option<String>, &'static str)>` (storing
+`state.as_str()`) because `State` derives neither `Hash` nor `Ord`, and the
+title renders through the existing
+`crate::daemon::executor::knowledge::program_line` rather than a new copy.
+`spawn_program_notices_task` in `startup.rs` is a one-line delegation to
+`program_notices::spawn_program_notices_task` so `run_daemon`'s
+hygiene-capped body grows by one line (its call site). The 2 s tick, the 1 s
+probe timeout and the supervised name `"program-notices"` follow
+`spawn_session_counters_task` exactly. End-to-end verification is deferred
+to the milestone close's live check per the phase doc.

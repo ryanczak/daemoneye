@@ -54,6 +54,14 @@ fn spawn_session_counters_task(shutdown: Arc<AtomicBool>) {
     ));
 }
 
+/// The 2 s `Shell`-notice tick (M38 phase 06): a program's entry into
+/// `blocked` / `done` / `error` over OSC 7501 publishes one `Shell` notice.
+/// Supervised like the counters task beside it; kept out of `run_daemon`
+/// so its hygiene-cap line does not grow.
+fn spawn_program_notices_task(shutdown: Arc<AtomicBool>) {
+    crate::daemon::program_notices::spawn_program_notices_task(shutdown);
+}
+
 /// The startup host warnings (M37 phase-06): each `[hosts.<name>]` problem
 /// the config validator finds, then each entry whose `ssh` names the daemon's
 /// own machine — that entry's `host:` is refused by the host gate. Kept out
@@ -532,6 +540,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     }
 
     spawn_session_counters_task(Arc::clone(&shutdown));
+    spawn_program_notices_task(Arc::clone(&shutdown));
     let sessions_cleanup_sup = sessions.clone();
     let log_path_sup = log_file.clone();
     tokio::spawn(supervise(

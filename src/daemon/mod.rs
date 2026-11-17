@@ -32,6 +32,7 @@ pub mod instance;
 pub mod memory_prompt;
 pub mod notice_sinks;
 pub mod policy;
+pub mod program_notices;
 pub mod prompt;
 pub mod ready;
 pub mod run;
