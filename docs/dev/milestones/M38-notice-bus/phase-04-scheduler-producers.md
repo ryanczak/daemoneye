@@ -1,7 +1,7 @@
 # Phase 04 — scheduler-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-16
 **Depends on:** phase-03
 **Estimated diff:** ~350 lines, about half of it tests
@@ -39,6 +39,31 @@ production caller (`src/daemon/startup.rs`) passes `None`, so it is dead.
 After this phase `fire_notification` (`src/daemon/utils/response.rs`) has
 no caller. The ghost-job paths in `scheduled.rs` call `inject_ghost_event`;
 they move in phase 05.
+
+## Edit order and the files you need
+
+**Your first `patch` to a source file lands within your first 15 turns.**
+The previous run read 1000 turns across the whole tree and edited nothing.
+Everything this phase needs is in these files; **read no others**:
+
+- `src/daemon/scheduled.rs`, `src/daemon/scheduled_tests.rs` — the work.
+- `src/daemon/startup.rs` — the one `run_scheduled_job` call.
+- `src/daemon/utils/response.rs` — `fire_notification`, to delete.
+- `src/daemon/notice_sinks.rs` and `src/bus/notice.rs` — read once for
+  `test_bus`, `Notice::new` and its builders; do not change them.
+- `CLAUDE.md` and `src/config/types.rs` — one line each (Spec task 3).
+
+Do the edits in this order. Each step ends at a green `cargo build`
+(`cargo build --tests` from step 2 on); start the next step only then.
+
+1. In `scheduled.rs`, add the four pure notice builders (Spec task 2) next
+   to `notify_job_result`, and change `notify_job_result` to take `bus:
+   &'static crate::bus::Bus` and publish the notice instead of sending.
+2. Replace `notify_tx` with `bus` through every function in `scheduled.rs`
+   and at the `startup.rs` call site, then fix `scheduled_tests.rs`'s
+   callers (Spec task 1).
+3. Delete `fire_notification` and update the two doc lines (Spec task 3).
+4. Add the tests in the Test plan, then run the gates once (Spec task 4).
 
 ## Spec
 
@@ -120,3 +145,25 @@ milestone close's live check.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-17
+
+The first run hit `budget_exceeded` at 1000 turns with **no source edit**:
+after reading the right files it drifted through `src/shell/`,
+`src/memory.rs`, `src/search.rs` and `src/daemon/situational.rs`, none of
+which this phase touches. Nothing in the spec changed except the new
+§ "Edit order and the files you need": a closed file list, a first-edit
+deadline, and four steps that each end at a green build. Follow it. Do not
+read files outside that list; if you think you need one, you don't — the
+four steps are complete without it.
+
+### Update — 2026-11-17 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** `budget_exceeded` with zero source edits is read paralysis, not a spec gap; the refinement adds the forced first edit, closed file list and stepwise edit order that phase 01 had and this doc lacked.
+
+### Update — 2026-11-17 02:27 (started, executor)
+
+**Executor:** phase-04 run, headless.
+
+Flipped the phase to `in-progress`; implementing the Spec tasks in order.
