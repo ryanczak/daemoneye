@@ -224,9 +224,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     startup_config.sandbox.validate();
 
     startup_config.execution.validate();
-    // Warn about an unrankable webhook severity_threshold (behaves as
-    // "warning", M37 phase 01) and any host that will not resolve.
-    startup_config.webhook.validate();
     // Warn about an unknown `[chat] glyphs` dialect (behaves as "emoji").
     startup_config.chat.validate();
     warn_host_problems(&startup_config);
@@ -429,13 +426,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // M38 phase 02: the notice bus's three sinks subscribe on the global bus
     // right after the store exists, with 2.9.0's default routes. No producer
     // publishes yet (phases 03–05), so this changes no runtime behaviour.
-    let threshold = crate::daemon::notice_sinks::threshold_from_config(
-        &crate::config::current().webhook.severity_threshold,
-    );
     crate::daemon::notice_sinks::register_default_sinks(
         crate::bus::global(),
         sessions.clone(),
-        crate::daemon::notice_sinks::default_routes(threshold),
+        crate::daemon::notice_sinks::default_routes(crate::bus::Severity::Warning),
     );
 
     // Load or create the schedule store.

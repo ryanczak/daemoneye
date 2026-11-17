@@ -1,7 +1,7 @@
 # Phase 07b — remove-old-keys
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-07a
 **Estimated diff:** ~350 lines, mostly deletions and test edits
@@ -191,3 +191,9 @@ check is the milestone close's.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-17 23:10 (progress)
+
+Started phase 07b (executor). Flipped this doc and the milestone README's 07b
+row to `in-progress`. Working the Spec tasks in order: removed-key check →
+fixed `warning` gates → field deletion → command sink → docs → gates.

@@ -20,7 +20,7 @@ DaemonEye 1.x drove your tmux panes. 2.0 runs its own shells, reaches remote hos
 - **One run model.** A chat turn, a ghost, a scheduled job and a delegated agent are all *runs*. Each run has its own turn log, a structured result and a briefing. Cancel any run with `daemoneye stop <run-id>` or `/stop`. Resume a finished ghost with new instructions using `daemoneye run resume`.
 - **Watch and join your agents.** `/shells` and `/tail` follow any shell live. `/agents` attaches to a running ghost so you can pause it, resume it, interrupt it, or type into it. `/logs` and `/log` replay finished recordings. `/hosts` lists the configured hosts, and `/shell` opens a shell of your own.
 - **Shell tools for the AI.** New tools: `list_shells`, `read_shell`, `find_in_shells`, `open_shell`, `close_shell`, `watch_shell` and `send_input`. There is also a deferred `history` group, `list_shell_logs` and `read_shell_log`, for reading past shell recordings.
-- **Alerts reach every chat, live.** Webhook alerts at or above `severity_threshold`, ghost lifecycle events and background completions are pushed to every connected chat and written to each session's history — a below-threshold alert never enters either (the threshold gates history and the chat notice as well as `on_alert` and AI analysis). The daemon also tracks which alerts are currently firing and tells an attaching chat about them. A chat reconnects by itself after a daemon restart. `chat --resume` opens with a `[Catch-up]` brief of everything that happened while you were away.
+- **Alerts reach every chat, live.** Webhook alerts route by default at `warning` and above, and ghost lifecycle events and background completions are pushed to every connected chat and written to each session's history. The daemon also tracks which alerts are currently firing and tells an attaching chat about them. A chat reconnects by itself after a daemon restart. `chat --resume` opens with a `[Catch-up]` brief of everything that happened while you were away.
 - **Tool calls that correct themselves.** When the model sends a mistyped argument to a real tool, the error names the bad parameter and the model retries. Before, the call was silently dropped.
 - **`daemoneye doctor`.** Prints one line per readiness check: config, API key, shell, daemon, sandbox, hosts and tmux.
 
@@ -807,8 +807,6 @@ model    = "claude-sonnet-4-6"
 # bind_addr = "127.0.0.1"   # set to "0.0.0.0" to expose on all interfaces
 # secret = ""               # Bearer token; empty = no auth
 # auto_analyze = true
-# severity_threshold = "warning"   # "info" | "warning" | "critical"; also
-#                                  # gates history injection and the chat notice
 # dedup_window_secs = 300
 ```
 
@@ -883,12 +881,16 @@ extra_patterns = [
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `on_alert` | string | `""` | Shell command to run when a watchdog alert fires. Available env vars: `$DAEMONEYE_JOB` (job name), `$DAEMONEYE_MSG` (alert message). |
 | `default_routes` | bool | `true` | Whether the built-in default routes stay on. Set to `false` to keep only the `[[notifications.route]]` tables you configure. |
+
+> **Removed in 2.10.0:** both keys below. A config file that still sets
+> either fails to load with an error showing the equivalent routes. Webhook
+> alerts route by default at `warning` and above; the old alert command
+> moves into a `[[notifications.route]]` with `sink = "command"`.
 
 ```toml
 [notifications]
-on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+default_routes = true
 ```
 
 #### `[[notifications.route]]`
@@ -898,7 +900,7 @@ Each `[[notifications.route]]` table routes notices to one sink behind a filter.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `sink` | string | *(required)* | Where matched notices go: `"history"` (append to every session's chat history), `"chat_notice"` (one-line overlay to every attached chat) or `"command"` (run `command`). |
-| `command` | string | *(required for `sink = "command"`)* | The shell command to run, with the same `$DAEMONEYE_*` environment as `on_alert`. Refused on a `history` or `chat_notice` route. |
+| `command` | string | *(required for `sink = "command"`)* | The shell command to run, with the four `$DAEMONEYE_*` variables: `$DAEMONEYE_JOB` (notice name), `$DAEMONEYE_MSG` (message text), `$DAEMONEYE_SEVERITY` (severity) and `$DAEMONEYE_SOURCE` (source). Refused on a `history` or `chat_notice` route. |
 | `min_severity` | string | *(any)* | Minimum severity, inclusive: `"debug"`, `"info"`, `"warning"`, `"error"`, `"critical"`. |
 | `sources` | list | `[]` (any) | Any-of list of sources: `"webhook"`, `"scheduler"`, `"watchdog"`, `"ghost"`, `"background"`, `"shell"`, `"daemon"`. |
 | `names` | list | `[]` (any) | Any-of list of exact notice names (e.g. `"HighCPU"`). |
@@ -939,12 +941,16 @@ Seeds the approval state at the start of every session — for `daemoneye chat` 
 | `bind_addr` | string | `"127.0.0.1"` | IP address to bind the webhook listener. Set to `"0.0.0.0"` to expose on all interfaces — **only with `secret` set**: a non-loopback bind with an empty secret is refused and the daemon fails to start, because every webhook post can launch a ghost shell that runs arbitrary commands. |
 | `secret` | string | `""` | Bearer token for authentication. Empty = no auth. |
 | `auto_analyze` | bool | `true` | Run runbook-based AI analysis when a matching runbook exists. |
-| `severity_threshold` | string | `"warning"` | Minimum severity for everything an alert does: AI analysis, `on_alert`, injecting the alert into every session's history, and the chat-pane notice. One of `"info"`, `"warning"`, `"critical"`. An alert whose severity is not one of these is treated as below threshold (fail closed); an unrankable threshold value behaves as `"warning"`, with a warning logged at load. |
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
+
+> **Removed in 2.10.0:** `[webhook] severity_threshold`. A config file that
+> still sets it fails to load with an error showing the equivalent
+> `[[notifications.route]]` table. The webhook routes by default at
+> `warning` and above.
 
 The listener also enforces a per-IP rate limit of 30 requests per 60-second window (a compile-time constant, not configurable). A bind failure at startup is fatal — it is treated as a duplicate-instance signal, not a transient error.
 
-Every alert the webhook accepts is recorded in the daemon's active-alert registry (keyed by fingerprint, entries expiring after 6 hours without a re-fire), including alerts below `severity_threshold` — only analysis, `on_alert`, history injection and the chat-pane notice are gated. The registry is visible to a chat client as an `AlertState` frame at attach and to `daemoneye top` in a later release.
+Every alert the webhook accepts is recorded in the daemon's active-alert registry (keyed by fingerprint, entries expiring after 6 hours without a re-fire) at every severity — the registry is not gated by the routing defaults, which route webhook alerts at `warning` and above. The registry is visible to a chat client as an `AlertState` frame at attach and to `daemoneye top` in a later release.
 
 #### Prometheus Alertmanager integration
 
@@ -1323,7 +1329,6 @@ port = 9393
 bind_addr = "127.0.0.1"
 secret = "change-me"          # set a Bearer token; leave empty to disable auth
 auto_analyze = true
-severity_threshold = "warning"
 dedup_window_secs = 300
 ```
 

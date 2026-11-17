@@ -1319,72 +1319,6 @@ fn self_host_problems_catches_the_label_and_loopback_spellings() {
     );
 }
 
-// ── M37 phase 01: the severity_threshold validator ──────────────────────────
-
-/// An unrankable `severity_threshold` produces exactly one warning naming the
-/// value and the fallback; the pure `warnings()` is what the test pins, and
-/// `validate()` is the caller that logs it.
-#[test]
-fn webhook_unrankable_threshold_warns_and_acts_as_warning() {
-    let cfg = WebhookConfig {
-        severity_threshold: "banana".to_string(),
-        ..WebhookConfig::default()
-    };
-    let warnings = cfg.warnings();
-    assert_eq!(
-        warnings.len(),
-        1,
-        "an unrankable threshold warns exactly once: {warnings:?}"
-    );
-    assert!(
-        warnings[0].contains("banana"),
-        "the warning names the offending value: {warnings:#?}"
-    );
-    assert!(
-        warnings[0].contains("Treating it as \"warning\""),
-        "the warning names the fallback: {warnings:#?}"
-    );
-    cfg.validate(); // must not panic — the validate path is the same one warn rides
-
-    // And the gate the warning describes: a `warning` alert fires while an
-    // `info` one does not. `severity_rank` is the production gate's own table.
-    assert_eq!(
-        crate::webhook::active_severity_rank("warning"),
-        2,
-        "a warning alert's rank"
-    );
-    assert_eq!(
-        crate::webhook::active_severity_rank("info"),
-        1,
-        "an info alert's rank"
-    );
-    assert_eq!(
-        crate::webhook::active_severity_rank("banana"),
-        0,
-        "the unrankable value ranks below info, so it is below any threshold"
-    );
-}
-
-/// A valid threshold warns nothing, and the default never warns.
-#[test]
-fn webhook_valid_threshold_warns_nothing() {
-    for value in ["info", "warning", "critical", "INFO", "Warning"] {
-        let cfg = WebhookConfig {
-            severity_threshold: value.to_string(),
-            ..WebhookConfig::default()
-        };
-        assert!(
-            cfg.warnings().is_empty(),
-            "{value} is rankable and must not warn: {:?}",
-            cfg.warnings()
-        );
-    }
-    assert!(
-        WebhookConfig::default().warnings().is_empty(),
-        "the default threshold never warns"
-    );
-}
-
 // ── M38 phase 07a: [[notifications.route]] ──────────────────────────────
 
 /// The switch defaults on, from an empty file and from `Config::default()`.
@@ -1459,6 +1393,79 @@ fn route_with_an_unknown_key_is_refused() {
         text.contains("unknown field `severity`"),
         "the error names the unknown key: {text}"
     );
+}
+
+/// A config that still sets the removed `[webhook] severity_threshold` fails
+/// to load, and the error shows the equivalent route table.
+#[test]
+fn removed_severity_threshold_is_a_load_error() {
+    let toml = r#"
+            [webhook]
+            severity_threshold = "critical"
+        "#;
+    let path = std::path::Path::new("config.toml");
+    let err = parse_config_text(path, toml).expect_err("a removed key must fail");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("removed in 2.10.0"),
+        "the error names the removal: {text}"
+    );
+    assert!(
+        text.contains("[[notifications.route]]")
+            && text.contains("sources = [\"webhook\"]")
+            && text.contains("min_severity = \"critical\""),
+        "the error shows the equivalent route: {text}"
+    );
+}
+
+/// A config that still sets the removed `[notifications] on_alert` fails to
+/// load. The error shows the two routes that reproduce it, with a literal
+/// placeholder — never the configured command, which may carry a secret.
+#[test]
+fn removed_on_alert_is_a_load_error() {
+    let toml = r#"
+            [notifications]
+            on_alert = "curl -H 'Authorization: Bearer token-s3cr3t' https://hooks.example"
+        "#;
+    let path = std::path::Path::new("config.toml");
+    let err = parse_config_text(path, toml).expect_err("a removed key must fail");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("removed in 2.10.0"),
+        "the error names the removal: {text}"
+    );
+    assert!(
+        text.contains("sink = \"command\"")
+            && text.contains("[\"scheduler\", \"watchdog\"]")
+            && text.contains("<your on_alert command>"),
+        "the error shows the two reproducing routes: {text}"
+    );
+    assert!(
+        !text.contains("token-s3cr3t"),
+        "the configured command is never echoed: {text}"
+    );
+}
+
+/// A config using only the surviving keys parses.
+#[test]
+fn config_without_removed_keys_still_loads() {
+    let toml = r#"
+            [webhook]
+            enabled = true
+
+            [notifications]
+            default_routes = false
+
+            [[notifications.route]]
+            sink = "command"
+            command = "echo hi"
+            sources = ["watchdog"]
+        "#;
+    let path = std::path::Path::new("config.toml");
+    let cfg = parse_config_text(path, toml).expect("the surviving keys parse");
+    assert!(cfg.webhook.enabled);
+    assert!(!cfg.notifications.default_routes);
+    assert_eq!(cfg.notifications.route.len(), 1);
 }
 
 /// A `command` sink route with no command — missing and blank — is refused,

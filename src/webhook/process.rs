@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
-use crate::daemon::notice_sinks::threshold_from_config;
 use crate::daemon::session::{
     SessionStore, append_session_message, presence_broadcast, presence_session_ids, with_sessions,
 };
@@ -154,7 +153,7 @@ pub async fn process_alert(
     );
 
     // 5. Publish the alert notice (M38 phase 03): the bus fans it out to the
-    //    sinks — history, chat notice, `on_alert` command, alert registry —
+    //    sinks — history, chat notice, command, alert registry —
     //    each behind its own routes. The severity the gate ranks is the
     //    notice's parsed severity; an unrankable raw string degrades to
     //    `Debug`, which sits below every threshold (the M37 fail-closed rule).
@@ -179,18 +178,17 @@ pub async fn process_alert(
     .label("kind", "alert");
     state.bus.publish(notice);
 
-    // 6. Severity gate — decides whether `auto_analyze` runs. An alert whose
-    //    severity cannot be ranked fails closed (below threshold), as before;
-    //    the difference from 2.9.0 is that `error`/`err` now rank (via the
-    //    notice severity) and pass a `warning` threshold.
-    let should_fire = notice_severity >= threshold_from_config(&cfg.severity_threshold);
+    // 6. Severity gate — decides whether `auto_analyze` runs. Fixed at
+    //    `warning` until the ghost trigger becomes a routed consumer (phase 09).
+    //    An alert whose severity cannot be ranked degrades to `Debug`, which
+    //    sits below `warning` — the fail-closed rule.
+    let should_fire = notice_severity >= crate::bus::Severity::Warning;
 
     if !should_fire {
         log::warn!(
-            "Webhook: alert '{}' discarded — severity '{}' below threshold '{}'",
+            "Webhook: alert '{}' discarded — severity '{}' below threshold 'warning'",
             alert.alert_name,
-            alert.severity,
-            cfg.severity_threshold
+            alert.severity
         );
         crate::daemon::utils::log_event(
             "webhook_discarded",
@@ -198,7 +196,7 @@ pub async fn process_alert(
                 "reason": "below_threshold",
                 "alert_name": alert.alert_name,
                 "severity": alert.severity,
-                "threshold": cfg.severity_threshold,
+                "threshold": "warning",
             }),
         );
         return None;

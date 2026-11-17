@@ -368,16 +368,15 @@ max_ghost_turns: 1
         },
     );
 
-    // The payload's severity is "info" (rankable), so a threshold of "info"
-    // fires it — "warning", the default, would discard it below threshold.
-    config.webhook.severity_threshold = "info".to_string();
+    // The gate is fixed at `warning`; the payload carries a rankable
+    // `warning` severity so the alert is admitted.
 
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config: config.clone(),
@@ -396,7 +395,7 @@ max_ghost_turns: 1
             "status": "firing",
             "labels": {
                 "alertname": "DiskFull",
-                "severity": "info",
+                "severity": "warning",
                 "instance": "web-01"
             },
             "annotations": {
@@ -408,7 +407,7 @@ max_ghost_turns: 1
     let alerts = parse_payload(&body);
     assert_eq!(alerts.len(), 1);
     assert_eq!(alerts[0].alert_name, "DiskFull");
-    assert_eq!(alerts[0].severity, "info");
+    assert_eq!(alerts[0].severity, "warning");
 
     let handle = rt.block_on(process_alert(alerts[0].clone(), state));
 
@@ -586,16 +585,15 @@ ssh_target: e2e-host
         },
     );
 
-    // The gate fails closed on an unrankable severity; this test exercises the
-    // analysis pipeline, so it admits the alert explicitly.
-    config.webhook.severity_threshold = "info".to_string();
+    // The gate is fixed at `warning`; this test exercises the analysis
+    // pipeline, so the payload carries a rankable `warning` severity.
 
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config: config.clone(),
@@ -614,7 +612,7 @@ ssh_target: e2e-host
             "status": "firing",
             "labels": {
                 "alertname": "DiskFull",
-                "severity": "info",
+                "severity": "warning",
                 "instance": "web-01"
             },
             "annotations": {
@@ -626,8 +624,7 @@ ssh_target: e2e-host
     let alerts = parse_payload(&body);
     assert_eq!(alerts.len(), 1);
 
-    // The ssh-target test's alert carries severity "info" (rankable) and the
-    // config's threshold is "info", so the fail-closed gate admits it.
+    // The alert carries severity "warning", which the fixed gate admits.
     let handle = rt.block_on(process_alert(alerts[0].clone(), state));
     let ghost_handle = handle.expect("process_alert returned None — no ghost spawned");
     // Await the ghost handle — deterministic, no sleep or polling.
@@ -735,14 +732,15 @@ max_ghost_turns: 1
     env.start_stub().await;
     env.start_daemon("de-test-ghost-http");
 
-    // Severity-less payload.
+    // Payload carrying a rankable `warning` severity, which the fixed gate
+    // admits.
     let body = serde_json::json!({
         "status": "firing",
         "alerts": [{
             "status": "firing",
             "labels": {
                 "alertname": "DiskFull",
-                "severity": "info",
+                "severity": "warning",
                 "instance": "web-01"
             },
             "annotations": {

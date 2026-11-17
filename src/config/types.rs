@@ -535,14 +535,10 @@ impl Default for GhostDaemonConfig {
     }
 }
 
-/// Notification hooks for scheduler/watchdog alerts.
+/// Notification routing: built-in defaults plus user `[[notifications.route]]`
+/// tables.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NotificationsConfig {
-    /// Shell command to run when a watchdog alert fires.
-    /// Available env vars: `$DAEMONEYE_JOB` (job name), `$DAEMONEYE_MSG` (alert message).
-    /// Example: `notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'`
-    #[serde(default)]
-    pub on_alert: String,
     /// Whether the built-in default routes stay on. Default: `true`.
     #[serde(default = "default_true")]
     pub default_routes: bool,
@@ -555,7 +551,6 @@ pub struct NotificationsConfig {
 impl Default for NotificationsConfig {
     fn default() -> Self {
         NotificationsConfig {
-            on_alert: String::new(),
             default_routes: true,
             route: Vec::new(),
         }
@@ -621,11 +616,6 @@ pub struct WebhookConfig {
     /// Run runbook-based AI analysis when a matching runbook is found.
     #[serde(default = "default_true")]
     pub auto_analyze: bool,
-    /// Minimum severity to trigger AI analysis; the notice-bus command sink
-    /// applies the same threshold to its webhook route.
-    /// "info" | "warning" | "critical"
-    #[serde(default = "default_severity_threshold")]
-    pub severity_threshold: String,
     /// Seconds to suppress duplicate alerts by fingerprint. Default 300.
     #[serde(default = "default_dedup_window")]
     pub dedup_window_secs: u64,
@@ -641,9 +631,6 @@ fn default_webhook_port() -> u16 {
 pub(super) fn default_true() -> bool {
     true
 }
-fn default_severity_threshold() -> String {
-    "warning".to_string()
-}
 fn default_dedup_window() -> u64 {
     300
 }
@@ -658,39 +645,8 @@ impl Default for WebhookConfig {
             port: default_webhook_port(),
             secret: String::new(),
             auto_analyze: default_true(),
-            severity_threshold: default_severity_threshold(),
             dedup_window_secs: default_dedup_window(),
             bind_addr: default_webhook_bind(),
-        }
-    }
-}
-
-impl WebhookConfig {
-    /// Every warning about this `[webhook]` section, in a stable order. Pure:
-    /// `validate()` is the caller that logs them — the same shape
-    /// `SandboxConfig::warnings` gives its section.
-    pub fn warnings(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        if !self.severity_threshold.trim().is_empty()
-            && crate::webhook::active_severity_rank(&self.severity_threshold) == 0
-        {
-            out.push(format!(
-                "[webhook] severity_threshold = {:?} is invalid — supported values are \
-                 \"info\", \"warning\", \"critical\". Treating it as \"warning\".",
-                self.severity_threshold
-            ));
-        }
-        out
-    }
-
-    /// Warn about an unrankable `severity_threshold`. The gate treats it as
-    /// `warning` (fail closed on the alert's side, M37 phase 01), so the
-    /// misconfiguration is surfaced at load rather than silently doubling the
-    /// default. Never panics and never returns a value — the other config
-    /// validators' shape.
-    pub fn validate(&self) {
-        for w in self.warnings() {
-            log::warn!("{w}");
         }
     }
 }

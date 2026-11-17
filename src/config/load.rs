@@ -135,6 +135,46 @@ fn dirs_next() -> PathBuf {
 /// before prompting — the error carries the same `parsing <path>` context
 /// either way.
 pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<Config> {
+    if let Ok(table) = text.parse::<toml::Table>() {
+        if table
+            .get("webhook")
+            .and_then(|w| w.get("severity_threshold"))
+            .is_some()
+        {
+            let configured = table["webhook"]["severity_threshold"]
+                .as_str()
+                .unwrap_or("");
+            anyhow::bail!(
+                "[webhook] severity_threshold was removed in 2.10.0. Route webhook notices \
+                 instead:\n\
+                 \x20 [[notifications.route]]\n\
+                 \x20 sink = \"history\"\n\
+                 \x20 sources = [\"webhook\"]\n\
+                 \x20 min_severity = \"{configured}\"\n\
+                 Webhook alerts also route by default at warning and above."
+            );
+        }
+        if table
+            .get("notifications")
+            .and_then(|n| n.get("on_alert"))
+            .is_some()
+        {
+            anyhow::bail!(
+                "[notifications] on_alert was removed in 2.10.0. Reproduce it with two routes \
+                 (put your command where the placeholder is):\n\
+                 \x20 [[notifications.route]]\n\
+                 \x20 sink = \"command\"\n\
+                 \x20 sources = [\"scheduler\", \"watchdog\"]\n\
+                 \x20 command = \"<your on_alert command>\"\n\
+                 \n\
+                 \x20 [[notifications.route]]\n\
+                 \x20 sink = \"command\"\n\
+                 \x20 sources = [\"webhook\"]\n\
+                 \x20 min_severity = \"warning\"\n\
+                 \x20 command = \"<your on_alert command>\""
+            );
+        }
+    }
     let mut cfg: Config =
         toml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
     cfg.validate_pricing();

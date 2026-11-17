@@ -769,7 +769,7 @@ fn webhook_alert_to_event_log() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,
@@ -867,7 +867,7 @@ fn webhook_alert_below_threshold_is_not_injected() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,
@@ -948,7 +948,7 @@ fn webhook_alert_at_threshold_is_injected() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,
@@ -1037,7 +1037,7 @@ fn webhook_alert_below_threshold_is_recorded_active() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,
@@ -1134,7 +1134,7 @@ fn webhook_alert_no_severity_is_below_threshold() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,
@@ -1238,7 +1238,7 @@ fn webhook_alert_unrankable_severity_is_below_threshold() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,
@@ -1332,7 +1332,7 @@ fn webhook_alert_below_threshold_discarded() {
     let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
-        daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
+        daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
         config,

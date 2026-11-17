@@ -171,7 +171,7 @@ fn watchdog_notice(job: &ScheduledJob, response: &str) -> crate::bus::Notice {
 /// Publish the job's result notice on the bus. The one notify tail a
 /// scheduled job has, so the success, failure and refusal paths cannot
 /// diverge on it. The bus fans the notice out to the sinks — the chat
-/// notice, the `on_alert` command — each behind its own routes; delivering
+/// notice, the command sink — each behind its own routes; delivering
 /// to nobody is the normal no-chat case.
 async fn notify_job_result(bus: &'static crate::bus::Bus, notice: crate::bus::Notice) {
     bus.publish(notice);

@@ -1,25 +1,26 @@
 //! The notice bus's three consumers (M38 phase 02): the chat-history
-//! sink (inline), the chat-notice sink (queued) and the `on_alert` command
-//! sink (queued). [`register_default_sinks`] subscribes all three on the
-//! global bus at daemon startup, with [`default_routes`] reproducing what
-//! 2.9.0 delivers. Nothing publishes until phases 03–05 wire the producers.
+//! sink (inline), the chat-notice sink (queued) and the command sink
+//! (queued, configured `command` routes only). [`register_default_sinks`]
+//! subscribes all three on the global bus at daemon startup, with
+//! [`default_routes`] reproducing what 2.9.0 delivers. Nothing publishes
+//! until phases 03–05 wire the producers.
 
 use crate::ai::Message;
 use crate::bus::{Bus, Filter, Notice, Severity, Source};
 use crate::daemon::session::{SessionStore, append_session_message, with_sessions};
 
-/// How long the command-sink test polls the file the `on_alert` command
+/// How long the command-sink test polls the file the route's command
 /// writes before giving up.
 #[cfg(test)]
 const ON_ALERT_POLL: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Per-sink route lists. A notice reaches a sink when **any** of the sink's
-/// filters matches.
+/// filters matches. The command sink has no built-in routes: it runs only
+/// configured `command` routes.
 #[derive(Debug, Clone, Default)]
 pub struct SinkRoutes {
     pub history: Vec<Filter>,
     pub chat_notice: Vec<Filter>,
-    pub command: Vec<Filter>,
     pub alert_registry: Vec<Filter>,
 }
 
@@ -49,49 +50,29 @@ pub fn sink_routed(
     routed
 }
 
-/// The commands the command sink runs for `n`, in order: `[notifications]
-/// on_alert` first, when it is non-empty, the defaults are on and the
-/// on-alert defaults route the notice; then each matching configured
-/// `command` route's command, in config order. Each distinct command
-/// appears once, first occurrence wins.
-pub fn command_targets(
-    cfg: &crate::config::NotificationsConfig,
-    on_alert_defaults: &[Filter],
-    n: &Notice,
-) -> Vec<String> {
+/// The commands the command sink runs for `n`, in order: each matching
+/// configured `command` route's command, in config order. Each distinct
+/// command appears once, first occurrence wins; a blank command never runs.
+pub fn command_targets(cfg: &crate::config::NotificationsConfig, n: &Notice) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let push = |cmd: String, out: &mut Vec<String>| {
-        if !cmd.trim().is_empty() && !out.contains(&cmd) {
-            out.push(cmd);
-        }
-    };
-    if cfg.default_routes && routes_match(on_alert_defaults, n) && !cfg.on_alert.is_empty() {
-        push(cfg.on_alert.clone(), &mut out);
-    }
     for route in &cfg.route {
         if route.sink == crate::config::RouteSink::Command
             && route.filter().matches(n)
             && let Some(cmd) = &route.command
         {
-            push(cmd.clone(), &mut out);
+            let cmd = cmd.trim();
+            if !cmd.is_empty() && !out.iter().any(|c| c == cmd) {
+                out.push(cmd.to_string());
+            }
         }
     }
     out
-}
-
-/// The threshold a webhook notice must rank at or above to be routed.
-/// `Severity::parse` falls back to [`Severity::Warning`] — the same
-/// fail-closed default the webhook gate applies to an unrankable
-/// `severity_threshold`.
-pub fn threshold_from_config(threshold: &str) -> Severity {
-    Severity::parse(threshold).unwrap_or(Severity::Warning)
 }
 
 /// The routes that reproduce what 2.9.0 delivers, given the webhook
 /// severity threshold:
 /// - history: webhook ≥ threshold; ghost (any); background (any).
 /// - chat_notice: webhook ≥ threshold; ghost; scheduler; watchdog.
-/// - command: webhook ≥ threshold; scheduler; watchdog.
 /// - alert_registry: webhook firing/resolved at **any** severity — a
 ///   below-threshold alert is still recorded, as in 2.9.0.
 pub fn default_routes(threshold: Severity) -> SinkRoutes {
@@ -122,13 +103,7 @@ pub fn default_routes(threshold: Severity) -> SinkRoutes {
             ghost_any.clone(),
             background_any,
         ],
-        chat_notice: vec![
-            webhook_at_or_above.clone(),
-            ghost_any,
-            scheduler_any.clone(),
-            watchdog_any.clone(),
-        ],
-        command: vec![webhook_at_or_above, scheduler_any, watchdog_any],
+        chat_notice: vec![webhook_at_or_above, ghost_any, scheduler_any, watchdog_any],
         alert_registry: vec![Filter {
             sources: vec![Source::Webhook],
             statuses: vec![
@@ -186,7 +161,7 @@ async fn deliver_chat_notice(sessions: SessionStore, line: String) {
     .await;
 }
 
-/// The `on_alert` command's environment, in pair form so the test asserts
+/// A route command's environment, in pair form so the test asserts
 /// the names and values without spawning anything.
 pub fn command_env(notice: &Notice) -> Vec<(&'static str, String)> {
     vec![
@@ -199,8 +174,7 @@ pub fn command_env(notice: &Notice) -> Vec<(&'static str, String)> {
 
 /// One command sink delivery: spawn `sh -c <cmd>` with the notice's
 /// environment — the same fire-and-forget `fire_notification` does. The
-/// command comes from `command_targets` (either `[notifications] on_alert`
-/// or a configured `command` route).
+/// command comes from `command_targets` (a configured `command` route).
 async fn deliver_command(cmd: String, notice: Notice) {
     let mut command = tokio::process::Command::new("sh");
     command.arg("-c").arg(cmd);
@@ -300,12 +274,11 @@ pub fn register_default_sinks(bus: &Bus, sessions: SessionStore, routes: SinkRou
         }
     });
     let cmd_rx = bus.subscribe("command", Filter::default(), 256);
-    let cmd_routes = routes.command.clone();
     tokio::spawn(async move {
         let mut rx = cmd_rx;
         while let Some(notice) = rx.recv().await {
             let cfg = crate::config::current().notifications.clone();
-            for cmd in command_targets(&cfg, &cmd_routes, &notice) {
+            for cmd in command_targets(&cfg, &notice) {
                 deliver_command(cmd, notice.as_ref().clone()).await;
             }
         }
@@ -405,51 +378,37 @@ mod tests {
         let web_info = webhook(Severity::Info, "HighCPU");
         assert!(
             !routes_match(&routes.history, &web_info)
-                && !routes_match(&routes.chat_notice, &web_info)
-                && !routes_match(&routes.command, &web_info),
+                && !routes_match(&routes.chat_notice, &web_info),
             "webhook info is below the warning threshold: no sink"
         );
 
         let web_warning = webhook(Severity::Warning, "HighCPU");
         assert!(
             routes_match(&routes.history, &web_warning)
-                && routes_match(&routes.chat_notice, &web_warning)
-                && routes_match(&routes.command, &web_warning),
-            "webhook warning reaches all three sinks"
+                && routes_match(&routes.chat_notice, &web_warning),
+            "webhook warning reaches history and chat_notice"
         );
 
         let ghost = Notice::new(Severity::Debug, Source::Ghost, "ghost-exit", "t");
         assert!(
-            routes_match(&routes.history, &ghost)
-                && routes_match(&routes.chat_notice, &ghost)
-                && !routes_match(&routes.command, &ghost),
-            "ghost (any severity) reaches history and chat_notice, not command"
+            routes_match(&routes.history, &ghost) && routes_match(&routes.chat_notice, &ghost),
+            "ghost (any severity) reaches history and chat_notice"
         );
 
         let background = Notice::new(Severity::Info, Source::Background, "bg-done", "t");
         assert!(
             routes_match(&routes.history, &background)
-                && !routes_match(&routes.chat_notice, &background)
-                && !routes_match(&routes.command, &background),
+                && !routes_match(&routes.chat_notice, &background),
             "background reaches history only"
         );
 
         for source in [Source::Scheduler, Source::Watchdog] {
             let n = Notice::new(Severity::Info, source, "job", "t");
             assert!(
-                !routes_match(&routes.history, &n)
-                    && routes_match(&routes.chat_notice, &n)
-                    && routes_match(&routes.command, &n),
-                "{source:?} reaches chat_notice and command, not history"
+                !routes_match(&routes.history, &n) && routes_match(&routes.chat_notice, &n),
+                "{source:?} reaches chat_notice, not history"
             );
         }
-    }
-
-    #[test]
-    fn threshold_from_config_falls_back_to_warning() {
-        assert_eq!(threshold_from_config("critical"), Severity::Critical);
-        assert_eq!(threshold_from_config("bogus"), Severity::Warning);
-        assert_eq!(threshold_from_config(""), Severity::Warning);
     }
 
     /// A configured route reaches a notice the defaults ignore, while the
@@ -537,18 +496,15 @@ mod tests {
         );
     }
 
-    /// `on_alert` first, then the configured command routes in config order,
-    /// each distinct command once.
+    /// Two matching routes with the same command give it once; a route
+    /// filtered to `watchdog` stays absent for a scheduler notice.
     #[test]
     fn command_targets_order_and_dedup() {
         let cfg: crate::config::Config = toml::from_str(
             r#"
-            [notifications]
-            on_alert = "echo alert"
-
             [[notifications.route]]
             sink = "command"
-            command = "echo route-a"
+            command = "echo alert"
 
             [[notifications.route]]
             sink = "command"
@@ -561,15 +517,14 @@ mod tests {
         "#,
         )
         .expect("valid route config");
-        let defaults = default_routes(Severity::Warning);
 
         let n = Notice::new(Severity::Info, Source::Scheduler, "job", "t");
-        let targets = command_targets(&cfg.notifications, &defaults.command, &n);
+        let targets = command_targets(&cfg.notifications, &n);
         assert_eq!(
             targets,
-            vec!["echo alert".to_string(), "echo route-a".to_string()],
-            "on_alert first, then the matching route; the watchdog-filtered \
-             third route does not fire for a scheduler notice: {targets:?}"
+            vec!["echo alert".to_string()],
+            "the repeated command appears once; the watchdog-filtered third \
+             route does not fire for a scheduler notice: {targets:?}"
         );
     }
 
@@ -589,42 +544,15 @@ mod tests {
 
         let watchdog = Notice::new(Severity::Info, Source::Watchdog, "disk", "t");
         assert_eq!(
-            command_targets(&cfg.notifications, &[], &watchdog),
+            command_targets(&cfg.notifications, &watchdog),
             vec!["echo watchdog-only".to_string()],
             "the watchdog notice runs the route's command: {watchdog:?}"
         );
 
         let scheduler = Notice::new(Severity::Info, Source::Scheduler, "job", "t");
         assert!(
-            command_targets(&cfg.notifications, &[], &scheduler).is_empty(),
+            command_targets(&cfg.notifications, &scheduler).is_empty(),
             "the scheduler notice matches no route: {scheduler:?}"
-        );
-    }
-
-    /// With the defaults off, `on_alert` is skipped but configured command
-    /// routes still run.
-    #[test]
-    fn command_targets_skip_on_alert_when_defaults_are_off() {
-        let cfg: crate::config::Config = toml::from_str(
-            r#"
-            [notifications]
-            on_alert = "echo alert"
-            default_routes = false
-
-            [[notifications.route]]
-            sink = "command"
-            command = "echo route-a"
-        "#,
-        )
-        .expect("valid route config");
-        let defaults = default_routes(Severity::Warning);
-
-        let n = Notice::new(Severity::Info, Source::Scheduler, "job", "t");
-        let targets = command_targets(&cfg.notifications, &defaults.command, &n);
-        assert_eq!(
-            targets,
-            vec!["echo route-a".to_string()],
-            "on_alert is dropped with the defaults, the route remains: {targets:?}"
         );
     }
 
@@ -740,16 +668,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn command_sink_runs_on_alert_with_notice_env() {
+    async fn command_sink_runs_a_route_command_with_notice_env() {
         let (_guard, home) = crate::test_home();
-        let marker = home.path().join("on_alert_ran");
+        let marker = home.path().join("route_cmd_ran");
         let script = format!(
             "echo \"$DAEMONEYE_SEVERITY $DAEMONEYE_SOURCE\" > {}",
             marker.display()
         );
         std::fs::write(
             home.path().join(".daemoneye/etc/config.toml"),
-            format!("[notifications]\non_alert = {script:?}\n"),
+            format!("[[notifications.route]]\nsink = \"command\"\ncommand = {script:?}\n"),
         )
         .expect("the temp HOME's config.toml exists");
 

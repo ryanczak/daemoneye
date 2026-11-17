@@ -258,9 +258,9 @@ fn name_list_with(pairs: &[(String, u64)], rendered: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Build the digest over `[from, to)`, streaming the event log once.
-/// `alert_threshold` is the `[webhook] severity_threshold` the live gate
-/// used. Returns `None` when nothing in the window would have reached an
-/// operator.
+/// `alert_threshold` is the fixed `warning` the live gate uses (until phase
+/// 09 routes the ghost trigger). Returns `None` when nothing in the window
+/// would have reached an operator.
 pub(crate) fn build_away_digest(
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
@@ -311,8 +311,7 @@ pub(crate) fn take_away_digest_on_attach(now: u64) -> Option<String> {
     }
     let from = chrono::DateTime::from_timestamp(from_secs as i64, 0)?;
     let to = chrono::DateTime::from_timestamp(now as i64, 0)?;
-    let threshold = crate::config::current().webhook.severity_threshold.clone();
-    build_away_digest(from, to, &threshold)
+    build_away_digest(from, to, "warning")
 }
 
 /// Stamp when the last chat leaves: called after `presence_unregister` when

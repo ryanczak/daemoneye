@@ -74,7 +74,6 @@ restart to land. Everything else swaps into the running config on reload.
 
 | Key | Type | Range | Default | Takes effect |
 |---|---|---|---|---|
-| `notifications.on_alert` | string (shell command) | any | none | reload |
 | `notifications.default_routes` | boolean | true/false | true | reload |
 | `notifications.route` | list of route tables (written as repeated `[[notifications.route]]`) | each: `sink` + filter keys | `[]` | reload |
 
@@ -86,7 +85,6 @@ restart to land. Everything else swaps into the running config on reload.
 | `webhook.port` | integer | 0–65535 | 9393 | restart |
 | `webhook.secret` | string | any (masked) | none | restart |
 | `webhook.auto_analyze` | boolean | true/false | true | restart |
-| `webhook.severity_threshold` | string | `info` / `warning` / `critical`; any other value behaves as `warning` (warned at load) | `warning` | restart |
 | `webhook.dedup_window_secs` | integer | ≥ 0 | 300 | restart |
 | `webhook.bind_addr` | string (IP) | any | `127.0.0.1` | restart |
 
