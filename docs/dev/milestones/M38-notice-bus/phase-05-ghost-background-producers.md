@@ -394,3 +394,16 @@ Finish condition: `git diff 4df97778 -- src/daemon/scheduled.rs | grep -c
 '^-.*store.mark_done'` prints `0`, and `cargo test` reports 2989 lib tests
 passed, **not** 2990.
 
+
+### Update — 2026-11-17 18:10 (bug-05-1 fix, resumed run)
+
+Applied the bounce's single edit: in `run_scheduled_job_inner`'s
+`ActionOn::Ghost` arm, the `Err(e)` branch of
+`GhostManager::start_session_with_config` now calls
+`store.mark_done(&job.id, false, Some(msg));` after its
+`publish_ghost_event(…)` — the line phase 05's caller rewrite dropped.
+Finish condition verified: `git diff 4df97778 -- src/daemon/scheduled.rs |
+grep -c '^-.*store.mark_done'` prints `0`. Gates re-run once: fmt clean,
+clippy `-D warnings` exits 0, `cargo test` green — **2989** lib tests
+passed (not 2990), all integration suites pass. Committed as `cc8ba903`;
+tree clean.
