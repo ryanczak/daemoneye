@@ -5,9 +5,10 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none drafted — next is 06 (terminal producer, OSC
-7501). 01 `done` (escalated), 02–03 `done` (first try), 04–05 `done`
-(after 1).
+**Active phase:** 06 — terminal-producer
+([`phase-06-terminal-producer.md`](milestones/M38-notice-bus/phase-06-terminal-producer.md)),
+`todo`, ready to dispatch. 01 `done` (escalated), 02–03 `done` (first try),
+04–05 `done` (after 1).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
