@@ -1,7 +1,7 @@
 # Phase 04 — scheduler-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** done
 **Drafted:** 2026-11-16
 **Depends on:** phase-03
 **Estimated diff:** ~350 lines, about half of it tests
@@ -263,3 +263,27 @@ one path and renames it out from under the others. This phase's new
 but did not create the race. Review should judge the delivered diff on
 its own and handle the flake separately (a per-call counter in
 `new_empty`'s file name — its doc already promises a "unique temp file").
+
+### Review verdict — 2026-11-17
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (first run `budget_exceeded` at 1000 turns with zero
+  edits; refined re-dispatch). The second run also ended
+  `budget_exceeded`, but only after the work was committed at turn 183 —
+  reviewed on the committed diff by routing from the escalation entry
+  above, not from a `complete` result.
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. Builders also carry `exit_code` and `script`
+  labels on the script notice — additive, unasked, harmless.
+- **Calibration:** the independent re-run is green on all four gates (lib
+  2982 passed, 10 ignored; hygiene 16 passed, no allowlist change). All
+  three acceptance greps exit 1. Delivery parity with 2.9.0 checked:
+  `default_routes` sends Scheduler/Watchdog at any severity to
+  `chat_notice` and `command`, and `history_text()` rejoins title + body,
+  so `DAEMONEYE_MSG` and the chat text match the old single message. No
+  mutation evidence in the log; the builder tests pin exact severity,
+  source, kind, title and body, so they fail on a broken builder. The
+  `fail_job_publishes_one_error_notice` status assertion is loose
+  (`Failed | Pending`), but its `last_error` assertion carries the check.
+  Follow-up outside this phase: the `ScheduleStore::new_empty()` temp-file
+  race (escalation entry above), now in `docs/dev/TODO.md`.

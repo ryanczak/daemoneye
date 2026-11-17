@@ -5,9 +5,9 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** 04 — scheduler-producers
-([`phase-04-scheduler-producers.md`](milestones/M38-notice-bus/phase-04-scheduler-producers.md)),
-`todo`, ready to dispatch. 01 `done` (escalated), 02–03 `done` (first try).
+**Active phase:** none drafted — next is 05 (ghost lifecycle and
+background producers). 01 `done` (escalated), 02–03 `done` (first try),
+04 `done` (after 1).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
