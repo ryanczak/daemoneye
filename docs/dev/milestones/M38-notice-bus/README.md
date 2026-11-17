@@ -99,7 +99,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 |----|-------|--------|
 | 01 | bus-core ([phase-01-bus-core.md](phase-01-bus-core.md)) | done |
 | 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | done |
-| 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | todo |
+| 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | in-progress |
 | 04 | scheduler and watchdog producers | planned |
 | 05 | ghost lifecycle and background producers | planned |
 | 06 | terminal producer (OSC 7501) | planned |
@@ -119,3 +119,9 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
   `DAEMONEYE_SOURCE`. History text is `title` or `title\nbody`; the chat
   line is the title's first line — producers (03–05) choose title/body so
   the catch-up brief's prefixes still match until phase 08 retires them.
+- **Accepted delivery deltas from 2.9.0, phase 03 (webhook producer):**
+  an alert whose severity is `error`/`err` now ranks and passes a
+  `warning` threshold (2.9.0 treated it as unrankable and failed closed);
+  and the history text's first line is `[Webhook Alert] [FIRING] …`
+  instead of a bare `[Webhook Alert]` line — the status tag moves into the
+  title so the chat-notice overlay and the catch-up brief carry it.

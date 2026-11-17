@@ -8,6 +8,7 @@
 use daemoneye::ipc::{Request, Response};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1379,6 +1380,407 @@ fn webhook_alert_below_threshold_discarded() {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
         None => unsafe { std::env::remove_var("HOME") },
     }
+}
+
+// ── M38 phase 03: the webhook producer publishes on the bus ─────────────────
+
+/// A `warning` firing alert yields exactly one notice on a recording-journal
+/// bus with no sinks: the fields of Spec task 3, the title starting
+/// `[Webhook Alert] [FIRING] `.
+#[test]
+fn webhook_alert_publishes_one_notice() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let journal: Arc<std::sync::Mutex<Vec<daemoneye::bus::Notice>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&journal);
+    let bus: &'static daemoneye::bus::Bus =
+        Box::leak(Box::new(daemoneye::bus::Bus::with_journal(move |n| {
+            sink.lock().expect("journal").push(n.clone())
+        })));
+
+    let config = daemoneye::config::Config::default();
+    let state = std::sync::Arc::new(WebhookState {
+        config,
+        sessions: daemoneye::daemon::session::SessionStore::default(),
+        cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "HighCPU",
+                "severity": "warning",
+                "instance": "web-01"
+            },
+            "annotations": {
+                "summary": "CPU usage above 90%"
+            },
+            "fingerprint": "test-fp-publish-1"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let notices = journal.lock().expect("journal");
+    assert_eq!(notices.len(), 1, "exactly one notice: {notices:?}");
+    let n = &notices[0];
+    assert_eq!(n.severity, daemoneye::bus::Severity::Warning);
+    assert_eq!(n.source, daemoneye::bus::Source::Webhook);
+    assert_eq!(n.source_id, "alertmanager");
+    assert_eq!(n.name, "HighCPU");
+    assert_eq!(n.status, daemoneye::bus::NoticeStatus::Firing);
+    assert_eq!(n.fingerprint, "test-fp-publish-1");
+    assert_eq!(
+        n.labels.get("severity").map(String::as_str),
+        Some("warning"),
+        "the raw severity string is preserved as a label"
+    );
+    assert_eq!(n.labels.get("kind").map(String::as_str), Some("alert"));
+    assert!(
+        n.title.starts_with("[Webhook Alert] [FIRING] "),
+        "the title opens with the tag and the status: {:?}",
+        n.title
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// A `critical` alert on a bus with **no** subscribers leaves the resident
+/// session's history empty — the producer no longer injects directly.
+#[test]
+fn webhook_alert_without_sinks_reaches_no_history() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "bus-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("bus-sess"),
+        );
+    });
+    let bus: &'static daemoneye::bus::Bus =
+        Box::leak(Box::new(daemoneye::bus::Bus::with_journal(|_| {})));
+    let state = std::sync::Arc::new(WebhookState {
+        config: daemoneye::config::Config::default(),
+        sessions: sessions.clone(),
+        cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "NoSinkAlert",
+                "severity": "critical",
+                "instance": "web-01"
+            },
+            "annotations": {
+                "summary": "CPU usage above 90%"
+            },
+            "fingerprint": "test-fp-publish-2"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store
+            .get("bus-sess")
+            .map(|e| e.messages.len())
+            .unwrap_or(usize::MAX)
+    });
+    assert_eq!(
+        count, 0,
+        "a critical alert with no subscribers reaches no history"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// A raw severity nobody ranks degrades to `Debug`, keeps the raw string as
+/// the `severity` label, and reaches no history (the fail-closed rule).
+#[test]
+fn webhook_alert_unknown_severity_publishes_debug() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "banana-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("banana-sess"),
+        );
+    });
+    let journal: Arc<std::sync::Mutex<Vec<daemoneye::bus::Notice>>> =
+        Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = Arc::clone(&journal);
+    let bus: &'static daemoneye::bus::Bus =
+        Box::leak(Box::new(daemoneye::bus::Bus::with_journal(move |n| {
+            sink.lock().expect("journal").push(n.clone())
+        })));
+    let state = std::sync::Arc::new(WebhookState {
+        config: daemoneye::config::Config::default(),
+        sessions: sessions.clone(),
+        cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "BananaPublish",
+                "severity": "banana",
+                "instance": "web-01"
+            },
+            "annotations": {
+                "summary": "CPU usage above 90%"
+            },
+            "fingerprint": "test-fp-publish-3"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let notices = journal.lock().expect("journal");
+    assert_eq!(notices.len(), 1, "one notice published: {notices:?}");
+    let n = &notices[0];
+    assert_eq!(
+        n.severity,
+        daemoneye::bus::Severity::Debug,
+        "an unrankable severity degrades to Debug"
+    );
+    assert_eq!(
+        n.labels.get("severity").map(String::as_str),
+        Some("banana"),
+        "the raw string survives as the label"
+    );
+    drop(notices);
+
+    let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store
+            .get("banana-sess")
+            .map(|e| e.messages.len())
+            .unwrap_or(usize::MAX)
+    });
+    assert_eq!(count, 0, "an unrankable severity reaches no history");
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// A raw `error` severity ranks (the accepted delta) and passes a `warning`
+/// threshold on the default test bus: the resident session's history gains
+/// one message.
+#[test]
+fn webhook_alert_error_severity_passes_warning_gate() {
+    use daemoneye::webhook::{WebhookState, parse_payload, process_alert};
+
+    daemoneye::ai::filter::init_masking(&[]);
+
+    let tmp = tempfile::tempdir().expect("create tempdir");
+    let _lock = daemoneye::test_home_guard();
+    let old_home = std::env::var("HOME").ok();
+    unsafe {
+        std::env::set_var("HOME", tmp.path().to_str().unwrap());
+    }
+    daemoneye::config::Config::ensure_dirs().expect("ensure dirs");
+
+    let sessions = daemoneye::daemon::session::SessionStore::default();
+    daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store.insert(
+            "err-sess".to_string(),
+            daemoneye::daemon::session::SessionEntry::from_disk("err-sess"),
+        );
+    });
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build current-thread runtime");
+    let _guard = rt.enter();
+    let bus = daemoneye::daemon::notice_sinks::test_bus(
+        sessions.clone(),
+        daemoneye::bus::Severity::Warning,
+    );
+    let state = std::sync::Arc::new(WebhookState {
+        config: daemoneye::config::Config::default(),
+        sessions: sessions.clone(),
+        cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
+        schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
+        bus,
+        dedup: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rate_limit: std::sync::Mutex::new(std::collections::HashMap::new()),
+        ip_limits: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "ErrorSeverityAlert",
+                "severity": "error",
+                "instance": "web-01"
+            },
+            "annotations": {
+                "summary": "CPU usage above 90%"
+            },
+            "fingerprint": "test-fp-publish-4"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    rt.block_on(process_alert(alerts[0].clone(), state));
+
+    let (count, first) = daemoneye::daemon::session::with_sessions(&sessions, |store| {
+        store
+            .get("err-sess")
+            .map(|e| {
+                (
+                    e.messages.len(),
+                    e.messages.first().map(|m| m.content.clone()),
+                )
+            })
+            .unwrap_or((0, None))
+    });
+    assert_eq!(count, 1, "history gains exactly one message");
+    let first = first.unwrap_or_default();
+    assert!(
+        first.starts_with("[Webhook Alert] [FIRING]"),
+        "the history message is the notice's history_text: {first:?}"
+    );
+
+    match old_home {
+        Some(v) => unsafe { std::env::set_var("HOME", v) },
+        None => unsafe { std::env::remove_var("HOME") },
+    }
+}
+
+/// `analysis_notice` splits the response: the title carries the name and the
+/// first line, the body the rest; a one-line response gives an empty body.
+#[test]
+fn analysis_notice_splits_the_response() {
+    use daemoneye::webhook::analysis_notice;
+    use daemoneye::webhook::parse_payload;
+
+    let body = serde_json::json!({
+        "status": "firing",
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "alertname": "HighCPU",
+                "severity": "warning",
+                "instance": "web-01"
+            },
+            "annotations": {
+                "summary": "CPU usage above 90%"
+            },
+            "fingerprint": "test-fp-analysis-1"
+        }]
+    });
+    let alerts = parse_payload(&body);
+    assert_eq!(alerts.len(), 1);
+
+    let multi = analysis_notice(
+        &alerts[0],
+        "Spike traced to a runaway build.\nSecond line.\nThird.",
+    );
+    assert_eq!(
+        multi.title,
+        "[Webhook Analysis] HighCPU: Spike traced to a runaway build."
+    );
+    assert_eq!(multi.body, "Second line.\nThird.");
+    assert_eq!(multi.name, "HighCPU");
+    assert_eq!(multi.source, daemoneye::bus::Source::Webhook);
+    assert_eq!(multi.status, daemoneye::bus::NoticeStatus::Event);
+    assert_eq!(multi.severity, daemoneye::bus::Severity::Warning);
+    assert_eq!(
+        multi.labels.get("kind").map(String::as_str),
+        Some("analysis")
+    );
+    assert_eq!(
+        multi.labels.get("severity").map(String::as_str),
+        Some("warning")
+    );
+
+    let single = analysis_notice(&alerts[0], "One line only.");
+    assert_eq!(single.title, "[Webhook Analysis] HighCPU: One line only.");
+    assert_eq!(single.body, "", "a one-line response gives an empty body");
 }
 
 // ── M37 phase 01: server-side alert surfaces ────────────────────────────────

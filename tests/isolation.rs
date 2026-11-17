@@ -347,6 +347,7 @@ max_ghost_turns: 1
         .enable_all()
         .build()
         .expect("build runtime");
+    let _rt_guard = rt.enter();
     rt.block_on(env.start_stub());
 
     // Build WebhookState pointing at the harness stub.
@@ -374,11 +375,6 @@ max_ghost_turns: 1
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build current-thread runtime");
-    let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
         daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),
@@ -569,6 +565,7 @@ ssh_target: e2e-host
         .enable_all()
         .build()
         .expect("build runtime");
+    let _rt_guard = rt.enter();
     rt.block_on(env.start_stub());
 
     // Build WebhookState pointing at the harness stub.
@@ -596,7 +593,6 @@ ssh_target: e2e-host
     let sessions = daemoneye::daemon::session::SessionStore::default();
     let cache = std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test"));
     let schedule_store = std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty());
-    let _guard = rt.enter();
     let bus = daemoneye::daemon::notice_sinks::test_bus(
         sessions.clone(),
         daemoneye::bus::Severity::from_external(&config.webhook.severity_threshold),

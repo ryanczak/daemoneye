@@ -56,6 +56,7 @@ pub(crate) fn build_catchup_brief(
             let c = &m.content;
             if c.contains("[Background Task Completed")
                 || c.contains("[Webhook Alert]")
+                || c.contains("[Webhook Analysis]")
                 || c.contains("[Watchdog]")
                 || c.contains("[Watch Pane")
                 || c.contains("[Ghost Shell Started]")
@@ -210,6 +211,18 @@ mod tests {
         let brief = build_catchup_brief(&msgs, 90, None).expect("should produce a brief");
         assert!(brief.contains("[Watchdog]"), "missing event: {brief}");
         assert!(brief.contains("1m"), "wrong away time: {brief}");
+    }
+
+    #[test]
+    fn catchup_lists_webhook_analysis() {
+        let msgs = vec![msg(
+            "[Webhook Analysis] HighCPU: spike traced to a runaway build\nfollow-up line",
+        )];
+        let brief = build_catchup_brief(&msgs, 90, None).expect("should produce a brief");
+        assert!(
+            brief.contains("[Webhook Analysis] HighCPU: spike traced to a runaway build"),
+            "the analysis' first line is the summary: {brief}"
+        );
     }
 
     #[test]

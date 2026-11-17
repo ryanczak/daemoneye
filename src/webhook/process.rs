@@ -2,16 +2,13 @@ use std::sync::Arc;
 
 use crate::ai::{AiEvent, Message};
 use crate::daemon::ghost::GhostManager;
+use crate::daemon::notice_sinks::threshold_from_config;
 use crate::daemon::session::{
-    SessionStore, append_session_message, presence_broadcast, presence_broadcast_frame,
-    presence_session_ids, with_sessions,
+    SessionStore, append_session_message, presence_broadcast, presence_session_ids, with_sessions,
 };
-use crate::daemon::utils::{UnpoisonExt, fire_notification, log_event};
+use crate::daemon::utils::{UnpoisonExt, log_event};
 
-use super::{
-    active_alerts_firing, active_alerts_resolved, active_alerts_snapshot, parse::InternalAlert,
-    server::WebhookState,
-};
+use super::{parse::InternalAlert, server::WebhookState};
 
 // ---------------------------------------------------------------------------
 // Severity ranking
@@ -156,37 +153,37 @@ pub async fn process_alert(
         alert.source
     );
 
-    // 5. Severity gate — before any injection or notice, so a below-threshold
-    //    alert never reaches chat history or the chat pane (M37 phase 01, the
-    //    issue-#3 fix). Fails closed on the alert's side: a severity
-    //    `severity_rank` cannot rank is below threshold. An unrankable
-    //    configured threshold behaves as `warning` (warned about at load).
-    let threshold_rank = severity_rank(&cfg.severity_threshold).unwrap_or(2);
-    let alert_rank = severity_rank(&alert.severity);
-    let should_fire = match alert_rank {
-        None => false,
-        Some(a) => a >= threshold_rank,
-    };
+    // 5. Publish the alert notice (M38 phase 03): the bus fans it out to the
+    //    sinks — history, chat notice, `on_alert` command, alert registry —
+    //    each behind its own routes. The severity the gate ranks is the
+    //    notice's parsed severity; an unrankable raw string degrades to
+    //    `Debug`, which sits below every threshold (the M37 fail-closed rule).
+    //    The title's first line is the chat-notice overlay; the body is the
+    //    remaining formatted lines.
+    let notice_severity = crate::bus::Severity::from_external(&alert.severity);
+    let (title, body) = split_first_line(&formatted);
+    let notice = crate::bus::Notice::new(
+        notice_severity,
+        crate::bus::Source::Webhook,
+        &alert.alert_name,
+        format!("[Webhook Alert] {}", title),
+    )
+    .source_id(alert.source)
+    .status(match alert.status {
+        crate::webhook::parse::AlertStatus::Firing => crate::bus::NoticeStatus::Firing,
+        crate::webhook::parse::AlertStatus::Resolved => crate::bus::NoticeStatus::Resolved,
+    })
+    .fingerprint(&alert.fingerprint)
+    .body(body)
+    .label("severity", &alert.severity)
+    .label("kind", "alert");
+    state.bus.publish(notice);
 
-    // 6. Record the alert in the active-alert registry, firing or resolved,
-    //    before the gate — a below-threshold alert is still active. When the
-    //    record changed the registry, broadcast the new snapshot to every
-    //    attached chat over the presence connection.
-    let record_changed = match alert.status {
-        crate::webhook::parse::AlertStatus::Firing => active_alerts_firing(
-            &alert.fingerprint,
-            &alert.alert_name,
-            &alert.severity,
-            now_secs(),
-        ),
-        crate::webhook::parse::AlertStatus::Resolved => active_alerts_resolved(&alert.fingerprint),
-    };
-    if record_changed {
-        let frame = crate::ipc::Response::AlertState {
-            alerts: active_alerts_snapshot(),
-        };
-        presence_broadcast_frame(&frame);
-    }
+    // 6. Severity gate — decides whether `auto_analyze` runs. An alert whose
+    //    severity cannot be ranked fails closed (below threshold), as before;
+    //    the difference from 2.9.0 is that `error`/`err` now rank (via the
+    //    notice severity) and pass a `warning` threshold.
+    let should_fire = notice_severity >= threshold_from_config(&cfg.severity_threshold);
 
     if !should_fire {
         log::warn!(
@@ -207,30 +204,20 @@ pub async fn process_alert(
         return None;
     }
 
-    // 7. Inject into all active AI sessions (disk + in-memory).
-    let alert_msg = Message {
-        role: "user".to_string(),
-        content: format!("[Webhook Alert]\n{}", formatted),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    };
-    inject_into_sessions(&state.sessions, &alert_msg);
-
-    // 8. Notify chat panes via tmux display-message.
-    let first_line = formatted.lines().next().unwrap_or(&formatted).to_string();
-    let s = state.sessions.clone();
-    let line = first_line.clone();
-    let _ = crate::process::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
-        .await;
-
-    // 9. Fire notification + optionally trigger AI analysis.
-    fire_notification(&alert.alert_name, &formatted, &state.config);
-
+    // 7. Optionally trigger AI analysis.
     if cfg.auto_analyze {
         return maybe_analyze_alert(&alert, &formatted, &state).await;
     }
     None
+}
+
+/// Split a formatted message into its first line and the rest: the title and
+/// body of the notice built from it. The remaining lines keep their newlines.
+fn split_first_line(text: &str) -> (String, String) {
+    match text.split_once('\n') {
+        Some((first, rest)) => (first.to_string(), rest.to_string()),
+        None => (text.to_string(), String::new()),
+    }
 }
 
 /// Append the alert message to every active session — both the on-disk JSONL
@@ -595,28 +582,29 @@ async fn maybe_analyze_alert(
             return Some(handle);
         }
 
-        let analysis = format!(
-            "[Webhook Analysis] {}: {}",
-            alert.alert_name,
-            response.trim()
-        );
-        let analysis_msg = Message {
-            role: "user".to_string(),
-            content: format!("[Webhook Alert]\n{}", analysis),
-            tool_calls: None,
-            tool_results: None,
-            turn: None,
-        };
-        inject_into_sessions(&state.sessions, &analysis_msg);
-        let first_line = analysis.lines().next().unwrap_or(&analysis).to_string();
-        let s = state.sessions.clone();
-        let line = first_line.clone();
-        let _ =
-            crate::process::off_runtime("notify-chat-panes", move || notify_chat_panes(&s, &line))
-                .await;
-        fire_notification(&alert.alert_name, &analysis, &state.config);
+        let notice = analysis_notice(alert, &response);
+        state.bus.publish(notice);
     }
     None
+}
+
+/// The `[Webhook Analysis]` notice: the alert's severity, source `Webhook`,
+/// name the alert's name, status `Event`, labels `severity` (raw) and `kind`
+/// = `analysis`. The title is `"[Webhook Analysis] <name>: "` plus the
+/// response's first line; the body is the rest. Pure so the split is
+/// testable without a bus.
+pub fn analysis_notice(alert: &InternalAlert, response: &str) -> crate::bus::Notice {
+    let trimmed = response.trim();
+    let (first, rest) = split_first_line(trimmed);
+    crate::bus::Notice::new(
+        crate::bus::Severity::from_external(&alert.severity),
+        crate::bus::Source::Webhook,
+        &alert.alert_name,
+        format!("[Webhook Analysis] {}: {}", alert.alert_name, first),
+    )
+    .body(rest)
+    .label("severity", &alert.severity)
+    .label("kind", "analysis")
 }
 
 // ---------------------------------------------------------------------------

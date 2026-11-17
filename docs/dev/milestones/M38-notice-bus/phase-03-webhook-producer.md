@@ -1,7 +1,7 @@
 # Phase 03 — webhook-producer
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-16
 **Depends on:** phase-02
 **Estimated diff:** ~450 lines, about half of it tests
@@ -152,3 +152,62 @@ close's live check.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-17 00:30 (started, executor)
+
+**Executor:** phase-03 run, headless.
+
+Flipped the phase to `in-progress`; implementing the Spec tasks in order.
+
+### Update — 2026-11-17 02:40 (end-to-end verification, executor)
+
+The phase doc marks end-to-end verification N/A; per STANDARDS §1 the
+transcript below is the phase's acceptance-criteria run against the real
+artifacts (the real `process_alert` through a real `Bus` and the real
+sinks), captured mechanically in one pass per command.
+
+```
+### End-to-end verification — M38 phase 03 (executor run)
+
+Command: cargo test --test integration -- webhook_alert_publishes_one_notice webhook_alert_without_sinks_reaches_no_history webhook_alert_unknown_severity_publishes_debug webhook_alert_error_severity_passes_warning_gate analysis_notice_splits_the_response
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+
+running 5 tests
+test analysis_notice_splits_the_response ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_publishes_one_notice ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 42 filtered out; finished in 0.05s
+
+Command: cargo test --lib -- --exact daemon::notice_sinks::tests::alert_registry_sink_records_firing_and_clears_on_resolve daemon::server::catchup::tests::catchup_lists_webhook_analysis
+
+running 2 tests
+test daemon::server::catchup::tests::catchup_lists_webhook_analysis ... ok
+test daemon::notice_sinks::tests::alert_registry_sink_records_firing_and_clears_on_resolve ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2985 filtered out; finished in 0.03s
+```
+
+Spec-literal grep (title tags, labels, the catch-up prefix, the fourth
+sink's routes):
+
+```
+$ grep -n 'format!("\[Webhook Alert\]' src/webhook/process.rs
+169:        format!("[Webhook Alert] {}", title),
+$ grep -n 'format!("\[Webhook Analysis\]' src/webhook/process.rs
+603:        format!("[Webhook Analysis] {}: {}", alert.alert_name, first),
+$ grep -n 'label("kind"' src/webhook/process.rs
+179:    .label("kind", "alert");
+607:    .label("kind", "analysis")
+$ grep -n 'c.contains("\[Webhook Analysis\]")' src/daemon/server/catchup.rs
+59:                || c.contains("[Webhook Analysis]")
+$ grep -n 'alert_registry' src/daemon/notice_sinks.rs
+23:    pub alert_registry: Vec<Filter>,
+83:        alert_registry: vec![Filter {
+189:    bus.subscribe_inline("alert_registry", Filter::default(), move |n| {
+177:fn record_alert_registry(notice: &Notice) {
+```
+

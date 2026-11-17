@@ -20,6 +20,7 @@ pub struct SinkRoutes {
     pub history: Vec<Filter>,
     pub chat_notice: Vec<Filter>,
     pub command: Vec<Filter>,
+    pub alert_registry: Vec<Filter>,
 }
 
 /// Whether `n` is routed to a sink whose routes are `routes`: any matching
@@ -42,6 +43,8 @@ pub fn threshold_from_config(threshold: &str) -> Severity {
 /// - history: webhook ≥ threshold; ghost (any); background (any).
 /// - chat_notice: webhook ≥ threshold; ghost; scheduler; watchdog.
 /// - command: webhook ≥ threshold; scheduler; watchdog.
+/// - alert_registry: webhook firing/resolved at **any** severity — a
+///   below-threshold alert is still recorded, as in 2.9.0.
 pub fn default_routes(threshold: Severity) -> SinkRoutes {
     let webhook_at_or_above = Filter {
         min_severity: Some(threshold),
@@ -77,6 +80,14 @@ pub fn default_routes(threshold: Severity) -> SinkRoutes {
             watchdog_any.clone(),
         ],
         command: vec![webhook_at_or_above, scheduler_any, watchdog_any],
+        alert_registry: vec![Filter {
+            sources: vec![Source::Webhook],
+            statuses: vec![
+                crate::bus::NoticeStatus::Firing,
+                crate::bus::NoticeStatus::Resolved,
+            ],
+            ..Filter::default()
+        }],
     }
 }
 
@@ -154,6 +165,41 @@ async fn deliver_command(notice: Notice) {
     let _ = command.spawn();
 }
 
+/// The alert-registry sink's inline delivery: a firing notice records the
+/// alert, a resolved notice removes it. When either changes the process-wide
+/// registry, broadcast the new snapshot to every attached chat over the
+/// presence connection — the same frame `process_alert` used to send.
+///
+/// The severity recorded is the raw label (`labels["severity"]`), falling
+/// back to the parsed severity's name, so an unrankable raw string is
+/// preserved for the snapshot's ranking. The registry is process-global:
+/// tests need a fingerprint no other test uses.
+fn record_alert_registry(notice: &Notice) {
+    let severity = notice
+        .labels
+        .get("severity")
+        .cloned()
+        .unwrap_or_else(|| notice.severity.as_str().to_string());
+    let changed = match notice.status {
+        crate::bus::NoticeStatus::Firing => crate::webhook::active_alerts_firing(
+            &notice.fingerprint,
+            &notice.name,
+            &severity,
+            notice.ts.timestamp() as u64,
+        ),
+        crate::bus::NoticeStatus::Resolved => {
+            crate::webhook::active_alerts_resolved(&notice.fingerprint)
+        }
+        crate::bus::NoticeStatus::Event => false,
+    };
+    if changed {
+        let frame = crate::ipc::Response::AlertState {
+            alerts: crate::webhook::active_alerts_snapshot(),
+        };
+        crate::daemon::session::presence_broadcast_frame(&frame);
+    }
+}
+
 /// A leaked bus with the default sinks registered on it, for tests.
 ///
 /// `register_default_sinks` spawns tasks, so this must run inside a Tokio
@@ -167,16 +213,24 @@ pub fn test_bus(sessions: SessionStore, threshold: Severity) -> &'static Bus {
     leaked
 }
 
-/// Subscribe the three sinks on `bus` and spawn the two queued tasks.
+/// Subscribe the four sinks on `bus` and spawn the two queued tasks.
 ///
-/// Each queued sink gets capacity 256 and its subscriber name
-/// (`history`, `chat_notice`, `command`). Called once by `run_daemon`, on
+/// The inline sinks (`history`, `alert_registry`) run inside `publish`;
+/// each queued sink gets capacity 256 and its subscriber name
+/// (`chat_notice`, `command`). Called once by `run_daemon`, on
 /// [`crate::bus::global`], right after the `SessionStore` is created.
 pub fn register_default_sinks(bus: &Bus, sessions: SessionStore, routes: SinkRoutes) {
     let sessions_history = sessions.clone();
     bus.subscribe_inline("history", Filter::default(), move |n| {
         if routes_match(&routes.history, n) {
             deliver_history(&sessions_history, n);
+        }
+    });
+
+    let registry_routes = routes.alert_registry.clone();
+    bus.subscribe_inline("alert_registry", Filter::default(), move |n| {
+        if routes_match(&registry_routes, n) {
+            record_alert_registry(n);
         }
     });
 
@@ -487,5 +541,37 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         assert_eq!(contents, "error scheduler");
+    }
+
+    #[tokio::test]
+    async fn alert_registry_sink_records_firing_and_clears_on_resolve() {
+        let _guard = crate::test_home();
+        let fingerprint = "m38-p03-registry-sink";
+        let bus = Bus::with_journal(|_| {});
+        let sessions = SessionStore::new();
+        register_default_sinks(&bus, sessions, default_routes(Severity::Warning));
+
+        bus.publish(webhook(Severity::Warning, "RegistryHighCPU").fingerprint(fingerprint));
+        let snapshot = crate::webhook::active_alerts_snapshot();
+        let entry = snapshot
+            .iter()
+            .find(|a| a.fingerprint == fingerprint)
+            .expect("the firing alert appears in the snapshot");
+        assert_eq!(entry.name, "RegistryHighCPU");
+        assert_eq!(
+            entry.severity, "warning",
+            "the recorded severity is the raw label"
+        );
+
+        bus.publish(
+            webhook(Severity::Warning, "RegistryHighCPU")
+                .fingerprint(fingerprint)
+                .status(NoticeStatus::Resolved),
+        );
+        let snapshot = crate::webhook::active_alerts_snapshot();
+        assert!(
+            !snapshot.iter().any(|a| a.fingerprint == fingerprint),
+            "the resolved notice removes the entry: {snapshot:?}"
+        );
     }
 }
