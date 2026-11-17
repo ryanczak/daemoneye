@@ -99,7 +99,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 |----|-------|--------|
 | 01 | bus-core ([phase-01-bus-core.md](phase-01-bus-core.md)) | done |
 | 02 | sinks ([phase-02-sinks.md](phase-02-sinks.md)) | done |
-| 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | review      |
+| 03 | webhook-producer ([phase-03-webhook-producer.md](phase-03-webhook-producer.md)) | done |
 | 04 | scheduler and watchdog producers | planned |
 | 05 | ghost lifecycle and background producers | planned |
 | 06 | terminal producer (OSC 7501) | planned |
@@ -125,3 +125,8 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
   and the history text's first line is `[Webhook Alert] [FIRING] …`
   instead of a bare `[Webhook Alert]` line — the status tag moves into the
   title so the chat-notice overlay and the catch-up brief carry it.
+- **Gotcha for producer phases (from phase 03):** `notice_sinks::test_bus`
+  spawns the queued sinks, so on a current-thread runtime it must be built
+  **after** `rt.enter()` (or inside `block_on`). Built before, the spawned
+  tasks never run and a test that waits on them hangs — it cost phase 03
+  about an hour in `webhook_ghost_e2e_deterministic`.

@@ -1,7 +1,7 @@
 # Phase 03 — webhook-producer
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-16
 **Depends on:** phase-02
 **Estimated diff:** ~450 lines, about half of it tests
@@ -351,3 +351,30 @@ kill: (-186295): No such process
 **Commit:** 255f6d2614b1f1dd46423ec5856942d73017682a
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-16
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (493 turns, about an hour of it on one hang)
+- **Scope deviations:** `src/webhook/server.rs`'s `test_state` keeps the
+  global bus — its rate-limit tests are synchronous and never publish, so
+  `test_bus` (which needs a runtime) is not usable there; accepted.
+  `tests/hygiene_allowlist.txt` raises `tests/integration.rs` from 2572 to
+  3016 test lines with a stated reason (the `test_bus` constructions plus
+  the phase's tests); accepted under the standing allowlist policy. One
+  intermediate `wip:` commit (`af8d94ac`) left in history, unpushed.
+- **Review checks:** gates re-run once each — fmt, build, clippy clean;
+  full suite 3082 passed, 0 failed. All seven named tests present.
+  `process_alert` / `maybe_analyze_alert` hold no direct output or registry
+  calls; the gate ranks on `Severity::from_external` against
+  `threshold_from_config`. Both accepted deltas are in the README Notes.
+- **Nit (not bounced):** `alert_registry_sink_records_firing_and_clears_on_resolve`
+  publishes without a `severity` label, so it covers the `as_str` fallback,
+  not the raw-label path its message names. The raw path is covered
+  indirectly (`webhook_alert_unknown_severity_publishes_debug` pins the
+  label; the integration tests drive the registry through `process_alert`).
+- **Calibration:** the spec named the runtime requirement for `test_bus`,
+  but not the current-thread case: a `test_bus` built before `rt.enter()`
+  on a current-thread runtime hung `webhook_ghost_e2e_deterministic`. Now
+  in the README Notes as a gotcha for phases 04–05.
