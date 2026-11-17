@@ -1,7 +1,7 @@
 # Phase 05 — ghost-background-producers
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-04
 **Estimated diff:** ~400 lines, about half of it tests
@@ -161,6 +161,9 @@ start the next step only then.
       still prints the one `log_event` line.
 - [ ] `cargo clippy --all-targets --all-features -- -D warnings` exits 0;
       `tests/hygiene.rs` passes with no new allowlist line.
+- [ ] Bug 05-1: `git diff 4df97778 -- src/daemon/scheduled.rs | grep -c '^-.*store.mark_done'`
+      prints `0`: the scheduled ghost job's could-not-start branch marks the
+      job done again ([bugs/bug-05-1.md](bugs/bug-05-1.md)).
 
 ## Test plan
 
@@ -211,6 +214,16 @@ close's live check (a background command landing in its chat).
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-17 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** steps 1–2 were done and the run stopped on one compile error
+(E0521 at `src/webhook/process.rs:563`) after six fixes in a row: two calls
+inside the `tokio::spawn` (the Completed and Failed arms) still said
+`state.bus` instead of the `bus` copy made before the spawn. That was a
+single wall, not a spec gap. *(Restored at review: the resumed run
+overwrote this entry instead of appending below it.)*
 
 ### Update — 2026-11-17 (resumed run started)
 
@@ -365,3 +378,19 @@ kill: (-308976): No such process
 **Commit:** 28721c7a678af469a98e5437a97b7908c4e7245c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-17 (bounce, bug 05-1)
+
+**Green gates and a clean tree are expected here and are NOT evidence the
+phase is done.** Everything else in this phase is reviewed and approved —
+do not touch `webhook/process.rs`, `bg_shell.rs`, `scheduler.rs` or any
+test. **There is exactly one edit left**, in `src/daemon/scheduled.rs`:
+in `run_scheduled_job_inner`'s `ActionOn::Ghost` arm, the `Err(e)` branch
+of `GhostManager::start_session_with_config` builds `msg`, logs it, and
+publishes `[Ghost Shell Failed] … could not start …`. Add
+`store.mark_done(&job.id, false, Some(msg));` after that
+`publish_ghost_event(…);` call. This puts back the line phase 05 dropped.
+Finish condition: `git diff 4df97778 -- src/daemon/scheduled.rs | grep -c
+'^-.*store.mark_done'` prints `0`, and `cargo test` reports 2989 lib tests
+passed, **not** 2990.
+
