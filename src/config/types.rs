@@ -536,13 +536,72 @@ impl Default for GhostDaemonConfig {
 }
 
 /// Notification hooks for scheduler/watchdog alerts.
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct NotificationsConfig {
     /// Shell command to run when a watchdog alert fires.
     /// Available env vars: `$DAEMONEYE_JOB` (job name), `$DAEMONEYE_MSG` (alert message).
     /// Example: `notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'`
     #[serde(default)]
     pub on_alert: String,
+    /// Whether the built-in default routes stay on. Default: `true`.
+    #[serde(default = "default_true")]
+    pub default_routes: bool,
+    /// User-configured routes, one `[[notifications.route]]` table each.
+    /// Additive to the built-in defaults.
+    #[serde(rename = "route", default)]
+    pub routes: Vec<RouteConfig>,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        NotificationsConfig {
+            on_alert: String::new(),
+            default_routes: true,
+            routes: Vec::new(),
+        }
+    }
+}
+
+/// The sink a `[[notifications.route]]` table routes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteSink {
+    History,
+    ChatNotice,
+    Command,
+}
+
+/// One `[[notifications.route]]` table: a sink paired with a filter over
+/// the notice fields. `deny_unknown_fields` refuses a typo'd key at load;
+/// the filter fields are repeated from [`crate::bus::Filter`] because serde
+/// does not support `flatten` together with `deny_unknown_fields`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteConfig {
+    pub sink: RouteSink,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub min_severity: Option<crate::bus::Severity>,
+    #[serde(default)]
+    pub sources: Vec<crate::bus::Source>,
+    #[serde(default)]
+    pub names: Vec<String>,
+    #[serde(default)]
+    pub statuses: Vec<crate::bus::NoticeStatus>,
+}
+
+impl RouteConfig {
+    /// The route's filter over the notice fields, as the bus's
+    /// [`crate::bus::Filter`] sees it.
+    pub fn filter(&self) -> crate::bus::Filter {
+        crate::bus::Filter {
+            min_severity: self.min_severity,
+            sources: self.sources.clone(),
+            names: self.names.clone(),
+            statuses: self.statuses.clone(),
+        }
+    }
 }
 
 /// Webhook ingestion configuration.

@@ -202,6 +202,26 @@ prompt = "sre"
 # Available env vars: $DAEMONEYE_JOB (job name), $DAEMONEYE_MSG (alert message).
 # on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
 
+# Keep the built-in default routes on (default: true). Set to false to keep
+# only the [[notifications.route]] tables you configure.
+# default_routes = true
+
+# Route notices to a sink behind a filter. Configured routes add to the
+# defaults. sink: "history" | "chat_notice" | "command". Filters:
+# min_severity, sources, names, statuses (empty list = any). A "command"
+# route requires its own command key. The `routes` key itself is a list of
+# route tables; the `[[notifications.route]]` tables below are how they are
+# written.
+# routes = []
+# [[notifications.route]]
+# sink = "command"
+# command = "notify-send 'DaemonEye' '$DAEMONEYE_MSG'"
+# sources = ["scheduler", "watchdog"]
+#
+# [[notifications.route]]
+# sink = "history"
+# names = ["WatchdogHighLoad"]
+
 # ── Webhook ──────────────────────────────────────────────────────────────────
 
 # [webhook]

@@ -1,7 +1,7 @@
 # Phase 07a — route-config
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-06
 **Estimated diff:** ~350 lines, about half of it tests
@@ -186,3 +186,13 @@ check.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-17 11:19 (progress)
+
+Started phase 07a (executor). Flipped the phase doc and the milestone README's
+07a row to `in-progress`. Read the milestone README, `src/config/types.rs`,
+`src/config/load.rs`, `src/config/tests.rs`, `src/daemon/notice_sinks.rs`,
+`src/bus/{filter,notice,severity}.rs`, the README `[notifications]` section and
+the `assets/etc/config.toml` notifications block. Implementing the Spec tasks in
+order: config types → validator → pure routing → sink wiring → docs → gates.
+

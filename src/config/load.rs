@@ -141,6 +141,7 @@ pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<C
     cfg.validate_compaction();
     cfg.validate_hosts();
     cfg.validate_budget();
+    cfg.validate_routes()?;
     Ok(cfg)
 }
 
@@ -228,6 +229,36 @@ impl Config {
             self.compaction.target_pct = defaults.target_pct;
             self.compaction.compact_at_pct = defaults.compact_at_pct;
         }
+    }
+
+    /// Validate the `[[notifications.route]]` tables. Each error names the
+    /// route by its 1-based position. Called from `Config::load()` via
+    /// `parse_config_text` — an `Err` fails the load, so `reload` keeps the
+    /// running config.
+    pub fn validate_routes(&self) -> Result<()> {
+        for (i, route) in self.notifications.routes.iter().enumerate() {
+            let name = format!("[[notifications.route]] #{}", i + 1);
+            match route.sink {
+                crate::config::RouteSink::Command => {
+                    let blank = route
+                        .command
+                        .as_deref()
+                        .map(|c| c.trim().is_empty())
+                        .unwrap_or(true);
+                    if blank {
+                        anyhow::bail!(
+                            "{name}: sink = \"command\" requires a non-empty command key"
+                        );
+                    }
+                }
+                crate::config::RouteSink::History | crate::config::RouteSink::ChatNotice => {
+                    if route.command.is_some() {
+                        anyhow::bail!("{name}: the command key only applies to sink = \"command\"");
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Return the path to the schedules JSON store: `~/.daemoneye/var/run/schedules.json`.

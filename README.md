@@ -884,10 +884,37 @@ extra_patterns = [
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `on_alert` | string | `""` | Shell command to run when a watchdog alert fires. Available env vars: `$DAEMONEYE_JOB` (job name), `$DAEMONEYE_MSG` (alert message). |
+| `default_routes` | bool | `true` | Whether the built-in default routes stay on. Set to `false` to keep only the `[[notifications.route]]` tables you configure. |
 
 ```toml
 [notifications]
 on_alert = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+```
+
+#### `[[notifications.route]]`
+
+Each `[[notifications.route]]` table routes notices to one sink behind a filter. Every route table carries:
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `sink` | string | *(required)* | Where matched notices go: `"history"` (append to every session's chat history), `"chat_notice"` (one-line overlay to every attached chat) or `"command"` (run `command`). |
+| `command` | string | *(required for `sink = "command"`)* | The shell command to run, with the same `$DAEMONEYE_*` environment as `on_alert`. Refused on a `history` or `chat_notice` route. |
+| `min_severity` | string | *(any)* | Minimum severity, inclusive: `"debug"`, `"info"`, `"warning"`, `"error"`, `"critical"`. |
+| `sources` | list | `[]` (any) | Any-of list of sources: `"webhook"`, `"scheduler"`, `"watchdog"`, `"ghost"`, `"background"`, `"shell"`, `"daemon"`. |
+| `names` | list | `[]` (any) | Any-of list of exact notice names (e.g. `"HighCPU"`). |
+| `statuses` | list | `[]` (any) | Any-of list: `"firing"`, `"resolved"`, `"event"`. |
+
+An empty list means "any". Configured routes **add to** the built-in defaults; `[notifications] default_routes = false` turns the defaults off and keeps only what you route. Routes are read per delivery, so `daemoneye reload` applies them.
+
+```toml
+[[notifications.route]]
+sink = "command"
+command = "notify-send 'DaemonEye' '$DAEMONEYE_MSG'"
+sources = ["scheduler", "watchdog"]
+
+[[notifications.route]]
+sink = "history"
+names = ["WatchdogHighLoad"]
 ```
 
 ### `[approvals]` section

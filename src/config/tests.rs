@@ -1384,3 +1384,127 @@ fn webhook_valid_threshold_warns_nothing() {
         "the default threshold never warns"
     );
 }
+
+// ── M38 phase 07a: [[notifications.route]] ──────────────────────────────
+
+/// The switch defaults on, from an empty file and from `Config::default()`.
+#[test]
+fn notifications_default_routes_is_on_by_default() {
+    let parsed: Config = toml::from_str("").unwrap();
+    assert!(
+        parsed.notifications.default_routes,
+        "an empty file parses default_routes to true"
+    );
+    assert!(
+        Config::default().notifications.default_routes,
+        "Config::default() has default_routes on"
+    );
+    assert!(
+        parsed.notifications.routes.is_empty(),
+        "an empty file has no routes"
+    );
+}
+
+/// Two `[[notifications.route]]` tables parse into filters carrying
+/// min_severity, sources and names, with the right sinks.
+#[test]
+fn route_tables_parse_into_filters() {
+    let toml = r#"
+            [[notifications.route]]
+            sink = "command"
+            command = "echo hi"
+            min_severity = "warning"
+            sources = ["scheduler", "watchdog"]
+            names = ["nightly-backup"]
+
+            [[notifications.route]]
+            sink = "history"
+            sources = ["shell"]
+        "#;
+    let cfg: Config = toml::from_str(toml).unwrap();
+    assert_eq!(cfg.notifications.routes.len(), 2);
+
+    let first = &cfg.notifications.routes[0];
+    assert_eq!(first.sink, crate::config::RouteSink::Command);
+    assert_eq!(first.command.as_deref(), Some("echo hi"));
+    let f = first.filter();
+    assert_eq!(f.min_severity, Some(crate::bus::Severity::Warning));
+    assert_eq!(
+        f.sources,
+        vec![crate::bus::Source::Scheduler, crate::bus::Source::Watchdog]
+    );
+    assert_eq!(f.names, vec!["nightly-backup".to_string()]);
+
+    let second = &cfg.notifications.routes[1];
+    assert_eq!(second.sink, crate::config::RouteSink::History);
+    assert_eq!(
+        second.filter().sources,
+        vec![crate::bus::Source::Shell],
+        "the second route's filter carries its source"
+    );
+}
+
+/// A typo'd key inside a route table is refused at parse, not ignored.
+#[test]
+fn route_with_an_unknown_key_is_refused() {
+    let toml = r#"
+            [[notifications.route]]
+            sink = "history"
+            severity = "warning"
+        "#;
+    let path = std::path::Path::new("config.toml");
+    let err = parse_config_text(path, toml).expect_err("an unknown key must fail");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("unknown field `severity`"),
+        "the error names the unknown key: {text}"
+    );
+}
+
+/// A `command` sink route with no command — missing and blank — is refused,
+/// and the error names the route's position.
+#[test]
+fn command_route_without_a_command_is_refused() {
+    let missing = r#"
+            [[notifications.route]]
+            sink = "command"
+        "#;
+    let path = std::path::Path::new("config.toml");
+    let err = parse_config_text(path, missing).expect_err("a missing command must fail");
+    assert!(
+        err.to_string().contains("#1"),
+        "the error names route #1: {err:#}"
+    );
+
+    let blank = r#"
+            [[notifications.route]]
+            sink = "command"
+            command = "   "
+        "#;
+    let err = parse_config_text(path, blank).expect_err("a blank command must fail");
+    assert!(
+        err.to_string().contains("#1"),
+        "the blank command also names route #1: {err:#}"
+    );
+}
+
+/// A `command` on a `history` or `chat_notice` route is refused.
+#[test]
+fn command_on_a_non_command_route_is_refused() {
+    let path = std::path::Path::new("config.toml");
+    for sink in ["history", "chat_notice"] {
+        let toml = format!(
+            r#"
+            [[notifications.route]]
+            sink = "{sink}"
+            command = "echo hi"
+        "#
+        );
+        let err =
+            parse_config_text(path, &toml).expect_err("a command on a non-command route must fail");
+        assert!(
+            err.to_string().contains("#1"),
+            "the error names the route: {err:#}"
+        );
+    }
+}

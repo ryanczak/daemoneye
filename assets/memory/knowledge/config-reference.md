@@ -75,6 +75,8 @@ restart to land. Everything else swaps into the running config on reload.
 | Key | Type | Range | Default | Takes effect |
 |---|---|---|---|---|
 | `notifications.on_alert` | string (shell command) | any | none | reload |
+| `notifications.default_routes` | boolean | true/false | true | reload |
+| `notifications.routes` | list of route tables | each: `sink` + filter keys | `[]` | reload |
 
 ## `[webhook]`
 
