@@ -1,7 +1,7 @@
 # Phase 03 — webhook-producer
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-16
 **Depends on:** phase-02
 **Estimated diff:** ~450 lines, about half of it tests
@@ -211,3 +211,143 @@ $ grep -n 'alert_registry' src/daemon/notice_sinks.rs
 177:fn record_alert_registry(notice: &Notice) {
 ```
 
+### Update — 2026-11-17 02:09 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 03 (webhook-producer) is implemented and committed (`255f6d26`). `process_alert` now publishes one firing/resolved notice on `WebhookState.bus` (severity parsed from the raw string, `source_id` = the alert's source, fingerprint the full one, labels `severity`/`kind=alert`, title `[Webhook Alert] [FIRING] …` with the body as the remaining lines), and `maybe_analyze_alert` publishes a pure `analysis_notice()` (`[Webhook Analysis] <name>: <first line>`, `kind=analysis`) — no direct `inject_into_sessions`/`notify_chat_panes`/`fire_notification`/registry calls remain in either. The alert registry is a fourth inline sink (`alert_registry` route, webhook firing/resolved at any severity, broadcasting `Response::AlertState` on change), `Source::as_str` replaced `source_name`, and `[Webhook Analysis]` joined the catch-up prefixes. Tests construct `WebhookState` through `notice_sinks::test_bus` (leaked bus, default sinks, own `SessionStore`) at all nine sites; `maybe_analyze_alert`'s hygiene fn entry dropped from 240 to within cap without an allowlist line, and `tests/integration.rs`'s allowlist entry was raised for the ~450 new test lines. Gates: fmt, build, clippy `-D warnings`, and the full suite clean (2977 lib + all integration/isolation/hygiene binaries, 0 failures).
+
+**Notes for review**
+
+- Two adaptations worth knowing: the first `test_bus` call in `webhook_ghost_e2e_deterministic` hung the test (60 min+ investigation) because `test_bus`'s spawned sink tasks need the current-thread runtime entered on the calling thread — the fix moves `rt.enter()` before `start_stub` in both ghost e2e tests, which is a **durable ordering requirement** for any future test that builds a `test_bus` on a current-thread runtime and then `block_on`s; worth folding into the milestone README's Notes.
+- I committed one intermediate `wip:` commit (`af8d94ac`, the bus-on-`WebhookState` mechanical change) to checkpoint during the hang investigation; the final commit builds on it.
+- The end-to-end verification entry (with the grep of the spec-pinned literals) is in the phase doc's Update Log, per STANDARDS §1, though the phase doc marks E2E N/A.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+t_config_parsing ... ok
+test ipc_ask_round_trip ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 12 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (185582): No such process
+kill: (-186295): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M38-notice-bus/README.md` — +7 -1
+- `docs/dev/milestones/M38-notice-bus/phase-03-webhook-producer.md` — +60 -1
+- `src/bus/notice.rs` — +15 -0
+- `src/daemon/notice_sinks.rs` — +103 -17
+- `src/daemon/server/catchup.rs` — +13 -0
+- `src/webhook/process.rs` — +65 -77
+- `src/webhook/server.rs` — +6 -0
+- `tests/hygiene_allowlist.txt` — +4 -2
+- `tests/integration.rs` — +472 -28
+- `tests/isolation.rs` — +12 -0
+
+**Commit:** 255f6d2614b1f1dd46423ec5856942d73017682a
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
