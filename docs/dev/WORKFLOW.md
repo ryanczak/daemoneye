@@ -2148,3 +2148,28 @@ resets on nothing and the run burns its whole budget. 165, 446, 500 and
 budget burns in M36 (16, 18, 21a, 21b, 21c) preceded it. Every phase that
 carried the block (21b and 21c re-dispatched, 21d's bounce, 21e) made its
 first edit early.)*
+
+### Name the function each test must call; say why an order matters
+
+"Do not restate the rules in the test" is an instruction the executor can
+agree with and still break. Weak executors write a test that rebuilds the
+logic it should exercise: a ring buffer re-implemented inside the test, or
+a hand-built `Filter` in place of the flag parsing under review. Such a
+test passes whatever the code does. So every Test plan entry names the
+**seam**: the function the test calls (`keep_last`, `filter_from_flags`,
+`handle_subscribe`). If the logic has no such function yet, the Spec asks
+for one ("put the selection in a pure function `…` and test that").
+
+The same holds for order. When a spec orders steps for correctness, say
+what breaks if the order is reversed, not just the order. "Subscribe, wait
+for the ack, **then** read the backlog. Read the backlog first and a notice
+published in between is lost." An executor given only the order kept the
+dedupe that exists for it and reversed the order anyway.
+
+Review checks both. Mutate the named function (drop from the wrong end,
+delete the filter check) and the test must fail.
+
+*(Folded 2026-11-18 at the M38 close, on PE sign-off. The tests in 08a,
+08b's journal fixture and 10a restated the code under test, even though the
+spec said not to. 10b, whose plan named each function, did not. 10b reversed
+an ordering the spec stated without its reason.)*
