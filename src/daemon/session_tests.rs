@@ -96,7 +96,7 @@ fn auto_name_suggested_starts_false() {
     // auto_name_suggested must default to false so the first suggestion fires.
     let entry = SessionEntry::new_interactive("test");
     assert!(!entry.as_interactive().unwrap().auto_name_suggested);
-    assert!(entry.saved_name.is_none());
+    assert!(entry.persistence.saved_name.is_none());
 }
 
 #[test]
@@ -104,16 +104,28 @@ fn session_entry_accumulates_cost_across_turns() {
     let mut entry = SessionEntry::new_interactive("test");
 
     // Simulate three turns of cost accumulation.
-    entry.cost_usd += 0.10;
-    *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.10;
-    entry.cost_usd += 0.20;
-    *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.20;
-    entry.cost_usd += 0.05;
-    *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.05;
+    entry.ledger.cost_usd += 0.10;
+    *entry
+        .ledger
+        .cost_by_agent
+        .entry("chat".to_string())
+        .or_insert(0.0) += 0.10;
+    entry.ledger.cost_usd += 0.20;
+    *entry
+        .ledger
+        .cost_by_agent
+        .entry("chat".to_string())
+        .or_insert(0.0) += 0.20;
+    entry.ledger.cost_usd += 0.05;
+    *entry
+        .ledger
+        .cost_by_agent
+        .entry("chat".to_string())
+        .or_insert(0.0) += 0.05;
 
-    assert!((entry.cost_usd - 0.35).abs() < 1e-10);
-    assert!((entry.cost_by_agent["chat"] - 0.35).abs() < 1e-10);
-    assert!(!entry.has_untracked_cost);
+    assert!((entry.ledger.cost_usd - 0.35).abs() < 1e-10);
+    assert!((entry.ledger.cost_by_agent["chat"] - 0.35).abs() < 1e-10);
+    assert!(!entry.ledger.has_untracked_cost);
 }
 
 #[test]
@@ -121,18 +133,23 @@ fn session_entry_per_agent_split() {
     let mut entry = SessionEntry::new_interactive("test");
 
     // Simulate /agent switch mid-flow.
-    entry.cost_usd += 0.30;
-    *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.30;
-    entry.cost_usd += 0.15;
+    entry.ledger.cost_usd += 0.30;
     *entry
+        .ledger
+        .cost_by_agent
+        .entry("chat".to_string())
+        .or_insert(0.0) += 0.30;
+    entry.ledger.cost_usd += 0.15;
+    *entry
+        .ledger
         .cost_by_agent
         .entry("architect".to_string())
         .or_insert(0.0) += 0.15;
 
-    assert!((entry.cost_usd - 0.45).abs() < 1e-10);
-    assert!((entry.cost_by_agent["chat"] - 0.30).abs() < 1e-10);
-    assert!((entry.cost_by_agent["architect"] - 0.15).abs() < 1e-10);
-    assert_eq!(entry.cost_by_agent.len(), 2);
+    assert!((entry.ledger.cost_usd - 0.45).abs() < 1e-10);
+    assert!((entry.ledger.cost_by_agent["chat"] - 0.30).abs() < 1e-10);
+    assert!((entry.ledger.cost_by_agent["architect"] - 0.15).abs() < 1e-10);
+    assert_eq!(entry.ledger.cost_by_agent.len(), 2);
 }
 
 #[test]
@@ -140,18 +157,26 @@ fn unknown_pricing_sets_has_untracked_cost() {
     let mut entry = SessionEntry::new_interactive("test");
 
     // Known pricing call.
-    entry.cost_usd += 0.10;
-    *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.10;
-    assert!(!entry.has_untracked_cost);
+    entry.ledger.cost_usd += 0.10;
+    *entry
+        .ledger
+        .cost_by_agent
+        .entry("chat".to_string())
+        .or_insert(0.0) += 0.10;
+    assert!(!entry.ledger.has_untracked_cost);
 
     // Unknown pricing call — flag should flip.
-    entry.has_untracked_cost = true;
-    assert!(entry.has_untracked_cost);
+    entry.ledger.has_untracked_cost = true;
+    assert!(entry.ledger.has_untracked_cost);
 
     // Subsequent known pricing calls don't reset the flag.
-    entry.cost_usd += 0.05;
-    *entry.cost_by_agent.entry("chat".to_string()).or_insert(0.0) += 0.05;
-    assert!(entry.has_untracked_cost);
+    entry.ledger.cost_usd += 0.05;
+    *entry
+        .ledger
+        .cost_by_agent
+        .entry("chat".to_string())
+        .or_insert(0.0) += 0.05;
+    assert!(entry.ledger.has_untracked_cost);
 }
 
 #[test]
@@ -391,20 +416,20 @@ fn entry_recreation_seeds_from_meta() {
     // Simulate entry recreation by reading meta and building a fresh entry.
     let loaded_meta = read_session_meta(id).expect("meta should exist");
     let mut entry = SessionEntry::new_interactive("");
-    entry.started_at = loaded_meta.started_at;
-    entry.turn_count = loaded_meta.turn_count;
-    entry.last_prompt_tokens = loaded_meta.last_prompt_tokens;
-    entry.token_scale = loaded_meta.token_scale;
-    entry.tool_calls_this_session = loaded_meta.tool_calls_this_session;
-    entry.saved_name = loaded_meta.saved_name;
+    entry.persistence.started_at = loaded_meta.started_at;
+    entry.history.turn_count = loaded_meta.turn_count;
+    entry.ledger.last_prompt_tokens = loaded_meta.last_prompt_tokens;
+    entry.ledger.token_scale = loaded_meta.token_scale;
+    entry.ledger.tool_calls_this_session = loaded_meta.tool_calls_this_session;
+    entry.persistence.saved_name = loaded_meta.saved_name;
 
-    assert_eq!(entry.turn_count, 7);
-    assert_eq!(entry.last_prompt_tokens, 200);
-    assert_eq!(entry.token_scale, 2.0);
-    assert_eq!(entry.tool_calls_this_session, 10);
-    assert_eq!(entry.saved_name, Some("seeded".to_string()));
-    assert!(!entry.compaction_in_flight);
-    assert!(entry.pending_compaction_notice.is_none());
+    assert_eq!(entry.history.turn_count, 7);
+    assert_eq!(entry.ledger.last_prompt_tokens, 200);
+    assert_eq!(entry.ledger.token_scale, 2.0);
+    assert_eq!(entry.ledger.tool_calls_this_session, 10);
+    assert_eq!(entry.persistence.saved_name, Some("seeded".to_string()));
+    assert!(!entry.history.compaction_in_flight);
+    assert!(entry.history.pending_compaction_notice.is_none());
 }
 
 #[test]
@@ -514,7 +539,7 @@ fn read_session_file_repairs_when_no_boundary() {
 
 fn entry_with(last_accessed: Instant) -> SessionEntry {
     let mut entry = SessionEntry::new_interactive("test");
-    entry.last_accessed = last_accessed;
+    entry.persistence.last_accessed = last_accessed;
     entry
 }
 
@@ -709,8 +734,8 @@ fn record_chat_detach_stamps_only_when_the_entry_exists() {
 
     with_sessions(&sessions, |store| {
         let entry = store.get_mut("has-entry").unwrap();
-        entry.messages.push(make_msg("user", "one"));
-        entry.messages.push(make_msg("assistant", "two"));
+        entry.history.messages.push(make_msg("user", "one"));
+        entry.history.messages.push(make_msg("assistant", "two"));
     });
     record_chat_detach("has-entry", &sessions);
     with_sessions(&sessions, |store| {
@@ -729,7 +754,7 @@ fn record_chat_detach_stamps_only_when_the_entry_exists() {
 #[test]
 fn mid_turn_event_survives_write_back() {
     let mut entry = entry_with(std::time::Instant::now());
-    entry.messages = vec![make_msg("user", "a")];
+    entry.history.messages = vec![make_msg("user", "a")];
     entry.begin_turn();
     entry.push_event(make_msg("user", "e1"));
     entry.finish_turn(vec![
@@ -737,14 +762,19 @@ fn mid_turn_event_survives_write_back() {
         make_msg("user", "q"),
         make_msg("assistant", "r"),
     ]);
-    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    let contents: Vec<&str> = entry
+        .history
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
     assert_eq!(
         contents,
         vec!["a", "q", "r", "e1"],
         "the event survives the write-back, after the turn's own messages"
     );
     assert!(
-        entry.turn_inbox.is_none(),
+        entry.history.turn_inbox.is_none(),
         "finish_turn clears the in-flight marker"
     );
 }
@@ -756,7 +786,12 @@ fn mid_turn_events_keep_arrival_order() {
     entry.push_event(make_msg("user", "e1"));
     entry.push_event(make_msg("user", "e2"));
     entry.finish_turn(vec![make_msg("user", "q"), make_msg("assistant", "r")]);
-    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    let contents: Vec<&str> = entry
+        .history
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
     assert_eq!(
         contents,
         vec!["q", "r", "e1", "e2"],
@@ -767,7 +802,7 @@ fn mid_turn_events_keep_arrival_order() {
 #[test]
 fn mid_turn_event_once_after_compaction_swap() {
     let mut entry = entry_with(std::time::Instant::now());
-    entry.messages = vec![make_msg("user", "a"), make_msg("assistant", "old")];
+    entry.history.messages = vec![make_msg("user", "a"), make_msg("assistant", "old")];
     entry.begin_turn();
     entry.push_event(make_msg("user", "e1"));
 
@@ -775,10 +810,15 @@ fn mid_turn_event_once_after_compaction_swap() {
     // shorter one while the turn is still running. The event's position in
     // the old vec is stale — finish_turn must find it in the inbox, not by
     // position.
-    entry.messages = vec![make_msg("user", "digest-of-old")];
+    entry.history.messages = vec![make_msg("user", "digest-of-old")];
 
     entry.finish_turn(vec![make_msg("user", "q"), make_msg("assistant", "r")]);
-    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    let contents: Vec<&str> = entry
+        .history
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
     assert_eq!(
         contents.iter().filter(|&&c| c == "e1").count(),
         1,
@@ -800,15 +840,20 @@ fn mid_turn_event_once_after_compaction_swap() {
 #[test]
 fn mid_turn_no_turn_push_appends() {
     let mut entry = entry_with(std::time::Instant::now());
-    entry.messages = vec![make_msg("user", "a")];
+    entry.history.messages = vec![make_msg("user", "a")];
     assert!(
-        entry.turn_inbox.is_none(),
+        entry.history.turn_inbox.is_none(),
         "precondition: no turn is in flight"
     );
     entry.push_event(make_msg("user", "e1"));
-    let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+    let contents: Vec<&str> = entry
+        .history
+        .messages
+        .iter()
+        .map(|m| m.content.as_str())
+        .collect();
     assert_eq!(contents, vec!["a", "e1"], "a push with no turn appends");
-    assert!(entry.turn_inbox.is_none(), "the inbox stays None");
+    assert!(entry.history.turn_inbox.is_none(), "the inbox stays None");
 }
 
 #[test]
@@ -817,9 +862,10 @@ fn mid_turn_begin_resets_stale_inbox() {
     entry.push_event(make_msg("user", "e-orphan"));
     // Simulate a turn that ended without a write-back: finish_turn never
     // ran, so the inbox would still hold e-orphan.
-    entry.turn_inbox = Some(vec![make_msg("user", "e-orphan")]);
+    entry.history.turn_inbox = Some(vec![make_msg("user", "e-orphan")]);
     entry.begin_turn();
     let inbox = entry
+        .history
         .turn_inbox
         .as_ref()
         .unwrap_or_else(|| panic!("begin_turn"));
@@ -834,7 +880,7 @@ fn mid_turn_snapshot_opens_inbox() {
     let sessions = SessionStore::new();
     with_sessions(&sessions, |store| {
         let mut entry = entry_with(std::time::Instant::now());
-        entry.messages = vec![make_msg("user", "a")];
+        entry.history.messages = vec![make_msg("user", "a")];
         store.insert("snap".to_string(), entry);
     });
 
@@ -855,7 +901,12 @@ fn mid_turn_snapshot_opens_inbox() {
             .unwrap_or_else(|| panic!("the entry is resident"));
         entry.push_event(make_msg("user", "e1"));
         entry.finish_turn(snapshot);
-        let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+        let contents: Vec<&str> = entry
+            .history
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
         assert_eq!(
             contents.iter().filter(|&&c| c == "e1").count(),
             1,
@@ -869,7 +920,7 @@ fn mid_turn_inject_into_sessions_survives() {
     let sessions = SessionStore::new();
     with_sessions(&sessions, |store| {
         let mut entry = entry_with(std::time::Instant::now());
-        entry.messages = vec![make_msg("user", "first")];
+        entry.history.messages = vec![make_msg("user", "first")];
         entry.begin_turn();
         store.insert("mid-turn".to_string(), entry);
     });
@@ -885,7 +936,12 @@ fn mid_turn_inject_into_sessions_survives() {
             make_msg("user", "q"),
             make_msg("assistant", "r"),
         ]);
-        let contents: Vec<&str> = entry.messages.iter().map(|m| m.content.as_str()).collect();
+        let contents: Vec<&str> = entry
+            .history
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect();
         assert_eq!(
             contents,
             vec!["first", "q", "r", "[Webhook Alert] disk 95%"],

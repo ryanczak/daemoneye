@@ -306,12 +306,15 @@ where
         with_sessions(sessions, |store| {
             (
                 store.len(),
-                store.values().map(|s| s.last_prompt_tokens).sum::<u32>(),
-                store.values().map(|s| s.turn_count).sum::<usize>(),
+                store
+                    .values()
+                    .map(|s| s.ledger.last_prompt_tokens)
+                    .sum::<u32>(),
+                store.values().map(|s| s.history.turn_count).sum::<usize>(),
                 store
                     .values()
                     .filter(|s| !s.is_ghost())
-                    .max_by_key(|s| s.last_accessed)
+                    .max_by_key(|s| s.persistence.last_accessed)
                     .and_then(|s| s.active_model.clone()),
             )
         });
@@ -374,7 +377,7 @@ where
     let session_costs: Vec<(String, f64)> = with_sessions(sessions, |store| {
         store
             .iter()
-            .map(|(id, entry)| (id.clone(), entry.cost_usd))
+            .map(|(id, entry)| (id.clone(), entry.ledger.cost_usd))
             .collect()
     });
 
@@ -500,9 +503,9 @@ where
     let (turn_count, tool_calls_this_session, history_len) = with_sessions(sessions, |store| {
         if let Some(entry) = store.get(&session_id) {
             (
-                entry.turn_count,
-                entry.tool_calls_this_session,
-                entry.messages.len(),
+                entry.history.turn_count,
+                entry.ledger.tool_calls_this_session,
+                entry.history.messages.len(),
             )
         } else {
             (0, 0, 0)
@@ -545,7 +548,7 @@ where
 {
     with_sessions(sessions, |store| {
         if let Some(entry) = store.get_mut(&session_id) {
-            entry.tool_calls_this_session = 0;
+            entry.ledger.tool_calls_this_session = 0;
             log::info!(
                 "Session {}: per-session tool call counter reset",
                 session_id

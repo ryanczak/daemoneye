@@ -65,17 +65,17 @@ pub fn spawn_compaction(session_id: String, sessions: SessionStore, config_snaps
 fn try_snapshot(session_id: &str, sessions: &SessionStore) -> Option<CompactionSnapshot> {
     with_sessions(sessions, |store| {
         let entry = store.get_mut(session_id)?;
-        if entry.compaction_in_flight || entry.is_ghost() {
+        if entry.history.compaction_in_flight || entry.is_ghost() {
             return None;
         }
-        entry.compaction_in_flight = true;
+        entry.history.compaction_in_flight = true;
 
         Some(CompactionSnapshot {
             session_id: session_id.to_string(),
-            messages: entry.messages.clone(),
-            turn_count: entry.turn_count,
-            msg_len: entry.messages.len(),
-            token_scale: entry.token_scale,
+            messages: entry.history.messages.clone(),
+            turn_count: entry.history.turn_count,
+            msg_len: entry.history.messages.len(),
+            token_scale: entry.ledger.token_scale,
         })
     })
 }
@@ -116,7 +116,7 @@ async fn run_compaction(
         // No viable cut — discard.
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get_mut(&snapshot.session_id) {
-                entry.compaction_in_flight = false;
+                entry.history.compaction_in_flight = false;
             }
         });
         return Ok(());
@@ -133,7 +133,7 @@ async fn run_compaction(
     {
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get_mut(&snapshot.session_id) {
-                entry.compaction_in_flight = false;
+                entry.history.compaction_in_flight = false;
             }
         });
         return Ok(());
@@ -226,24 +226,24 @@ async fn run_compaction(
         // Staleness check: if the entry is gone, or turn_count/msg_len changed,
         // discard the compacted vec.
         let entry = store.get_mut(&snapshot.session_id)?;
-
-        if entry.turn_count != snapshot.turn_count || entry.messages.len() != snapshot.msg_len {
+        let h = &mut entry.history;
+        if h.turn_count != snapshot.turn_count || h.messages.len() != snapshot.msg_len {
             // A turn ran while we worked — discard. Clear the flag so the next
             // turn's end can re-spawn with fresh data.
-            entry.compaction_in_flight = false;
+            h.compaction_in_flight = false;
             return None;
         }
 
         // Match — swap.
-        let before_len = entry.messages.len();
+        let before_len = h.messages.len();
         let after_len = compacted.len();
-        entry.messages = compacted.clone();
-        entry.compaction_in_flight = false;
-        entry.pending_compaction_notice = Some(format!(
+        h.messages = compacted.clone();
+        h.compaction_in_flight = false;
+        h.pending_compaction_notice = Some(format!(
             "↩ Session history compacted in the background ({} → {} messages) — epoch {} recorded",
             before_len, after_len, record.seq,
         ));
-        entry.dirty = true;
+        entry.persistence.dirty = true;
         Some((before_len, after_len))
     }) else {
         // Either the entry was evicted, or a turn ran while we worked. Both are
@@ -354,8 +354,8 @@ mod tests {
         // Simulate a snapshot with turn_count = 1, then bump to 2.
         with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
-            entry.turn_count = 1;
-            entry.messages.push(Message {
+            entry.history.turn_count = 1;
+            entry.history.messages.push(Message {
                 role: "user".to_string(),
                 content: "hello".to_string(),
                 tool_calls: None,
@@ -371,8 +371,8 @@ mod tests {
         // Simulate a new turn arriving — bump turn_count and msg_len.
         with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
-            entry.turn_count = 2;
-            entry.messages.push(Message {
+            entry.history.turn_count = 2;
+            entry.history.messages.push(Message {
                 role: "assistant".to_string(),
                 content: "world".to_string(),
                 tool_calls: None,
@@ -389,9 +389,9 @@ mod tests {
         // Verify: compaction_in_flight is cleared, messages untouched.
         with_sessions(&sessions, |store| {
             let entry = store.get(&session_id).unwrap();
-            assert!(!entry.compaction_in_flight);
-            assert_eq!(entry.messages.len(), 2); // original 2 messages
-            assert!(entry.pending_compaction_notice.is_none());
+            assert!(!entry.history.compaction_in_flight);
+            assert_eq!(entry.history.messages.len(), 2); // original 2 messages
+            assert!(entry.history.pending_compaction_notice.is_none());
         });
     }
 
@@ -407,7 +407,7 @@ mod tests {
         // Mark as in-flight.
         with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
-            entry.compaction_in_flight = true;
+            entry.history.compaction_in_flight = true;
         });
 
         // spawn_compaction should be a no-op (doesn't spawn a task).
@@ -421,7 +421,7 @@ mod tests {
         // Flag should still be true — no task touched it.
         with_sessions(&sessions, |store| {
             let entry = store.get(&session_id).unwrap();
-            assert!(entry.compaction_in_flight);
+            assert!(entry.history.compaction_in_flight);
         });
     }
 
@@ -432,7 +432,7 @@ mod tests {
         let sessions: SessionStore = SessionStore::new();
         let session_id = "test-notice".to_string();
         let mut entry = make_test_entry();
-        entry.pending_compaction_notice = Some("test notice".to_string());
+        entry.history.pending_compaction_notice = Some("test notice".to_string());
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
         });
@@ -440,7 +440,7 @@ mod tests {
         // Drain the notice.
         let notice = with_sessions(&sessions, |store| {
             let entry = store.get_mut(&session_id).unwrap();
-            entry.pending_compaction_notice.take()
+            entry.history.pending_compaction_notice.take()
         });
 
         assert_eq!(notice.as_deref(), Some("test notice"));
@@ -448,7 +448,7 @@ mod tests {
         // Verify the field is cleared.
         with_sessions(&sessions, |store| {
             let entry = store.get(&session_id).unwrap();
-            assert!(entry.pending_compaction_notice.is_none());
+            assert!(entry.history.pending_compaction_notice.is_none());
         });
     }
 
@@ -460,11 +460,11 @@ mod tests {
 
         let msgs = make_turn_msgs(32);
         let mut entry = make_test_entry();
-        entry.messages = msgs.clone();
-        entry.turn_count = 5;
+        entry.history.messages = msgs.clone();
+        entry.history.turn_count = 5;
         // `try_snapshot` sets this in production. The hand-built snapshot below
         // bypasses it, so set it here or the flag assertion is tautological.
-        entry.compaction_in_flight = true;
+        entry.history.compaction_in_flight = true;
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
         });
@@ -484,14 +484,17 @@ mod tests {
 
         with_sessions(&sessions, |store| {
             let entry = store.get(&session_id).unwrap();
-            assert!(!entry.compaction_in_flight, "in-flight flag cleared");
             assert!(
-                entry.messages.len() < 32,
-                "history compacted, got {}",
-                entry.messages.len()
+                !entry.history.compaction_in_flight,
+                "in-flight flag cleared"
             );
             assert!(
-                entry.pending_compaction_notice.is_some(),
+                entry.history.messages.len() < 32,
+                "history compacted, got {}",
+                entry.history.messages.len()
+            );
+            assert!(
+                entry.history.pending_compaction_notice.is_some(),
                 "notice queued for next turn"
             );
         });
@@ -511,9 +514,9 @@ mod tests {
 
         let msgs = make_turn_msgs(32);
         let mut entry = make_test_entry();
-        entry.messages = msgs.clone();
-        entry.turn_count = 5;
-        entry.compaction_in_flight = true;
+        entry.history.messages = msgs.clone();
+        entry.history.turn_count = 5;
+        entry.history.compaction_in_flight = true;
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
         });
@@ -529,7 +532,7 @@ mod tests {
 
         // A turn lands while the build is in flight — the snapshot is now stale.
         with_sessions(&sessions, |store| {
-            store.get_mut(&session_id).unwrap().turn_count = 6;
+            store.get_mut(&session_id).unwrap().history.turn_count = 6;
         });
 
         let result = run_compaction(&snapshot, &sessions, &hermetic_config()).await;
@@ -538,11 +541,11 @@ mod tests {
         with_sessions(&sessions, |store| {
             let e = store.get(&session_id).unwrap();
             assert!(
-                !e.compaction_in_flight,
+                !e.history.compaction_in_flight,
                 "the stale-branch discard must clear the in-flight flag"
             );
             assert_eq!(
-                e.messages.len(),
+                e.history.messages.len(),
                 32,
                 "a stale discard must leave the history untouched"
             );
@@ -557,8 +560,8 @@ mod tests {
 
         let msgs = make_turn_msgs(32);
         let mut entry = make_test_entry();
-        entry.messages = msgs.clone();
-        entry.turn_count = 5;
+        entry.history.messages = msgs.clone();
+        entry.history.turn_count = 5;
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
         });
@@ -580,10 +583,10 @@ mod tests {
         // idempotency guard as the sole reason a second epoch is not created.
         with_sessions(&sessions, |store| {
             let e = store.get_mut(&session_id).unwrap();
-            e.messages = msgs.clone();
-            e.turn_count = 5;
+            e.history.messages = msgs.clone();
+            e.history.turn_count = 5;
             // In-flight, as `try_snapshot` would have left it before the build.
-            e.compaction_in_flight = true;
+            e.history.compaction_in_flight = true;
         });
 
         // Second build over the same snapshot: the guard must skip it.
@@ -597,7 +600,7 @@ mod tests {
         with_sessions(&sessions, |store| {
             let e = store.get(&session_id).unwrap();
             assert!(
-                !e.compaction_in_flight,
+                !e.history.compaction_in_flight,
                 "the idempotency-guard discard must clear the in-flight flag"
             );
         });
@@ -611,8 +614,8 @@ mod tests {
 
         let msgs = make_turn_msgs(32);
         let mut entry = make_test_entry();
-        entry.messages = msgs.clone();
-        entry.turn_count = 5;
+        entry.history.messages = msgs.clone();
+        entry.history.turn_count = 5;
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
         });

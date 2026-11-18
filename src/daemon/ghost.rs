@@ -46,7 +46,7 @@ async fn write_mailbox_on_exit(
     let last_content = with_sessions(sessions, |store| {
         store
             .get(session_id)
-            .and_then(|e| e.messages.last())
+            .and_then(|e| e.history.messages.last())
             .filter(|m| m.role == "assistant")
             .map(|m| m.content.clone())
             .unwrap_or_default()
@@ -529,7 +529,7 @@ pub async fn trigger_ghost_turn(
     let summary = with_sessions(sessions, |store| {
         store
             .get(session_id)
-            .and_then(|e| e.messages.last())
+            .and_then(|e| e.history.messages.last())
             .filter(|m| m.role == "assistant")
             .map(|m| m.content.clone())
             .unwrap_or_default()
@@ -674,7 +674,7 @@ fn push_user_note(session_id: &str, sessions: &SessionStore, text: String, turn:
     };
     let pushed = with_sessions(sessions, |store| {
         if let Some(entry) = store.get_mut(session_id) {
-            entry.messages.push(message.clone());
+            entry.history.messages.push(message.clone());
             true
         } else {
             false

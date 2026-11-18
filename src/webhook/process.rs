@@ -801,7 +801,7 @@ mod tests {
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
             let mut e = SessionEntry::new_interactive("test");
-            e.messages = vec![msg("first"), msg("second")];
+            e.history.messages = vec![msg("first"), msg("second")];
             store.insert("resident-1".to_string(), e);
         });
 
@@ -811,12 +811,12 @@ mod tests {
         with_sessions(&sessions, |store| {
             let entry = store.get("resident-1").expect("the entry is resident");
             assert_eq!(
-                entry.messages.len(),
+                entry.history.messages.len(),
                 3,
                 "the injected alert lands in the resident history"
             );
             assert_eq!(
-                entry.messages.last().map(|m| m.content.as_str()),
+                entry.history.messages.last().map(|m| m.content.as_str()),
                 Some("[Webhook Alert] disk usage at 95%"),
                 "the alert is the last message"
             );
@@ -1063,13 +1063,13 @@ mod tests {
 
         for id in ["a", "b"] {
             let content_there = with_sessions(&sessions, |store| {
-                store.get(id).map(|e| e.messages.len()).unwrap_or(0)
+                store.get(id).map(|e| e.history.messages.len()).unwrap_or(0)
             });
             assert_eq!(content_there, 1, "session {id} gains exactly one message");
             let last = with_sessions(&sessions, |store| {
                 store
                     .get(id)
-                    .and_then(|e| e.messages.last().map(|m| m.content.clone()))
+                    .and_then(|e| e.history.messages.last().map(|m| m.content.clone()))
             });
             assert_eq!(
                 last.as_deref(),

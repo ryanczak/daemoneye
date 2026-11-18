@@ -885,7 +885,7 @@ fn webhook_alert_below_threshold_is_not_injected() {
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
         store
             .get("gate-sess")
-            .map(|e| e.messages.len())
+            .map(|e| e.history.messages.len())
             .unwrap_or(usize::MAX)
     });
     assert_eq!(
@@ -967,9 +967,9 @@ fn webhook_alert_at_threshold_is_injected() {
         daemoneye::daemon::session::with_sessions(&sessions, |store| {
             store.get("at-sess").map(|e| {
                 (
-                    e.messages.len(),
-                    e.messages.first().map(|m| m.role.clone()),
-                    e.messages.first().map(|m| m.content.clone()),
+                    e.history.messages.len(),
+                    e.history.messages.first().map(|m| m.role.clone()),
+                    e.history.messages.first().map(|m| m.content.clone()),
                 )
             })
         })
@@ -1167,7 +1167,7 @@ fn webhook_alert_no_severity_is_below_threshold() {
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
         store
             .get("no-sev-sess")
-            .map(|e| e.messages.len())
+            .map(|e| e.history.messages.len())
             .unwrap_or(usize::MAX)
     });
     assert_eq!(
@@ -1269,7 +1269,7 @@ fn webhook_alert_unrankable_severity_is_below_threshold() {
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
         store
             .get("unrankable-sess")
-            .map(|e| e.messages.len())
+            .map(|e| e.history.messages.len())
             .unwrap_or(usize::MAX)
     });
     assert_eq!(
@@ -1535,7 +1535,7 @@ fn webhook_alert_without_sinks_reaches_no_history() {
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
         store
             .get("bus-sess")
-            .map(|e| e.messages.len())
+            .map(|e| e.history.messages.len())
             .unwrap_or(usize::MAX)
     });
     assert_eq!(
@@ -1632,7 +1632,7 @@ fn webhook_alert_unknown_severity_publishes_debug() {
     let count = daemoneye::daemon::session::with_sessions(&sessions, |store| {
         store
             .get("banana-sess")
-            .map(|e| e.messages.len())
+            .map(|e| e.history.messages.len())
             .unwrap_or(usize::MAX)
     });
     assert_eq!(count, 0, "an unrankable severity reaches no history");
@@ -1712,8 +1712,8 @@ fn webhook_alert_error_severity_passes_warning_gate() {
             .get("err-sess")
             .map(|e| {
                 (
-                    e.messages.len(),
-                    e.messages.first().map(|m| m.content.clone()),
+                    e.history.messages.len(),
+                    e.history.messages.first().map(|m| m.content.clone()),
                 )
             })
             .unwrap_or((0, None))

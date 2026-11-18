@@ -37,9 +37,10 @@ pub fn estimate_history_tokens(messages: &[Message]) -> u64 {
 /// leaves the scale untouched (no observation to calibrate against).
 pub fn update_token_scale(entry: &mut crate::daemon::session::SessionEntry, messages: &[Message]) {
     let est = estimate_history_tokens(messages);
-    if est > 0 && entry.last_prompt_tokens > 0 {
-        let observed = entry.last_prompt_tokens as f64 / est as f64;
-        entry.token_scale = (0.7 * entry.token_scale + 0.3 * observed).clamp(0.5, 4.0);
+    if est > 0 && entry.ledger.last_prompt_tokens > 0 {
+        let observed = entry.ledger.last_prompt_tokens as f64 / est as f64;
+        entry.ledger.token_scale =
+            (0.7 * entry.ledger.token_scale + 0.3 * observed).clamp(0.5, 4.0);
     }
 }
 
@@ -109,17 +110,17 @@ mod tests {
         // 10 iterations: scale should monotonically approach 2.0
         let mut prev = 1.5;
         for _ in 0..10 {
-            entry.last_prompt_tokens = (est * 2) as u32;
+            entry.ledger.last_prompt_tokens = (est * 2) as u32;
             update_token_scale(&mut entry, &msgs);
             assert!(
-                entry.token_scale >= prev,
+                entry.ledger.token_scale >= prev,
                 "Scale should increase monotonically toward 2.0"
             );
             assert!(
-                entry.token_scale <= 2.0,
+                entry.ledger.token_scale <= 2.0,
                 "Scale should not overshoot 2.0 with constant observed=2.0"
             );
-            prev = entry.token_scale;
+            prev = entry.ledger.token_scale;
         }
 
         // Test clamping with adversarial ratios
@@ -127,20 +128,20 @@ mod tests {
         let est = estimate_history_tokens(&msgs);
 
         // Extremely low ratio: observed = 0.01 * est
-        entry.token_scale = 1.5;
-        entry.last_prompt_tokens = (est as f64 * 0.01) as u32;
+        entry.ledger.token_scale = 1.5;
+        entry.ledger.last_prompt_tokens = (est as f64 * 0.01) as u32;
         update_token_scale(&mut entry, &msgs);
         assert!(
-            entry.token_scale >= 0.5,
+            entry.ledger.token_scale >= 0.5,
             "Scale should clamp to >= 0.5 with very low observed ratio"
         );
 
         // Extremely high ratio: observed = 1000.0 * est
-        entry.token_scale = 1.5;
-        entry.last_prompt_tokens = (est as f64 * 1000.0) as u32;
+        entry.ledger.token_scale = 1.5;
+        entry.ledger.last_prompt_tokens = (est as f64 * 1000.0) as u32;
         update_token_scale(&mut entry, &msgs);
         assert!(
-            entry.token_scale <= 4.0,
+            entry.ledger.token_scale <= 4.0,
             "Scale should clamp to <= 4.0 with very high observed ratio"
         );
     }
@@ -149,23 +150,23 @@ mod tests {
     fn update_token_scale_noop_when_no_observation() {
         let mut entry = crate::daemon::session::SessionEntry::new_interactive("test");
 
-        let original_scale = entry.token_scale;
+        let original_scale = entry.ledger.token_scale;
 
         // Empty history → no update
         let empty: &[Message] = &[];
-        entry.last_prompt_tokens = 100;
+        entry.ledger.last_prompt_tokens = 100;
         update_token_scale(&mut entry, empty);
         assert_eq!(
-            entry.token_scale, original_scale,
+            entry.ledger.token_scale, original_scale,
             "Scale should be unchanged when history is empty"
         );
 
         // last_prompt_tokens == 0 → no update
         let msgs = vec![make_plain("hello")];
-        entry.last_prompt_tokens = 0;
+        entry.ledger.last_prompt_tokens = 0;
         update_token_scale(&mut entry, &msgs);
         assert_eq!(
-            entry.token_scale, original_scale,
+            entry.ledger.token_scale, original_scale,
             "Scale should be unchanged when last_prompt_tokens is 0"
         );
     }

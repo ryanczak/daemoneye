@@ -19,7 +19,7 @@ pub async fn generate_and_save_briefing(
 ) {
     let Some((messages, model_key)) = with_sessions(sessions, |store| {
         let entry = store.get(session_id)?;
-        Some((entry.messages.clone(), entry.active_model.clone()))
+        Some((entry.history.messages.clone(), entry.active_model.clone()))
     }) else {
         log::warn!(
             "Briefing: session '{}' not found for agent '{}'",

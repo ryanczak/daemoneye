@@ -93,6 +93,7 @@ fn track_artifact(ctx: &ArtifactCtx<'_>, kind: &str, name: &str) {
     with_sessions(ctx.sessions, |store| {
         if let Some(entry) = store.get_mut(sid) {
             entry
+                .persistence
                 .artifacts_created
                 .push(crate::session_store::ArtifactRef {
                     kind: kind.to_string(),

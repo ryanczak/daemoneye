@@ -210,7 +210,7 @@ mod tests {
 
     fn entry(messages: Vec<Message>) -> SessionEntry {
         let mut e = SessionEntry::new_interactive("test");
-        e.messages = messages;
+        e.history.messages = messages;
         e
     }
 
@@ -810,7 +810,7 @@ mod tests {
             // A resident turn appends to disk and pushes to the entry's
             // history; a test simulating one must do both or `record_chat_detach`
             // counts 0.
-            entry.messages.push(completed);
+            entry.history.messages.push(completed);
         });
         crate::daemon::session::append_session_message(
             sid,
@@ -906,11 +906,11 @@ mod tests {
         with_sessions(&sessions, |store| {
             let e = store.get(sid).expect("the attach inserted the entry");
             assert_eq!(
-                e.messages.len(),
+                e.history.messages.len(),
                 messages.len(),
                 "the entry holds the disk history's message count"
             );
-            for (entry_msg, file_msg) in e.messages.iter().zip(messages.iter()) {
+            for (entry_msg, file_msg) in e.history.messages.iter().zip(messages.iter()) {
                 assert_eq!(
                     entry_msg.content, file_msg.content,
                     "the entry's message matches the disk history's"
@@ -952,7 +952,7 @@ mod tests {
             let entry = store
                 .entry(sid.to_string())
                 .or_insert_with(|| SessionEntry::from_disk(sid));
-            entry.messages.push(completed);
+            entry.history.messages.push(completed);
         });
         crate::daemon::session::append_session_message(
             sid,
@@ -1055,7 +1055,8 @@ mod tests {
                 .get(sid)
                 .expect("the attach made the session resident");
             assert!(
-                e.messages
+                e.history
+                    .messages
                     .iter()
                     .any(|m| m.content.contains("disk usage at 95%")),
                 "the resident entry carries the alert — what the next ask reads"
@@ -1194,22 +1195,25 @@ mod tests {
                 .get(sid)
                 .expect("the attach made the session resident");
             assert_eq!(
-                e.messages.len(),
+                e.history.messages.len(),
                 2,
                 "the entry carries the disk history's two messages"
             );
-            assert_eq!(e.turn_count, 5, "the meta's turn_count is restored");
+            assert_eq!(e.history.turn_count, 5, "the meta's turn_count is restored");
             assert_eq!(
-                e.last_prompt_tokens, 1234,
+                e.ledger.last_prompt_tokens, 1234,
                 "the meta's last_prompt_tokens is restored"
             );
-            assert_eq!(e.token_scale, 1.25, "the meta's token_scale is restored");
             assert_eq!(
-                e.tool_calls_this_session, 3,
+                e.ledger.token_scale, 1.25,
+                "the meta's token_scale is restored"
+            );
+            assert_eq!(
+                e.ledger.tool_calls_this_session, 3,
                 "the meta's tool_calls_this_session is restored"
             );
             assert_eq!(
-                e.saved_name.as_deref(),
+                e.persistence.saved_name.as_deref(),
                 Some("deploy hunt"),
                 "the meta's saved_name is restored"
             );

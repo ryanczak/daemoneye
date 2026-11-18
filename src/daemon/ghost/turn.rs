@@ -20,7 +20,7 @@ pub(super) async fn do_ghost_turn(
         let entry = store.get(session_id)?;
         let g = entry.as_ghost()?;
         Some((
-            entry.messages.clone(),
+            entry.history.messages.clone(),
             g.config.clone(),
             entry.active_model.clone(),
         ))
@@ -109,7 +109,7 @@ pub(super) async fn do_ghost_turn(
             };
             let pushed = with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(session_id) {
-                    entry.messages.push(wrap_up.clone());
+                    entry.history.messages.push(wrap_up.clone());
                     true
                 } else {
                     false
@@ -156,10 +156,10 @@ pub(super) async fn do_ghost_turn(
             with_sessions(sessions, |store| {
                 let entry = store.get(session_id)?;
                 Some((
-                    entry.messages.clone(),
+                    entry.history.messages.clone(),
                     entry.loaded_tools.iter().cloned().collect::<Vec<String>>(),
-                    entry.token_scale,
-                    entry.started_at,
+                    entry.ledger.token_scale,
+                    entry.persistence.started_at,
                 ))
             })
         else {
@@ -178,7 +178,7 @@ pub(super) async fn do_ghost_turn(
         if compacted {
             with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(session_id) {
-                    entry.messages = chat_messages.clone();
+                    entry.history.messages = chat_messages.clone();
                 }
             });
             write_session_file(session_id, &chat_messages);
@@ -531,14 +531,13 @@ pub(super) async fn do_ghost_turn(
 
                         // Accumulate cost on the session entry.
                         with_sessions(sessions, |store| {
-                            if let Some(entry) = store.get_mut(session_id) {
-                                entry.cost_usd += record.cost.total_cost_usd;
-                                *entry
-                                    .cost_by_agent
+                            if let Some(l) = store.get_mut(session_id).map(|e| &mut e.ledger) {
+                                l.cost_usd += record.cost.total_cost_usd;
+                                *l.cost_by_agent
                                     .entry(record.agent_name.clone())
                                     .or_insert(0.0) += record.cost.total_cost_usd;
                                 if record.pricing_source == PricingSource::Unknown {
-                                    entry.has_untracked_cost = true;
+                                    l.has_untracked_cost = true;
                                 }
                             }
                         });
@@ -692,8 +691,8 @@ pub(super) async fn do_ghost_turn(
         append_session_message(session_id, &assistant_msg);
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get_mut(session_id) {
-                entry.messages.push(assistant_msg);
-                entry.last_accessed = Instant::now();
+                entry.history.messages.push(assistant_msg);
+                entry.persistence.last_accessed = Instant::now();
             }
         });
 
@@ -704,6 +703,7 @@ pub(super) async fn do_ghost_turn(
                         .get(session_id)
                         .map(|entry| {
                             entry
+                                .history
                                 .messages
                                 .iter()
                                 .filter(|m| m.role == "assistant")
@@ -733,8 +733,8 @@ pub(super) async fn do_ghost_turn(
                     append_session_message(session_id, &nudge);
                     with_sessions(sessions, |store| {
                         if let Some(entry) = store.get_mut(session_id) {
-                            entry.messages.push(nudge);
-                            entry.last_accessed = Instant::now();
+                            entry.history.messages.push(nudge);
+                            entry.persistence.last_accessed = Instant::now();
                         }
                     });
                     log::warn!(

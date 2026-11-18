@@ -209,14 +209,13 @@ fn record_model_call(
     // Accumulate cost on the session entry.
     if let Some(id) = session_id {
         with_sessions(sessions, |store| {
-            if let Some(entry) = store.get_mut(id) {
-                entry.cost_usd += record.cost.total_cost_usd;
-                *entry
-                    .cost_by_agent
+            if let Some(l) = store.get_mut(id).map(|e| &mut e.ledger) {
+                l.cost_usd += record.cost.total_cost_usd;
+                *l.cost_by_agent
                     .entry(record.agent_name.clone())
                     .or_insert(0.0) += record.cost.total_cost_usd;
                 if record.pricing_source == PricingSource::Unknown {
-                    entry.has_untracked_cost = true;
+                    l.has_untracked_cost = true;
                 }
             }
         });

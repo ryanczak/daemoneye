@@ -53,7 +53,7 @@ where
                         for name in &loaded {
                             entry.loaded_tools.insert(name.clone());
                         }
-                        entry.dirty = true;
+                        entry.persistence.dirty = true;
                     }
                 });
             }

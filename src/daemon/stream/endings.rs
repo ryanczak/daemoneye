@@ -123,7 +123,7 @@ where
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get_mut(id) {
                 entry.finish_turn(messages.clone());
-                entry.dirty = true;
+                entry.persistence.dirty = true;
             }
         });
         for msg in &messages[post_trim_len..] {

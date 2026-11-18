@@ -69,44 +69,74 @@ pub enum SessionMode {
     Ghost(GhostSession),
 }
 
+/// Conversation message history, turn counter, and background compaction state.
+#[derive(Debug, Clone, Default)]
+pub struct ConversationHistory {
+    pub messages: Vec<Message>,
+    pub turn_count: usize,
+    pub compaction_in_flight: bool,
+    pub pending_compaction_notice: Option<String>,
+    pub turn_inbox: Option<Vec<Message>>,
+}
+
+/// Token usage, EMA scale factor, tool-call counters, and USD spend.
+#[derive(Debug, Clone)]
+pub struct SessionLedger {
+    pub last_prompt_tokens: u32,
+    pub token_scale: f64,
+    pub tool_calls_this_session: usize,
+    pub cost_usd: f64,
+    pub cost_by_agent: HashMap<String, f64>,
+    pub has_untracked_cost: bool,
+}
+
+impl Default for SessionLedger {
+    fn default() -> Self {
+        Self {
+            last_prompt_tokens: 0,
+            token_scale: 1.5,
+            tool_calls_this_session: 0,
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+        }
+    }
+}
+
+/// Creation/access timestamps and named-session save state.
+#[derive(Debug, Clone)]
+pub struct SessionPersistence {
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub last_accessed: Instant,
+    pub saved_name: Option<String>,
+    pub dirty: bool,
+    pub artifacts_created: Vec<crate::session_store::ArtifactRef>,
+}
+
+impl Default for SessionPersistence {
+    fn default() -> Self {
+        Self {
+            started_at: chrono::Utc::now(),
+            last_accessed: Instant::now(),
+            saved_name: None,
+            dirty: false,
+            artifacts_created: Vec::new(),
+        }
+    }
+}
+
 /// In-memory record of an active chat or Ghost Shell session (evicted after 30m idle).
 pub struct SessionEntry {
-    /// Full message history for this session (bounded by token-budget compaction).
-    pub messages: Vec<Message>,
-    /// Wall-clock time of the last `Ask` request; used to prune idle sessions.
-    pub last_accessed: Instant,
-    /// Prompt token count from the most recent AI turn (`Response::UsageUpdate`).
-    pub last_prompt_tokens: u32,
-    /// Wall-clock time when this session was created.
-    pub started_at: chrono::DateTime<chrono::Utc>,
-    /// Number of user-visible turns completed in this session (never reset by compaction).
-    pub turn_count: usize,
-    /// Cumulative number of non-approval-gated tool calls executed across all turns.
-    pub tool_calls_this_session: usize,
-    /// Session-level model override set by `/model` (`None` = daemon default).
+    /// Conversation messages, turn counter, and background compaction state.
+    pub history: ConversationHistory,
+    /// Token usage, EMA scale factor, tool-call counters, and USD spend.
+    pub ledger: SessionLedger,
+    /// Creation/access timestamps and named-session save state.
+    pub persistence: SessionPersistence,
+    /// Session-level `/model` override (`None` = daemon default).
     pub active_model: Option<String>,
-    /// Name of the saved session (`None` for unsaved ephemeral sessions).
-    pub saved_name: Option<String>,
-    /// True if messages have been added since the last save or load.
-    pub dirty: bool,
-    /// Deferred tool names loaded into this session via `load_tools`.
+    /// Deferred tool groups loaded into this session via `load_tools`.
     pub loaded_tools: HashSet<String>,
-    /// Artifacts (memories, runbooks, scripts) created during this session.
-    pub artifacts_created: Vec<crate::session_store::ArtifactRef>,
-    /// Cumulative cost of this session so far. Reset on /clear or new session.
-    pub cost_usd: f64,
-    /// Per-agent breakdown for this session (key = agent_name).
-    pub cost_by_agent: HashMap<String, f64>,
-    /// Whether any AI call in this session had Unknown pricing.
-    pub has_untracked_cost: bool,
-    /// EMA-smoothed multiplier mapping estimated history tokens to observed prompt tokens.
-    pub token_scale: f64,
-    /// True while a background compaction task for this session is running.
-    pub compaction_in_flight: bool,
-    /// Notice queued by a completed background compaction for the next turn.
-    pub pending_compaction_notice: Option<String>,
-    /// Events pushed onto this session while a turn was in flight (`begin_turn`..`finish_turn`).
-    pub turn_inbox: Option<Vec<Message>>,
     /// Mode-specific state: interactive chat vs. autonomous Ghost Shell.
     pub mode: SessionMode,
 }
@@ -298,7 +328,7 @@ pub fn record_chat_detach(session_id: &str, sessions: &SessionStore) {
     let now_utc = chrono::Utc::now();
     with_sessions(sessions, |store| {
         if let Some(entry) = store.get_mut(session_id) {
-            let msg_len = entry.messages.len();
+            let msg_len = entry.history.messages.len();
             if let Some(i) = entry.as_interactive_mut() {
                 i.last_detach = Some(now);
                 i.detach_time_utc = Some(now_utc);
@@ -556,24 +586,11 @@ impl SessionEntry {
     /// Construct a fresh interactive chat session attached to `tmux_session`.
     pub fn new_interactive(tmux_session: impl Into<String>) -> Self {
         Self {
-            messages: Vec::new(),
-            last_accessed: Instant::now(),
-            last_prompt_tokens: 0,
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
+            history: ConversationHistory::default(),
+            ledger: SessionLedger::default(),
+            persistence: SessionPersistence::default(),
             active_model: None,
-            saved_name: None,
-            dirty: false,
             loaded_tools: HashSet::new(),
-            artifacts_created: Vec::new(),
-            cost_usd: 0.0,
-            cost_by_agent: HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
             mode: SessionMode::Interactive(InteractiveSession {
                 tmux_session: tmux_session.into(),
                 ..InteractiveSession::default()
@@ -590,7 +607,10 @@ impl SessionEntry {
     ) -> Self {
         let active_model = config.model.clone();
         Self {
-            messages,
+            history: ConversationHistory {
+                messages,
+                ..ConversationHistory::default()
+            },
             active_model,
             mode: SessionMode::Ghost(GhostSession {
                 config,
@@ -648,72 +668,53 @@ impl SessionEntry {
     }
 
     pub fn last_accessed(&self) -> std::time::Instant {
-        self.last_accessed
+        self.persistence.last_accessed
     }
 
-    /// Build the resident entry for `id` from its disk state: the session
-    /// file's history plus the persisted meta's continuity fields. A missing
-    /// file or meta gives an empty history and the same defaults a fresh
-    /// session starts with. This is the one constructor for a resident entry —
-    /// `handle_ask`'s upsert and the presence attach both go through it, so
-    /// the two creation sites cannot drift (M29 phase 05).
+    /// Build the resident entry for `id` from its disk state (history + persisted meta).
     pub fn from_disk(id: &str) -> SessionEntry {
         let mut entry = Self::new_interactive(String::new());
-        entry.messages = read_session_file(id, None);
+        entry.history.messages = read_session_file(id, None);
         if let Some(m) = read_session_meta(id) {
-            entry.started_at = m.started_at;
-            entry.turn_count = m.turn_count;
-            entry.last_prompt_tokens = m.last_prompt_tokens;
-            entry.tool_calls_this_session = m.tool_calls_this_session;
-            entry.token_scale = m.token_scale;
-            entry.saved_name = m.saved_name;
+            entry.persistence.started_at = m.started_at;
+            entry.history.turn_count = m.turn_count;
+            entry.ledger.last_prompt_tokens = m.last_prompt_tokens;
+            entry.ledger.tool_calls_this_session = m.tool_calls_this_session;
+            entry.ledger.token_scale = m.token_scale;
+            entry.persistence.saved_name = m.saved_name;
         }
         entry
     }
 
-    /// Mark a turn as in flight: events pushed until `finish_turn` land in
-    /// `turn_inbox` instead of being silently dropped by the turn's write-back.
-    /// Called by `handle_ask` under the same lock acquisition that clones the
-    /// turn's starting history.
+    /// Mark a turn as in flight so mid-turn events land in `turn_inbox`.
     pub fn begin_turn(&mut self) {
-        self.turn_inbox = Some(Vec::new());
+        self.history.turn_inbox = Some(Vec::new());
     }
 
-    /// Append an event to the session. While a turn is in flight the event is
-    /// recorded in the inbox too, so the turn's write-back keeps it; the
-    /// `messages` append keeps every reader (catch-up brief, pane render) up
-    /// to date either way.
+    /// Append an event to the session (and to `turn_inbox` while a turn is in flight).
     pub fn push_event(&mut self, msg: Message) {
-        if let Some(inbox) = self.turn_inbox.as_mut() {
+        if let Some(inbox) = self.history.turn_inbox.as_mut() {
             inbox.push(msg.clone());
         }
-        self.messages.push(msg);
+        self.history.messages.push(msg);
     }
 
-    /// Write back a turn's own messages: `turn_messages` followed by every
-    /// event that arrived mid-turn, in arrival order, and close the in-flight
-    /// window. Replaces the bare `entry.messages = turn_messages` overwrite,
-    /// which dropped those events.
+    /// Write back `turn_messages` followed by mid-turn inbox events and close `turn_inbox`.
     pub fn finish_turn(&mut self, turn_messages: Vec<Message>) {
         let mut merged = turn_messages;
-        let events = self.turn_inbox.take();
-        if let Some(events) = events {
+        if let Some(events) = self.history.turn_inbox.take() {
             merged.extend(events);
         }
-        self.messages = merged;
+        self.history.messages = merged;
     }
 }
 
-/// Open a session's turn inbox and hand back the history a turn starts from,
-/// in one lock acquisition. The inbox stays open until the turn's
-/// `finish_turn` write-back, so every event `push_event` records in it
-/// survives that write-back even while the turn runs. Returns `None` when the
-/// entry is not resident.
+/// Open a session's turn inbox and hand back the history a turn starts from.
 pub fn take_turn_snapshot(sessions: &SessionStore, id: &str) -> Option<Vec<Message>> {
     with_sessions(sessions, |store| {
         let entry = store.get_mut(id)?;
         entry.begin_turn();
-        Some(entry.messages.clone())
+        Some(entry.history.messages.clone())
     })
 }
 

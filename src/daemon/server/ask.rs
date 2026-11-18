@@ -124,8 +124,8 @@ where
                 };
             }
 
-            let cost_usd = entry.cost_usd;
-            let has_untracked = entry.has_untracked_cost;
+            let cost_usd = entry.ledger.cost_usd;
+            let has_untracked = entry.ledger.has_untracked_cost;
             (cost_usd, has_untracked)
         })
     } else {
@@ -153,8 +153,8 @@ where
     {
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get(id.as_str()) {
-                let lpt = entry.last_prompt_tokens;
-                let scale = entry.token_scale;
+                let lpt = entry.ledger.last_prompt_tokens;
+                let scale = entry.ledger.token_scale;
                 if lpt > 0 {
                     (lpt, scale)
                 } else {
@@ -210,9 +210,11 @@ where
         // No narrative call — this is the backstop when pressure is extreme.
         // Aggressive elision first.
         let elided = crate::daemon::digest::elide_old_tool_results(&mut messages, true);
-        let started_at = session_id
-            .as_ref()
-            .and_then(|id| with_sessions(sessions, |store| store.get(id).map(|e| e.started_at)));
+        let started_at = session_id.as_ref().and_then(|id| {
+            with_sessions(sessions, |store| {
+                store.get(id).map(|e| e.persistence.started_at)
+            })
+        });
         if let Some(since) = started_at {
             // Budget-based compaction: compute the target budget and plan the
             // cut against the session's calibrated token_scale (phase 02).
@@ -354,8 +356,8 @@ where
         .map(|id| {
             with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(id) {
-                    entry.turn_count += 1;
-                    entry.turn_count
+                    entry.history.turn_count += 1;
+                    entry.history.turn_count
                 } else {
                     1
                 }
@@ -568,7 +570,7 @@ where
         with_sessions(sessions, |store| {
             store
                 .get_mut(id)
-                .and_then(|e| e.pending_compaction_notice.take())
+                .and_then(|e| e.history.pending_compaction_notice.take())
         })
     });
     if let Some(notice) = pending_notice {

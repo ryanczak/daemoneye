@@ -518,7 +518,7 @@ mod tests {
 
     fn message_count(sessions: &SessionStore, id: &str) -> usize {
         with_sessions(sessions, |store| {
-            store.get(id).map(|e| e.messages.len()).unwrap_or(0)
+            store.get(id).map(|e| e.history.messages.len()).unwrap_or(0)
         })
     }
 
@@ -884,7 +884,7 @@ mod tests {
         let content = with_sessions(&sessions, |store| {
             store
                 .get("a")
-                .and_then(|e| e.messages.last().map(|m| m.content.clone()))
+                .and_then(|e| e.history.messages.last().map(|m| m.content.clone()))
         });
         assert_eq!(
             content.as_deref(),

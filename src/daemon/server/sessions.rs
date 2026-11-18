@@ -37,14 +37,14 @@ where
         with_sessions(sessions, |store| {
             if let Some(entry) = store.get(&session_id) {
                 (
-                    entry.messages.clone(),
-                    entry.turn_count,
-                    entry.saved_name.clone(),
+                    entry.history.messages.clone(),
+                    entry.history.turn_count,
+                    entry.persistence.saved_name.clone(),
                     entry
                         .active_model
                         .clone()
                         .unwrap_or_else(|| "default".to_string()),
-                    entry.artifacts_created.clone(),
+                    entry.persistence.artifacts_created.clone(),
                 )
             } else {
                 (Vec::new(), 0, None, "default".to_string(), Vec::new())
@@ -74,8 +74,8 @@ where
             }
             with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(&session_id) {
-                    entry.saved_name = Some(name.clone());
-                    entry.dirty = false;
+                    entry.persistence.saved_name = Some(name.clone());
+                    entry.persistence.dirty = false;
                 }
             });
             log::info!("Session {}: saved as '{}'", session_id, name);
@@ -104,7 +104,7 @@ where
         return Ok(());
     }
     let is_dirty = with_sessions(sessions, |store| {
-        store.get(&session_id).is_some_and(|e| e.dirty)
+        store.get(&session_id).is_some_and(|e| e.persistence.dirty)
     });
     if is_dirty && !force {
         send_response_split(
@@ -140,9 +140,9 @@ where
 
             with_sessions(sessions, |store| {
                 if let Some(entry) = store.get_mut(&session_id) {
-                    entry.messages = loaded_msgs;
-                    entry.saved_name = Some(name.clone());
-                    entry.dirty = false;
+                    entry.history.messages = loaded_msgs;
+                    entry.persistence.saved_name = Some(name.clone());
+                    entry.persistence.dirty = false;
                 }
             });
             log::info!(
@@ -237,8 +237,8 @@ where
         Ok(()) => {
             with_sessions(sessions, |store| {
                 for entry in store.values_mut() {
-                    if entry.saved_name.as_deref() == Some(old_name.as_str()) {
-                        entry.saved_name = Some(new_name.clone());
+                    if entry.persistence.saved_name.as_deref() == Some(old_name.as_str()) {
+                        entry.persistence.saved_name = Some(new_name.clone());
                     }
                 }
             });

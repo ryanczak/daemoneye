@@ -917,7 +917,11 @@ mod tests {
 
         let (role, content) = with_sessions(&sessions, |store| {
             let entry = store.get(&session_id).expect("the session entry is back");
-            let last = entry.messages.last().expect("a completion was pushed");
+            let last = entry
+                .history
+                .messages
+                .last()
+                .expect("a completion was pushed");
             (last.role.clone(), last.content.clone())
         });
         assert_eq!(role, "user", "the completion is injected as the user role");
@@ -981,6 +985,7 @@ mod tests {
         let content = with_sessions(&sessions, |store| {
             let entry = store.get(&session_id).expect("the session entry is back");
             entry
+                .history
                 .messages
                 .last()
                 .expect("a completion was pushed")
@@ -1301,17 +1306,17 @@ mod tests {
             move |id: ShellId| {
                 let close_log = Arc::clone(&close_log);
                 async move {
-                    let message_there = with_sessions(&sessions, |store| {
-                        store
-                            .get(&session_id)
-                            .map(|entry| {
-                                entry
-                                    .messages
-                                    .iter()
-                                    .any(|m| m.content.starts_with("[Background Task Completed]"))
-                            })
-                            .unwrap_or(false)
-                    });
+                    let message_there =
+                        with_sessions(&sessions, |store| {
+                            store
+                                .get(&session_id)
+                                .map(|entry| {
+                                    entry.history.messages.iter().any(|m| {
+                                        m.content.starts_with("[Background Task Completed]")
+                                    })
+                                })
+                                .unwrap_or(false)
+                        });
                     close_log
                         .lock()
                         .expect("close log lock")
@@ -1438,7 +1443,7 @@ mod tests {
 
         let count = |id: &str| {
             with_sessions(&sessions, |store| {
-                store.get(id).map(|e| e.messages.len()).unwrap_or(0)
+                store.get(id).map(|e| e.history.messages.len()).unwrap_or(0)
             })
         };
         assert_eq!(

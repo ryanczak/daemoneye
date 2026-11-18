@@ -187,7 +187,7 @@ where
                         with_sessions(&sessions, |store| {
                             if let Some(entry) = store.get_mut(id) {
                                 entry.finish_turn(messages.clone());
-                                entry.dirty = true;
+                                entry.persistence.dirty = true;
                             }
                         });
                         for msg in &messages[post_trim_len..] {
@@ -330,15 +330,15 @@ where
                             with_sessions(&sessions, |store| {
                                 if let Some(entry) = store.get_mut(id) {
                                     entry.finish_turn(messages.clone());
-                                    merged_messages = entry.messages.clone();
-                                    entry.last_accessed = Instant::now();
-                                    entry.last_prompt_tokens = usage.input_tokens
+                                    merged_messages = entry.history.messages.clone();
+                                    entry.persistence.last_accessed = Instant::now();
+                                    entry.ledger.last_prompt_tokens = usage.input_tokens
                                         + usage.cache_read_tokens
                                         + usage.cache_write_tokens;
                                     crate::daemon::context::estimate::update_token_scale(
                                         entry, &messages,
                                     );
-                                    entry.dirty = true;
+                                    entry.persistence.dirty = true;
                                     if chat_pane.is_some()
                                         && let Some(i) = entry.as_interactive_mut()
                                     {
@@ -366,12 +366,14 @@ where
                                     store
                                         .get(id)
                                         .map(|entry| crate::daemon::session::SessionMeta {
-                                            started_at: entry.started_at,
-                                            turn_count: entry.turn_count,
-                                            last_prompt_tokens: entry.last_prompt_tokens,
-                                            token_scale: entry.token_scale,
-                                            tool_calls_this_session: entry.tool_calls_this_session,
-                                            saved_name: entry.saved_name.clone(),
+                                            started_at: entry.persistence.started_at,
+                                            turn_count: entry.history.turn_count,
+                                            last_prompt_tokens: entry.ledger.last_prompt_tokens,
+                                            token_scale: entry.ledger.token_scale,
+                                            tool_calls_this_session: entry
+                                                .ledger
+                                                .tool_calls_this_session,
+                                            saved_name: entry.persistence.saved_name.clone(),
                                         })
                                 });
                                 if let Some(meta) = meta {
@@ -400,8 +402,9 @@ where
                             let should_suggest = with_sessions(&sessions, |store| {
                                 if let Some(ref id) = session_id
                                     && let Some(entry) = store.get_mut(id)
-                                    && entry.saved_name.is_none()
-                                    && entry.turn_count == config.sessions.auto_name_turn_threshold
+                                    && entry.persistence.saved_name.is_none()
+                                    && entry.history.turn_count
+                                        == config.sessions.auto_name_turn_threshold
                                     && let Some(i) = entry.as_interactive_mut()
                                     && !i.auto_name_suggested
                                 {
@@ -468,7 +471,7 @@ where
                     if let Some(ref id) = session_id {
                         with_sessions(&sessions, |store| {
                             if let Some(entry) = store.get_mut(id) {
-                                entry.last_prompt_tokens = usage.input_tokens
+                                entry.ledger.last_prompt_tokens = usage.input_tokens
                                     + usage.cache_read_tokens
                                     + usage.cache_write_tokens;
                                 crate::daemon::context::estimate::update_token_scale(
@@ -505,7 +508,7 @@ where
                                     .as_ref()
                                     .and_then(|id| {
                                         with_sessions(&sessions, |store| {
-                                            store.get(id).map(|e| e.tool_calls_this_session)
+                                            store.get(id).map(|e| e.ledger.tool_calls_this_session)
                                         })
                                     })
                                     .unwrap_or(0);
@@ -647,7 +650,7 @@ where
                                 {
                                     with_sessions(&sessions, |store| {
                                         if let Some(entry) = store.get_mut(id) {
-                                            entry.tool_calls_this_session += 1;
+                                            entry.ledger.tool_calls_this_session += 1;
                                         }
                                     });
                                 }
