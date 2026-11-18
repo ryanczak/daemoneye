@@ -247,12 +247,16 @@ pub(crate) fn replay_alert_registry_in(
     let from = now - chrono::Duration::seconds(crate::webhook::ACTIVE_ALERT_TTL_SECS as i64);
 
     let apply = apply_notice_to_registry_in(map);
-    let mut restored = 0usize;
     crate::bus::for_each_notice_between(Some(from), Some(now), &mut |notice| {
-        if routes_match(&routes, notice) && apply(notice) {
-            restored += 1;
+        if routes_match(&routes, notice) {
+            apply(notice);
         }
     });
+    // What survived the replay — a fire later resolved restores nothing.
+    let restored = {
+        use crate::util::UnpoisonExt;
+        map.lock().unwrap_or_log().len()
+    };
     if restored > 0 {
         log::info!("Alert registry replay: {restored} alert(s) restored");
     }
@@ -386,91 +390,90 @@ mod tests {
         assert_eq!(entry.last_seen_unix, 2_000, "last_seen is the latest fire");
     }
 
+    /// Journal `notices` as `Bus::new` journals them, then run the real
+    /// replay into a fresh map; return what it restored and the snapshot's
+    /// fingerprints.
+    fn journal_and_replay(notices: &[&Notice]) -> (usize, Vec<String>) {
+        for notice in notices {
+            crate::daemon::utils::log_event(
+                "notice",
+                serde_json::to_value(notice).expect("serialize notice"),
+            );
+        }
+        let map = fresh_registry_map();
+        let restored = replay_alert_registry_in(&map);
+        let fingerprints =
+            crate::webhook::active_alerts_snapshot_in(&map, crate::webhook::now_secs())
+                .into_iter()
+                .map(|alert| alert.fingerprint)
+                .collect();
+        (restored, fingerprints)
+    }
+
     #[test]
     fn replay_ignores_what_the_registry_route_does_not_match() {
-        let map = fresh_registry_map();
+        let _guard = crate::test_home();
+        let hour_ago = (crate::webhook::now_secs() - 3600) as i64;
 
-        // A webhook `Event` notice (an analysis): the registry route matches
-        // only firing/resolved webhook notices.
-        let analysis = Notice::new(
-            Severity::Info,
-            Source::Webhook,
-            "AnalysisDone",
-            "analysis complete",
-        )
-        .fingerprint("fp-replay-analysis");
+        // A webhook `Event` notice (an analysis) and a scheduler notice marked
+        // `Firing`: the registry route matches only firing/resolved webhook
+        // notices, so the replay must record neither.
+        let analysis = Notice::new(Severity::Info, Source::Webhook, "AnalysisDone", "analysis")
+            .fingerprint("fp-replay-analysis")
+            .ts_refire(hour_ago);
+        let scheduler_firing = Notice::new(Severity::Warning, Source::Scheduler, "JobDone", "job")
+            .fingerprint("fp-replay-scheduler")
+            .status(NoticeStatus::Firing)
+            .ts_refire(hour_ago);
+        // The positive control: a firing webhook notice the route does match.
+        let control = webhook(Severity::Warning, "Control")
+            .fingerprint("fp-replay-control")
+            .ts_refire(hour_ago);
 
-        // A scheduler notice marked Firing: the registry route names webhook
-        // only.
-        let scheduler_firing = Notice::new(
-            Severity::Warning,
-            Source::Scheduler,
-            "JobDone",
-            "scheduled job finished",
-        )
-        .fingerprint("fp-replay-scheduler")
-        .status(NoticeStatus::Firing);
-
-        let routes = default_routes(crate::bus::Severity::Warning).alert_registry;
-        let apply = apply_notice_to_registry_in(&map);
-        for notice in [&analysis, &scheduler_firing] {
-            if routes_match(&routes, notice) {
-                apply(notice);
-            }
-        }
-
-        assert!(
-            crate::webhook::active_alerts_snapshot_in(&map, crate::webhook::now_secs()).is_empty(),
-            "neither notice is recorded"
+        let (restored, fingerprints) =
+            journal_and_replay(&[&analysis, &scheduler_firing, &control]);
+        assert_eq!(
+            fingerprints,
+            vec!["fp-replay-control".to_string()],
+            "only the firing webhook notice is replayed"
         );
+        assert_eq!(restored, 1, "the replay reports what it restored");
     }
 
     #[test]
     fn replay_reads_only_the_ttl_window() {
         let _guard = crate::test_home();
-        let map = fresh_registry_map();
-
         let now = crate::webhook::now_secs();
         let inside = webhook(Severity::Warning, "InsideTTL")
             .fingerprint("fp-replay-inside")
             .ts_refire((now - 3600) as i64);
         let outside = webhook(Severity::Warning, "OutsideTTL")
             .fingerprint("fp-replay-outside")
-            .ts_refire((now.saturating_sub(crate::webhook::ACTIVE_ALERT_TTL_SECS) - 60) as i64);
+            .ts_refire((now - crate::webhook::ACTIVE_ALERT_TTL_SECS - 60) as i64);
 
-        // Journal both notices exactly as `Bus::new` journals them, then
-        // replay only the TTL window.
-        let window_from = chrono::Utc::now()
-            - chrono::Duration::seconds(crate::webhook::ACTIVE_ALERT_TTL_SECS as i64);
-        for notice in [&inside, &outside] {
-            crate::daemon::utils::log_event(
-                "notice",
-                serde_json::to_value(notice).expect("serialize notice"),
-            );
-        }
-        let apply = apply_notice_to_registry_in(&map);
-        let mut restored = 0;
-        crate::bus::for_each_notice_between(
-            Some(window_from),
-            Some(chrono::Utc::now()),
-            &mut |n| {
-                if apply(n) {
-                    restored += 1;
-                }
-            },
-        );
-
-        let snapshot = crate::webhook::active_alerts_snapshot_in(&map, now);
-        let fingerprints: Vec<&str> = snapshot
-            .iter()
-            .map(|alert| alert.fingerprint.as_str())
-            .collect();
-        assert_eq!(restored, 1, "only the notice inside the window applies");
+        let (restored, fingerprints) = journal_and_replay(&[&inside, &outside]);
         assert_eq!(
             fingerprints,
-            vec!["fp-replay-inside"],
+            vec!["fp-replay-inside".to_string()],
             "the notice older than the TTL never enters the registry"
         );
+        assert_eq!(restored, 1, "only the notice inside the window is restored");
+    }
+
+    #[test]
+    fn replay_counts_survivors_not_changes() {
+        let _guard = crate::test_home();
+        let hour_ago = (crate::webhook::now_secs() - 3600) as i64;
+        let fired = webhook(Severity::Warning, "Gone")
+            .fingerprint("fp-replay-gone")
+            .ts_refire(hour_ago);
+        let resolved = Notice {
+            status: NoticeStatus::Resolved,
+            ..fired.clone()
+        };
+        let (restored, fingerprints) = journal_and_replay(&[&fired, &resolved]);
+        assert!(fingerprints.is_empty(), "a resolved alert is not restored");
+        assert_eq!(restored, 0, "a fire then resolve restores nothing");
     }
 
     fn resident_entry() -> SessionEntry {
