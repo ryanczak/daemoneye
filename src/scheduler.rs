@@ -1129,7 +1129,7 @@ mod tests {
 
     #[test]
     fn recover_interrupted_skips_a_running_every_job_to_its_next_slot() {
-        let _home = crate::test_home_guard();
+        let (_home, _dir) = crate::test_home();
         let (store, path) = tmp_store();
 
         let fired_slot = Utc::now() - chrono::Duration::seconds(6 * 86400 + 10);
@@ -1160,7 +1160,7 @@ mod tests {
 
     #[test]
     fn recover_interrupted_skips_a_running_cron_job_to_its_next_slot() {
-        let _home = crate::test_home_guard();
+        let (_home, _dir) = crate::test_home();
         let (store, path) = tmp_store();
 
         let past = Utc::now() - chrono::Duration::seconds(10);
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[test]
     fn recover_interrupted_fails_a_running_once_job() {
-        let _home = crate::test_home_guard();
+        let (_home, _dir) = crate::test_home();
         let (store, path) = tmp_store();
 
         let past = Utc::now() - chrono::Duration::seconds(10);
@@ -1253,7 +1253,7 @@ mod tests {
 
     #[test]
     fn a_recovered_job_is_not_due_on_the_next_tick() {
-        let _home = crate::test_home_guard();
+        let (_home, _dir) = crate::test_home();
         let (store, path) = tmp_store();
 
         let past = Utc::now() - chrono::Duration::seconds(10);

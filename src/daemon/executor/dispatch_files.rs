@@ -163,7 +163,7 @@ mod tests {
     /// event are unchanged.
     #[tokio::test]
     async fn read_file_connect_failure_writes_no_tool_result_frame() {
-        let _home = crate::test_home_guard();
+        let (_home, _dir) = crate::test_home();
         let call = PendingCall::ReadFile {
             id: "rf-79".to_string(),
             thought_signature: None,
