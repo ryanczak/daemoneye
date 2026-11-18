@@ -6,16 +6,15 @@
 //! `var/run/chat_last_seen`, holding unix seconds — is written when the last
 //! live presence connection in the daemon closes (a chat leaving) and again
 //! at every attach that considers delivery, so a window is never reported
-//! twice. The **event log** carries the counts: every script and watchdog
-//! alert job run appends a `scheduled_job_finished` record, and every webhook
-//! alert that reaches the operator appends a `webhook_alert` record.
-//!
-//! Nothing is queued. The first chat to attach while it is the daemon's only
-//! live presence connection gets one `SystemMsg` counting the runs and alerts
-//! in `[last_seen, now)`; nothing is shown when nothing happened.
+//! twice. The **notice journal** carries the counts: `Bus::new` journals
+//! every notice producers publish as an `event: "notice"` record, and the
+//! digest streams them back with `for_each_notice_between` (M38 phase 08b),
+//! counting script runs (source `Scheduler`, kinds `script` and `failure`)
+//! and alerts (source `Scheduler` kind `alert`, and webhook firing alerts
+//! whose severity reaches `warning`).
 
+use crate::bus::{Notice, NoticeStatus, Source, for_each_notice_between};
 use crate::config::var_run_dir;
-use crate::daemon::utils::for_each_event_between;
 use crate::util::UnpoisonExt;
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -101,57 +100,45 @@ impl AwayCounts {
     }
 }
 
-/// Whether a `webhook_alert` record reached the operator: the same rule as
-/// the gate in `process_alert` step 5 — rankable, and at or above
-/// `alert_threshold` (an unrankable threshold behaves as `warning`).
-fn alert_reaches_operator(severity: &str, alert_threshold: &str) -> bool {
-    let threshold_rank = crate::webhook::severity_rank(alert_threshold).unwrap_or(2);
-    match crate::webhook::severity_rank(severity) {
-        None => false,
-        Some(rank) => rank >= threshold_rank,
-    }
+/// Whether a webhook notice reached the operator: the same rule as the gate
+/// in `process_alert` — firing, and severity at or above `warning` (an
+/// unrankable severity degrades to `Debug`, below the gate — fail-closed).
+fn alert_reaches_operator(notice: &Notice) -> bool {
+    notice.status == NoticeStatus::Firing && notice.severity >= crate::bus::Severity::Warning
 }
 
-/// Tally one parsed event-log record into `counts`. Pure: the same function
-/// the streaming caller drives, so the window filtering it relies on is
-/// `for_each_event_between`'s `[from, to)` rule and nothing else.
-fn count_record(value: &serde_json::Value, alert_threshold: &str, counts: &mut AwayCounts) {
-    match value.get("event").and_then(|v| v.as_str()) {
-        Some("scheduled_job_finished") => {
-            let job = value.get("job_name").and_then(|v| v.as_str());
-            let Some(job) = job else { return };
-            match value.get("action").and_then(|v| v.as_str()) {
-                Some("script") => {
-                    let ok = value.get("outcome").and_then(|v| v.as_str()) == Some("succeeded");
-                    counts.count_script(job, ok);
-                }
-                Some("alert") => counts.count_alert(job),
-                _ => {}
-            }
+/// Tally one notice into `counts`. Pure: the same function the streaming
+/// caller drives, so the window filtering it relies on is
+/// `for_each_notice_between`'s `[from, to)` rule and nothing else.
+fn count_notice(notice: &Notice, counts: &mut AwayCounts) {
+    let action = notice.labels.get("action").map(String::as_str);
+    let kind = notice.labels.get("kind").map(String::as_str);
+    match (notice.source, kind) {
+        (Source::Scheduler, Some("script")) => {
+            let ok = notice.labels.get("exit_code").map(String::as_str) == Some("0");
+            counts.count_script(&notice.name, ok);
         }
-        Some("webhook_alert") => {
-            let name = value.get("alert_name").and_then(|v| v.as_str());
-            let Some(name) = name else { return };
-            let status = value.get("status").and_then(|v| v.as_str());
-            let severity = value.get("severity").and_then(|v| v.as_str()).unwrap_or("");
-            if status == Some("firing") && alert_reaches_operator(severity, alert_threshold) {
-                counts.count_alert(name);
-            }
+        (Source::Scheduler, Some("failure")) if action == Some("script") => {
+            counts.count_script(&notice.name, false);
+        }
+        (Source::Scheduler, Some("alert")) => counts.count_alert(&notice.name),
+        (Source::Webhook, Some("alert")) if alert_reaches_operator(notice) => {
+            counts.count_alert(&notice.name);
         }
         _ => {}
     }
 }
 
-/// Count every script run and operator-visible alert in one window.
-/// Pure over an iterator of parsed records; the file streaming lives in
+/// Count every script run and operator-visible alert in one window of
+/// notices. Pure over an iterator; the file streaming lives in
 /// [`build_away_digest`].
-fn count_events<'a, I>(records: I, alert_threshold: &str) -> AwayCounts
+fn count_notices<'a, I>(notices: I) -> AwayCounts
 where
-    I: IntoIterator<Item = &'a serde_json::Value>,
+    I: IntoIterator<Item = &'a Notice>,
 {
     let mut counts = AwayCounts::default();
-    for value in records {
-        count_record(value, alert_threshold, &mut counts);
+    for notice in notices {
+        count_notice(notice, &mut counts);
     }
     counts
 }
@@ -257,20 +244,18 @@ fn name_list_with(pairs: &[(String, u64)], rendered: &[String]) -> String {
 // The window and the delivery
 // ---------------------------------------------------------------------------
 
-/// Build the digest over `[from, to)`, streaming the event log once.
-/// `alert_threshold` is the fixed `warning` the live gate uses (until phase
-/// 09 routes the ghost trigger). Returns `None` when nothing in the window
-/// would have reached an operator.
+/// Build the digest over `[from, to)`, streaming the notice journal once.
+/// Returns `None` when nothing in the window would have reached an
+/// operator.
 pub(crate) fn build_away_digest(
     from: chrono::DateTime<chrono::Utc>,
     to: chrono::DateTime<chrono::Utc>,
-    alert_threshold: &str,
 ) -> Option<String> {
-    let mut records: Vec<serde_json::Value> = Vec::new();
-    for_each_event_between(Some(from), Some(to), &mut |value| {
-        records.push(value.clone());
+    let mut notices: Vec<Notice> = Vec::new();
+    for_each_notice_between(Some(from), Some(to), &mut |notice| {
+        notices.push(notice.clone());
     });
-    let counts = count_events(&records, alert_threshold);
+    let counts = count_notices(&notices);
     format_away_digest(&counts, from, to)
 }
 
@@ -311,7 +296,7 @@ pub(crate) fn take_away_digest_on_attach(now: u64) -> Option<String> {
     }
     let from = chrono::DateTime::from_timestamp(from_secs as i64, 0)?;
     let to = chrono::DateTime::from_timestamp(now as i64, 0)?;
-    build_away_digest(from, to, "warning")
+    build_away_digest(from, to)
 }
 
 /// Stamp when the last chat leaves: called after `presence_unregister` when
@@ -326,32 +311,133 @@ pub(crate) fn stamp_on_last_detach() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::bus::Severity;
 
-    fn script_event(job: &str, outcome: &str) -> serde_json::Value {
-        json!({
-            "event": "scheduled_job_finished",
-            "job_name": job,
-            "action": "script",
-            "outcome": outcome,
-        })
+    /// A `Scheduler` script-run notice shaped as `script_job_notice` writes
+    /// it, with a pinned instant so a test can place it in a window.
+    fn script_notice(job: &str, exit_code: i32, ts: chrono::DateTime<chrono::Utc>) -> Notice {
+        Notice::new(
+            if exit_code == 0 {
+                Severity::Info
+            } else {
+                Severity::Error
+            },
+            Source::Scheduler,
+            job,
+            format!("`{job}.sh` finished (exit {exit_code})"),
+        )
+        .source_id(format!("job-{job}"))
+        .label("kind", "script")
+        .label("exit_code", exit_code.to_string())
+        .label("script", format!("{job}.sh"))
+        .ts_refire(ts.timestamp())
     }
 
-    fn alert_job_event(job: &str) -> serde_json::Value {
-        json!({
-            "event": "scheduled_job_finished",
-            "job_name": job,
-            "action": "alert",
-        })
+    /// A `Scheduler` failure notice shaped as `failure_notice` writes it.
+    fn failure_notice(action: &str, job: &str, ts: chrono::DateTime<chrono::Utc>) -> Notice {
+        Notice::new(
+            Severity::Error,
+            Source::Scheduler,
+            job,
+            "refused: cannot start",
+        )
+        .source_id(format!("job-{job}"))
+        .label("kind", "failure")
+        .label("action", action)
+        .ts_refire(ts.timestamp())
     }
 
-    fn webhook_event(name: &str, status: &str, severity: &str) -> serde_json::Value {
-        json!({
-            "event": "webhook_alert",
-            "alert_name": name,
-            "status": status,
-            "severity": severity,
-        })
+    /// A `Scheduler` alert-job notice shaped as `alert_job_notice` writes it.
+    fn alert_job_notice(job: &str, ts: chrono::DateTime<chrono::Utc>) -> Notice {
+        Notice::new(
+            Severity::Warning,
+            Source::Scheduler,
+            job,
+            "threshold crossed",
+        )
+        .source_id(format!("job-{job}"))
+        .label("kind", "alert")
+        .ts_refire(ts.timestamp())
+    }
+
+    /// A `Webhook` alert notice shaped as `process_alert` writes it.
+    /// `severity` here is the raw label the webhook carried; the notice's
+    /// own severity is what an unrankable string degrades to `Debug`.
+    fn webhook_notice(
+        name: &str,
+        status: NoticeStatus,
+        severity: &str,
+        ts: chrono::DateTime<chrono::Utc>,
+    ) -> Notice {
+        Notice::new(
+            Severity::from_external(severity),
+            Source::Webhook,
+            name,
+            format!("[Webhook Alert] {name}"),
+        )
+        .source_id("alertmanager")
+        .status(status)
+        .fingerprint(format!("fp-{name}"))
+        .label("severity", severity)
+        .label("kind", "alert")
+        .ts_refire(ts.timestamp())
+    }
+
+    /// A notice that is neither a script run nor an alert, of the shape the
+    /// named producer writes.
+    fn other_notice(
+        source: Source,
+        name: &str,
+        kind: &str,
+        ts: chrono::DateTime<chrono::Utc>,
+    ) -> Notice {
+        Notice::new(Severity::Info, source, name, format!("[{kind}] {name}"))
+            .label("kind", kind)
+            .ts_refire(ts.timestamp())
+    }
+
+    /// The serialized-notice journal record `Bus::new` writes, with a pinned
+    /// `ts`, `event: "notice"` and `pid` — the shape `for_each_notice_between`
+    /// parses, used by the delivery tests that read real journal files.
+    fn journal_record(notice: &Notice) -> serde_json::Value {
+        let mut record = serde_json::to_value(notice).expect("serialize notice");
+        let obj = record.as_object_mut().expect("notice is an object");
+        let mut stamped = serde_json::Map::new();
+        stamped.insert(
+            "ts".to_string(),
+            serde_json::Value::String(notice.ts.to_rfc3339()),
+        );
+        stamped.insert(
+            "event".to_string(),
+            serde_json::Value::String("notice".to_string()),
+        );
+        stamped.insert("pid".to_string(), serde_json::Value::from(4242));
+        for (k, v) in obj.clone() {
+            stamped.insert(k, v);
+        }
+        serde_json::Value::Object(stamped)
+    }
+
+    /// Append one journal record with a pinned `ts` into the segment its own
+    /// date names — the seam `for_each_notice_between` reads, mirroring how
+    /// `Bus::new`'s journal records land in the segment of their day.
+    fn seed_journal_record(record: &serde_json::Value, ts: chrono::DateTime<chrono::Utc>) {
+        let path =
+            crate::config::events_dir().join(format!("events-{}.jsonl", ts.format("%Y%m%d")));
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("the events dir");
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("opening the segment");
+        writeln!(f, "{}", serde_json::to_string(record).unwrap()).expect("appending");
+    }
+
+    /// Seed one notice into the journal at `ts`.
+    fn seed_notice(notice: &Notice, ts: chrono::DateTime<chrono::Utc>) {
+        seed_journal_record(&journal_record(notice), ts);
     }
 
     #[test]
@@ -383,15 +469,14 @@ mod tests {
 
     #[test]
     fn counts_script_runs_per_job_and_outcome() {
-        let counts = count_events(
-            &[
-                script_event("tmp-cast-purge", "succeeded"),
-                script_event("tmp-cast-purge", "succeeded"),
-                script_event("tmp-cast-purge", "failed"),
-                script_event("backup", "succeeded"),
-            ],
-            "warning",
-        );
+        let from = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let ts = |mins: i64| from + chrono::Duration::minutes(mins);
+        let counts = count_notices([
+            &script_notice("tmp-cast-purge", 0, ts(5)),
+            &script_notice("tmp-cast-purge", 0, ts(10)),
+            &script_notice("tmp-cast-purge", 1, ts(15)),
+            &failure_notice("script", "backup", ts(20)),
+        ]);
         assert_eq!(
             counts.scripts.get("tmp-cast-purge"),
             Some(&(2, 1)),
@@ -399,71 +484,112 @@ mod tests {
         );
         assert_eq!(
             counts.scripts.get("backup"),
-            Some(&(1, 0)),
-            "a job with no failures reads (1, 0)"
+            Some(&(0, 1)),
+            "a failure notice with action script counts as a failed run"
         );
-        assert!(counts.alerts.is_empty(), "no alerts in these records");
+        assert!(counts.alerts.is_empty(), "no alerts in these notices");
     }
 
     #[test]
     fn counts_only_alerts_that_reach_the_operator() {
-        let counts = count_events(
-            &[
-                webhook_event("disk-high", "firing", "warning"),
-                webhook_event("heartbeat", "firing", "info"),
-                webhook_event("disk-high", "resolved", "warning"),
-                webhook_event("weird", "firing", "banana"),
-                alert_job_event("deadman"),
-            ],
-            "warning",
-        );
+        let from = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let ts = |mins: i64| from + chrono::Duration::minutes(mins);
+        let counts = count_notices([
+            &webhook_notice("disk-high", NoticeStatus::Firing, "warning", ts(1)),
+            &webhook_notice("heartbeat", NoticeStatus::Firing, "info", ts(2)),
+            &webhook_notice("disk-high", NoticeStatus::Resolved, "warning", ts(3)),
+            &webhook_notice("weird", NoticeStatus::Firing, "banana", ts(4)),
+            &webhook_notice("anomaly", NoticeStatus::Event, "warning", ts(5)),
+            &alert_job_notice("deadman", ts(6)),
+        ]);
         assert_eq!(
             counts.alerts.get("disk-high"),
             Some(&1),
             "a firing warning counts"
         );
-        assert!(
-            !counts.alerts.contains_key("heartbeat"),
-            "a firing info below a warning threshold does not"
-        );
         assert_eq!(
             counts.alerts.get("deadman"),
             Some(&1),
-            "a scheduled_job_finished with action alert is a fired alert"
+            "a scheduler kind alert notice is a fired alert"
+        );
+        assert!(
+            !counts.alerts.contains_key("heartbeat"),
+            "a firing info sits below the fixed warning gate"
         );
         assert_eq!(
             counts.alerts.len(),
             2,
-            "a resolved alert and an unrankable severity do not count"
+            "a resolved alert, an unrankable raw severity and a webhook \
+             analysis notice do not count: {:?}",
+            counts.alerts
         );
     }
 
     #[test]
-    fn ignores_events_outside_the_window_and_other_event_kinds() {
-        let counts = count_events(
-            &[
-                json!({"event": "ghost_lifecycle", "content": "[Ghost Shell Started] x"}),
-                // A Ghost job never emits this event and a deprecated Command
-                // job is refused before any run, so neither action reaches the
-                // counting: they must not read as script runs or alerts.
-                json!({"event": "scheduled_job_finished", "job_name": "g", "action": "ghost"}),
-                json!({"event": "scheduled_job_finished", "job_name": "c", "action": "command"}),
-                webhook_event("n", "firing", "critical"),
-            ],
-            "warning",
-        );
+    fn ignores_notices_that_are_neither_runs_nor_alerts() {
+        let from = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let ts = |mins: i64| from + chrono::Duration::minutes(mins);
+        let counts = count_notices([
+            &other_notice(Source::Ghost, "g", "started", ts(1)),
+            &other_notice(Source::Watchdog, "w", "watchdog", ts(2)),
+            &other_notice(Source::Background, "bg", "completed", ts(3)),
+            &other_notice(Source::Shell, "sh", "state", ts(4)),
+            &failure_notice("command", "c", ts(5)),
+            &webhook_notice("n", NoticeStatus::Firing, "critical", ts(6)),
+        ]);
         assert!(
             counts.scripts.is_empty(),
-            "a ghost job and a command action are not script runs: {:?}",
+            "a ghost, watchdog, background or shell notice, and a refused \
+             command failure, are not script runs: {:?}",
             counts.scripts
         );
-        // The fourth record is a real firing alert; the assertion is that the
-        // ghost and command events contributed nothing.
+        // The sixth notice is a real firing alert; the assertion is that the
+        // other five contributed nothing.
         assert_eq!(
             counts.alerts.len(),
             1,
             "only the webhook alert counted: {:?}",
             counts.alerts
+        );
+    }
+
+    #[test]
+    fn a_legacy_scheduled_job_finished_record_is_not_read() {
+        let _home = crate::test_home_guard();
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", dir.path()) };
+        crate::config::Config::ensure_dirs().ok();
+
+        let from = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let to = from + chrono::Duration::hours(1);
+        seed_journal_record(
+            &serde_json::json!({
+                "ts": (from + chrono::Duration::minutes(5)).to_rfc3339(),
+                "event": "scheduled_job_finished",
+                "job_name": "tmp-cast-purge",
+                "action": "script",
+                "outcome": "succeeded",
+            }),
+            from + chrono::Duration::minutes(5),
+        );
+        seed_journal_record(
+            &serde_json::json!({
+                "ts": (from + chrono::Duration::minutes(6)).to_rfc3339(),
+                "event": "webhook_alert",
+                "alert_name": "disk-high",
+                "status": "firing",
+                "severity": "critical",
+            }),
+            from + chrono::Duration::minutes(6),
+        );
+
+        let mut notices: Vec<Notice> = Vec::new();
+        for_each_notice_between(Some(from), Some(to), &mut |n| notices.push(n.clone()));
+        let counts = count_notices(&notices);
+        assert!(
+            counts.scripts.is_empty() && counts.alerts.is_empty(),
+            "the old event records are no longer read: {:?}",
+            counts
         );
     }
 
@@ -549,12 +675,15 @@ mod tests {
         let now = stamp + 7 * 3600 + 40 * 60;
         let from = chrono::DateTime::from_timestamp(stamp as i64, 0).unwrap();
 
-        // Seed the window the production streaming path reads: appends with
-        // pinned `ts` values, in the record shape the emitter writes.
-        log_event_helper(&script_event("tmp-cast-purge", "succeeded"), from);
-        log_event_helper(&script_event("tmp-cast-purge", "succeeded"), from);
-        log_event_helper(&script_event("tmp-cast-purge", "failed"), from);
-        log_event_helper(&webhook_event("disk-high", "firing", "warning"), from);
+        // Seed the window the production streaming path reads: journal
+        // records with pinned `ts` values, in the shape `Bus::new` writes.
+        seed_notice(&script_notice("tmp-cast-purge", 0, from), from);
+        seed_notice(&script_notice("tmp-cast-purge", 0, from), from);
+        seed_notice(&script_notice("tmp-cast-purge", 1, from), from);
+        seed_notice(
+            &webhook_notice("disk-high", NoticeStatus::Firing, "warning", from),
+            from,
+        );
 
         stamp_last_seen(stamp);
         let digest = take_away_digest_on_attach(now).expect("events since the stamp → a digest");
@@ -580,32 +709,6 @@ mod tests {
             None,
             "the window is never reported twice"
         );
-    }
-
-    /// Append one event with a pinned `ts`, the way `log_event` writes it —
-    /// the seam the streaming reader parses. The segment is chosen from the
-    /// record's own `ts`, as production's records always carry a `ts` near
-    /// the write time and land in that day's segment. Only the digest tests
-    /// use it; `log_event` itself stamps wall-clock time.
-    fn log_event_helper(value: &serde_json::Value, ts: chrono::DateTime<chrono::Utc>) {
-        let mut record = serde_json::Map::new();
-        record.insert("ts".to_string(), serde_json::Value::String(ts.to_rfc3339()));
-        if let Some(obj) = value.as_object() {
-            for (k, v) in obj {
-                record.insert(k.clone(), v.clone());
-            }
-        }
-        let path =
-            crate::config::events_dir().join(format!("events-{}.jsonl", ts.format("%Y%m%d")));
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).expect("the events dir");
-        }
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .expect("opening the segment");
-        writeln!(f, "{}", serde_json::to_string(&record).unwrap()).expect("appending");
     }
 
     #[test]
@@ -662,11 +765,11 @@ mod tests {
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().ok();
 
-        // An event at T, a stamp at T + 3600: the event is before the
+        // A notice at T, a stamp at T + 3600: the notice is before the
         // window's lower bound and must not appear in a digest over
         // [T+3600, now).
-        let event_ts = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
-        log_event_helper(&script_event("old-job", "failed"), event_ts);
+        let notice_ts = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        seed_notice(&script_notice("old-job", 1, notice_ts), notice_ts);
 
         stamp_last_seen(1_700_003_600);
         let now = 1_700_007_200u64;

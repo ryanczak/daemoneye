@@ -1,7 +1,7 @@
 # Phase 08b — digest-from-journal
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** done
 **Drafted:** 2026-11-17
 **Depends on:** phase-08a
 **Estimated diff:** ~250 lines, mostly test fixtures
@@ -145,3 +145,48 @@ Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 01:18 (started)
+
+Executor: Claude (headless run). Status flipped `todo → in-progress` in the
+phase doc and milestone README. Beginning step 1 (label the failure notice).
+
+### Update — 2026-11-18 (escalation)
+
+**Chosen lever:** session takeover of the remainder.
+**Rationale:**
+- The run ended `hard_fail` (`IdenticalToolCallRepetition`, the same bash
+  `grep` for `test_home_guard` six times) at turn 333, with steps 1–2 done
+  and green.
+- On the partial tree, build and clippy were clean and all 12 away-digest
+  tests passed. Two things were left: `cargo fmt`, and one failing test.
+- The failing test was `attach_joins_the_digest_to_the_brief_in_one_system_msg`.
+  Its new `seed_notice_record` stamped the pinned `ts`, then copied the
+  notice's own fields over it. The notice's wall-clock `ts` won, the seeded
+  run fell outside `[stamp, now)`, and the digest came back empty.
+- The fix is one line, small enough to finish directly rather than spend
+  another executor session on.
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** escalated (the executor wrote the phase; the architect
+  finished the remainder)
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (333 turns, `hard_fail`), then Claude (direct)
+  for the remainder
+- **Scope deviations:** none. A separate
+  `a_legacy_scheduled_job_finished_record_is_not_read` test carries the
+  legacy-record case the spec folded into the "ignores" test. Accepted.
+- **Architect fix:** `seed_notice_record` in `chat_presence.rs` re-pins
+  `ts` after copying the notice's fields, then `cargo fmt`. Full gates
+  pass: 3014 lib tests, fmt, clippy `-D warnings`.
+- **Checked:** every counting test calls `count_notices`, not a restatement
+  of its rules, so the 08a calibration held. The legacy-record test goes
+  through `for_each_notice_between`. All three acceptance greps hold
+  (`0`, `1`, `0`).
+- **Calibration:** the journaled record's `ts` is the notice's own `ts`.
+  The 08a fixtures pinned it with `ts_refire`; this fixture tried to set
+  the record field instead and lost to the copy. When a later spec has
+  fixtures write journal records, say so: pin the notice's `ts` (or write
+  `ts` last).
+

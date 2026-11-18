@@ -711,18 +711,23 @@ fn script_job_notice_severity_follows_the_exit_code() {
 
 #[test]
 fn failure_notice_is_a_scheduler_error() {
-    let job = test_job(
+    let script = test_job(
         "nightly-backup",
         ActionOn::Script("backup.sh".into()),
         "job-fail-1",
     );
-    let n = failure_notice(&job, "refused: the command action moved to scripts");
+    let n = failure_notice(&script, "refused: the command action moved to scripts");
     assert_eq!(n.source, crate::bus::Source::Scheduler);
     assert_eq!(n.severity, crate::bus::Severity::Error);
     assert_eq!(n.name, "nightly-backup");
     assert_eq!(n.source_id, "job-fail-1");
     assert_eq!(n.labels.get("kind").map(String::as_str), Some("failure"));
+    assert_eq!(n.labels.get("action").map(String::as_str), Some("script"));
     assert_eq!(n.title, "refused: the command action moved to scripts");
+
+    let command = test_job("legacy-cmd", ActionOn::Command("ls".into()), "job-fail-2");
+    let n = failure_notice(&command, "refused: the command action moved to scripts");
+    assert_eq!(n.labels.get("action").map(String::as_str), Some("command"));
 }
 
 #[test]

@@ -138,8 +138,15 @@ fn script_job_notice(
 }
 
 /// The `Scheduler` notice `fail_job` / `fail_job_terminal` publish: `Error`,
-/// kind `failure`, title the reason's first line, body the rest.
+/// kind `failure`, an `action` label naming the job's action, title the
+/// reason's first line, body the rest.
 fn failure_notice(job: &ScheduledJob, reason: &str) -> crate::bus::Notice {
+    let action = match &job.action {
+        ActionOn::Script(_) => "script",
+        ActionOn::Alert => "alert",
+        ActionOn::Ghost { .. } => "ghost",
+        ActionOn::Command(_) => "command",
+    };
     let (title, body) = split_first_line(reason);
     crate::bus::Notice::new(
         crate::bus::Severity::Error,
@@ -150,6 +157,7 @@ fn failure_notice(job: &ScheduledJob, reason: &str) -> crate::bus::Notice {
     .source_id(&job.id)
     .body(body)
     .label("kind", "failure")
+    .label("action", action)
 }
 
 /// The `Watchdog` notice a runbook watchdog's response publishes: `Warning`,

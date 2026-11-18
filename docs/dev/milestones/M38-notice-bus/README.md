@@ -106,7 +106,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 07a | route-config ([phase-07a-route-config.md](phase-07a-route-config.md)) | done |
 | 07b | remove-old-keys ([phase-07b-remove-old-keys.md](phase-07b-remove-old-keys.md)) | done |
 | 08a | registry-replay ([phase-08a-registry-replay.md](phase-08a-registry-replay.md)) | done |
-| 08b | digest-from-journal ([phase-08b-digest-from-journal.md](phase-08b-digest-from-journal.md)) | todo |
+| 08b | digest-from-journal ([phase-08b-digest-from-journal.md](phase-08b-digest-from-journal.md)) | done |
 | 08c | the catch-up brief reads notices from the journal | planned |
 | 09 | ghost trigger as a consumer | planned |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |

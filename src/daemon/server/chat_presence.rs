@@ -1120,22 +1120,15 @@ mod tests {
 
     // ── M37 phase 08: the away digest rides the attach message ──────────────
 
-    /// Append one `scheduled_job_finished` record with a pinned `ts` into the
-    /// segment its own date names — the seam `for_each_event_between` reads,
-    /// mirroring how `log_event`'s records land in the segment of their day.
-    fn seed_finished_event(job: &str, outcome: &str, ts: chrono::DateTime<chrono::Utc>) {
+    /// Append one journal record with a pinned `ts` into the segment its own
+    /// date names — the seam `for_each_notice_between` reads, mirroring how
+    /// `Bus::new` journals each notice into the segment of its day.
+    fn seed_json_record(record: &serde_json::Value, ts: chrono::DateTime<chrono::Utc>) {
         let path =
             crate::config::events_dir().join(format!("events-{}.jsonl", ts.format("%Y%m%d")));
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).expect("the events dir");
         }
-        let record = serde_json::json!({
-            "ts": ts.to_rfc3339(),
-            "event": "scheduled_job_finished",
-            "job_name": job,
-            "action": "script",
-            "outcome": outcome,
-        });
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1143,6 +1136,28 @@ mod tests {
             .expect("opening the segment");
         use std::io::Write;
         writeln!(f, "{}", record).expect("appending");
+    }
+
+    /// Append one journaled-notice record with a pinned `ts` into the
+    /// segment its own date names — the seam `for_each_notice_between`
+    /// reads, mirroring how `Bus::new` journals each notice.
+    fn seed_notice_record(notice: &crate::bus::Notice, ts: chrono::DateTime<chrono::Utc>) {
+        let mut record = serde_json::to_value(notice).expect("serialize notice");
+        let obj = record.as_object_mut().expect("notice is an object");
+        let mut stamped = serde_json::Map::new();
+        stamped.insert("ts".to_string(), serde_json::Value::String(ts.to_rfc3339()));
+        stamped.insert(
+            "event".to_string(),
+            serde_json::Value::String("notice".to_string()),
+        );
+        stamped.insert("pid".to_string(), serde_json::Value::from(4242));
+        for (k, v) in obj.clone() {
+            stamped.insert(k, v);
+        }
+        // The record's `ts` is also the notice's `ts`: pin it after the copy,
+        // or the notice's own wall-clock `ts` lands it outside the window.
+        stamped.insert("ts".to_string(), serde_json::Value::String(ts.to_rfc3339()));
+        seed_json_record(&serde_json::Value::Object(stamped), ts);
     }
 
     #[tokio::test]
@@ -1155,9 +1170,16 @@ mod tests {
         let stamp = 1_700_000_000u64; // 2023-11-14 22:13:20 UTC
         let from = chrono::DateTime::from_timestamp(stamp as i64, 0).unwrap();
         crate::daemon::away_digest::stamp_last_seen(stamp);
-        seed_finished_event(
-            "tmp-cast-purge",
-            "succeeded",
+        seed_notice_record(
+            &crate::bus::Notice::new(
+                crate::bus::Severity::Info,
+                crate::bus::Source::Scheduler,
+                "tmp-cast-purge",
+                "`tmp-cast-purge.sh` finished (exit 0)",
+            )
+            .source_id("job-tmp-cast-purge")
+            .label("kind", "script")
+            .label("exit_code", "0"),
             from + chrono::Duration::minutes(5),
         );
 
