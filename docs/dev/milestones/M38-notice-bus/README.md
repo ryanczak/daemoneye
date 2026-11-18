@@ -112,7 +112,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 09b | analyze-route ([phase-09b-analyze-route.md](phase-09b-analyze-route.md)) | done |
 | 09c | notice-docs ([phase-09c-notice-docs.md](phase-09c-notice-docs.md)) | done |
 | 10a | notices-list ([phase-10a-notices-list.md](phase-10a-notices-list.md)) | done |
-| 10b | notices-follow ([phase-10b-notices-follow.md](phase-10b-notices-follow.md)) | in-progress |
+| 10b | notices-follow ([phase-10b-notices-follow.md](phase-10b-notices-follow.md)) | review      |
 
 ## Notes
 
