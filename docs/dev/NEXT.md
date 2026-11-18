@@ -5,12 +5,11 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** 08c — catchup-from-journal
-([`phase-08c-catchup-from-journal.md`](milestones/M38-notice-bus/phase-08c-catchup-from-journal.md)),
-`todo`, ready to dispatch. 01 `done` (escalated), 02–03 `done` (first
-try), 04–05 `done` (after 1), 06 `done` (first try), 07a `done` (after 1),
-07b–08a `done` (first try), 08b `done` (escalated). 09 (ghost trigger)
-follows.
+**Active phase:** none drafted — next is 09 (the ghost trigger as a
+routed consumer), then 10 (`Request::Subscribe` and `daemoneye notices`).
+01 `done` (escalated), 02–03 `done` (first try), 04–05 `done` (after 1),
+06 `done` (first try), 07a `done` (after 1), 07b–08a `done` (first try),
+08b `done` (escalated), 08c `done` (first try, reviewer fixup).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).

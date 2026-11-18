@@ -1104,21 +1104,18 @@ mod tests {
         );
         record_chat_detach(sid, &sessions);
 
-        // The alert arrives while the chat is away: journaled inside the
-        // detach window the brief reads.
-        let detach = with_sessions(&sessions, |store| {
-            store.get(sid).expect("the resident entry").detach_time_utc
-        })
-        .expect("the detach stamp");
-        let alert = alert_notice("LiveTicks", "[Webhook Alert] LiveTicks: ticks resumed");
-        seed_notice_record(&alert, detach + chrono::Duration::seconds(5));
-
         // Backdate the detach 60 s — the detach must look ≥ 30 s away.
+        let detach = chrono::Utc::now() - chrono::Duration::seconds(60);
         with_sessions(&sessions, |store| {
             let e = store.get_mut(sid).expect("the resident entry");
             e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
-            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+            e.detach_time_utc = Some(detach);
         });
+
+        // The alert arrives while the chat is away: journaled inside the
+        // `[detach, now)` window the brief reads — never in the future.
+        let alert = alert_notice("LiveTicks", "[Webhook Alert] LiveTicks: ticks resumed");
+        seed_notice_record(&alert, detach + chrono::Duration::seconds(5));
 
         // Re-attach ≥ 60 s later: the catch-up brief names the alert.
         let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();

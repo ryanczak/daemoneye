@@ -80,17 +80,21 @@ pub(crate) fn build_catchup_brief(
         format!("{}h{}m", away_secs / 3600, (away_secs % 3600) / 60)
     };
 
-    // Read the notices the journal holds for the detach window.
+    // Read the notices the journal holds for `[detach, now)`. With no
+    // detach time there is no window, and nothing is listed: an open start
+    // would read the whole journal.
+    let now = chrono::Utc::now();
     let mut notices: Vec<crate::bus::Notice> = Vec::new();
-    crate::bus::for_each_notice_between(detach_time_utc, None, &mut |n| {
-        notices.push(n.clone());
-    });
+    if let Some(detach) = detach_time_utc {
+        crate::bus::for_each_notice_between(Some(detach), Some(now), &mut |n| {
+            notices.push(n.clone());
+        });
+    }
     let cfg = crate::config::current().notifications.clone();
     let events = brief_lines(&notices, session_id, &cfg);
 
     // Compute cost during the detach window (Phase 7).
     let cost_line = detach_time_utc.and_then(|detach_time| {
-        let now = chrono::Utc::now();
         let summary = crate::daemon::utils::sum_cost_between(detach_time, now);
         if summary.call_count == 0 {
             // No AI calls during detach — omit cost line entirely.
@@ -412,8 +416,14 @@ mod tests {
     }
 
     #[test]
-    fn catchup_brief_none_when_no_detach_time_and_no_journal() {
+    fn catchup_brief_lists_nothing_without_a_detach_time() {
         let (_home, _home_dir) = home();
+        // A routed alert sits in the journal: with no detach time there is no
+        // window, so it must not be listed (an open start reads it all).
+        let ts = chrono::Utc::now() - chrono::Duration::minutes(5);
+        let alert = alert_notice("disk-high", Severity::Warning, NoticeStatus::Firing)
+            .ts_refire(ts.timestamp());
+        seed_notice(&alert, ts);
         assert!(build_catchup_brief("sess-1", 120, None).is_none());
     }
 

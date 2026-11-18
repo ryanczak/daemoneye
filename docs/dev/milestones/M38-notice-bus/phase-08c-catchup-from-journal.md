@@ -1,7 +1,7 @@
 # Phase 08c — catchup-from-journal
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-18
 **Depends on:** phase-08b
 **Estimated diff:** ~300 lines, mostly tests
@@ -317,3 +317,45 @@ kill: (-696926): No such process
 **Commit:** b102334756c49427c601e5acd7fe7270d673eeb6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** approved_first_try, with a reviewer fixup
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. The executor noted that an `Info` webhook
+  analysis is not listed under the defaults. That is correct: the default
+  webhook route is `warning` or above, and the gate runs analysis only
+  for alerts that pass it.
+- **Reviewer fixup (spec item 2, "no `detach_time_utc` lists no notices"):**
+  - **The defect:** `build_catchup_brief` called
+    `for_each_notice_between(detach_time_utc, None, …)`. A `None` start
+    reads every segment, so a detach with no time would have listed the
+    whole journal.
+  - **The masking test:** `catchup_brief_none_when_no_detach_time_and_no_journal`
+    ran against an empty journal, so it could not see the defect.
+  - **The fix:** the read now happens only for `Some(detach)`, over
+    `[detach, now)`, with one `now` shared with the cost line.
+  - **The test:** renamed to `catchup_brief_lists_nothing_without_a_detach_time`,
+    and it now journals a routed alert first. Mutation check: restoring the
+    open-start read makes it fail. With the fix it passes.
+  - **A second fixture fix:** bounding the window at `now` exposed a
+    fixture in `restart_reconnect_quit_alert_resume_briefs_the_alert`. It
+    journaled its alert 5 s after the real detach instant, which is in the
+    future, and passed only while the window had no end. It now backdates
+    the detach first and journals inside it.
+  - **Collateral:** that test's panic left a presence connection
+    registered, which also failed `the_last_detach_stamps_last_seen`. Both
+    pass now.
+- **Checked:**
+  - Every selection test calls `brief_lines`.
+  - The window and delivery tests call `build_catchup_brief` or
+    `attach_brief_for` over journaled notices, pinned with `ts_refire`.
+  - The acceptance greps print `0`, `3` and `0`.
+  - Full gates pass: 3015 lib tests, fmt, and clippy `-D warnings`.
+- **Calibration:**
+  - A spec rule about an *absent* input ("no X lists nothing") needs its
+    test to seed what X would otherwise reach, or it passes vacuously.
+  - "Window `[a, now)`" should name both bounds in the spec, so an open
+    end is a visible deviation.
+
