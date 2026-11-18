@@ -17,6 +17,25 @@ fn request_ping_roundtrip() {
     assert!(matches!(roundtrip_req(&Request::Ping), Request::Ping));
 }
 
+/// The phase-10b `Subscribe` request carries its `Filter` over the wire.
+#[test]
+fn subscribe_request_roundtrip() {
+    let filter = crate::bus::Filter {
+        min_severity: Some(crate::bus::Severity::Warning),
+        sources: vec![crate::bus::Source::Webhook],
+        names: vec!["HighCPU".to_string()],
+        statuses: Vec::new(),
+    };
+    match roundtrip_req(&Request::Subscribe {
+        filter: filter.clone(),
+    }) {
+        Request::Subscribe { filter: back } => {
+            assert_eq!(back, filter, "the filter survives the wire");
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
 #[test]
 fn request_shutdown_roundtrip() {
     assert!(matches!(
@@ -188,6 +207,27 @@ fn request_credential_response_roundtrip() {
 #[test]
 fn response_ok_roundtrip() {
     assert!(matches!(roundtrip_resp(&Response::Ok), Response::Ok));
+}
+
+/// The phase-10b `Notice` response carries its notice over the wire.
+#[test]
+fn notice_response_roundtrip() {
+    let notice = crate::bus::Notice::new(
+        crate::bus::Severity::Warning,
+        crate::bus::Source::Webhook,
+        "HighCPU",
+        "CPU high",
+    )
+    .status(crate::bus::NoticeStatus::Firing);
+    let resp = Response::Notice {
+        notice: notice.clone(),
+    };
+    match roundtrip_resp(&resp) {
+        Response::Notice { notice: back } => {
+            assert_eq!(back, notice, "the notice survives the wire");
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
 }
 
 #[test]
@@ -1387,4 +1427,42 @@ fn client_approval_deadline_sits_inside_the_daemons() {
         APPROVAL_CLIENT_MARGIN
     );
     assert!(CLIENT_APPROVAL_TIMEOUT >= std::time::Duration::from_secs(30));
+}
+// ── Alert wire tests (moved from src/ipc.rs to keep it under the file cap) ──
+
+/// `AlertBadge` and the two new frames survive the wire exactly.
+#[test]
+fn alert_state_frames_round_trip() {
+    let badge = AlertBadge {
+        fingerprint: "fp-1".to_string(),
+        name: "HighCPU".to_string(),
+        severity: "critical".to_string(),
+        first_seen_unix: 1_764_000_000,
+        last_seen_unix: 1_764_000_600,
+    };
+    let resp = Response::AlertState {
+        alerts: vec![badge.clone()],
+    };
+    match roundtrip_resp(&resp) {
+        Response::AlertState { alerts } => {
+            assert_eq!(alerts, vec![badge], "every field survives the wire");
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
+#[test]
+fn alert_list_request_round_trips() {
+    assert!(matches!(
+        roundtrip_req(&Request::AlertList),
+        Request::AlertList
+    ));
+}
+
+/// `AlertState`'s name on the wire is "AlertState" — the label the client
+/// sees in "unexpected reply" messages.
+#[test]
+fn alert_state_names_itself_alert_state() {
+    let resp = Response::AlertState { alerts: Vec::new() };
+    assert_eq!(resp.kind(), "AlertState");
 }

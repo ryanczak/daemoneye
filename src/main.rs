@@ -218,7 +218,9 @@ enum Commands {
     /// single transaction, so a concurrent search sees the old index or the new
     /// one, never a partial one. Needs no daemon and never modifies a memory file.
     Reindex,
-    /// Print past notices from the event journal (no daemon required)
+    /// Print past notices from the event journal (no daemon required). With
+    /// `--follow`, print the backlog then stream live notices until Ctrl-C
+    /// (needs the daemon).
     Notices {
         /// Minimum severity (inclusive): debug, info, warning, error or critical
         #[arg(long, value_name = "SEV")]
@@ -233,6 +235,10 @@ enum Commands {
         /// Print at most this many notices, oldest first
         #[arg(long, value_name = "N", default_value_t = 50)]
         limit: usize,
+        /// Print the backlog, then stream live notices until Ctrl-C.
+        /// Needs the daemon.
+        #[arg(long)]
+        follow: bool,
     },
 }
 
@@ -580,8 +586,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             source,
             name,
             limit,
+            follow,
         } => {
-            cli::run_notices(min_severity.as_deref(), &source, &name, limit)?;
+            if follow {
+                cli::run_notices_follow(min_severity.as_deref(), &source, &name, limit).await?;
+            } else {
+                cli::run_notices(min_severity.as_deref(), &source, &name, limit)?;
+            }
         }
     }
 

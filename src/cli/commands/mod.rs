@@ -29,7 +29,7 @@ pub use costs::{GroupBy, run_costs};
 pub use interrupt::InterruptState;
 pub use ipc_client::{connect, recv, send_request};
 pub use lifecycle::{liveness_line, run_logs, run_ping, run_stop, run_stop_run};
-pub use notices::run_notices;
+pub use notices::{run_notices, run_notices_follow};
 pub use profile::run_profile;
 pub use reindex::run_reindex;
 pub use reload::{format_reload, run_reload};

@@ -229,7 +229,8 @@ async fn run_ask_raw(query: String) -> Result<()> {
             | Response::SavedSessionList { .. }
             | Response::Reloaded { .. }
             | Response::ToolStarted { .. }
-            | Response::ToolFinished { .. } => {}
+            | Response::ToolFinished { .. }
+            | Response::Notice { .. } => {}
         }
     }
 

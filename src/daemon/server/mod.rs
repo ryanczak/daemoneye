@@ -6,6 +6,7 @@ mod ask;
 mod catchup;
 mod chat_presence;
 mod handlers;
+mod notices;
 mod sessions;
 mod shells;
 
@@ -205,6 +206,9 @@ pub async fn handle_client(
         Request::ShellTail { id, follow } => {
             shells::handle_shell_tail(&mut rx, &mut tx, crate::shell::registry(), &id, follow)
                 .await?;
+        }
+        Request::Subscribe { filter } => {
+            notices::handle_subscribe(&mut rx, &mut tx, crate::bus::global(), filter).await?;
         }
         Request::Cancel { session_id } => {
             let found = crate::daemon::run::cancel_session(

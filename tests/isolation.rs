@@ -998,3 +998,74 @@ async fn daemon_start_replays_active_alerts() {
         env.root().display()
     );
 }
+
+/// `daemoneye notices --follow` streams a live notice over `Request::Subscribe`
+/// (M38 phase 10b).
+///
+/// Start an isolated daemon, connect to its socket, send `Subscribe` filtered
+/// to webhook sources and read the ack, then post a firing alert to its
+/// webhook. Within 10 s a `Response::Notice` carrying the alert's name must
+/// arrive on the subscription.
+#[tokio::test]
+async fn notices_follow_streams_a_webhook_alert() {
+    let mut env = IsolatedEnv::new();
+    env.set_stub_response("ok".to_string());
+    env.start_stub().await;
+    env.start_daemon("de-test-follow");
+
+    let socket = env.root().join(".daemoneye/var/run/daemoneye.sock");
+    let stream = tokio::net::UnixStream::connect(&socket)
+        .await
+        .expect("connect to the daemon socket");
+    let (rx, mut tx) = stream.into_split();
+    let mut rx = tokio::io::BufReader::new(rx);
+    daemoneye::cli::commands::send_request(
+        &mut tx,
+        daemoneye::ipc::Request::Subscribe {
+            filter: daemoneye::bus::Filter {
+                sources: vec![daemoneye::bus::Source::Webhook],
+                ..daemoneye::bus::Filter::default()
+            },
+        },
+    )
+    .await
+    .expect("send Subscribe");
+    let ack = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        daemoneye::cli::commands::recv(&mut rx),
+    )
+    .await
+    .expect("the Subscribe ack arrives in time")
+    .expect("read the Subscribe ack");
+    assert!(
+        matches!(ack, daemoneye::ipc::Response::Ok),
+        "the first reply is the ack, got {ack:?}"
+    );
+
+    let body = serde_json::json!({
+        "alerts": [{
+            "status": "firing",
+            "alertname": "FollowDiskFull",
+            "labels": {"severity": "warning", "alertname": "FollowDiskFull"}
+        }]
+    });
+    let (status, _) = env.post_webhook(&body).await;
+    assert_eq!(status, 200, "the webhook accepted the alert");
+
+    let notice = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match daemoneye::cli::commands::recv(&mut rx).await {
+                Ok(daemoneye::ipc::Response::Notice { notice }) => return Ok(notice),
+                Ok(_) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    })
+    .await
+    .expect("a Response::Notice arrives within 10 s")
+    .expect("read the streamed notice");
+    assert_eq!(
+        notice.name, "FollowDiskFull",
+        "the streamed notice is the posted alert"
+    );
+}

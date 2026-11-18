@@ -3,13 +3,13 @@
 //! "any". Later phases load these from `[[notifications.route]]` TOML and
 //! from `Request::Subscribe` IPC.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::notice::{Notice, NoticeStatus, Source};
 use super::severity::Severity;
 
 /// A content filter over [`Notice`] fields. `Default` matches everything.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Filter {
     /// Minimum severity, inclusive. `None` = any severity.
@@ -163,5 +163,20 @@ mod tests {
         assert!(f.sources.is_empty());
         assert!(f.names.is_empty());
         assert!(f.statuses.is_empty());
+    }
+
+    /// The `Request::Subscribe` filter crosses the IPC wire as JSON, with all
+    /// four fields set (phase 10b).
+    #[test]
+    fn filter_round_trips_through_json() {
+        let f = Filter {
+            min_severity: Some(Severity::Warning),
+            sources: vec![Source::Webhook, Source::Scheduler],
+            names: vec!["HighCPU".to_string()],
+            statuses: vec![NoticeStatus::Firing],
+        };
+        let json = serde_json::to_string(&f).expect("serialize filter");
+        let back: Filter = serde_json::from_str(&json).expect("deserialize filter");
+        assert_eq!(back, f, "every field survives the wire");
     }
 }

@@ -7,8 +7,11 @@ use std::collections::VecDeque;
 
 use anyhow::{Context, Result};
 use chrono::Local;
+use tokio::io::BufReader;
 
 use crate::bus::{Filter, Notice, Severity, Source};
+use crate::cli::commands::ipc_client::{connect, recv, send_request};
+use crate::ipc::{Request, Response};
 
 /// The severities `--min-severity` accepts, for the error message.
 const SEVERITIES: &str = "debug, info, warning, error, critical";
@@ -140,6 +143,80 @@ pub fn run_notices(
     let selected = select_notices(&filter, limit);
     print!("{}", render_notices(&selected));
     Ok(())
+}
+
+/// The live-stream line for `notice`, or `None` when the backlog already
+/// printed it: a notice published between the ack and the backlog read is
+/// both in the journal and on the live stream, and must print once. Pure.
+fn live_line(printed: &std::collections::HashSet<String>, n: &Notice) -> Option<String> {
+    if printed.contains(&n.id) {
+        return None;
+    }
+    Some(notice_line(n))
+}
+
+/// `--follow`: print the backlog, then stream live notices until the
+/// connection closes or the user interrupts.
+///
+/// The backlog prints even when the daemon is down (the journal is read
+/// locally); the live stream needs the daemon, so without one the command
+/// exits 1 after the backlog.
+pub async fn run_notices_follow(
+    min_severity: Option<&str>,
+    sources: &[String],
+    names: &[String],
+    limit: usize,
+) -> Result<()> {
+    if limit == 0 {
+        anyhow::bail!("--limit must be at least 1");
+    }
+    let filter = filter_from_flags(min_severity, sources, names)?;
+
+    // The backlog first, with the ids it printed — the daemon may already
+    // have queued notices that the journal also holds.
+    let selected = select_notices(&filter, limit);
+    let printed: std::collections::HashSet<String> =
+        selected.iter().map(|n| n.id.clone()).collect();
+    print!("{}", render_notices(&selected));
+    use std::io::Write as _;
+    std::io::stdout().flush()?;
+
+    let stream = connect().await;
+    let stream = match stream {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!("daemon not running — cannot follow");
+            std::process::exit(1);
+        }
+    };
+    let (rx, mut tx) = stream.into_split();
+    let mut rx = BufReader::new(rx);
+    send_request(&mut tx, Request::Subscribe { filter }).await?;
+    match recv(&mut rx).await {
+        Ok(Response::Ok) => {}
+        Ok(other) => anyhow::bail!("unexpected reply to Subscribe: {}", other.kind()),
+        Err(e) => anyhow::bail!("reading the Subscribe ack: {e}"),
+    }
+
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    loop {
+        tokio::select! {
+            msg = recv(&mut rx) => match msg {
+                Ok(Response::Notice { notice }) => {
+                    if let Some(line) = live_line(&printed, &notice) {
+                        println!("{line}");
+                        std::io::stdout().flush()?;
+                    }
+                }
+                Ok(_) => {}
+                // The daemon closed the connection (or errored): done.
+                Err(_) => return Ok(()),
+            },
+            _ = interrupt.recv() => {
+                return Ok(());
+            }
+        }
+    }
 }
 
 /// Parse a `--source` value into a [`Source`], `None` when unrecognised.
@@ -326,5 +403,27 @@ mod tests {
         let empty = select_notices(&filter, 50);
         assert!(empty.is_empty(), "an empty journal");
         assert_eq!(render_notices(&empty), "no notices\n");
+    }
+
+    /// A live notice whose id the backlog printed must not print again; any
+    /// other notice prints as `notice_line` (phase 10b).
+    #[test]
+    fn live_line_skips_a_backlog_notice() {
+        let backlog = notice(Severity::Info, Source::Webhook, "HighCPU", "cpu 95%");
+        let printed: std::collections::HashSet<String> = [backlog.id.clone()].into_iter().collect();
+
+        let dup = live_line(&printed, &backlog);
+        assert!(
+            dup.is_none(),
+            "a notice the backlog printed must not print again, got {dup:?}"
+        );
+
+        let fresh = notice(Severity::Info, Source::Webhook, "LowDisk", "disk 90%");
+        let line = live_line(&printed, &fresh);
+        assert_eq!(
+            line.as_deref(),
+            Some(notice_line(&fresh).as_str()),
+            "a fresh live notice prints its line"
+        );
     }
 }

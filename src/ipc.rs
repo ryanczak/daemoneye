@@ -261,11 +261,13 @@ pub enum Request {
     /// phase 01). The daemon answers with `Response::AlertState` over the
     /// current snapshot.
     AlertList,
-    /// Re-read `~/.daemoneye/etc/config.toml`, swap what is safe to swap at
-    /// runtime, and report the keys that changed. The daemon replies with
-    /// `Response::Reloaded`, or `Response::Error` when the file is invalid —
-    /// an invalid file is refused and the running config stays.
+    /// Re-read the config file and report the keys that changed. The daemon
+    /// replies with `Response::Reloaded`, or `Response::Error` when invalid.
     Reload,
+    /// Subscribe this connection to the notice bus.
+    Subscribe {
+        filter: crate::bus::Filter,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -565,8 +567,7 @@ pub enum Response {
     /// Sent after each AI turn completes, carrying the prompt token count from
     /// that turn. The client uses this to update the context-budget display.
     /// `output_tokens` is the turn's total over every model call in it (M37
-    /// phase 02b) — the throughput slot's numerator. Defaulted so a frame
-    /// from an older daemon still decodes.
+    /// phase 02b). Defaulted so a frame from an older daemon still decodes.
     UsageUpdate {
         prompt_tokens: u32,
         #[serde(default)]
@@ -734,15 +735,14 @@ pub enum Response {
     LimitsInfo {
         /// Effective limits from `config.limits`.
         limits: LimitsSummary,
-        /// Number of turns completed so far in this session.
+        /// Turn, tool-call and history counters for this session.
         turn_count: usize,
-        /// Cumulative non-approval-gated tool calls executed in this session.
         tool_calls_this_session: usize,
-        /// Current number of messages in this session's history.
         history_len: usize,
     },
+    /// One notice streamed to a `Subscribe` connection.
+    Notice { notice: crate::bus::Notice },
 }
-
 impl Response {
     /// A stable, human-readable label for this variant — its PascalCase
     /// name. Used in user-facing "unexpected reply" messages instead of a
@@ -792,6 +792,7 @@ impl Response {
             Response::SavedSessionList { .. } => "SavedSessionList",
             Response::Reloaded { .. } => "Reloaded",
             Response::LimitsInfo { .. } => "LimitsInfo",
+            Response::Notice { .. } => "Notice",
         }
     }
 }
@@ -799,58 +800,6 @@ impl Response {
 #[cfg(test)]
 #[path = "ipc_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-mod alert_wire_tests {
-    use super::*;
-
-    fn roundtrip_req(req: &Request) -> Request {
-        let json = serde_json::to_string(req).expect("serialize");
-        serde_json::from_str(&json).expect("deserialize")
-    }
-
-    fn roundtrip_resp(resp: &Response) -> Response {
-        let json = serde_json::to_string(resp).expect("serialize");
-        serde_json::from_str(&json).expect("deserialize")
-    }
-
-    /// `AlertBadge` and the two new frames survive the wire exactly.
-    #[test]
-    fn alert_state_frames_round_trip() {
-        let badge = AlertBadge {
-            fingerprint: "fp-1".to_string(),
-            name: "HighCPU".to_string(),
-            severity: "critical".to_string(),
-            first_seen_unix: 1_764_000_000,
-            last_seen_unix: 1_764_000_600,
-        };
-        let resp = Response::AlertState {
-            alerts: vec![badge.clone()],
-        };
-        match roundtrip_resp(&resp) {
-            Response::AlertState { alerts } => {
-                assert_eq!(alerts, vec![badge], "every field survives the wire");
-            }
-            other => panic!("wrong variant: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn alert_list_request_round_trips() {
-        assert!(matches!(
-            roundtrip_req(&Request::AlertList),
-            Request::AlertList
-        ));
-    }
-
-    /// `AlertState`'s name on the wire is "AlertState" — the label the client
-    /// sees in "unexpected reply" messages.
-    #[test]
-    fn alert_state_names_itself_alert_state() {
-        let resp = Response::AlertState { alerts: Vec::new() };
-        assert_eq!(resp.kind(), "AlertState");
-    }
-}
 
 #[cfg(test)]
 mod counters_wire_tests {

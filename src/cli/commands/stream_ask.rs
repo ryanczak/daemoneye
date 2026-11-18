@@ -637,7 +637,8 @@ pub(in super::super) async fn ask_with_session_ratatui(
             | Response::SessionSaved { .. }
             | Response::SessionLoaded { .. }
             | Response::SavedSessionList { .. }
-            | Response::Reloaded { .. } => {}
+            | Response::Reloaded { .. }
+            | Response::Notice { .. } => {}
         }
     }
 
