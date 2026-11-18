@@ -1,8 +1,10 @@
-/// `daemoneye notices` CLI — prints past notices from the event journal,
-/// filtered by severity, source and name.
-///
-/// No daemon round-trip — reads the event log directly (consistent with
-/// `daemoneye costs`). Works even when the daemon is down.
+//! `daemoneye notices` CLI — prints past notices from the event journal,
+//! filtered by severity, source and name.
+//!
+//! No daemon round-trip — reads the event log directly (consistent with
+//! `daemoneye costs`). Works even when the daemon is down.
+use std::collections::VecDeque;
+
 use anyhow::{Context, Result};
 use chrono::Local;
 
@@ -13,39 +15,54 @@ const SEVERITIES: &str = "debug, info, warning, error, critical";
 /// The sources `--source` accepts, for the error message.
 const SOURCES: &str = "webhook, scheduler, watchdog, ghost, background, shell, daemon";
 
-/// The flags of one `daemoneye notices` invocation, before they build a
-/// [`Filter`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NoticesArgs {
-    pub min_severity: Option<Severity>,
-    pub sources: Vec<Source>,
-    pub names: Vec<String>,
-    pub limit: usize,
+/// Build the [`Filter`] the flags describe. An unknown severity or source
+/// is an error naming the valid values.
+fn filter_from_flags(
+    min_severity: Option<&str>,
+    sources: &[String],
+    names: &[String],
+) -> Result<Filter> {
+    let min_severity = match min_severity {
+        Some(s) => Some(
+            Severity::parse(s)
+                .with_context(|| format!("Invalid --min-severity '{s}' (valid: {SEVERITIES})"))?,
+        ),
+        None => None,
+    };
+    let mut parsed_sources = Vec::with_capacity(sources.len());
+    for src in sources {
+        parsed_sources.push(
+            parse_source(src)
+                .with_context(|| format!("Invalid --source '{src}' (valid: {SOURCES})"))?,
+        );
+    }
+    Ok(Filter {
+        min_severity,
+        sources: parsed_sources,
+        names: names.to_vec(),
+        statuses: Vec::new(),
+    })
 }
 
-/// Build a [`Filter`] from the CLI flags.
-fn build_filter(args: &NoticesArgs) -> Filter {
-    Filter {
-        min_severity: args.min_severity,
-        sources: args.sources.clone(),
-        names: args.names.clone(),
-        statuses: Vec::new(),
+/// Offer one notice to the selection: a match joins the back of `ring`,
+/// and the oldest is dropped once `ring` holds `limit`.
+fn keep_last(ring: &mut VecDeque<Notice>, filter: &Filter, limit: usize, notice: &Notice) {
+    if !filter.matches(notice) {
+        return;
     }
+    if ring.len() == limit {
+        ring.pop_front();
+    }
+    ring.push_back(notice.clone());
 }
 
 /// Stream the whole journal, keep the notices the filter matches, and
 /// return the last `limit` of them, in journal order (oldest first). Only
 /// `limit` notices are held in memory at a time.
 fn select_notices(filter: &Filter, limit: usize) -> Vec<Notice> {
-    let mut ring: std::collections::VecDeque<Notice> = std::collections::VecDeque::new();
+    let mut ring = VecDeque::with_capacity(limit);
     crate::bus::for_each_notice_between(None, None, &mut |notice| {
-        if !filter.matches(notice) {
-            return;
-        }
-        if ring.len() == limit {
-            ring.pop_front();
-        }
-        ring.push_back(notice.clone());
+        keep_last(&mut ring, filter, limit, notice);
     });
     ring.into_iter().collect()
 }
@@ -119,27 +136,7 @@ pub fn run_notices(
     if limit == 0 {
         anyhow::bail!("--limit must be at least 1");
     }
-    let min_severity = match min_severity {
-        Some(s) => Some(
-            Severity::parse(s)
-                .with_context(|| format!("Invalid --min-severity '{s}' (valid: {SEVERITIES})"))?,
-        ),
-        None => None,
-    };
-    let mut parsed_sources = Vec::with_capacity(sources.len());
-    for src in sources {
-        parsed_sources.push(
-            parse_source(src)
-                .with_context(|| format!("Invalid --source '{src}' (valid: {SOURCES})"))?,
-        );
-    }
-    let args = NoticesArgs {
-        min_severity,
-        sources: parsed_sources,
-        names: names.to_vec(),
-        limit,
-    };
-    let filter = build_filter(&args);
+    let filter = filter_from_flags(min_severity, sources, names)?;
     let selected = select_notices(&filter, limit);
     print!("{}", render_notices(&selected));
     Ok(())
@@ -172,21 +169,17 @@ mod tests {
 
     #[test]
     fn notices_keeps_the_last_limit_oldest_first() {
-        let five: Vec<Notice> = (0..5)
-            .map(|i| notice(Severity::Info, Source::Webhook, "HighCPU", &format!("n{i}")))
-            .collect();
-        // Stream through the same selection the command runs, holding only
-        // the ring of `limit` notices.
-        let mut kept: Vec<Notice> = Vec::new();
-        for n in &five {
-            if kept.len() == 3 {
-                kept.remove(0);
-            }
-            kept.push(n.clone());
+        let filter = filter_from_flags(None, &["webhook".to_string()], &[]).expect("valid flags");
+        let mut ring = VecDeque::new();
+        for i in 0..5 {
+            let kept = notice(Severity::Info, Source::Webhook, "HighCPU", &format!("n{i}"));
+            keep_last(&mut ring, &filter, 3, &kept);
+            // A non-matching notice between each must not take a slot.
+            let other = notice(Severity::Info, Source::Ghost, "run", &format!("g{i}"));
+            keep_last(&mut ring, &filter, 3, &other);
         }
-        assert_eq!(kept.len(), 3);
-        assert_eq!(kept[0].title, "n2", "the oldest kept is the third");
-        assert_eq!(kept[2].title, "n4", "the newest kept is the last");
+        let titles: Vec<&str> = ring.iter().map(|n| n.title.as_str()).collect();
+        assert_eq!(titles, ["n2", "n3", "n4"], "the last three, oldest first");
     }
 
     #[test]
@@ -196,32 +189,34 @@ mod tests {
         let warning_scheduler = notice(Severity::Warning, Source::Scheduler, "HighCPU", "cpu");
         let other_name = notice(Severity::Warning, Source::Webhook, "HighMemory", "mem");
 
-        let min_warning = Filter {
-            min_severity: Some(Severity::Warning),
-            ..Filter::default()
-        };
-        assert!(min_warning.matches(&warning_webhook), "warning is kept");
-        assert!(!min_warning.matches(&info_webhook), "info is dropped");
-
-        let webhook_only = Filter {
-            sources: vec![Source::Webhook],
-            ..Filter::default()
-        };
-        assert!(webhook_only.matches(&warning_webhook));
+        let filter = filter_from_flags(
+            Some("warning"),
+            &["webhook".to_string()],
+            &["HighCPU".to_string()],
+        )
+        .expect("valid flags");
         assert!(
-            !webhook_only.matches(&warning_scheduler),
-            "a scheduler notice is dropped by --source webhook"
+            filter.matches(&warning_webhook),
+            "a warning webhook HighCPU is kept"
+        );
+        assert!(
+            !filter.matches(&info_webhook),
+            "--min-severity warning drops info"
+        );
+        assert!(
+            !filter.matches(&warning_scheduler),
+            "--source webhook drops a scheduler notice"
+        );
+        assert!(
+            !filter.matches(&other_name),
+            "--name HighCPU drops another name"
         );
 
-        let named = Filter {
-            names: vec!["HighCPU".to_string()],
-            ..Filter::default()
-        };
-        assert!(named.matches(&warning_webhook));
-        assert!(
-            !named.matches(&other_name),
-            "another name is dropped by --name"
-        );
+        let bad_sev = filter_from_flags(Some("bogus"), &[], &[]).expect_err("unknown severity");
+        assert!(format!("{bad_sev:#}").contains("debug, info, warning, error, critical"));
+        let bad_src =
+            filter_from_flags(None, &["bogus".to_string()], &[]).expect_err("unknown source");
+        assert!(format!("{bad_src:#}").contains("webhook, scheduler, watchdog"));
     }
 
     #[test]
@@ -307,12 +302,17 @@ mod tests {
             names: vec!["DiskFull".to_string()],
             statuses: Vec::new(),
         };
-        let selected = select_notices(&filter, 50);
-        assert_eq!(selected.len(), 1, "only the DiskFull webhook survives");
-        let line = notice_line(&selected[0]);
+        let out = render_notices(&select_notices(&filter, 50));
+        assert_eq!(
+            out.lines().count(),
+            1,
+            "only the DiskFull webhook survives: {out}"
+        );
         assert!(
-            line.contains("error") && line.contains("webhook") && line.contains("disk notice"),
-            "the line carries the fields: {line}"
+            out.contains(" error ")
+                && out.contains(" webhook ")
+                && out.ends_with("firing DiskFull disk notice\n"),
+            "the line carries the fields: {out}"
         );
     }
 
