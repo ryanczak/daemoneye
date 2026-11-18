@@ -1,7 +1,7 @@
 # Phase 09c — notice-docs
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** done
 **Drafted:** 2026-11-18
 **Depends on:** phase-09b
 **Estimated diff:** ~150 lines, docs only
@@ -148,3 +148,41 @@ Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 (escalation)
+
+**Chosen lever:** session takeover.
+**Rationale:** the run made no edits in 428 turns and ended `hard_fail`
+(`IdenticalToolCallRepetition`: the same bash `grep` for `briefing` in
+`src/daemon/ghost/prompt.rs`, six times in a row). It read the four target
+files early on, then spent the run in source files the spec never named. The
+spec already carried every anti-stall lever from earlier phases: a closed
+file list, a first edit due by turn 15, an edit order, and the facts
+pre-verified. The executor ignored all of them. A refined re-dispatch would
+meet the same read-without-editing failure, and the phase is ~150 lines of
+docs.
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** escalated
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (428 turns, `hard_fail`, no diff), then
+  Claude (direct)
+- **Scope deviations:** none.
+  - The ghost guide's lifecycle-events sentence now says what the routes do.
+  - The README's `Default routes` subsection notes that a `shell` notice
+    matches no default route. Both are covered by the spec's facts.
+- **Checked:**
+  - Every fact against `default_routes`, `Filter`, `Source` and
+    `NoticeStatus` (the lowercase serde names) and `webhook.auto_analyze`
+    in `trigger.rs`.
+  - The new TOML examples parse.
+  - All seven acceptance greps pass (0, 0, 1, 1, 1, 1, 2).
+  - Gates: 3022 lib tests, fmt and clippy `-D warnings` pass, and every
+    integration binary is green.
+- **Calibration:** on GLM-5.3-Flash, a docs-only phase over the README is a
+  read-paralysis risk even with a closed file list. The README is ~1400
+  lines and every claim invites a source check. Pre-verified facts did not
+  stop it checking them again. For docs phases on this model, prefer an
+  architect takeover, or split the work into one file per phase.
+
