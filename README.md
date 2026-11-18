@@ -912,14 +912,16 @@ Each `[[notifications.route]]` table routes notices to one sink behind a filter.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `sink` | string | *(required)* | Where matched notices go: `"history"` (append to every session's chat history), `"chat_notice"` (one-line overlay to every attached chat) or `"command"` (run `command`). |
-| `command` | string | *(required for `sink = "command"`)* | The shell command to run, with the four `$DAEMONEYE_*` variables: `$DAEMONEYE_JOB` (notice name), `$DAEMONEYE_MSG` (message text), `$DAEMONEYE_SEVERITY` (severity) and `$DAEMONEYE_SOURCE` (source). Refused on a `history` or `chat_notice` route. |
+| `sink` | string | *(required)* | Where matched notices go: `"history"` (append to every session's chat history), `"chat_notice"` (one-line overlay to every attached chat), `"command"` (run `command`) or `"analyze"` (feed the webhook alert to the runbook analysis that may start a ghost shell — webhook alerts only). |
+| `command` | string | *(required for `sink = "command"`)* | The shell command to run, with the four `$DAEMONEYE_*` variables: `$DAEMONEYE_JOB` (notice name), `$DAEMONEYE_MSG` (message text), `$DAEMONEYE_SEVERITY` (severity) and `$DAEMONEYE_SOURCE` (source). Refused on a `history`, `chat_notice` or `analyze` route. |
 | `min_severity` | string | *(any)* | Minimum severity, inclusive: `"debug"`, `"info"`, `"warning"`, `"error"`, `"critical"`. |
 | `sources` | list | `[]` (any) | Any-of list of sources: `"webhook"`, `"scheduler"`, `"watchdog"`, `"ghost"`, `"background"`, `"shell"`, `"daemon"`. |
 | `names` | list | `[]` (any) | Any-of list of exact notice names (e.g. `"HighCPU"`). |
 | `statuses` | list | `[]` (any) | Any-of list: `"firing"`, `"resolved"`, `"event"`. |
 
 An empty list means "any". Configured routes **add to** the built-in defaults; `[notifications] default_routes = false` turns the defaults off and keeps only what you route. Routes are read per delivery, so `daemoneye reload` applies them.
+
+The default analyze route fires the runbook analysis for webhook alerts at `warning` or above. `[notifications] default_routes = false` drops it too: ghost triggering stops unless you configure an `analyze` route of your own.
 
 ```toml
 [[notifications.route]]
@@ -929,6 +931,12 @@ sources = ["scheduler", "watchdog"]
 
 [[notifications.route]]
 sink = "history"
+names = ["WatchdogHighLoad"]
+
+# Analyse info alerts for one name the defaults ignore.
+[[notifications.route]]
+sink = "analyze"
+min_severity = "info"
 names = ["WatchdogHighLoad"]
 ```
 

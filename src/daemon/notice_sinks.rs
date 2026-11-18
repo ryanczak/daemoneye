@@ -31,12 +31,22 @@ pub fn routes_match(routes: &[Filter], n: &Notice) -> bool {
     routes.iter().any(|f| f.matches(n))
 }
 
-/// The gate the alert producer and the ghost-trigger consumer share: matches
-/// `default_routes(Severity::Warning).analyze` — a webhook alert at or above
-/// `warning`, firing or resolved. An analysis notice (status `Event`) does
-/// not match, so an analysis can never trigger another.
-pub fn analyze_routed(n: &Notice) -> bool {
-    routes_match(&default_routes(Severity::Warning).analyze, n)
+/// The analyze gate the alert producer and the ghost-trigger consumer
+/// share: true when the notice is a webhook alert (`kind` = `alert`) and
+/// [`sink_routed`] matches `default_routes(Severity::Warning).analyze`
+/// (webhook, firing or resolved, at or above `warning`) against the
+/// config the caller read per notice. The `kind` rule lives here because
+/// a configured route with no `statuses` — `sink = "analyze"` filtered
+/// only by `names` — matches an analysis notice too, and an analysis
+/// triggering another analysis would loop for ever.
+pub fn analyze_routed(cfg: &crate::config::NotificationsConfig, n: &Notice) -> bool {
+    n.labels.get("kind").map(String::as_str) == Some("alert")
+        && sink_routed(
+            cfg,
+            &default_routes(Severity::Warning).analyze,
+            crate::config::RouteSink::Analyze,
+            n,
+        )
 }
 
 /// Whether `sink` receives `n`: the built-in defaults when
@@ -354,7 +364,9 @@ mod tests {
     use crate::daemon::session::SessionEntry;
 
     fn webhook(severity: Severity, name: &str) -> Notice {
-        Notice::new(severity, Source::Webhook, name, "title").status(NoticeStatus::Firing)
+        Notice::new(severity, Source::Webhook, name, "title")
+            .status(NoticeStatus::Firing)
+            .label("kind", "alert")
     }
 
     fn fresh_registry_map()
@@ -645,8 +657,97 @@ mod tests {
             "an analysis notice does not match the analyze route"
         );
         assert!(
-            !crate::daemon::notice_sinks::analyze_routed(&analysis),
+            !crate::daemon::notice_sinks::analyze_routed(
+                &crate::config::NotificationsConfig::default(),
+                &analysis
+            ),
             "analyze_routed rejects the analysis notice"
+        );
+    }
+
+    /// The analyze gate honours the config: the default routes keep the
+    /// warning threshold; `default_routes = false` drops them; a configured
+    /// `analyze` route adds to (or replaces) them.
+    #[test]
+    fn analyze_routed_honours_configured_routes() {
+        let warning = webhook(Severity::Warning, "HighCPU");
+        let info_other = webhook(Severity::Info, "DiskFull");
+
+        let default_cfg = crate::config::NotificationsConfig::default();
+        assert!(
+            crate::daemon::notice_sinks::analyze_routed(&default_cfg, &warning),
+            "default config routes a webhook warning alert"
+        );
+        assert!(
+            !crate::daemon::notice_sinks::analyze_routed(&default_cfg, &info_other),
+            "default config does not route a webhook info alert"
+        );
+
+        let cfg: crate::config::Config = toml::from_str(
+            r#"
+            [notifications]
+            default_routes = false
+        "#,
+        )
+        .expect("valid notifications config");
+        assert!(
+            !crate::daemon::notice_sinks::analyze_routed(&cfg.notifications, &warning),
+            "with default_routes off and no routes, nothing is analyzed"
+        );
+
+        let cfg: crate::config::Config = toml::from_str(
+            r#"
+            [notifications]
+            default_routes = false
+
+            [[notifications.route]]
+            sink = "analyze"
+            names = ["LowCPU"]
+        "#,
+        )
+        .expect("valid analyze route config");
+        let info_low = webhook(Severity::Info, "LowCPU");
+        assert!(
+            crate::daemon::notice_sinks::analyze_routed(&cfg.notifications, &info_low),
+            "the configured analyze route routes the info LowCPU alert"
+        );
+        assert!(
+            !crate::daemon::notice_sinks::analyze_routed(&cfg.notifications, &info_other),
+            "the configured analyze route does not route another name"
+        );
+    }
+
+    /// A configured `analyze` route with no `statuses` matches an analysis
+    /// notice too — the gate's `kind` rule is what keeps an analysis from
+    /// triggering another.
+    #[test]
+    fn analyze_routed_never_routes_an_analysis() {
+        let cfg: crate::config::Config = toml::from_str(
+            r#"
+            [[notifications.route]]
+            sink = "analyze"
+            names = ["HighCPU"]
+        "#,
+        )
+        .expect("valid analyze route config");
+        let analysis = Notice::new(
+            Severity::Warning,
+            Source::Webhook,
+            "HighCPU",
+            "[Webhook Analysis] HighCPU: spike traced",
+        )
+        .label("kind", "analysis");
+        assert_eq!(analysis.status, NoticeStatus::Event);
+        assert!(
+            !crate::daemon::notice_sinks::routes_match(
+                &crate::daemon::notice_sinks::default_routes(Severity::Warning).analyze,
+                &analysis
+            ),
+            "precondition: the route's filter alone matches the analysis notice"
+        );
+        assert!(
+            !crate::daemon::notice_sinks::analyze_routed(&cfg.notifications, &analysis),
+            "the gate never routes an analysis notice"
         );
     }
 

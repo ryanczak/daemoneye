@@ -35,10 +35,13 @@ async fn ghost_trigger_task(
     mut rx: tokio::sync::mpsc::Receiver<Arc<crate::bus::Notice>>,
 ) {
     while let Some(notice) = rx.recv().await {
-        if !crate::daemon::notice_sinks::analyze_routed(&notice) {
-            continue;
-        }
-        if notice.labels.get("kind").map(String::as_str) != Some("alert") {
+        // The gate owns the `kind` rule; the config is read per notice so
+        // `daemoneye reload` applies route changes. `state.config` is a
+        // startup snapshot `reload` never updates — never route on it.
+        if !crate::daemon::notice_sinks::analyze_routed(
+            &crate::config::current().notifications,
+            &notice,
+        ) {
             continue;
         }
         if !state.config.webhook.auto_analyze {

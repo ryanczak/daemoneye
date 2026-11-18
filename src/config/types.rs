@@ -564,6 +564,7 @@ pub enum RouteSink {
     History,
     ChatNotice,
     Command,
+    Analyze,
 }
 
 /// One `[[notifications.route]]` table: a sink paired with a filter over

@@ -1515,3 +1515,40 @@ fn command_on_a_non_command_route_is_refused() {
         );
     }
 }
+
+/// `sink = "analyze"` parses into `RouteSink::Analyze` and carries its
+/// filter.
+#[test]
+fn analyze_route_parses() {
+    let toml = r#"
+            [[notifications.route]]
+            sink = "analyze"
+            names = ["HighCPU"]
+        "#;
+    let cfg: Config = toml::from_str(toml).unwrap();
+    assert_eq!(cfg.notifications.route.len(), 1);
+    assert_eq!(
+        cfg.notifications.route[0].sink,
+        crate::config::RouteSink::Analyze
+    );
+    assert_eq!(
+        cfg.notifications.route[0].filter().names,
+        vec!["HighCPU".to_string()]
+    );
+}
+
+/// A `command` on an `analyze` route is refused, like on `history`.
+#[test]
+fn analyze_route_refuses_a_command() {
+    let path = std::path::Path::new("config.toml");
+    let toml = r#"
+            [[notifications.route]]
+            sink = "analyze"
+            command = "echo hi"
+        "#;
+    let err = parse_config_text(path, toml).expect_err("a command on an analyze route must fail");
+    assert!(
+        err.to_string().contains("#1"),
+        "the error names the route: {err:#}"
+    );
+}

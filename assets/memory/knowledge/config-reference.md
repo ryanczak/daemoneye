@@ -75,7 +75,7 @@ restart to land. Everything else swaps into the running config on reload.
 | Key | Type | Range | Default | Takes effect |
 |---|---|---|---|---|
 | `notifications.default_routes` | boolean | true/false | true | reload |
-| `notifications.route` | list of route tables (written as repeated `[[notifications.route]]`) | each: `sink` + filter keys | `[]` | reload |
+| `notifications.route` | list of route tables (written as repeated `[[notifications.route]]`) | each: `sink` (`history`, `chat_notice`, `command` or `analyze`) + filter keys | `[]` | reload |
 
 ## `[webhook]`
 

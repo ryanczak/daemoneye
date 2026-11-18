@@ -175,12 +175,15 @@ pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
     .label("kind", "alert");
     let published = state.bus.publish(notice);
 
-    // 6. Severity gate — the fixed analyze gate until phase 09b makes it a
-    //    route. `analyze_routed` is the same predicate the ghost-trigger
-    //    consumer applies; the producer no longer calls the analysis.
-    //    An alert whose severity cannot be ranked degrades to `Debug`,
-    //    which sits below `warning` — the fail-closed rule.
-    if !crate::daemon::notice_sinks::analyze_routed(&published) {
+    // 6. Analyze gate — the shared predicate the ghost-trigger consumer
+    //    applies; the producer no longer calls the analysis. The config is
+    //    read per alert so `daemoneye reload` applies route changes. An
+    //    alert whose severity cannot be ranked degrades to `Debug`, which
+    //    sits below `warning` — the fail-closed rule.
+    if !crate::daemon::notice_sinks::analyze_routed(
+        &crate::config::current().notifications,
+        &published,
+    ) {
         log::warn!(
             "Webhook: alert '{}' discarded — severity '{}' below threshold 'warning'",
             alert.alert_name,

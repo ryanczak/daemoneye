@@ -203,9 +203,10 @@ prompt = "sre"
 # default_routes = true
 
 # Route notices to a sink behind a filter. Configured routes add to the
-# defaults. sink: "history" | "chat_notice" | "command". Filters:
+# defaults. sink: "history" | "chat_notice" | "command" | "analyze". Filters:
 # min_severity, sources, names, statuses (empty list = any). A "command"
-# route requires its own command key.
+# route requires its own command key. The "analyze" sink feeds webhook
+# alerts to the runbook analysis that may start a ghost shell.
 # [[notifications.route]]
 # sink = "command"
 # command = "notify-send 'DaemonEye' '$DAEMONEYE_MSG'"
@@ -213,6 +214,10 @@ prompt = "sre"
 #
 # [[notifications.route]]
 # sink = "history"
+# names = ["WatchdogHighLoad"]
+#
+# [[notifications.route]]
+# sink = "analyze"
 # names = ["WatchdogHighLoad"]
 
 # ── Webhook ──────────────────────────────────────────────────────────────────

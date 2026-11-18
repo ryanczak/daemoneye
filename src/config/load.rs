@@ -291,7 +291,9 @@ impl Config {
                         );
                     }
                 }
-                crate::config::RouteSink::History | crate::config::RouteSink::ChatNotice => {
+                crate::config::RouteSink::History
+                | crate::config::RouteSink::ChatNotice
+                | crate::config::RouteSink::Analyze => {
                     if route.command.is_some() {
                         anyhow::bail!("{name}: the command key only applies to sink = \"command\"");
                     }
