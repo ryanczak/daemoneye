@@ -145,12 +145,17 @@ async fn start_spawn_session(
     use crate::daemon::ghost::GhostManager;
     use crate::webhook::{GhostEvent, publish_ghost_event};
 
+    let trigger = if ghost_config.parent_job_id.is_some() {
+        crate::daemon::GhostTrigger::Delegated
+    } else {
+        crate::daemon::GhostTrigger::Interactive
+    };
     match GhostManager::start_session_with_config(
         sessions.clone(),
         rb,
         &ghost_config,
         message,
-        crate::daemon::GS_BG_WINDOW_PREFIX,
+        trigger,
         spawn_config.approvals.ghost_commands,
     )
     .await
@@ -163,8 +168,8 @@ async fn start_spawn_session(
             let job_id = sid.clone();
             let task_message = message.to_string();
             with_sessions(sessions, |store| {
-                if let Some(entry) = store.get_mut(&sid) {
-                    entry.ghost_task_message = Some(task_message);
+                if let Some(g) = store.get_mut(&sid).and_then(|e| e.as_ghost_mut()) {
+                    g.task_message = Some(task_message);
                 }
             });
             publish_ghost_event(

@@ -94,80 +94,14 @@ fn session_file_roundtrip() {
 #[test]
 fn auto_name_suggested_starts_false() {
     // auto_name_suggested must default to false so the first suggestion fires.
-    let entry = SessionEntry {
-        messages: vec![],
-        last_accessed: std::time::Instant::now(),
-        chat_pane: None,
-        default_target_pane: None,
-        bg_windows: vec![],
-        last_prompt_tokens: 0,
-        tmux_session: "test".to_string(),
-        last_detach: None,
-        detach_time_utc: None,
-        messages_at_detach: 0,
-        is_ghost: false,
-        ghost_config: None,
-        ghost_bg_prefix: "",
-        ghost_runbook_name: None,
-        started_at: chrono::Utc::now(),
-        turn_count: 0,
-        tool_calls_this_session: 0,
-        active_model: None,
-        last_snapshot_activity: 0,
-        saved_name: None,
-        dirty: false,
-        artifacts_created: vec![],
-        auto_name_suggested: false,
-        ghost_task_message: None,
-        cost_usd: 0.0,
-        loaded_tools: HashSet::new(),
-        cost_by_agent: HashMap::new(),
-        has_untracked_cost: false,
-        token_scale: 1.5,
-        compaction_in_flight: false,
-        pending_compaction_notice: None,
-        turn_inbox: None,
-    };
-    assert!(!entry.auto_name_suggested);
+    let entry = SessionEntry::new_interactive("test");
+    assert!(!entry.as_interactive().unwrap().auto_name_suggested);
     assert!(entry.saved_name.is_none());
 }
 
 #[test]
 fn session_entry_accumulates_cost_across_turns() {
-    let mut entry = SessionEntry {
-        messages: vec![],
-        last_accessed: std::time::Instant::now(),
-        chat_pane: None,
-        default_target_pane: None,
-        bg_windows: vec![],
-        last_prompt_tokens: 0,
-        tmux_session: "test".to_string(),
-        last_detach: None,
-        detach_time_utc: None,
-        messages_at_detach: 0,
-        is_ghost: false,
-        ghost_config: None,
-        ghost_bg_prefix: "",
-        ghost_runbook_name: None,
-        started_at: chrono::Utc::now(),
-        turn_count: 0,
-        tool_calls_this_session: 0,
-        active_model: None,
-        last_snapshot_activity: 0,
-        saved_name: None,
-        dirty: false,
-        artifacts_created: vec![],
-        auto_name_suggested: false,
-        ghost_task_message: None,
-        cost_usd: 0.0,
-        loaded_tools: HashSet::new(),
-        cost_by_agent: HashMap::new(),
-        has_untracked_cost: false,
-        token_scale: 1.5,
-        compaction_in_flight: false,
-        pending_compaction_notice: None,
-        turn_inbox: None,
-    };
+    let mut entry = SessionEntry::new_interactive("test");
 
     // Simulate three turns of cost accumulation.
     entry.cost_usd += 0.10;
@@ -184,40 +118,7 @@ fn session_entry_accumulates_cost_across_turns() {
 
 #[test]
 fn session_entry_per_agent_split() {
-    let mut entry = SessionEntry {
-        messages: vec![],
-        last_accessed: std::time::Instant::now(),
-        chat_pane: None,
-        default_target_pane: None,
-        bg_windows: vec![],
-        last_prompt_tokens: 0,
-        tmux_session: "test".to_string(),
-        last_detach: None,
-        detach_time_utc: None,
-        messages_at_detach: 0,
-        is_ghost: false,
-        ghost_config: None,
-        ghost_bg_prefix: "",
-        ghost_runbook_name: None,
-        started_at: chrono::Utc::now(),
-        turn_count: 0,
-        tool_calls_this_session: 0,
-        active_model: None,
-        last_snapshot_activity: 0,
-        saved_name: None,
-        dirty: false,
-        artifacts_created: vec![],
-        auto_name_suggested: false,
-        ghost_task_message: None,
-        cost_usd: 0.0,
-        loaded_tools: HashSet::new(),
-        cost_by_agent: HashMap::new(),
-        has_untracked_cost: false,
-        token_scale: 1.5,
-        compaction_in_flight: false,
-        pending_compaction_notice: None,
-        turn_inbox: None,
-    };
+    let mut entry = SessionEntry::new_interactive("test");
 
     // Simulate /agent switch mid-flow.
     entry.cost_usd += 0.30;
@@ -236,40 +137,7 @@ fn session_entry_per_agent_split() {
 
 #[test]
 fn unknown_pricing_sets_has_untracked_cost() {
-    let mut entry = SessionEntry {
-        messages: vec![],
-        last_accessed: std::time::Instant::now(),
-        chat_pane: None,
-        default_target_pane: None,
-        bg_windows: vec![],
-        last_prompt_tokens: 0,
-        tmux_session: "test".to_string(),
-        last_detach: None,
-        detach_time_utc: None,
-        messages_at_detach: 0,
-        is_ghost: false,
-        ghost_config: None,
-        ghost_bg_prefix: "",
-        ghost_runbook_name: None,
-        started_at: chrono::Utc::now(),
-        turn_count: 0,
-        tool_calls_this_session: 0,
-        active_model: None,
-        last_snapshot_activity: 0,
-        saved_name: None,
-        dirty: false,
-        artifacts_created: vec![],
-        auto_name_suggested: false,
-        ghost_task_message: None,
-        cost_usd: 0.0,
-        loaded_tools: HashSet::new(),
-        cost_by_agent: HashMap::new(),
-        has_untracked_cost: false,
-        token_scale: 1.5,
-        compaction_in_flight: false,
-        pending_compaction_notice: None,
-        turn_inbox: None,
-    };
+    let mut entry = SessionEntry::new_interactive("test");
 
     // Known pricing call.
     entry.cost_usd += 0.10;
@@ -522,40 +390,13 @@ fn entry_recreation_seeds_from_meta() {
 
     // Simulate entry recreation by reading meta and building a fresh entry.
     let loaded_meta = read_session_meta(id).expect("meta should exist");
-    let entry = SessionEntry {
-        messages: Vec::new(),
-        last_accessed: std::time::Instant::now(),
-        chat_pane: None,
-        default_target_pane: None,
-        bg_windows: Vec::new(),
-        last_prompt_tokens: loaded_meta.last_prompt_tokens,
-        tmux_session: String::new(),
-        last_detach: None,
-        detach_time_utc: None,
-        messages_at_detach: 0,
-        is_ghost: false,
-        ghost_config: None,
-        ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
-        ghost_runbook_name: None,
-        started_at: loaded_meta.started_at,
-        turn_count: loaded_meta.turn_count,
-        tool_calls_this_session: loaded_meta.tool_calls_this_session,
-        active_model: None,
-        last_snapshot_activity: 0,
-        saved_name: loaded_meta.saved_name,
-        dirty: false,
-        artifacts_created: Vec::new(),
-        auto_name_suggested: false,
-        ghost_task_message: None,
-        loaded_tools: std::collections::HashSet::new(),
-        cost_usd: 0.0,
-        cost_by_agent: std::collections::HashMap::new(),
-        has_untracked_cost: false,
-        token_scale: loaded_meta.token_scale,
-        compaction_in_flight: false,
-        pending_compaction_notice: None,
-        turn_inbox: None,
-    };
+    let mut entry = SessionEntry::new_interactive("");
+    entry.started_at = loaded_meta.started_at;
+    entry.turn_count = loaded_meta.turn_count;
+    entry.last_prompt_tokens = loaded_meta.last_prompt_tokens;
+    entry.token_scale = loaded_meta.token_scale;
+    entry.tool_calls_this_session = loaded_meta.tool_calls_this_session;
+    entry.saved_name = loaded_meta.saved_name;
 
     assert_eq!(entry.turn_count, 7);
     assert_eq!(entry.last_prompt_tokens, 200);
@@ -672,40 +513,9 @@ fn read_session_file_repairs_when_no_boundary() {
 }
 
 fn entry_with(last_accessed: Instant) -> SessionEntry {
-    SessionEntry {
-        messages: vec![],
-        last_accessed,
-        chat_pane: None,
-        default_target_pane: None,
-        bg_windows: vec![],
-        last_prompt_tokens: 0,
-        tmux_session: "test".to_string(),
-        last_detach: None,
-        detach_time_utc: None,
-        messages_at_detach: 0,
-        is_ghost: false,
-        ghost_config: None,
-        ghost_bg_prefix: "",
-        ghost_runbook_name: None,
-        started_at: chrono::Utc::now(),
-        turn_count: 0,
-        tool_calls_this_session: 0,
-        active_model: None,
-        last_snapshot_activity: 0,
-        saved_name: None,
-        dirty: false,
-        artifacts_created: vec![],
-        auto_name_suggested: false,
-        ghost_task_message: None,
-        cost_usd: 0.0,
-        loaded_tools: HashSet::new(),
-        cost_by_agent: HashMap::new(),
-        has_untracked_cost: false,
-        token_scale: 1.5,
-        compaction_in_flight: false,
-        pending_compaction_notice: None,
-        turn_inbox: None,
-    }
+    let mut entry = SessionEntry::new_interactive("test");
+    entry.last_accessed = last_accessed;
+    entry
 }
 
 #[test]
@@ -904,7 +714,7 @@ fn record_chat_detach_stamps_only_when_the_entry_exists() {
     });
     record_chat_detach("has-entry", &sessions);
     with_sessions(&sessions, |store| {
-        let entry = store.get("has-entry").unwrap();
+        let entry = store.get("has-entry").unwrap().as_interactive().unwrap();
         assert!(entry.last_detach.is_some(), "detach must be stamped");
         assert!(entry.detach_time_utc.is_some());
         assert_eq!(

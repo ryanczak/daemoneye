@@ -339,8 +339,10 @@ where
                                         entry, &messages,
                                     );
                                     entry.dirty = true;
-                                    if chat_pane.is_some() {
-                                        entry.chat_pane = chat_pane.clone();
+                                    if chat_pane.is_some()
+                                        && let Some(i) = entry.as_interactive_mut()
+                                    {
+                                        i.chat_pane = chat_pane.clone();
                                     }
                                 }
                             });
@@ -399,10 +401,11 @@ where
                                 if let Some(ref id) = session_id
                                     && let Some(entry) = store.get_mut(id)
                                     && entry.saved_name.is_none()
-                                    && !entry.auto_name_suggested
                                     && entry.turn_count == config.sessions.auto_name_turn_threshold
+                                    && let Some(i) = entry.as_interactive_mut()
+                                    && !i.auto_name_suggested
                                 {
-                                    entry.auto_name_suggested = true;
+                                    i.auto_name_suggested = true;
                                     true
                                 } else {
                                     false

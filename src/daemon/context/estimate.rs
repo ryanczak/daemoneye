@@ -99,40 +99,7 @@ mod tests {
 
     #[test]
     fn update_token_scale_converges_and_clamps() {
-        let mut entry = crate::daemon::session::SessionEntry {
-            messages: vec![],
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: vec![],
-            last_prompt_tokens: 0,
-            token_scale: 1.5,
-            tmux_session: "test".to_string(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_runbook_name: None,
-            ghost_bg_prefix: "",
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: vec![],
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        };
+        let mut entry = crate::daemon::session::SessionEntry::new_interactive("test");
 
         // Feed a constant observed/estimated ratio of 2.0 repeatedly.
         // We simulate by setting last_prompt_tokens to 2 * estimated.
@@ -180,40 +147,7 @@ mod tests {
 
     #[test]
     fn update_token_scale_noop_when_no_observation() {
-        let mut entry = crate::daemon::session::SessionEntry {
-            messages: vec![],
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: vec![],
-            last_prompt_tokens: 0,
-            token_scale: 1.5,
-            tmux_session: "test".to_string(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_runbook_name: None,
-            ghost_bg_prefix: "",
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: vec![],
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        };
+        let mut entry = crate::daemon::session::SessionEntry::new_interactive("test");
 
         let original_scale = entry.token_scale;
 

@@ -507,40 +507,7 @@ mod tests {
     }
 
     fn resident_entry() -> SessionEntry {
-        SessionEntry {
-            messages: Vec::new(),
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: Vec::new(),
-            last_prompt_tokens: 0,
-            tmux_session: String::new(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_runbook_name: None,
-            ghost_bg_prefix: "",
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: Vec::new(),
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        }
+        SessionEntry::new_interactive("")
     }
 
     fn insert_resident(sessions: &SessionStore, id: &str) {

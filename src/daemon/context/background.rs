@@ -65,7 +65,7 @@ pub fn spawn_compaction(session_id: String, sessions: SessionStore, config_snaps
 fn try_snapshot(session_id: &str, sessions: &SessionStore) -> Option<CompactionSnapshot> {
     with_sessions(sessions, |store| {
         let entry = store.get_mut(session_id)?;
-        if entry.compaction_in_flight || entry.is_ghost {
+        if entry.compaction_in_flight || entry.is_ghost() {
             return None;
         }
         entry.compaction_in_flight = true;
@@ -339,40 +339,7 @@ mod tests {
     }
 
     fn make_test_entry() -> SessionEntry {
-        SessionEntry {
-            messages: vec![],
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: vec![],
-            last_prompt_tokens: 0,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-            tmux_session: "test".to_string(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_runbook_name: None,
-            ghost_bg_prefix: "",
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: vec![],
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-        }
+        SessionEntry::new_interactive("test")
     }
 
     #[tokio::test(start_paused = true)]

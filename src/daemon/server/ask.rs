@@ -105,22 +105,24 @@ where
             let Some(entry) = store.get_mut(id.as_str()) else {
                 return (0.0, false);
             };
-            entry.chat_pane = chat_pane.clone();
-            entry.tmux_session = session_name.clone();
+            if let Some(i) = entry.as_interactive_mut() {
+                i.chat_pane = chat_pane.clone();
+                i.tmux_session = session_name.clone();
 
-            // Detect pane drift: the client resolved a different target pane
-            // than what was stored. The state is kept so the activity-based
-            // snapshot refresh still keys on the right pane; nothing is sent
-            // to the model — commands run in PTY shells, not in a pane.
-            match (&entry.default_target_pane, &client_target_pane) {
-                (Some(old), Some(new)) if old != new => {
-                    entry.default_target_pane = Some(new.clone());
-                }
-                (None, Some(new)) => {
-                    entry.default_target_pane = Some(new.clone());
-                }
-                _ => {}
-            };
+                // Detect pane drift: the client resolved a different target pane
+                // than what was stored. The state is kept so the activity-based
+                // snapshot refresh still keys on the right pane; nothing is sent
+                // to the model — commands run in PTY shells, not in a pane.
+                match (&i.default_target_pane, &client_target_pane) {
+                    (Some(old), Some(new)) if old != new => {
+                        i.default_target_pane = Some(new.clone());
+                    }
+                    (None, Some(new)) => {
+                        i.default_target_pane = Some(new.clone());
+                    }
+                    _ => {}
+                };
+            }
 
             let cost_usd = entry.cost_usd;
             let has_untracked = entry.has_untracked_cost;
@@ -365,7 +367,7 @@ where
     // enforced in ghost.rs via max_ghost_turns — this check is skipped for them.
     let is_ghost_session = session_id
         .as_ref()
-        .and_then(|id| with_sessions(sessions, |store| store.get(id).map(|e| e.is_ghost)))
+        .and_then(|id| with_sessions(sessions, |store| store.get(id).map(|e| e.is_ghost())))
         .unwrap_or(false);
     if !is_ghost_session
         && let Some(turn_limit) = crate::config::LimitsConfig::cap_usize(config.limits.max_turns)
@@ -387,9 +389,11 @@ where
     // Read the default target pane for this session so the activity-based
     // snapshot refresh keys on the pane whose activity matters. Nothing is
     // sent to the model — commands run in PTY shells, not in a pane.
-    let default_target_pane: Option<String> = session_id
-        .as_ref()
-        .and_then(|id| with_sessions(sessions, |store| store.get(id)?.default_target_pane.clone()));
+    let default_target_pane: Option<String> = session_id.as_ref().and_then(|id| {
+        with_sessions(sessions, |store| {
+            store.get(id)?.default_target_pane().map(str::to_string)
+        })
+    });
 
     // Activity-based snapshot refresh: compare the foreground pane's current
     // last_activity timestamp against the value recorded when we last injected a
@@ -410,7 +414,10 @@ where
         .as_ref()
         .and_then(|id| {
             with_sessions(sessions, |store| {
-                store.get(id).map(|e| e.last_snapshot_activity)
+                store
+                    .get(id)
+                    .and_then(|e| e.as_interactive())
+                    .map(|i| i.last_snapshot_activity)
             })
         })
         .unwrap_or(0);
@@ -423,8 +430,8 @@ where
         && let Some(ref id) = session_id
     {
         with_sessions(sessions, |store| {
-            if let Some(entry) = store.get_mut(id) {
-                entry.last_snapshot_activity = pane_activity;
+            if let Some(i) = store.get_mut(id).and_then(|e| e.as_interactive_mut()) {
+                i.last_snapshot_activity = pane_activity;
             }
         });
     }
@@ -433,22 +440,13 @@ where
     // to daemon ceiling; 0 = use the ceiling).  Returns None for regular chat.
     let ghost_turn_limit: Option<usize> = session_id.as_ref().and_then(|id| {
         with_sessions(sessions, |store| {
-            let entry = store.get(id)?;
-            if !entry.is_ghost {
-                return None;
-            }
+            let g = store.get(id)?.as_ghost()?;
             let ceiling = config.ghost.max_ghost_turns;
-            let limit = entry
-                .ghost_config
-                .as_ref()
-                .map(|gc| {
-                    if gc.max_ghost_turns > 0 {
-                        gc.max_ghost_turns.min(ceiling)
-                    } else {
-                        ceiling
-                    }
-                })
-                .unwrap_or(ceiling);
+            let limit = if g.config.max_ghost_turns > 0 {
+                g.config.max_ghost_turns.min(ceiling)
+            } else {
+                ceiling
+            };
             Some(limit)
         })
     });
@@ -465,23 +463,16 @@ where
         .and_then(|id| {
             with_sessions(sessions, |store| {
                 let entry = store.get(id)?;
-                let ghost = entry.is_ghost;
-                let (policy, agent) = if ghost {
-                    (
-                        entry
-                            .ghost_config
-                            .as_ref()
-                            .and_then(|gc| gc.tool_policy.clone()),
-                        entry.ghost_config.as_ref().and_then(|gc| gc.agent.clone()),
-                    )
+                if let Some(g) = entry.as_ghost() {
+                    Some((
+                        g.config.tool_policy.clone(),
+                        g.config.agent.clone(),
+                        true,
+                        g.config.parent_job_id.clone(),
+                    ))
                 } else {
-                    (None, None)
-                };
-                let parent = entry
-                    .ghost_config
-                    .as_ref()
-                    .and_then(|gc| gc.parent_job_id.clone());
-                Some((policy, agent, ghost, parent))
+                    Some((None, None, false, None))
+                }
             })
         })
         .unwrap_or((None, None, false, None));

@@ -1770,7 +1770,7 @@ mod tests {
             "prompt.rs keeps its live caller"
         );
         assert!(
-            !include_str!("../../executor/foreground.rs").contains("get_pane_remote_host"),
+            !include_str!("../../executor/ghost_exec.rs").contains("get_pane_remote_host"),
             "the tmux foreground caller was deleted in M27 phase 05"
         );
         let helper = include_str!("../../utils/host.rs");

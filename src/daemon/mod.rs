@@ -52,20 +52,20 @@ pub use startup::run_daemon;
 pub const DAEMON_WINDOW_PREFIX: &str = "de-";
 /// Window-name prefix for background execution windows.
 /// Format: `de-bg-<pane_num>-<unix_ts>-<cmd_slug>`, e.g. `de-bg-42-1712937600-cargo-build`.
-pub const BG_WINDOW_PREFIX: &str = "de-bg-";
+const BG_WINDOW_PREFIX: &str = "de-bg-";
 /// Window-name prefix for regular scheduled-job windows.
 /// Format: `de-sj-<pane_num>-<unix_ts>-<cmd_slug>`, e.g. `de-sj-43-1712937600-backup.sh`.
-pub const SCHED_WINDOW_PREFIX: &str = "de-sj-";
+const SCHED_WINDOW_PREFIX: &str = "de-sj-";
 /// Window-name prefix for ghost-shell background execution windows.
 /// Format: `de-gs-bg-<pane_num>-<unix_ts>-<cmd_slug>`.
 /// Used when a ghost is triggered by a webhook or interactive `spawn_ghost_shell`.
-pub const GS_BG_WINDOW_PREFIX: &str = "de-gs-bg-";
+const GS_BG_WINDOW_PREFIX: &str = "de-gs-bg-";
 /// Window-name prefix for ghost-shell scheduled-job windows.
 /// Format: `de-gs-sj-<pane_num>-<unix_ts>-<cmd_slug>`.
 /// Used when a ghost is triggered by a scheduled job (`ActionOn::Ghost`).
-pub const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
+const GS_SCHED_WINDOW_PREFIX: &str = "de-gs-sj-";
 /// Window-name prefix for ghost-shell incident-response (main session) windows (`de-gs-ir-<ts>-<id>`).
-pub const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
+const INCIDENT_WINDOW_PREFIX: &str = "de-gs-ir-";
 
 /// True when `window_name` is a window this daemon created and manages.
 ///
@@ -114,6 +114,7 @@ pub fn is_targetable_pane(window_name: &str, pane_id: &str, chat_pane: Option<&s
     !is_daemon_window(window_name) && chat_pane != Some(pane_id) // never target the chat pane
 }
 
+pub use ghost::GhostTrigger;
 pub use scheduled::run_scheduled_job;
 pub use server::handle_alert_list;
 pub use server::handle_chat_attach;

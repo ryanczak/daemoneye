@@ -347,7 +347,7 @@ async fn run_scheduled_job_inner(
                     &rb,
                     &merged_config,
                     &alert_msg,
-                    crate::daemon::GS_SCHED_WINDOW_PREFIX,
+                    crate::daemon::GhostTrigger::Scheduled,
                     config.approvals.ghost_commands,
                 )
                 .await

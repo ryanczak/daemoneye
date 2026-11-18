@@ -56,9 +56,9 @@ where
 
             // The PTY shell substrate, the only substrate, for a **ghost**:
             // its remote-host, sandboxed and local PTY branches each live in
-            // `foreground::run_background`, and a ghost that fits none of
+            // `ghost_exec::run_background`, and a ghost that fits none of
             // them gets the refusal tail naming the missing route.
-            foreground::run_background(
+            ghost_exec::run_background(
                 id,
                 cmd,
                 host.as_deref(),

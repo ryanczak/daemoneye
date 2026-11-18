@@ -59,17 +59,7 @@ pub struct CostAttribution {
 
 impl CostAttribution {
     /// Build attribution from a ghost shell config.
-    ///
-    /// When `ghost_config` is `None` (should not happen in the ghost path),
-    /// falls back to `"ghost-anonymous"` with no parent.
-    pub fn from_ghost_config(ghost_config: Option<&crate::ipc::GhostConfig>) -> Self {
-        let Some(gc) = ghost_config else {
-            return CostAttribution {
-                agent_name: "ghost-anonymous".to_string(),
-                is_ghost: true,
-                parent_job_id: None,
-            };
-        };
+    pub fn from_ghost_config(gc: &crate::ipc::GhostConfig) -> Self {
         CostAttribution {
             agent_name: gc
                 .agent

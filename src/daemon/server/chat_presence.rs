@@ -25,14 +25,14 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 /// before a daemon restart re-attaches resident and reads the same branch.
 pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Option<String> {
     with_sessions(sessions, |store| {
-        let entry = store.get_mut(session_id)?;
-        let brief = entry.last_detach.and_then(|detach| {
+        let i = store.get_mut(session_id)?.as_interactive_mut()?;
+        let brief = i.last_detach.and_then(|detach| {
             let away_secs = detach.elapsed().as_secs();
-            build_catchup_brief(session_id, away_secs, entry.detach_time_utc)
+            build_catchup_brief(session_id, away_secs, i.detach_time_utc)
         });
-        entry.last_detach = None;
-        entry.detach_time_utc = None;
-        entry.messages_at_detach = 0;
+        i.last_detach = None;
+        i.detach_time_utc = None;
+        i.messages_at_detach = 0;
         brief
     })
 }
@@ -203,47 +203,15 @@ mod tests {
         presence_count,
     };
     use std::collections::HashMap;
-    use std::collections::HashSet;
     use std::io::Write;
     use std::sync::Mutex;
     use std::time::Instant;
     use tokio::io::AsyncWriteExt;
 
     fn entry(messages: Vec<Message>) -> SessionEntry {
-        SessionEntry {
-            messages,
-            last_accessed: Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: Vec::new(),
-            last_prompt_tokens: 0,
-            tmux_session: "test".to_string(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_bg_prefix: "",
-            ghost_runbook_name: None,
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: Vec::new(),
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        }
+        let mut e = SessionEntry::new_interactive("test");
+        e.messages = messages;
+        e
     }
 
     fn msg(content: &str) -> Message {
@@ -450,7 +418,7 @@ mod tests {
         close(&mut client_w, task).await;
 
         with_sessions(&sessions, |store| {
-            let e = store.get("s1").unwrap();
+            let e = store.get("s1").unwrap().as_interactive().unwrap();
             assert!(e.last_detach.is_some(), "the close stamps last_detach");
             assert!(e.detach_time_utc.is_some());
             assert_eq!(
@@ -581,7 +549,7 @@ mod tests {
         assert_eq!(presence_count("s2"), 2, "two clients attached");
         close(&mut client1, task1).await;
         with_sessions(&sessions, |store| {
-            let e = store.get("s2").unwrap();
+            let e = store.get("s2").unwrap().as_interactive().unwrap();
             assert!(
                 e.last_detach.is_none(),
                 "one of two still attached → no detach stamp"
@@ -590,7 +558,7 @@ mod tests {
 
         close(&mut client2, task2).await;
         with_sessions(&sessions, |store| {
-            let e = store.get("s2").unwrap();
+            let e = store.get("s2").unwrap().as_interactive().unwrap();
             assert!(e.last_detach.is_some(), "the last close stamps the detach");
             assert_eq!(e.messages_at_detach, 1);
         });
@@ -606,16 +574,22 @@ mod tests {
                 msg("user question"),
                 msg("[Background Task Completed] apt upgrade finished (exit 0)"),
             ]);
-            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
-            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
-            e.messages_at_detach = 1;
+            let i = e.as_interactive_mut().unwrap();
+            i.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            i.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+            i.messages_at_detach = 1;
             store.insert("s3".to_string(), e);
         });
 
         // The brief reads the journal, not the history: journal a notice
         // inside the detach window so the brief has something to list.
         let detach = with_sessions(&sessions, |store| {
-            store.get("s3").expect("the entry").detach_time_utc
+            store
+                .get("s3")
+                .expect("the entry")
+                .as_interactive()
+                .unwrap()
+                .detach_time_utc
         })
         .expect("the detach stamp");
         let bg = crate::bus::Notice::new(
@@ -645,7 +619,7 @@ mod tests {
         }
         // Cleared by the attach itself — before the close below re-stamps it.
         with_sessions(&sessions, |store| {
-            let e = store.get("s3").unwrap();
+            let e = store.get("s3").unwrap().as_interactive().unwrap();
             assert!(
                 e.last_detach.is_none(),
                 "detach state cleared after the brief"
@@ -665,9 +639,10 @@ mod tests {
                 msg("user question"),
                 msg("[Background Task Completed] apt upgrade finished (exit 0)"),
             ]);
-            e.last_detach = Some(Instant::now());
-            e.detach_time_utc = Some(chrono::Utc::now());
-            e.messages_at_detach = 1;
+            let i = e.as_interactive_mut().unwrap();
+            i.last_detach = Some(Instant::now());
+            i.detach_time_utc = Some(chrono::Utc::now());
+            i.messages_at_detach = 1;
             store.insert("s4".to_string(), e);
         });
 
@@ -679,7 +654,7 @@ mod tests {
         );
         // Cleared by the attach itself — before the close below re-stamps it.
         with_sessions(&sessions, |store| {
-            let e = store.get("s4").unwrap();
+            let e = store.get("s4").unwrap().as_interactive().unwrap();
             assert!(
                 e.last_detach.is_none(),
                 "state cleared even when no brief was produced"
@@ -727,7 +702,7 @@ mod tests {
             "an I/O error during the hold must unregister the connection"
         );
         with_sessions(&sessions, |store| {
-            let e = store.get("s-io").unwrap();
+            let e = store.get("s-io").unwrap().as_interactive().unwrap();
             assert!(
                 e.last_detach.is_some(),
                 "an I/O error on the last connection stamps last_detach"
@@ -760,12 +735,21 @@ mod tests {
         // Backdate the detach 60 s — the detach must look ≥ 30 s away — and
         // journal the alert inside the window it names.
         with_sessions(&sessions, |store| {
-            let entry = store.get_mut("away-1").unwrap();
+            let entry = store
+                .get_mut("away-1")
+                .unwrap()
+                .as_interactive_mut()
+                .unwrap();
             entry.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
             entry.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
         });
         let detach = with_sessions(&sessions, |store| {
-            store.get("away-1").unwrap().detach_time_utc
+            store
+                .get("away-1")
+                .unwrap()
+                .as_interactive()
+                .unwrap()
+                .detach_time_utc
         })
         .expect("the detach stamp");
         let alert = alert_notice("disk-high", "[Webhook Alert] disk usage at 95%");
@@ -785,7 +769,7 @@ mod tests {
         );
 
         with_sessions(&sessions, |store| {
-            let entry = store.get("away-1").unwrap();
+            let entry = store.get("away-1").unwrap().as_interactive().unwrap();
             assert!(
                 entry.last_detach.is_none(),
                 "the attach clears the detach state"
@@ -849,7 +833,11 @@ mod tests {
         // Backdate the detach 60 s — the detach must look ≥ 30 s away — and
         // journal the alert inside the window it names.
         with_sessions(&sessions, |store| {
-            let e = store.get_mut(sid).expect("the resident entry");
+            let e = store
+                .get_mut(sid)
+                .expect("the resident entry")
+                .as_interactive_mut()
+                .unwrap();
             assert_eq!(
                 e.messages_at_detach, 1,
                 "one message was in the history at detach"
@@ -858,7 +846,12 @@ mod tests {
             e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
         });
         let detach = with_sessions(&sessions, |store| {
-            store.get(sid).expect("the resident entry").detach_time_utc
+            store
+                .get(sid)
+                .expect("the resident entry")
+                .as_interactive()
+                .unwrap()
+                .detach_time_utc
         })
         .expect("the detach stamp");
         let alert = alert_notice("disk-high", "[Webhook Alert] disk usage at 95%");
@@ -979,7 +972,11 @@ mod tests {
         );
         record_chat_detach(sid, &sessions);
         with_sessions(&sessions, |store| {
-            let e = store.get(sid).expect("the entry survives the detach stamp");
+            let e = store
+                .get(sid)
+                .expect("the entry survives the detach stamp")
+                .as_interactive()
+                .unwrap();
             assert_eq!(
                 e.messages_at_detach, 1,
                 "one message was in the history at detach"
@@ -988,7 +985,11 @@ mod tests {
 
         // Backdate the detach 60 s — the detach must look ≥ 30 s away.
         with_sessions(&sessions, |store| {
-            let e = store.get_mut(sid).expect("the resident entry");
+            let e = store
+                .get_mut(sid)
+                .expect("the resident entry")
+                .as_interactive_mut()
+                .unwrap();
             e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
             e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
         });
@@ -996,7 +997,12 @@ mod tests {
         // The alert arrives after the chat left, while it is still resident:
         // it is journaled inside the detach window the brief reads.
         let detach = with_sessions(&sessions, |store| {
-            store.get(sid).expect("the resident entry").detach_time_utc
+            store
+                .get(sid)
+                .expect("the resident entry")
+                .as_interactive()
+                .unwrap()
+                .detach_time_utc
         })
         .expect("the detach stamp");
         let alert = alert_notice("LiveTicks", "[Webhook Alert] LiveTicks: ticks resumed");
@@ -1107,7 +1113,11 @@ mod tests {
         // Backdate the detach 60 s — the detach must look ≥ 30 s away.
         let detach = chrono::Utc::now() - chrono::Duration::seconds(60);
         with_sessions(&sessions, |store| {
-            let e = store.get_mut(sid).expect("the resident entry");
+            let e = store
+                .get_mut(sid)
+                .expect("the resident entry")
+                .as_interactive_mut()
+                .unwrap();
             e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
             e.detach_time_utc = Some(detach);
         });
@@ -1244,9 +1254,10 @@ mod tests {
                 msg("user question"),
                 msg("[Background Task Completed] apt upgrade finished (exit 0)"),
             ]);
-            e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
-            e.detach_time_utc = Some(from + chrono::Duration::minutes(30));
-            e.messages_at_detach = 1;
+            let i = e.as_interactive_mut().unwrap();
+            i.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            i.detach_time_utc = Some(from + chrono::Duration::minutes(30));
+            i.messages_at_detach = 1;
             store.insert("away-1".to_string(), e);
         });
         // The brief lists what the journal holds for the detach window:

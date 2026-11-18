@@ -150,9 +150,12 @@ where
         return Ok(());
     }
     with_sessions(sessions, |store| {
-        if let Some(entry) = store.get_mut(&session_id) {
-            entry.default_target_pane = Some(pane_id.clone());
-            crate::pane_prefs::save(&entry.tmux_session, &pane_id);
+        if let Some(i) = store
+            .get_mut(&session_id)
+            .and_then(|e| e.as_interactive_mut())
+        {
+            i.default_target_pane = Some(pane_id.clone());
+            crate::pane_prefs::save(&i.tmux_session, &pane_id);
         }
     });
     let (cmd, window) = {
@@ -190,8 +193,8 @@ where
     let (current_target, chat_pane_id) = with_sessions(sessions, |store| {
         let entry = store.get(&session_id);
         (
-            entry.and_then(|e| e.default_target_pane.clone()),
-            entry.and_then(|e| e.chat_pane.clone()),
+            entry.and_then(|e| e.default_target_pane().map(str::to_string)),
+            entry.and_then(|e| e.chat_pane().map(str::to_string)),
         )
     });
     // Phase 1 (locked): snapshot the candidates. No blocking work under the
@@ -307,7 +310,7 @@ where
                 store.values().map(|s| s.turn_count).sum::<usize>(),
                 store
                     .values()
-                    .filter(|s| !s.is_ghost)
+                    .filter(|s| !s.is_ghost())
                     .max_by_key(|s| s.last_accessed)
                     .and_then(|s| s.active_model.clone()),
             )
@@ -457,20 +460,16 @@ where
                     store
                         .values()
                         .filter_map(|entry| {
-                            if let Some(ref gc) = entry.ghost_config
-                                && let Some(ref agent_name) = gc.agent
-                            {
-                                let job_id = entry
-                                    .ghost_task_message
-                                    .as_deref()
-                                    .unwrap_or("unknown")
-                                    .chars()
-                                    .take(40)
-                                    .collect();
-                                Some((agent_name.clone(), job_id))
-                            } else {
-                                None
-                            }
+                            let g = entry.as_ghost()?;
+                            let agent_name = g.config.agent.as_ref()?;
+                            let job_id = g
+                                .task_message
+                                .as_deref()
+                                .unwrap_or("unknown")
+                                .chars()
+                                .take(40)
+                                .collect();
+                            Some((agent_name.clone(), job_id))
                         })
                         .collect()
                 });
@@ -621,7 +620,7 @@ where
         &rb,
         &merged,
         &plan.seed,
-        crate::daemon::GS_BG_WINDOW_PREFIX,
+        crate::daemon::GhostTrigger::Interactive,
         config.approvals.ghost_commands,
     )
     .await

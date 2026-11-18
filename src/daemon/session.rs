@@ -6,119 +6,109 @@ use crate::ai::Message;
 use crate::ipc::Response;
 use crate::util::UnpoisonExt;
 
-/// Metadata for a background tmux window spawned during a chat session.
-pub struct BgWindowInfo {
-    /// tmux pane ID (e.g. `%7`) — the background window's foreground target.
-    pub pane_id: String,
-    /// Full tmux window name (e.g. `de-bg-42-1712937600-cargo-build`).
-    pub window_name: String,
-    /// The tmux session the window belongs to (needed to kill it on eviction).
-    pub tmux_session: String,
-    /// `None` while still running; `Some(code)` after the pane exits.
-    pub exit_code: Option<i32>,
+/// What triggered an autonomous Ghost Shell run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GhostTrigger {
+    #[default]
+    Webhook,
+    Scheduled,
+    Interactive,
+    Delegated,
 }
 
-/// In-memory record of an active chat session.
-/// Evicted by the cleanup task after 30 minutes of inactivity.
+impl GhostTrigger {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GhostTrigger::Webhook => "webhook",
+            GhostTrigger::Scheduled => "scheduled",
+            GhostTrigger::Interactive => "interactive",
+            GhostTrigger::Delegated => "delegated",
+        }
+    }
+}
+
+/// Mode-specific state for an interactive chat session.
+#[derive(Debug, Clone, Default)]
+pub struct InteractiveSession {
+    /// The tmux pane where the chat is occurring.
+    pub chat_pane: Option<String>,
+    /// User-selected default pane for foreground execution when the AI doesn't specify one.
+    pub default_target_pane: Option<String>,
+    /// The tmux session name this AI session is attached to.
+    pub tmux_session: String,
+    /// When the tmux client last detached from this session (`client-detached` hook, N15).
+    pub last_detach: Option<Instant>,
+    /// UTC wall-clock time of the last detach.
+    pub detach_time_utc: Option<chrono::DateTime<chrono::Utc>>,
+    /// Number of messages in `messages` at the time of `last_detach`.
+    pub messages_at_detach: usize,
+    /// Unix timestamp (`#{pane_activity}`) when a terminal snapshot was last injected.
+    pub last_snapshot_activity: u64,
+    /// True after the auto-name suggestion has been sent once this session.
+    pub auto_name_suggested: bool,
+}
+
+/// Mode-specific state for an autonomous Ghost Shell session.
+#[derive(Debug, Clone)]
+pub struct GhostSession {
+    /// Settings for autonomous execution (always present on a ghost session).
+    pub config: crate::ipc::GhostConfig,
+    /// Name of the runbook this ghost shell follows.
+    pub runbook_name: String,
+    /// What triggered this ghost session.
+    pub trigger: GhostTrigger,
+    /// Task description passed to `spawn_ghost_shell` when this ghost was spawned.
+    pub task_message: Option<String>,
+}
+
+/// Discriminates an interactive chat session from an autonomous Ghost Shell.
+#[derive(Debug, Clone)]
+pub enum SessionMode {
+    Interactive(InteractiveSession),
+    Ghost(GhostSession),
+}
+
+/// In-memory record of an active chat or Ghost Shell session (evicted after 30m idle).
 pub struct SessionEntry {
-    /// Full message history for this session. Bounded by token-budget
-    /// compaction rather than a fixed message count.
+    /// Full message history for this session (bounded by token-budget compaction).
     pub messages: Vec<Message>,
     /// Wall-clock time of the last `Ask` request; used to prune idle sessions.
     pub last_accessed: Instant,
-    /// The tmux pane where the chat is occurring.
-    pub chat_pane: Option<String>,
-    /// A user-selected default pane for foreground execution when the AI doesn't specify one.
-    pub default_target_pane: Option<String>,
-    /// Background windows spawned during this session (capped at `MAX_BG_WINDOWS_PER_SESSION`).
-    pub bg_windows: Vec<BgWindowInfo>,
-    /// Prompt token count from the most recent AI turn — represents current context pressure.
-    /// Updated after every `AiEvent::Done`; sent to the client as `Response::UsageUpdate`.
+    /// Prompt token count from the most recent AI turn (`Response::UsageUpdate`).
     pub last_prompt_tokens: u32,
-    /// The tmux session name this AI session is attached to.
-    /// Used to correlate client-detached / client-attached hook events (N15).
-    pub tmux_session: String,
-    /// When the tmux client last detached from this session (`client-detached` hook, N15).
-    /// `None` while a client is attached or before any detach has been observed.
-    pub last_detach: Option<Instant>,
-    /// UTC wall-clock time of the last detach. Used to query `events.jsonl` for
-    /// cost incurred during the detach window (Phase 7).
-    pub detach_time_utc: Option<chrono::DateTime<chrono::Utc>>,
-    /// Number of messages in `messages` at the time of `last_detach`.
-    /// Used to identify messages injected while no client was present (N15).
-    pub messages_at_detach: usize,
-    /// True if this session is autonomous (no attached human user).
-    pub is_ghost: bool,
-    /// Settings for autonomous execution (inherited from the triggering runbook).
-    pub ghost_config: Option<crate::ipc::GhostConfig>,
-    /// Name of the runbook this ghost shell follows. `None` for chat
-    /// sessions. Names the run in `RunKind::Ghost { runbook, .. }`.
-    pub ghost_runbook_name: Option<String>,
-    /// Window-name prefix to use for background command windows spawned by this ghost session.
-    /// Defaults to `GS_BG_WINDOW_PREFIX`; set to `GS_SCHED_WINDOW_PREFIX` for scheduler-
-    /// originated ghosts so their windows are visually distinct.
-    pub ghost_bg_prefix: &'static str,
-    /// Wall-clock time when this session was created. Used by the session digest
-    /// to filter events and detect artifacts created during this session.
+    /// Wall-clock time when this session was created.
     pub started_at: chrono::DateTime<chrono::Utc>,
-    /// Number of user-visible turns completed in this session.  Incremented on
-    /// every Ask and never reset by compaction — used by the client to display
-    /// a stable, ever-increasing turn counter.
+    /// Number of user-visible turns completed in this session (never reset by compaction).
     pub turn_count: usize,
-    /// Cumulative number of non-approval-gated tool calls executed across all
-    /// turns in this session.  Checked against `config.limits.max_tool_calls_per_session`.
+    /// Cumulative number of non-approval-gated tool calls executed across all turns.
     pub tool_calls_this_session: usize,
-    /// Session-level model override set by `/model` slash command.
-    /// `None` means use the daemon default (`[models.default]` from config).
+    /// Session-level model override set by `/model` (`None` = daemon default).
     pub active_model: Option<String>,
-    /// Unix timestamp (`#{pane_activity}`) of the foreground pane when a terminal
-    /// snapshot was last injected into the prompt (first turn or auto-refresh).
-    /// On the next turn, if the foreground pane's `last_activity` has advanced past
-    /// this value the daemon automatically injects a fresh snapshot without requiring
-    /// a `get_shell_context` tool call.
-    pub last_snapshot_activity: u64,
-    /// Name of the saved session this entry is associated with.
-    /// `None` for ephemeral sessions that have not been saved.
+    /// Name of the saved session (`None` for unsaved ephemeral sessions).
     pub saved_name: Option<String>,
     /// True if messages have been added since the last save or load.
-    /// Guards `/session load` against discarding unsaved work.
     pub dirty: bool,
-    /// Deferred tool names that have been loaded into this session via `load_tools`.
-    /// When non-empty, those tools' schemas are included in the next AI render.
+    /// Deferred tool names loaded into this session via `load_tools`.
     pub loaded_tools: HashSet<String>,
     /// Artifacts (memories, runbooks, scripts) created during this session.
-    /// Used for retroactive `session_origin` frontmatter backfill on save (Phase 3).
     pub artifacts_created: Vec<crate::session_store::ArtifactRef>,
-    /// True after the auto-name suggestion has been sent once this session.
-    /// Prevents repeated suggestions if the user ignores the first one.
-    pub auto_name_suggested: bool,
-    /// Task description passed to `spawn_ghost_shell` when this ghost was spawned.
-    /// Used in mailbox results so the coordinator sees what the child was asked to do.
-    pub ghost_task_message: Option<String>,
     /// Cumulative cost of this session so far. Reset on /clear or new session.
     pub cost_usd: f64,
     /// Per-agent breakdown for this session (key = agent_name).
     pub cost_by_agent: HashMap<String, f64>,
     /// Whether any AI call in this session had Unknown pricing.
     pub has_untracked_cost: bool,
-    /// Multiplier mapping estimated history tokens to observed prompt tokens
-    /// (absorbs system prompt, tool schemas, provider framing). EMA-smoothed;
-    /// clamped to [0.5, 4.0]. Starts at 1.5 (history is typically smaller than
-    /// the full prompt).
+    /// EMA-smoothed multiplier mapping estimated history tokens to observed prompt tokens.
     pub token_scale: f64,
     /// True while a background compaction task for this session is running.
-    /// Prevents duplicate spawns; cleared by the task on completion/discard.
     pub compaction_in_flight: bool,
-    /// Notice queued by a completed background compaction, delivered as a
-    /// SystemMsg at the start of the next turn.
+    /// Notice queued by a completed background compaction for the next turn.
     pub pending_compaction_notice: Option<String>,
-    /// Events pushed onto this session while a turn was in flight:
-    /// `Some(vec![])` from `begin_turn` until `finish_turn`, holding the
-    /// messages `push_event` appended in that window. A turn's write-back
-    /// (`finish_turn`) appends them after the turn's own messages instead of
-    /// dropping them, and cannot recover them by position because a
-    /// background compaction may have replaced `messages` mid-turn.
+    /// Events pushed onto this session while a turn was in flight (`begin_turn`..`finish_turn`).
     pub turn_inbox: Option<Vec<Message>>,
+    /// Mode-specific state: interactive chat vs. autonomous Ghost Shell.
+    pub mode: SessionMode,
 }
 
 /// Shared registry of live sessions.
@@ -308,25 +298,14 @@ pub fn record_chat_detach(session_id: &str, sessions: &SessionStore) {
     let now_utc = chrono::Utc::now();
     with_sessions(sessions, |store| {
         if let Some(entry) = store.get_mut(session_id) {
-            entry.last_detach = Some(now);
-            entry.detach_time_utc = Some(now_utc);
-            entry.messages_at_detach = entry.messages.len();
+            let msg_len = entry.messages.len();
+            if let Some(i) = entry.as_interactive_mut() {
+                i.last_detach = Some(now);
+                i.detach_time_utc = Some(now_utc);
+                i.messages_at_detach = msg_len;
+            }
         }
     })
-}
-
-/// Broadcast channel for background command completion via IPC.
-/// Carries `(pane_id, exit_code)` delivered directly by the command wrapper.
-pub static COMPLETE_TX: std::sync::OnceLock<tokio::sync::broadcast::Sender<(String, i32)>> =
-    std::sync::OnceLock::new();
-
-pub fn complete_subscribe() -> tokio::sync::broadcast::Receiver<(String, i32)> {
-    COMPLETE_TX
-        .get_or_init(|| {
-            let (tx, _) = tokio::sync::broadcast::channel(32);
-            tx
-        })
-        .subscribe()
 }
 
 /// Path to the JSONL file storing a session's message history.
@@ -574,6 +553,100 @@ pub fn read_session_file(id: &str, cap: Option<usize>) -> Vec<Message> {
 }
 
 impl SessionEntry {
+    /// Construct a fresh interactive chat session attached to `tmux_session`.
+    pub fn new_interactive(tmux_session: impl Into<String>) -> Self {
+        Self {
+            messages: Vec::new(),
+            last_accessed: Instant::now(),
+            last_prompt_tokens: 0,
+            started_at: chrono::Utc::now(),
+            turn_count: 0,
+            tool_calls_this_session: 0,
+            active_model: None,
+            saved_name: None,
+            dirty: false,
+            loaded_tools: HashSet::new(),
+            artifacts_created: Vec::new(),
+            cost_usd: 0.0,
+            cost_by_agent: HashMap::new(),
+            has_untracked_cost: false,
+            token_scale: 1.5,
+            compaction_in_flight: false,
+            pending_compaction_notice: None,
+            turn_inbox: None,
+            mode: SessionMode::Interactive(InteractiveSession {
+                tmux_session: tmux_session.into(),
+                ..InteractiveSession::default()
+            }),
+        }
+    }
+
+    /// Construct a fresh autonomous Ghost Shell session.
+    pub fn new_ghost(
+        runbook_name: impl Into<String>,
+        config: crate::ipc::GhostConfig,
+        trigger: GhostTrigger,
+        messages: Vec<Message>,
+    ) -> Self {
+        let active_model = config.model.clone();
+        Self {
+            messages,
+            active_model,
+            mode: SessionMode::Ghost(GhostSession {
+                config,
+                runbook_name: runbook_name.into(),
+                trigger,
+                task_message: None,
+            }),
+            ..Self::new_interactive(String::new())
+        }
+    }
+
+    pub fn is_ghost(&self) -> bool {
+        matches!(self.mode, SessionMode::Ghost(_))
+    }
+
+    pub fn as_interactive(&self) -> Option<&InteractiveSession> {
+        match &self.mode {
+            SessionMode::Interactive(i) => Some(i),
+            SessionMode::Ghost(_) => None,
+        }
+    }
+
+    pub fn as_interactive_mut(&mut self) -> Option<&mut InteractiveSession> {
+        match &mut self.mode {
+            SessionMode::Interactive(i) => Some(i),
+            SessionMode::Ghost(_) => None,
+        }
+    }
+
+    pub fn as_ghost(&self) -> Option<&GhostSession> {
+        match &self.mode {
+            SessionMode::Ghost(g) => Some(g),
+            SessionMode::Interactive(_) => None,
+        }
+    }
+
+    pub fn as_ghost_mut(&mut self) -> Option<&mut GhostSession> {
+        match &mut self.mode {
+            SessionMode::Ghost(g) => Some(g),
+            SessionMode::Interactive(_) => None,
+        }
+    }
+
+    pub fn ghost_config(&self) -> Option<&crate::ipc::GhostConfig> {
+        self.as_ghost().map(|g| &g.config)
+    }
+
+    pub fn chat_pane(&self) -> Option<&str> {
+        self.as_interactive().and_then(|i| i.chat_pane.as_deref())
+    }
+
+    pub fn default_target_pane(&self) -> Option<&str> {
+        self.as_interactive()
+            .and_then(|i| i.default_target_pane.as_deref())
+    }
+
     pub fn last_accessed(&self) -> std::time::Instant {
         self.last_accessed
     }
@@ -585,59 +658,17 @@ impl SessionEntry {
     /// `handle_ask`'s upsert and the presence attach both go through it, so
     /// the two creation sites cannot drift (M29 phase 05).
     pub fn from_disk(id: &str) -> SessionEntry {
-        let meta = read_session_meta(id);
-        let (
-            started_at,
-            turn_count,
-            last_prompt_tokens,
-            tool_calls_this_session,
-            token_scale,
-            saved_name,
-        ) = match &meta {
-            Some(m) => (
-                m.started_at,
-                m.turn_count,
-                m.last_prompt_tokens,
-                m.tool_calls_this_session,
-                m.token_scale,
-                m.saved_name.clone(),
-            ),
-            None => (chrono::Utc::now(), 0, 0, 0, 1.5, None),
-        };
-        SessionEntry {
-            messages: read_session_file(id, None),
-            last_accessed: Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: Vec::new(),
-            last_prompt_tokens,
-            tmux_session: String::new(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_runbook_name: None,
-            ghost_bg_prefix: crate::daemon::GS_BG_WINDOW_PREFIX,
-            started_at,
-            turn_count,
-            tool_calls_this_session,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name,
-            dirty: false,
-            artifacts_created: Vec::new(),
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: HashMap::new(),
-            has_untracked_cost: false,
-            token_scale,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
+        let mut entry = Self::new_interactive(String::new());
+        entry.messages = read_session_file(id, None);
+        if let Some(m) = read_session_meta(id) {
+            entry.started_at = m.started_at;
+            entry.turn_count = m.turn_count;
+            entry.last_prompt_tokens = m.last_prompt_tokens;
+            entry.tool_calls_this_session = m.tool_calls_this_session;
+            entry.token_scale = m.token_scale;
+            entry.saved_name = m.saved_name;
         }
+        entry
     }
 
     /// Mark a turn as in flight: events pushed until `finish_turn` land in

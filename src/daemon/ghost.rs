@@ -5,7 +5,6 @@ use tokio::io::BufReader;
 
 use crate::ai::{AiEvent, Message, PendingCall, ToolResult, make_client};
 use crate::config::{Config, PricingSource, load_named_prompt};
-use crate::daemon::GS_SCHED_WINDOW_PREFIX;
 use crate::daemon::run::{
     Briefing, Budget, BudgetDimension, RunId, RunKind, RunLogGuard, RunMetrics, RunState,
     TurnLogEvent, TurnLogRecord, append_turn_event, emit_turn_started,
@@ -35,9 +34,8 @@ async fn write_mailbox_on_exit(
 ) {
     let Some((agent_name, ghost_config)) = with_sessions(sessions, |store| {
         let entry = store.get(session_id)?;
-        let gc = entry.ghost_config.clone();
-        let agent = gc.as_ref().and_then(|g| g.agent.clone());
-        Some((agent, gc))
+        let g = entry.as_ghost()?;
+        Some((g.config.agent.clone(), g.config.clone()))
     }) else {
         return;
     };
@@ -81,13 +79,13 @@ async fn write_mailbox_on_exit(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let spawn_depth = ghost_config.as_ref().map(|g| g.spawn_depth).unwrap_or(0);
-    let parent_job_id = ghost_config.as_ref().and_then(|g| g.parent_job_id.clone());
+    let spawn_depth = ghost_config.spawn_depth;
+    let parent_job_id = ghost_config.parent_job_id.clone();
 
     let task_desc = with_sessions(sessions, |store| {
         store
             .get(session_id)
-            .and_then(|e| e.ghost_task_message.clone())
+            .and_then(|e| e.as_ghost().and_then(|g| g.task_message.clone()))
             .unwrap_or_else(|| match &parent_job_id {
                 Some(pid) => format!(
                     "ghost shell for session {} (depth {}, parent: {})",
@@ -197,23 +195,22 @@ pub(crate) fn apply_ssh_target_resolution(
     Some(resolution)
 }
 
+pub use crate::daemon::session::GhostTrigger;
+
 /// Orchestrates the lifecycle of an autonomous Ghost Shell.
 pub struct GhostManager;
 
 impl GhostManager {
     /// Start a new Ghost Shell for a specific alert and runbook.
     ///
-    /// 1. Ensures a host tmux session exists (active or detached).
-    /// 2. Initializes a new ghost `SessionEntry` with the alert as the first user turn.
-    ///    Background windows are created lazily on the first tool call, prefixed with
-    ///    `bg_prefix` (e.g. `GS_BG_WINDOW_PREFIX` for webhook/interactive ghosts,
-    ///    `GS_SCHED_WINDOW_PREFIX` for scheduler-triggered ghosts).
+    /// 1. Initializes a new ghost `SessionEntry` with the alert as the first user turn.
+    /// 2. Records the [`GhostTrigger`] that initiated the session.
     /// 3. Returns the session ID for use by `trigger_ghost_turn`.
     pub async fn start_session(
         sessions: SessionStore,
         runbook: &Runbook,
         alert_msg: &str,
-        bg_prefix: &'static str,
+        trigger: GhostTrigger,
         // Seed from config.approvals.ghost_commands — OR-ed with per-runbook frontmatter.
         ghost_commands_default: bool,
     ) -> Result<String> {
@@ -222,7 +219,7 @@ impl GhostManager {
             runbook,
             &runbook.ghost_config,
             alert_msg,
-            bg_prefix,
+            trigger,
             ghost_commands_default,
         )
         .await
@@ -238,14 +235,10 @@ impl GhostManager {
         runbook: &Runbook,
         ghost_config: &crate::ipc::GhostConfig,
         alert_msg: &str,
-        bg_prefix: &'static str,
+        trigger: GhostTrigger,
         ghost_commands_default: bool,
     ) -> Result<String> {
         let alert_name = &runbook.name;
-
-        // A ghost owns no tmux session (phase 05): its identity is its session
-        // id, and its commands run in PTY shells.
-        let tmux_session = String::new();
 
         // 2. Initialize ghost shell entry
         let session_id = format!("ghost-{}-{}", alert_name, uuid::Uuid::new_v4().simple());
@@ -285,40 +278,7 @@ impl GhostManager {
         gc.auto_approve_commands |= ghost_commands_default;
         apply_ssh_target_resolution(&mut gc, &crate::config::current().hosts, &session_id);
 
-        let entry = SessionEntry {
-            messages,
-            last_accessed: Instant::now(),
-            chat_pane: None,
-            default_target_pane: None, // Ghost shells use background windows exclusively
-            bg_windows: Vec::new(),
-            last_prompt_tokens: 0,
-            tmux_session: tmux_session.clone(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: true,
-            ghost_config: Some(gc),
-            ghost_runbook_name: Some(runbook.name.clone()),
-            ghost_bg_prefix: bg_prefix,
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: ghost_config.model.clone(),
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: Vec::new(),
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        };
+        let entry = SessionEntry::new_ghost(runbook.name.clone(), gc, trigger, messages);
 
         with_sessions(&sessions, |store| {
             store.insert(session_id.clone(), entry);
@@ -327,17 +287,17 @@ impl GhostManager {
         crate::daemon::stats::inc_ghosts_launched();
 
         log::info!(
-            "Ghost Shell started: {} (alert: {}, bg_prefix: {})",
+            "Ghost Shell started: {} (alert: {}, trigger: {})",
             session_id,
             alert_name,
-            bg_prefix,
+            trigger.as_str(),
         );
         crate::daemon::utils::log_event(
             "ghost_start",
             serde_json::json!({
                 "session_id": session_id,
                 "alert_name": alert_name,
-                "trigger": bg_prefix,
+                "trigger": trigger.as_str(),
                 "spawn_depth": ghost_config.spawn_depth,
                 "parent_job_id": ghost_config.parent_job_id,
             }),
@@ -354,7 +314,7 @@ pub fn ghost_run_kind(
     runbook: Option<&str>,
     agent: Option<&str>,
     parent_job_id: Option<&str>,
-    bg_prefix: &str,
+    trigger: GhostTrigger,
 ) -> RunKind {
     if let (Some(agent), Some(parent)) = (agent, parent_job_id)
         && let Ok(parent_id) = RunId::parse(parent)
@@ -364,14 +324,9 @@ pub fn ghost_run_kind(
             parent: parent_id,
         };
     }
-    let trigger = if bg_prefix == GS_SCHED_WINDOW_PREFIX {
-        "scheduled"
-    } else {
-        "webhook"
-    };
     RunKind::Ghost {
         runbook: runbook.unwrap_or("unknown").to_string(),
-        trigger: trigger.to_string(),
+        trigger: trigger.as_str().to_string(),
     }
 }
 
@@ -486,26 +441,25 @@ pub async fn trigger_ghost_turn(
     // otherwise), so a cancelled or errored run can never strand the cap
     // until restart (M36 phase-13 B2).
     let _slot = crate::daemon::stats::GhostSlot::held();
-    let kind = with_sessions(sessions, |store| {
-        let entry = store.get(session_id)?;
-        let gc = entry.ghost_config.clone().unwrap_or_default();
-        Some(ghost_run_kind(
-            entry.ghost_runbook_name.as_deref(),
-            gc.agent.as_deref(),
-            gc.parent_job_id.as_deref(),
-            entry.ghost_bg_prefix,
-        ))
-    })
-    .unwrap_or_else(|| ghost_run_kind(None, None, None, ""));
+    let ghost_s = with_sessions(sessions, |store| store.get(session_id)?.as_ghost().cloned());
+    let kind = ghost_s.as_ref().map_or_else(
+        || ghost_run_kind(None, None, None, GhostTrigger::default()),
+        |g| {
+            ghost_run_kind(
+                Some(&g.runbook_name),
+                g.config.agent.as_deref(),
+                g.config.parent_job_id.as_deref(),
+                g.trigger,
+            )
+        },
+    );
     let mut run_log = RunLogGuard::start(RunId::new(), kind.clone());
-    if let Some(ghost_gc) = with_sessions(sessions, |store| {
-        store.get(session_id).and_then(|e| e.ghost_config.clone())
-    }) {
-        if let Some(agent) = ghost_gc.agent.clone() {
-            run_log.tag("agent", agent);
+    if let Some(ref g) = ghost_s {
+        if let Some(ref agent) = g.config.agent {
+            run_log.tag("agent", agent.clone());
         }
-        if let Some(host) = ghost_gc.ssh_target.clone() {
-            run_log.tag("host", host);
+        if let Some(ref host) = g.config.ssh_target {
+            run_log.tag("host", host.clone());
         }
     }
     let (_cancel_guard, cancel_signal, _active_guard) =
@@ -584,20 +538,10 @@ pub async fn trigger_ghost_turn(
     // the effective turn cap the loop enforced, the other four limits are 0
     // (no other cap exists yet), and the tally folds its spend in. The wall
     // clock is read off the guard's `Instant`, which covers the whole run.
-    let effective_cap = with_sessions(sessions, |store| {
-        let daemon_ceiling = config.ghost.max_ghost_turns as u64;
-        store
-            .get(session_id)
-            .and_then(|e| e.ghost_config.as_ref())
-            .map(|gc| {
-                if gc.max_ghost_turns > 0 {
-                    (gc.max_ghost_turns as u64).min(daemon_ceiling)
-                } else {
-                    daemon_ceiling
-                }
-            })
-            .unwrap_or(daemon_ceiling)
-    });
+    let daemon_ceiling = config.ghost.max_ghost_turns as u64;
+    let effective_cap = ghost_s
+        .and_then(|g| (g.config.max_ghost_turns > 0).then_some(g.config.max_ghost_turns as u64))
+        .map_or(daemon_ceiling, |n| n.min(daemon_ceiling));
     let mut budget = Budget::from_limits(effective_cap, 0, 0, 0, 0);
     run_log
         .metrics()
@@ -1051,12 +995,7 @@ mod tests {
 
     #[test]
     fn ghost_run_kind_names_the_runbook_and_a_webhook_trigger() {
-        let kind = ghost_run_kind(
-            Some("investigate-disk"),
-            None,
-            None,
-            crate::daemon::GS_BG_WINDOW_PREFIX,
-        );
+        let kind = ghost_run_kind(Some("investigate-disk"), None, None, GhostTrigger::Webhook);
         assert_eq!(
             kind,
             RunKind::Ghost {
@@ -1067,13 +1006,8 @@ mod tests {
     }
 
     #[test]
-    fn ghost_run_kind_names_a_scheduled_trigger_from_the_sched_prefix() {
-        let kind = ghost_run_kind(
-            Some("nightly-sweep"),
-            None,
-            None,
-            crate::daemon::GS_SCHED_WINDOW_PREFIX,
-        );
+    fn ghost_run_kind_names_a_scheduled_trigger() {
+        let kind = ghost_run_kind(Some("nightly-sweep"), None, None, GhostTrigger::Scheduled);
         let trigger = match &kind {
             RunKind::Ghost { trigger, .. } => trigger.clone(),
             other => panic!("expected Ghost, got {other:?}"),
@@ -1088,7 +1022,7 @@ mod tests {
             Some("investigate-disk"),
             Some("analyst"),
             Some(parent.as_str()),
-            crate::daemon::GS_BG_WINDOW_PREFIX,
+            GhostTrigger::Delegated,
         );
         assert_eq!(
             kind,
@@ -1105,7 +1039,7 @@ mod tests {
             Some("investigate-disk"),
             Some("analyst"),
             Some("ghost-disk-full-0123456789abcdef0123456789abcdef"),
-            crate::daemon::GS_BG_WINDOW_PREFIX,
+            GhostTrigger::Webhook,
         );
         assert_ne!(
             kind,
@@ -1125,7 +1059,7 @@ mod tests {
 
     #[test]
     fn ghost_run_kind_without_a_runbook_says_unknown() {
-        let kind = ghost_run_kind(None, None, None, crate::daemon::GS_BG_WINDOW_PREFIX);
+        let kind = ghost_run_kind(None, None, None, GhostTrigger::Webhook);
         match kind {
             RunKind::Ghost { runbook, .. } => {
                 assert_eq!(runbook, "unknown", "a nameless runbook must read 'unknown'")

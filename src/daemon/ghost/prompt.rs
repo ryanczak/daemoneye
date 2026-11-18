@@ -27,7 +27,7 @@ pub(super) fn build_ghost_prompt(
         with_sessions(sessions, |store| {
             store
                 .get(session_id)
-                .and_then(|e| e.ghost_config.as_ref())
+                .and_then(|e| e.ghost_config())
                 .map(|gc| {
                     let scripts = if gc.auto_approve_scripts.is_empty() {
                         "none".to_string()
@@ -64,7 +64,7 @@ pub(super) fn build_ghost_prompt(
     let steps: Vec<String> = with_sessions(sessions, |store| {
         store
             .get(session_id)
-            .and_then(|e| e.ghost_runbook_name.clone())
+            .and_then(|e| e.as_ghost().map(|g| g.runbook_name.clone()))
     })
     .and_then(|name| match crate::runbook::load_runbook(&name) {
         Ok(rb) => Some(crate::runbook::parse_steps(&rb.content)),

@@ -16,18 +16,15 @@ pub(super) async fn do_ghost_turn(
     outcome: &mut GhostLoopOutcome,
     metrics: &mut RunMetrics,
 ) -> Result<()> {
-    let Some((_messages, ghost_config, tmux_session, _target_pane, ghost_active_model)) =
-        with_sessions(sessions, |store| {
-            let entry = store.get(session_id)?;
-            Some((
-                entry.messages.clone(),
-                entry.ghost_config.clone(),
-                entry.tmux_session.clone(),
-                entry.default_target_pane.clone(),
-                entry.active_model.clone(),
-            ))
-        })
-    else {
+    let Some((_messages, ghost_config, ghost_active_model)) = with_sessions(sessions, |store| {
+        let entry = store.get(session_id)?;
+        let g = entry.as_ghost()?;
+        Some((
+            entry.messages.clone(),
+            g.config.clone(),
+            entry.active_model.clone(),
+        ))
+    }) else {
         anyhow::bail!("Ghost Shell '{}' not found", session_id);
     };
 
@@ -35,7 +32,7 @@ pub(super) async fn do_ghost_turn(
         system,
         max_ghost_turns,
         steps,
-    } = prompt::build_ghost_prompt(session_id, sessions, config, &tmux_session);
+    } = prompt::build_ghost_prompt(session_id, sessions, config, "");
 
     // Ghost shells never have a real IPC client — use sink/empty so that
     // send_response_split writes never block (they're discarded) and reads
@@ -516,7 +513,7 @@ pub(super) async fn do_ghost_turn(
                     }
                     AiEvent::Done(usage) => {
                         let attribution =
-                            crate::cost::CostAttribution::from_ghost_config(ghost_config.as_ref());
+                            crate::cost::CostAttribution::from_ghost_config(&ghost_config);
                         let record = crate::cost::emit_cost(crate::cost::CostCall {
                             model_entry,
                             usage: &usage,
@@ -605,7 +602,7 @@ pub(super) async fn do_ghost_turn(
                 &mut rx,
                 crate::daemon::executor::SessionCtx {
                     session_id: Some(session_id),
-                    session_name: &tmux_session,
+                    session_name: "",
                     chat_pane: None,
                     sessions,
                 },
@@ -753,10 +750,8 @@ pub(super) async fn do_ghost_turn(
     }
 
     log::info!("Ghost Shell {}: completed in {} turn(s)", session_id, turn);
-    let (spawn_depth, parent_job_id) = ghost_config
-        .as_ref()
-        .map(|gc| (gc.spawn_depth, gc.parent_job_id.clone()))
-        .unwrap_or((0, None));
+    let (spawn_depth, parent_job_id) =
+        (ghost_config.spawn_depth, ghost_config.parent_job_id.clone());
     crate::daemon::utils::log_event(
         "ghost_complete",
         serde_json::json!({
@@ -768,9 +763,7 @@ pub(super) async fn do_ghost_turn(
     );
 
     // Briefing generation: best-effort summary for the next invocation.
-    if let Some(ref gc) = ghost_config
-        && let Some(ref agent_name) = gc.agent
-    {
+    if let Some(ref agent_name) = ghost_config.agent {
         crate::daemon::briefing::generate_and_save_briefing(
             agent_name, session_id, sessions, config,
         )

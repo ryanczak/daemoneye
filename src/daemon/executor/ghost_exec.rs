@@ -362,7 +362,7 @@ where
         let profile = with_sessions(sessions, |store| {
             store
                 .get(sid.as_str())
-                .and_then(|e| e.ghost_config.as_ref().and_then(|g| g.agent.clone()))
+                .and_then(|e| e.ghost_config().and_then(|g| g.agent.clone()))
         });
         let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
         let run = crate::shell::real_runner(program);

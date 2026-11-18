@@ -237,8 +237,8 @@ where
                 }
             }
 
-            foreground::refuse_foreground(
-                foreground::FgArgs { id, cmd },
+            ghost_exec::refuse_foreground(
+                ghost_exec::FgArgs { id, cmd },
                 ctx,
                 GhostCtx {
                     policy: ghost_policy.as_ref(),

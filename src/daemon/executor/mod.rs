@@ -13,12 +13,12 @@ mod dispatch_schedule;
 mod dispatch_send_input;
 mod dispatch_shells;
 mod file_ops;
-mod foreground;
+mod ghost_exec;
 pub(crate) mod ghost_remote;
 pub(crate) mod ghost_sandbox;
 pub(crate) mod host_gate;
 // The gate's two public pieces, reachable as `super::…` for this module's
-// children (`foreground.rs`, `knowledge/ghost.rs`) and through their
+// children (`ghost_exec.rs`, `knowledge/ghost.rs`) and through their
 // `use super::*` globs for the dispatch arms.
 pub(crate) use host_gate::{ghost_host_refusal, refuse_ghost_host, resolve_host};
 pub(crate) mod knowledge;
@@ -211,7 +211,7 @@ pub fn build_memory_namespaces(
     }
     let agent_name: Option<String> = session_id.and_then(|sid| {
         with_sessions(sessions, |store| {
-            store.get(sid)?.ghost_config.as_ref()?.agent.clone()
+            store.get(sid)?.ghost_config()?.agent.clone()
         })
     });
     let mut namespaces: Vec<String> = Vec::new();
@@ -475,20 +475,6 @@ where
     } = ctx;
     // ── Pre-fetch session state in one acquisition ───────────────────────────
     let snap = route::load_snapshot(session_id, sessions);
-    // Defensive guard: a ghost shell entry must always have a ghost_config.
-    if snap.is_ghost_shell && snap.ghost_policy.is_none() {
-        let msg = "Error: ghost shell has no policy configured (ghost_config missing in runbook frontmatter)".to_string();
-        log::error!("{} for session {:?}", msg, session_id);
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: call.id().to_string(),
-                output: msg.clone(),
-            },
-        )
-        .await?;
-        return Ok(ToolCallOutcome::Result(msg));
-    }
     // ── Tool Policy Enforcement (agent-level) ────────────────────────────────
     if let Some(policy) = &snap.tool_policy
         && !policy.permits(call.tool_name())
@@ -1320,7 +1306,6 @@ mod tests {
     fn namespaces_ghost_excludes_foreign_namespace() {
         use crate::agents::AgentConfig;
         use crate::daemon::session::SessionEntry;
-        use std::collections::HashMap;
 
         let _guard = crate::test_home_guard();
         let tmp = std::env::temp_dir().join(format!("de_ns_test_{}", std::process::id()));
@@ -1344,43 +1329,15 @@ mod tests {
         })
         .unwrap();
 
-        let entry = SessionEntry {
-            messages: vec![],
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: vec![],
-            last_prompt_tokens: 0,
-            tmux_session: "test".to_string(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: true,
-            ghost_config: Some(crate::ipc::GhostConfig {
+        let entry = SessionEntry::new_ghost(
+            "test",
+            crate::ipc::GhostConfig {
                 agent: Some("analyst".to_string()),
                 ..Default::default()
-            }),
-            ghost_bg_prefix: "",
-            ghost_runbook_name: None,
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: vec![],
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        };
+            },
+            crate::daemon::ghost::GhostTrigger::Webhook,
+            vec![],
+        );
         let store: SessionStore = SessionStore::new();
         with_sessions(&store, |s| {
             s.insert("gsid".to_string(), entry);
@@ -1420,7 +1377,6 @@ mod tests {
     fn build_memory_namespaces_does_not_hold_the_lock_across_load_agent() {
         use crate::agents::AgentConfig;
         use crate::daemon::session::SessionEntry;
-        use std::collections::HashMap;
 
         let _guard = crate::test_home_guard();
         let tmp = std::env::temp_dir().join(format!("de_lock_test_{}", std::process::id()));
@@ -1444,43 +1400,15 @@ mod tests {
         })
         .unwrap();
 
-        let entry = SessionEntry {
-            messages: vec![],
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: vec![],
-            last_prompt_tokens: 0,
-            tmux_session: "test".to_string(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: true,
-            ghost_config: Some(crate::ipc::GhostConfig {
+        let entry = SessionEntry::new_ghost(
+            "test",
+            crate::ipc::GhostConfig {
                 agent: Some("test-agent".to_string()),
                 ..Default::default()
-            }),
-            ghost_bg_prefix: "",
-            ghost_runbook_name: None,
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: vec![],
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        };
+            },
+            crate::daemon::ghost::GhostTrigger::Webhook,
+            vec![],
+        );
         let store: SessionStore = SessionStore::new();
         with_sessions(&store, |s| {
             s.insert("gsid".to_string(), entry);

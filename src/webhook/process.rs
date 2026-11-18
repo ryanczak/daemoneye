@@ -241,7 +241,10 @@ pub(crate) fn inject_into_sessions(sessions: &SessionStore, msg: &Message) {
 /// without tmux still sees the alert.
 pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
     let panes: Vec<String> = with_sessions(sessions, |store| {
-        store.values().filter_map(|e| e.chat_pane.clone()).collect()
+        store
+            .values()
+            .filter_map(|e| e.chat_pane().map(str::to_string))
+            .collect()
     });
 
     // Unlocked phase: everything blocking happens out here.
@@ -536,7 +539,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
                     &rb_clone,
                     &merged_config,
                     &alert_msg,
-                    crate::daemon::GS_BG_WINDOW_PREFIX,
+                    crate::daemon::GhostTrigger::Webhook,
                     config_clone.approvals.ghost_commands,
                 )
                 .await
@@ -797,43 +800,9 @@ mod tests {
     fn inject_into_sessions_updates_resident_history() {
         let sessions = SessionStore::new();
         with_sessions(&sessions, |store| {
-            store.insert(
-                "resident-1".to_string(),
-                SessionEntry {
-                    messages: vec![msg("first"), msg("second")],
-                    last_accessed: std::time::Instant::now(),
-                    chat_pane: None,
-                    default_target_pane: None,
-                    bg_windows: Vec::new(),
-                    last_prompt_tokens: 0,
-                    tmux_session: "test".to_string(),
-                    last_detach: None,
-                    detach_time_utc: None,
-                    messages_at_detach: 0,
-                    is_ghost: false,
-                    ghost_config: None,
-                    ghost_bg_prefix: "",
-                    ghost_runbook_name: None,
-                    started_at: chrono::Utc::now(),
-                    turn_count: 0,
-                    tool_calls_this_session: 0,
-                    active_model: None,
-                    last_snapshot_activity: 0,
-                    saved_name: None,
-                    dirty: false,
-                    artifacts_created: Vec::new(),
-                    auto_name_suggested: false,
-                    ghost_task_message: None,
-                    loaded_tools: std::collections::HashSet::new(),
-                    cost_usd: 0.0,
-                    cost_by_agent: std::collections::HashMap::new(),
-                    has_untracked_cost: false,
-                    token_scale: 1.5,
-                    compaction_in_flight: false,
-                    pending_compaction_notice: None,
-                    turn_inbox: None,
-                },
-            );
+            let mut e = SessionEntry::new_interactive("test");
+            e.messages = vec![msg("first"), msg("second")];
+            store.insert("resident-1".to_string(), e);
         });
 
         let alert = msg("[Webhook Alert] disk usage at 95%");
@@ -1011,40 +980,7 @@ mod tests {
     // ── ghost notice builder (M38 phase 05) ──────────────────────────────
 
     fn resident_entry() -> SessionEntry {
-        SessionEntry {
-            messages: Vec::new(),
-            last_accessed: std::time::Instant::now(),
-            chat_pane: None,
-            default_target_pane: None,
-            bg_windows: Vec::new(),
-            last_prompt_tokens: 0,
-            tmux_session: String::new(),
-            last_detach: None,
-            detach_time_utc: None,
-            messages_at_detach: 0,
-            is_ghost: false,
-            ghost_config: None,
-            ghost_runbook_name: None,
-            ghost_bg_prefix: "",
-            started_at: chrono::Utc::now(),
-            turn_count: 0,
-            tool_calls_this_session: 0,
-            active_model: None,
-            last_snapshot_activity: 0,
-            saved_name: None,
-            dirty: false,
-            artifacts_created: Vec::new(),
-            auto_name_suggested: false,
-            ghost_task_message: None,
-            loaded_tools: std::collections::HashSet::new(),
-            cost_usd: 0.0,
-            cost_by_agent: std::collections::HashMap::new(),
-            has_untracked_cost: false,
-            token_scale: 1.5,
-            compaction_in_flight: false,
-            pending_compaction_notice: None,
-            turn_inbox: None,
-        }
+        SessionEntry::new_interactive("")
     }
 
     #[test]

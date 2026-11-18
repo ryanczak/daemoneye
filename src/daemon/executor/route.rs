@@ -6,28 +6,29 @@ use super::*;
 
 /// The session state `execute_tool_call` reads, taken in one acquisition.
 pub(super) fn load_snapshot(session_id: Option<&str>, sessions: &SessionStore) -> DispatchSnapshot {
+    use crate::daemon::session::SessionMode;
     match session_id {
         Some(sid) => with_sessions(sessions, |store| match store.get(sid) {
-            Some(e) => {
-                let gc = e.ghost_config.as_ref();
-                DispatchSnapshot {
-                    ghost_policy: if e.is_ghost {
-                        gc.map(GhostPolicy::from_config)
-                    } else {
-                        None
-                    },
-                    tool_policy: if e.is_ghost {
-                        gc.and_then(|g| g.tool_policy.clone())
-                    } else {
-                        None
-                    },
-                    is_ghost_shell: e.is_ghost,
-                    spawn_depth: gc.map(|g| g.spawn_depth).unwrap_or(0),
-                    effective_parent_job_id: gc.map(|_| sid.to_string()),
+            Some(e) => match &e.mode {
+                SessionMode::Ghost(g) => DispatchSnapshot {
+                    ghost_policy: Some(GhostPolicy::from_config(&g.config)),
+                    tool_policy: g.config.tool_policy.clone(),
+                    is_ghost_shell: true,
+                    spawn_depth: g.config.spawn_depth,
+                    effective_parent_job_id: Some(sid.to_string()),
                     saved_name: e.saved_name.clone(),
                     turn_count: e.turn_count,
-                }
-            }
+                },
+                SessionMode::Interactive(_) => DispatchSnapshot {
+                    ghost_policy: None,
+                    tool_policy: None,
+                    is_ghost_shell: false,
+                    spawn_depth: 0,
+                    effective_parent_job_id: None,
+                    saved_name: e.saved_name.clone(),
+                    turn_count: e.turn_count,
+                },
+            },
             None => DispatchSnapshot::default(),
         }),
         None => DispatchSnapshot::default(),
