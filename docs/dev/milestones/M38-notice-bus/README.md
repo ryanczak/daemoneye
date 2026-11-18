@@ -7,7 +7,7 @@ every consumer (chat history, the chat notice, the status bar and `top`,
 the `on_alert` command, the ghost trigger, external subscribers) decides
 what to take by filtering on those fields.
 
-**Status:** closing — retrospective written; live check, doc sweep and release pending PE sign-off
+**Status:** closing — exit criteria met, live check passed 2026-11-18; release pending PE sign-off
 
 **Release:** 2.10.0
 
@@ -171,9 +171,47 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
     `analyze` sink.
   - **`daemoneye notices`** lists from the journal and streams with
     `--follow`.
-- **Not yet met:** the live check on pinky (an Alertmanager alert, a
-  failing scheduled script, a background command and a terminal `blocked`
-  report, all four seen under `notices --follow`).
+- **Live check, 2026-11-18 (met).** Release binary at `f5e9bc2b`,
+  throwaway `HOME=/tmp/de38-live`, private tmux, GLM-5.3-Flash. The config
+  was a copy of the PE's real 2.9.0 config, migrated. It kept the default
+  routes and added one `command` route for `scheduler` + `webhook` that
+  appends to a file. `daemoneye notices --follow` ran from before the
+  first event and printed all four:
+
+  ```
+  2026-11-18 11:03:40 warning  webhook    firing DiskPressureLive [Webhook Alert] [FIRING] DiskPressureLive — disk /data at 91% (alertmanager)
+  2026-11-18 11:06:00 error    scheduler  event fail-check `fail-check.sh` failed (exit 3)
+  2026-11-18 11:06:47 warning  shell      event livecheck [Shell s2] Program livecheck (blocked (question)) msg: continue the migration?
+  2026-11-18 11:09:51 error    background event 4dbc717457a3407c [Background Task Completed]
+  ```
+
+  | Notice | History | Chat notice | Alert registry | Command route |
+  |---|---|---|---|---|
+  | webhook `warning` (repeated as `LiveWarnCheck` once a chat was open) | yes | yes (`⚙` line) | yes (status bar `⚠ 2 warn`) | yes |
+  | webhook `info` (`LiveInfoCheck`) | no | no | yes | yes (the route has no floor) |
+  | scheduler failure (repeated as `fail-check-2` with a chat open) | no | yes (`⚙` line) | — | yes |
+  | background completion (`wait: false`, exit 4) | yes | no | — | — |
+  | shell `blocked` (OSC 7501) | no | no | — | — |
+
+  Every row matches `default_routes(Warning)`: only the journal and the
+  follower saw the shell notice. The analyze sink was not exercised live:
+  no runbook matched the alert names. The isolation tests cover it.
+
+**Found in the live check:**
+- **Fixed (`f5e9bc2b`):** a config that still set either removed key fell
+  back to the defaults. The daemon then failed on the default provider's
+  missing API key, and the migration message reached only `daemon.log`.
+  The daemon now refuses to start with every removed key's migration
+  printed on the terminal.
+- **Not fixed — first-sight baseline.** `ProgramWatcher` treats a shell's
+  first probe as baseline (phase 06, as specified). The `wait: false`
+  shell `s3` reported `blocked` within its first 2 s tick, so it never
+  produced a notice; only `s2`, which already existed, did. A background
+  program that asks a question at once is never announced. Candidate
+  issue.
+- **Not a bug:** one-shot `daemoneye ask` has no session, so
+  `wait: false` is refused there. The refusal reads "Run it in the chat
+  session's shell instead", which is misleading for `ask`.
 
 **Outcomes:** 16 phases.
 - 9 `approved_first_try`: 02, 03, 06, 07b, 08a, 08c, 09b, 10a, 10b. In
@@ -207,19 +245,21 @@ into sub-phases held: no sub-phase exceeded one run.
 - **Cap pressure.** 10b cut doc comments to fit `src/ipc.rs` under 800
   lines; the reviewer restored them and allowlisted the file at 806.
 
-**Found, not yet fixed:**
-- **Tests write into the real event log.** A full `cargo test` writes 5
-  records into the real `~/.daemoneye` event log: `ssh_connect_failed`
-  for `de-test-unreachable.invalid`, and four `scheduler_job_recovered`.
-  These come from older tests calling `log_event` without a temporary
-  `HOME`. Earlier M38 executor runs also left fixture records there
-  (pid `4242`): 3 in `events-20261118.jsonl` and all of
-  `events-20231114.jsonl`.
-- **Stale docs.** `docs/REQUIREMENTS.md` (FR-1.2.11, FR-1.2.14) and
-  `docs/design-reference.md` still describe `on_alert` and
-  `severity_threshold`.
+**Fixed at the close:**
+- **Tests wrote into the real event log** (issue #10). The leak dated from
+  2026-10-31: 1,661 `ssh_connect_failed` / `scheduler_job_recovered`
+  fixture records across 19 segments, plus 29 pid-`4242` notice fixtures
+  from M38 executor runs. The PE approved removing them all. Five tests
+  now take `test_home()` (`fd81466c`). `log_event`'s `cfg(test)` assert
+  now refuses a test whose `HOME` is not redirected, not just one without
+  the lock (`a5d951ef`). A full `cargo test` leaves the real event
+  directory byte-identical.
+- **Stale docs:** `REQUIREMENTS.md` FR-1.2.11 / FR-1.2.14 and
+  `design-reference.md` §2.7 / §2.9 describe routes and sinks
+  (`215a56b8`).
 
-**Calibration fold candidate (3 occurrences, held for PE sign-off):** a
-test-plan entry names the function the test must call, not just the
-behaviour, and a spec that orders steps for correctness says what breaks
-if the order is reversed.
+**Calibration folded (PE sign-off, `95573e2d`):** a test-plan entry names
+the function the test must call, not just the behaviour, and a spec that
+orders steps for correctness says what breaks if the order is reversed.
+See `WORKFLOW.md` § "Name the function each test must call; say why an
+order matters".
