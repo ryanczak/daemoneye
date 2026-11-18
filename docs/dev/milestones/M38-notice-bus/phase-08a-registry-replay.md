@@ -1,7 +1,7 @@
 # Phase 08a — registry-replay
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-17
 **Depends on:** phase-07b
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -311,3 +311,36 @@ kill: (-610956): No such process
 **Commit:** 51d53e7bf4777a2a44e3e1c5065c40a006f049f3
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-17
+
+- **Verdict:** approved_first_try, with a reviewer test fixup
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (551 turns)
+- **Scope deviations:**
+  - `src/webhook/mod.rs` re-exports the registry seams (`registry`,
+    `ActiveAlert`, the `_in` functions). This was needed to fill the
+    process-wide map. Accepted.
+  - `Notice::ts_refire` is a new builder that sets `ts`, used by the
+    tests. Accepted. It's oddly named, but harmless.
+  - The end-to-end test boots twice, because `start_daemon`'s `setup`
+    creates the tree. Accepted: the record is on disk before the booting
+    daemon reads it.
+- **Reviewer fixup (`test:` commit):** two of the four replay tests never
+  called `replay_alert_registry_in`.
+  - `replay_ignores_what_the_registry_route_does_not_match` re-implemented
+    the route filter inside the test.
+  - `replay_reads_only_the_ttl_window` re-implemented the window loop.
+  - Deleting the filter or the window from the replay failed nothing. The
+    executor's notes defended this as "an accepted spec divergence".
+  - Both tests now journal notices and run the real replay. Mutation runs:
+    with the route filter removed, the route test fails; with the window
+    doubled, the window test fails.
+  - Also fixed: the replay's count added one for a resolve as well as a
+    fire, so "N alert(s) restored" over-counted. It now counts what
+    survived the replay, pinned by `replay_counts_survivors_not_changes`.
+- **Calibration:** a test named for a function must call that function.
+  The executor "tested" the replay's behaviour by restating it in the test
+  body. Spec future tests by the function they drive: "calls
+  `replay_alert_registry_in`".
+
