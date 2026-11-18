@@ -1,7 +1,7 @@
 # Phase 10b — notices-follow
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-18
 **Depends on:** phase-10a
 **Estimated diff:** ~350 lines, half tests
@@ -319,3 +319,55 @@ kill: (-1038871): No such process
 **Commit:** 3aa98c095efa4d464cf30f49895e8e02e6e346d7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** approved_first_try, with two reviewer fixes (recorded as
+  warnings in telemetry)
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (390 turns, `complete`)
+- **Scope deviations, accepted:**
+  - `ask.rs` and `stream_ask.rs` gain `Response::Notice` in their
+    exhaustive matches, which the compiler requires.
+  - `alert_wire_tests` moved into `src/ipc_tests.rs`, the file's existing
+    test module.
+- **Reviewer fixes:**
+  - **`--follow` read the backlog before subscribing.** The spec orders
+    subscribe → `Ok` → backlog, so that every notice lands in the
+    journal, on the stream, or both. Reading the backlog first lost any
+    notice published between the read and the subscribe. `live_line`'s
+    dedupe only matters in the spec's order. The command now subscribes
+    first, keeps the write half alive for the whole stream (dropping it
+    would end the subscription), then prints the backlog. With no daemon it
+    still prints the backlog and exits 1. That path was checked live on
+    pinky, where no daemon was running.
+  - **`src/ipc.rs` doc comments were cut to fit the 800-line cap.** That
+    dropped the `Reload` request's "an invalid file is refused and the
+    running config stays" and the per-field docs of the three
+    `LimitsInfo` counters. I restored them and allowlisted the file as
+    `file src/ipc.rs 806`. The wire enums are one type, with no real seam
+    to split along.
+
+    So the allowlist diff has 3 entries, one more than the criterion's two;
+    the extra is this reviewer-added line.
+- **Checked:**
+  - The handler subscribes before its `Ok`. It stops on EOF, a read error
+    or a failed write, and always returns `Ok(())`.
+  - The handler tests drive `handle_subscribe` over `duplex`, on a
+    `with_journal` bus, reading the `Ok` before publishing, with a timeout
+    on every wait. The streaming test includes a non-matching notice.
+  - `notices_follow_streams_a_webhook_alert` passes against an isolated
+    daemon (isolation: 13 passed).
+  - The bumped counts are exactly what the gate measures (229, 189).
+  - Gates: 3033 lib tests, fmt, clippy `-D warnings` and hygiene (16) all
+    pass.
+- **Finding, not this phase's code:** a full `cargo test` still writes 5
+  records into the real `~/.daemoneye` event log, from the test binary's
+  pid. They are an `ssh_connect_failed` for `de-test-unreachable.invalid`
+  and four `scheduler_job_recovered` records (`recovered-every`,
+  `interrupted-*`). These are older tests that call `log_event` without a
+  temporary `HOME`. For the milestone close.
+- **Calibration:** a spec that orders steps for a correctness reason (here
+  ack-before-backlog) should say what goes wrong if the order is reversed.
+  The executor kept the dedupe and reversed the order it exists for.
+
