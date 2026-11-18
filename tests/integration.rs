@@ -1736,28 +1736,20 @@ fn webhook_alert_error_severity_passes_warning_gate() {
 #[test]
 fn analysis_notice_splits_the_response() {
     use daemoneye::webhook::analysis_notice;
-    use daemoneye::webhook::parse_payload;
 
-    let body = serde_json::json!({
-        "status": "firing",
-        "alerts": [{
-            "status": "firing",
-            "labels": {
-                "alertname": "HighCPU",
-                "severity": "warning",
-                "instance": "web-01"
-            },
-            "annotations": {
-                "summary": "CPU usage above 90%"
-            },
-            "fingerprint": "test-fp-analysis-1"
-        }]
-    });
-    let alerts = parse_payload(&body);
-    assert_eq!(alerts.len(), 1);
+    // `analysis_notice` reads the alert from the alert notice the producer
+    // published: the alert notice with its raw severity label.
+    let alert_notice = daemoneye::bus::Notice::new(
+        daemoneye::bus::Severity::Warning,
+        daemoneye::bus::Source::Webhook,
+        "HighCPU",
+        "[Webhook Alert] [FIRING] CPU usage above 90%",
+    )
+    .label("severity", "warning")
+    .label("kind", "alert");
 
     let multi = analysis_notice(
-        &alerts[0],
+        &alert_notice,
         "Spike traced to a runaway build.\nSecond line.\nThird.",
     );
     assert_eq!(
@@ -1778,7 +1770,7 @@ fn analysis_notice_splits_the_response() {
         Some("warning")
     );
 
-    let single = analysis_notice(&alerts[0], "One line only.");
+    let single = analysis_notice(&alert_notice, "One line only.");
     assert_eq!(single.title, "[Webhook Analysis] HighCPU: One line only.");
     assert_eq!(single.body, "", "a one-line response gives an empty body");
 }

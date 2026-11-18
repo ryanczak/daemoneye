@@ -94,16 +94,13 @@ fn is_duplicate(
     false
 }
 
-pub async fn process_alert(
-    alert: InternalAlert,
-    state: Arc<WebhookState>,
-) -> Option<tokio::task::JoinHandle<()>> {
+pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
     crate::daemon::stats::record_webhook();
     let cfg = &state.config.webhook;
 
     // 1. Deduplication check: a duplicate is discarded here.
     if is_duplicate(&alert, &state.dedup, cfg.dedup_window_secs) {
-        return None;
+        return;
     }
 
     // 2. Mask sensitive data in summary + description.
@@ -176,15 +173,14 @@ pub async fn process_alert(
     .body(body)
     .label("severity", &alert.severity)
     .label("kind", "alert");
-    state.bus.publish(notice);
+    let published = state.bus.publish(notice);
 
-    // 6. Severity gate — decides whether `auto_analyze` runs. Fixed at
-    //    `warning` until the ghost trigger becomes a routed consumer (phase 09).
-    //    An alert whose severity cannot be ranked degrades to `Debug`, which
-    //    sits below `warning` — the fail-closed rule.
-    let should_fire = notice_severity >= crate::bus::Severity::Warning;
-
-    if !should_fire {
+    // 6. Severity gate — the fixed analyze gate until phase 09b makes it a
+    //    route. `analyze_routed` is the same predicate the ghost-trigger
+    //    consumer applies; the producer no longer calls the analysis.
+    //    An alert whose severity cannot be ranked degrades to `Debug`,
+    //    which sits below `warning` — the fail-closed rule.
+    if !crate::daemon::notice_sinks::analyze_routed(&published) {
         log::warn!(
             "Webhook: alert '{}' discarded — severity '{}' below threshold 'warning'",
             alert.alert_name,
@@ -199,14 +195,7 @@ pub async fn process_alert(
                 "threshold": "warning",
             }),
         );
-        return None;
     }
-
-    // 7. Optionally trigger AI analysis.
-    if cfg.auto_analyze {
-        return maybe_analyze_alert(&alert, &formatted, &state).await;
-    }
-    None
 }
 
 /// Split a formatted message into its first line and the rest: the title and
@@ -379,31 +368,25 @@ fn find_runbook_for_alert(alert_name: &str) -> Option<crate::runbook::Runbook> {
 }
 
 /// Run runbook-based AI analysis for the alert, rate-limited per alert name.
-///
-/// Returns `Some(handle)` when a ghost was spawned; `None` otherwise.
-async fn maybe_analyze_alert(
-    alert: &InternalAlert,
-    formatted_msg: &str,
-    state: &WebhookState,
-) -> Option<tokio::task::JoinHandle<()>> {
+pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &WebhookState) {
     // Rate limit: skip if we analysed the same alert_name within dedup_window_secs.
     {
         let mut rl = state.rate_limit.lock().unwrap_or_log();
         let now = now_secs();
-        if let Some(&last) = rl.get(&alert.alert_name)
+        if let Some(&last) = rl.get(&notice.name)
             && now.saturating_sub(last) < state.config.webhook.dedup_window_secs
         {
-            return None;
+            return;
         }
-        rl.insert(alert.alert_name.clone(), now);
+        rl.insert(notice.name.clone(), now);
     }
 
-    let Some(rb) = find_runbook_for_alert(&alert.alert_name) else {
+    let Some(rb) = find_runbook_for_alert(&notice.name) else {
         log::debug!(
             "Webhook: no runbook found for alert '{}' (tried kebab-case, lowercase, exact match) — skipping analysis",
-            alert.alert_name
+            notice.name
         );
-        return None;
+        return;
     };
 
     // The daily cap gates the analysis before the model call: over
@@ -414,21 +397,28 @@ async fn maybe_analyze_alert(
     {
         log::warn!(
             "Webhook: analysis for '{}' skipped — daily cost cap: {message}",
-            alert.alert_name
+            notice.name
         );
-        return None;
+        return;
     }
 
     log::info!(
         "Webhook: running runbook analysis for '{}' using runbook '{}'",
-        alert.alert_name,
+        notice.name,
         rb.name
     );
 
+    // The analysis reads the alert from the notice: the formatted text is
+    // the notice's history text without its `[Webhook Alert] ` prefix.
+    let alert_msg = notice
+        .history_text()
+        .strip_prefix("[Webhook Alert] ")
+        .unwrap_or(&notice.history_text())
+        .to_string();
     let system = crate::runbook::watchdog_system_prompt(&rb);
     let msgs = vec![Message {
         role: "user".to_string(),
-        content: format!("Incoming alert:\n{}", formatted_msg),
+        content: format!("Incoming alert:\n{alert_msg}"),
         tool_calls: None,
         tool_results: None,
         turn: None,
@@ -447,7 +437,7 @@ async fn maybe_analyze_alert(
     let api_err = if let Err(e) = client.chat(&system, msgs, ai_tx, false, Vec::new()).await {
         log::error!(
             "Webhook: runbook analysis API call failed for '{}': {}",
-            alert.alert_name,
+            notice.name,
             e
         );
         Some(e.to_string())
@@ -477,7 +467,7 @@ async fn maybe_analyze_alert(
 
     log::info!(
         "Webhook: analysis for '{}' complete — should_act={} reason='{}' ghost_enabled={} (response: {} chars)",
-        alert.alert_name,
+        notice.name,
         should_act,
         trigger_reason,
         rb.ghost_config.enabled,
@@ -486,20 +476,20 @@ async fn maybe_analyze_alert(
     if !should_act && rb.ghost_config.enabled {
         log::info!(
             "Webhook: ghost shell NOT triggered for '{}' — reason: {}",
-            alert.alert_name,
+            notice.name,
             trigger_reason
         );
     }
     log::debug!(
         "Webhook: analysis response for '{}':\n{}",
-        alert.alert_name,
+        notice.name,
         response.trim()
     );
 
     log_event(
         "webhook_analysis",
         serde_json::json!({
-            "alert_name": alert.alert_name,
+            "alert_name": notice.name,
             "runbook": rb.name,
             "ghost_trigger": should_act,
             "trigger_reason": trigger_reason,
@@ -513,30 +503,30 @@ async fn maybe_analyze_alert(
             if !crate::daemon::ghost::check_ghost_capacity(&state.config) {
                 log::warn!(
                     "Webhook: ghost shell skipped for '{}' — concurrency limit ({}) reached",
-                    alert.alert_name,
+                    notice.name,
                     state.config.ghost.max_concurrent_ghosts
                 );
                 publish_ghost_event(
                     state.bus,
                     GhostEvent::Skipped,
-                    &alert.alert_name,
+                    &notice.name,
                     &format!(
                         "[Ghost Shell Skipped] Concurrency limit reached for alert: {}",
-                        alert.alert_name
+                        notice.name
                     ),
                 );
-                return None;
+                return;
             }
-            log::info!("Webhook: triggering Ghost Shell for '{}'", alert.alert_name);
+            log::info!("Webhook: triggering Ghost Shell for '{}'", notice.name);
             let sessions = state.sessions.clone();
-            let alert_msg = formatted_msg.to_string();
+            let alert_msg = alert_msg.clone();
             let rb_clone = rb.clone();
             let config_clone = state.config.clone();
             let cache_clone = state.cache.clone();
             let schedule_store_clone = state.schedule_store.clone();
             let bus = state.bus;
 
-            let handle = tokio::spawn(async move {
+            let _handle = tokio::spawn(async move {
                 let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
                 match GhostManager::start_session_with_config(
                     sessions.clone(),
@@ -599,31 +589,36 @@ async fn maybe_analyze_alert(
                     Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
                 }
             });
-            return Some(handle);
         }
 
-        let notice = analysis_notice(alert, &response);
-        state.bus.publish(notice);
+        let analysis = analysis_notice(notice, &response);
+        state.bus.publish(analysis);
     }
-    None
 }
 
-/// The `[Webhook Analysis]` notice: the alert's severity, source `Webhook`,
-/// name the alert's name, status `Event`, labels `severity` (raw) and `kind`
-/// = `analysis`. The title is `"[Webhook Analysis] <name>: "` plus the
-/// response's first line; the body is the rest. Pure so the split is
-/// testable without a bus.
-pub fn analysis_notice(alert: &InternalAlert, response: &str) -> crate::bus::Notice {
+/// The `[Webhook Analysis]` notice: the alert's severity (parsed from the
+/// notice's raw `severity` label), source `Webhook`, name the notice's name,
+/// status `Event`, labels `severity` (raw) and `kind` = `analysis`. The
+/// title is `"[Webhook Analysis] <name>: "` plus the response's first line;
+/// the body is the rest. Pure so the split is testable without a bus.
+pub fn analysis_notice(alert: &crate::bus::Notice, response: &str) -> crate::bus::Notice {
     let trimmed = response.trim();
     let (first, rest) = split_first_line(trimmed);
     crate::bus::Notice::new(
-        crate::bus::Severity::from_external(&alert.severity),
+        alert.severity,
         crate::bus::Source::Webhook,
-        &alert.alert_name,
-        format!("[Webhook Analysis] {}: {}", alert.alert_name, first),
+        &alert.name,
+        format!("[Webhook Analysis] {}: {}", alert.name, first),
     )
     .body(rest)
-    .label("severity", &alert.severity)
+    .label(
+        "severity",
+        alert
+            .labels
+            .get("severity")
+            .map(String::as_str)
+            .unwrap_or(alert.severity.as_str()),
+    )
     .label("kind", "analysis")
 }
 

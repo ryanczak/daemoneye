@@ -22,12 +22,21 @@ pub struct SinkRoutes {
     pub history: Vec<Filter>,
     pub chat_notice: Vec<Filter>,
     pub alert_registry: Vec<Filter>,
+    pub analyze: Vec<Filter>,
 }
 
 /// Whether `n` is routed to a sink whose routes are `routes`: any matching
 /// filter routes it; an empty list matches nothing.
 pub fn routes_match(routes: &[Filter], n: &Notice) -> bool {
     routes.iter().any(|f| f.matches(n))
+}
+
+/// The gate the alert producer and the ghost-trigger consumer share: matches
+/// `default_routes(Severity::Warning).analyze` — a webhook alert at or above
+/// `warning`, firing or resolved. An analysis notice (status `Event`) does
+/// not match, so an analysis can never trigger another.
+pub fn analyze_routed(n: &Notice) -> bool {
+    routes_match(&default_routes(Severity::Warning).analyze, n)
 }
 
 /// Whether `sink` receives `n`: the built-in defaults when
@@ -105,6 +114,15 @@ pub fn default_routes(threshold: Severity) -> SinkRoutes {
         ],
         chat_notice: vec![webhook_at_or_above, ghost_any, scheduler_any, watchdog_any],
         alert_registry: vec![Filter {
+            sources: vec![Source::Webhook],
+            statuses: vec![
+                crate::bus::NoticeStatus::Firing,
+                crate::bus::NoticeStatus::Resolved,
+            ],
+            ..Filter::default()
+        }],
+        analyze: vec![Filter {
+            min_severity: Some(threshold),
             sources: vec![Source::Webhook],
             statuses: vec![
                 crate::bus::NoticeStatus::Firing,
@@ -590,6 +608,46 @@ mod tests {
                 "{source:?} reaches chat_notice, not history"
             );
         }
+
+        let resolved = webhook(Severity::Warning, "HighCPU").status(NoticeStatus::Resolved);
+        assert!(
+            routes_match(&routes.analyze, &web_warning),
+            "a webhook warning firing alert matches the analyze route"
+        );
+        assert!(
+            routes_match(&routes.analyze, &resolved),
+            "a webhook warning resolved alert matches the analyze route"
+        );
+        assert!(
+            !routes_match(&routes.analyze, &web_info),
+            "a webhook info alert is below the analyze threshold"
+        );
+    }
+
+    /// A webhook analysis notice (status `Event`, `kind` = `analysis`) must
+    /// not match the analyze route: an analysis triggering another analysis
+    /// would loop for ever.
+    #[test]
+    fn analyze_route_skips_analysis_notices() {
+        let analysis = Notice::new(
+            Severity::Warning,
+            Source::Webhook,
+            "HighCPU",
+            "[Webhook Analysis] HighCPU: spike traced",
+        )
+        .label("kind", "analysis");
+        assert_eq!(analysis.status, NoticeStatus::Event);
+        assert!(
+            !default_routes(Severity::Warning)
+                .analyze
+                .iter()
+                .any(|f| f.matches(&analysis)),
+            "an analysis notice does not match the analyze route"
+        );
+        assert!(
+            !crate::daemon::notice_sinks::analyze_routed(&analysis),
+            "analyze_routed rejects the analysis notice"
+        );
     }
 
     /// A configured route reaches a notice the defaults ignore, while the

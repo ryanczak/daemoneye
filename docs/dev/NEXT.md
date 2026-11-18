@@ -5,10 +5,10 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** 09a — ghost-trigger-consumer
-([`phase-09a-ghost-trigger-consumer.md`](milestones/M38-notice-bus/phase-09a-ghost-trigger-consumer.md)),
-`todo`, ready to dispatch. 01–08c `done`. 09b (the `analyze` route sink)
-follows, then 10 (`Request::Subscribe` and `daemoneye notices`).
+**Active phase:** none drafted — next is 09b (the `analyze` route sink in
+`[[notifications.route]]`), then 10 (`Request::Subscribe` and `daemoneye
+notices`). 01–08c `done`; 09a `done` (escalated: remainder finished by the
+architect).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).

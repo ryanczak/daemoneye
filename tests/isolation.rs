@@ -287,12 +287,16 @@ async fn daemon_webhook_returns_200() {
 
 /// A severity-less alert reaches a ghost shell through the full pipeline.
 ///
-/// Drives `process_alert` in-process with a private tmux server, awaits the
-/// returned `JoinHandle`, and asserts the event chain:
+/// Drives `process_alert` in-process with a private tmux server, waits on the
+/// bus for the ghost's lifecycle notice, and asserts the event chain:
 /// `webhook_alert` → `webhook_analysis{ghost_trigger:true}` → `ghost_start`.
 ///
-/// This test is **deterministic** — it awaits the handle rather than
-/// sleeping or polling, satisfying STANDARDS.md §3.3.
+/// The analysis is run by the queued `ghost_trigger` bus consumer: the test
+/// registers it, subscribes its own queued receiver for `Ghost` notices
+/// **before** calling `process_alert`, and awaits the first notice whose
+/// title starts `[Ghost Shell Completed]` / `[Ghost Shell Failed]` /
+/// `[Ghost Shell Skipped]` under a timeout. Deterministic — the bus is the
+/// completion signal, no sleep or polling.
 ///
 /// It sets both `HOME` and `TMUX_TMPDIR` under `test_home_guard()` so any tmux
 /// subprocess the daemon itself may shell out to lands in a private server,
@@ -352,6 +356,7 @@ max_ghost_turns: 1
 
     // Build WebhookState pointing at the harness stub.
     let mut config = daemoneye::config::Config::default();
+    config.webhook.auto_analyze = true;
     config.models.insert(
         "default".to_string(),
         daemoneye::config::ModelEntry {
@@ -409,19 +414,43 @@ max_ghost_turns: 1
     assert_eq!(alerts[0].alert_name, "DiskFull");
     assert_eq!(alerts[0].severity, "warning");
 
-    let handle = rt.block_on(process_alert(alerts[0].clone(), state));
+    // The analysis is run by the queued `ghost_trigger` consumer, so the
+    // ghost's lifecycle notices arrive on the bus. Subscribe a receiver for
+    // them **before** publishing the alert.
+    let mut ghost_rx = bus.subscribe(
+        "isolation-ghost-watcher",
+        daemoneye::bus::Filter {
+            sources: vec![daemoneye::bus::Source::Ghost],
+            ..Default::default()
+        },
+        64,
+    );
 
-    // A ghost should have been spawned — handle is Some.
-    let ghost_handle = handle.expect("process_alert returned None — no ghost spawned");
+    // The ghost trigger registers after `rt.enter()` (so its queued task
+    // runs on this current-thread runtime) and before the alert is
+    // published (a subscriber sees only what is published after it).
+    daemoneye::webhook::register_ghost_trigger(state.clone());
+    rt.block_on(process_alert(alerts[0].clone(), state.clone()));
 
-    // Await the ghost handle — deterministic, no sleep or polling.
+    // Wait for the ghost's lifecycle notice — the bus is the completion
+    // signal, deterministic, no sleep or polling.
     rt.block_on(async {
-        if let Err(e) = ghost_handle.await {
-            panic!("Ghost task panicked: {:?}", e);
-        }
+        let wait = async {
+            while let Some(notice) = ghost_rx.recv().await {
+                if notice.title.starts_with("[Ghost Shell Completed]")
+                    || notice.title.starts_with("[Ghost Shell Failed]")
+                    || notice.title.starts_with("[Ghost Shell Skipped]")
+                {
+                    return;
+                }
+            }
+            panic!("the ghost watcher's queue closed before the ghost finished");
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(120), wait)
+            .await
+            .expect("the ghost never finished — no lifecycle notice within 120s");
     });
 
-    // Read the event segment and assert the full chain.
     let path = daemoneye::config::current_event_segment_path();
     let content = std::fs::read_to_string(&path).expect("read event segment");
 
@@ -624,14 +653,42 @@ ssh_target: e2e-host
     let alerts = parse_payload(&body);
     assert_eq!(alerts.len(), 1);
 
+    // The analysis is run by the queued `ghost_trigger` consumer, so the
+    // ghost's lifecycle notices arrive on the bus. Subscribe a receiver for
+    // them **before** publishing the alert.
+    let mut ghost_rx = bus.subscribe(
+        "isolation-ghost-watcher-ssh",
+        daemoneye::bus::Filter {
+            sources: vec![daemoneye::bus::Source::Ghost],
+            ..Default::default()
+        },
+        64,
+    );
+
     // The alert carries severity "warning", which the fixed gate admits.
-    let handle = rt.block_on(process_alert(alerts[0].clone(), state));
-    let ghost_handle = handle.expect("process_alert returned None — no ghost spawned");
-    // Await the ghost handle — deterministic, no sleep or polling.
+    // The ghost trigger registers after `rt.enter()` (so its queued task
+    // runs on this current-thread runtime) and before the alert is
+    // published (a subscriber sees only what is published after it).
+    daemoneye::webhook::register_ghost_trigger(state.clone());
+    rt.block_on(process_alert(alerts[0].clone(), state.clone()));
+
+    // Wait for the ghost's lifecycle notice — the bus is the completion
+    // signal, deterministic, no sleep or polling.
     rt.block_on(async {
-        if let Err(e) = ghost_handle.await {
-            panic!("Ghost task panicked: {:?}", e);
-        }
+        let wait = async {
+            while let Some(notice) = ghost_rx.recv().await {
+                if notice.title.starts_with("[Ghost Shell Completed]")
+                    || notice.title.starts_with("[Ghost Shell Failed]")
+                    || notice.title.starts_with("[Ghost Shell Skipped]")
+                {
+                    return;
+                }
+            }
+            panic!("the ghost watcher's queue closed before the ghost finished");
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(120), wait)
+            .await
+            .expect("the ghost never finished — no lifecycle notice within 120s");
     });
 
     // Read the event segment and assert the resolution record.

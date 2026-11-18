@@ -136,9 +136,7 @@ async fn handle_webhook(
     for alert in alerts {
         let state2 = Arc::clone(&state);
         tokio::spawn(async move {
-            let _handle = process_alert(alert, state2).await;
-            // Handle is dropped here — the HTTP handler must return 200
-            // without waiting for the ghost to finish.
+            process_alert(alert, state2).await;
         });
     }
 
@@ -212,6 +210,7 @@ pub async fn serve(
         rate_limit: Mutex::new(HashMap::new()),
         ip_limits: Mutex::new(HashMap::new()),
     });
+    crate::webhook::trigger::register_ghost_trigger(Arc::clone(&state));
 
     let app = Router::new()
         .route("/webhook", post(handle_webhook))

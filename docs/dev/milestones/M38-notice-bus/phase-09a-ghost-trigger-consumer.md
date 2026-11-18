@@ -1,7 +1,7 @@
 # Phase 09a — ghost-trigger-consumer
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** done
 **Drafted:** 2026-11-18
 **Depends on:** phase-08c
 **Estimated diff:** ~350 lines
@@ -164,3 +164,57 @@ line into the Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 (escalation)
+
+**Chosen lever:** session takeover of the remainder.
+**Rationale:**
+- The run ended `budget_exceeded` at 1000 turns, with 4 of 5 tasks done.
+  The production work (spec items 1–4) was complete and correct.
+- Two test defects held it up. Each is a single mechanical fix, so a
+  re-dispatch would have spent another session on a few lines.
+  - `ghost_trigger_skips_what_it_must_not_analyse` called `state()` twice.
+    Each call took `test_home_guard()`, a non-reentrant mutex, so the
+    test deadlocked and the suite hung.
+  - Both ghost end-to-end isolation tests called `register_ghost_trigger`
+    **after** `process_alert` had published. A subscriber sees only what
+    is published after it, so the consumer never saw the alert, and the
+    5 s wait failed.
+- The executor had added `DEBUG` / `RATELIMIT` / `BUSSTAT` `eprintln!`
+  output, still in place, while chasing the second defect.
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** escalated (the executor wrote the phase; the architect
+  finished the remainder)
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (1000 turns, `budget_exceeded`), then Claude
+  (direct) for the remainder
+- **Scope deviations:** none
+- **Architect fixes:**
+  - `trigger.rs` tests: the guard is taken once per test, and `state()`
+    no longer takes it.
+  - Both isolation tests register the trigger before `process_alert`.
+    They wait under one overall 120 s timeout rather than 5 s per notice,
+    and the debug output is gone.
+  - `analysis_notice_splits_the_response` drops the webhook payload it no
+    longer used. The new notice fixture had pushed `tests/integration.rs`
+    past its allowlisted 3016 test lines, which may not grow.
+  - A clippy `let_and_return` in the reworked test helper.
+- **Checked:**
+  - Mutation check: deleting the consumer's `analyze_routed` gate makes
+    `ghost_trigger_skips_what_it_must_not_analyse` fail.
+  - Both trigger tests publish through the bus with the consumer
+    registered.
+  - `maybe_analyze_alert`'s allowlist line went from 240 down to 227.
+  - Acceptance greps print `1`, `1` and `0`.
+  - Full gates pass: 3018 lib tests, isolation 12 passed, fmt, clippy
+    `-D warnings`, hygiene.
+- **Calibration:**
+  - Spec item 5 said "register after `rt.enter()`" but not "before the
+    publish". The ordering against the publish is the load-bearing half
+    of any test that subscribes a consumer.
+  - The double-guard deadlock is new data. A spec whose test builds two
+    fixtures that each take `test_home_guard` should say the guard is
+    taken once.
+

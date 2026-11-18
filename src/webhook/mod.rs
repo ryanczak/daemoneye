@@ -14,10 +14,12 @@ mod active;
 mod parse;
 mod process;
 mod server;
+mod trigger;
 
 pub use parse::*;
 pub use process::*;
 pub use server::*;
+pub use trigger::register_ghost_trigger;
 
 pub use active::ACTIVE_ALERT_TTL_SECS;
 #[cfg(test)]
