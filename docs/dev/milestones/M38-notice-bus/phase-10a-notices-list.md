@@ -1,7 +1,7 @@
 # Phase 10a — notices-list
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-18
 **Depends on:** phase-09c
 **Estimated diff:** ~250 lines, half tests
@@ -318,3 +318,45 @@ kill: (-950993): No such process
 **Commit:** 39931cff58f31390cc0fb838274c8549bbb975da
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** approved_first_try, with reviewer fixes
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (119 turns, `complete`)
+- **Scope deviations:** the flags are strings validated against name
+  tables, not a clap value enum. `Severity::parse` accepts its aliases
+  (`warn`, `crit`). Accepted, because the errors name the valid values.
+- **Reviewer fixes:**
+  - **The ring test was fake.** `notices_keeps_the_last_limit_oldest_first`
+    rebuilt the ring inside the test and never called the selection. The
+    ring is now `keep_last`, which `select_notices` and the test share, and
+    the test interleaves non-matching notices.
+    Mutations: `pop_front` → `pop_back` fails it, and deleting the filter
+    check fails it. Both pass once restored.
+  - **The filter test checked existing code.** It called
+    `Filter::matches` with hand-built filters. The flags now go through
+    `filter_from_flags`, which `run_notices` uses, and the test drives it,
+    including the two refusals that name the valid values. The unused
+    `NoticesArgs` / `build_filter` are gone.
+  - **The allowlist was bumped too far.** `async_main` was bumped to 189;
+    the hygiene gate measures 184 (176 + the 8-line arm). It now reads 184.
+  - **The module doc** used `///` and now uses `//!`.
+  - `notices_reads_the_journal` asserts the rendered output.
+- **Checked:**
+  - Gates: 3027 lib tests, fmt, clippy `-D warnings` and hygiene pass.
+  - `notices --min-severity bogus` exits 1, and the error names the valid
+    values.
+  - `--help` lists all four flags, and the README row is present.
+  - A full `cargo test` leaves the real `~/.daemoneye` event log unchanged.
+- **Finding, not this phase's code:** the real event log holds test-fixture
+  records with pid `4242`. There are 3 in `events-20261118.jsonl`, from an
+  earlier draft of this phase's test, and a 26-line `events-20231114.jsonl`
+  written 2026-11-17 18:13, during the 08a/08b executor runs. The current
+  suite writes nothing there.
+- **Calibration:** the spec said "do not restate its rules in the test"
+  and the executor still re-implemented the logic under test inside the
+  test. That makes three occurrences in M38 (08a, 08b's fixtures, 10a). A
+  spec should name the seam function the test must call, not just forbid
+  restating.
+
