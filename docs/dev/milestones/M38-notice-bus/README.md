@@ -107,7 +107,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 07b | remove-old-keys ([phase-07b-remove-old-keys.md](phase-07b-remove-old-keys.md)) | done |
 | 08a | registry-replay ([phase-08a-registry-replay.md](phase-08a-registry-replay.md)) | done |
 | 08b | digest-from-journal ([phase-08b-digest-from-journal.md](phase-08b-digest-from-journal.md)) | done |
-| 08c | the catch-up brief reads notices from the journal | planned |
+| 08c | catchup-from-journal ([phase-08c-catchup-from-journal.md](phase-08c-catchup-from-journal.md)) | todo |
 | 09 | ghost trigger as a consumer | planned |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
 
@@ -136,6 +136,10 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
   makes the ghost trigger a routed consumer. Nothing ships between phases,
   so the interim never reaches a release. Phase 07 split into 07a
   (additive route config) and 07b (the removals).
+- **PE decision at phase-08c drafting (2026-11-18):** the catch-up brief
+  lists the notices routed to history **or** the chat notice, so scheduler
+  job results and watchdog analyses join it (2.9.0 showed them only as an
+  overlay). Accepted delta.
 - **Gotcha for producer phases (from phase 03):** `notice_sinks::test_bus`
   spawns the queued sinks, so on a current-thread runtime it must be built
   **after** `rt.enter()` (or inside `block_on`). Built before, the spawned
