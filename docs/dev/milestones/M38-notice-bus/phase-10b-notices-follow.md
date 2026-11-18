@@ -1,7 +1,7 @@
 # Phase 10b — notices-follow
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-18
 **Depends on:** phase-10a
 **Estimated diff:** ~350 lines, half tests
@@ -163,3 +163,9 @@ its `cargo test --test isolation` result line into the Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 18:24 — started (executor)
+
+Executing the Spec in order: wire types, the `handle_subscribe` handler,
+`--follow`, the allowlist bumps, docs, and the isolation end-to-end test.
+
