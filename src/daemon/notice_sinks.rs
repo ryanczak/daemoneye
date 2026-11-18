@@ -739,11 +739,8 @@ mod tests {
         .label("kind", "analysis");
         assert_eq!(analysis.status, NoticeStatus::Event);
         assert!(
-            !crate::daemon::notice_sinks::routes_match(
-                &crate::daemon::notice_sinks::default_routes(Severity::Warning).analyze,
-                &analysis
-            ),
-            "precondition: the route's filter alone matches the analysis notice"
+            cfg.notifications.route[0].filter().matches(&analysis),
+            "precondition: the configured route's filter alone matches the analysis notice"
         );
         assert!(
             !crate::daemon::notice_sinks::analyze_routed(&cfg.notifications, &analysis),

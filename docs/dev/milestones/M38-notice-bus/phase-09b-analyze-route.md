@@ -1,7 +1,7 @@
 # Phase 09b — analyze-route
 
 **Milestone:** M38 — The notice bus
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-18
 **Depends on:** phase-09a
 **Estimated diff:** ~200 lines
@@ -355,3 +355,33 @@ kill: (-823560): No such process
 **Commit:** b9f7c12085e8c7497546f11c1ba1ef0b93f7e0af
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-18
+
+- **Verdict:** approved_first_try, with two reviewer nit fixes
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. The shared `webhook()` test helper in
+  `notice_sinks.rs` now carries `kind` = `alert`, which the new gate needs.
+  No other test's meaning changes.
+- **Reviewer fixes:**
+  - **The loop test's precondition.** `analyze_routed_never_routes_an_analysis`
+    asserted that the *default* route does not match the analysis notice,
+    under a message saying the *configured* route's filter does. It now
+    asserts the real premise: `route[0].filter().matches(&analysis)`.
+    Mutation check: removing the gate's `kind` rule makes the test fail.
+    With the rule restored, it passes.
+  - **The `CLAUDE.md` row** listed `command` as a `SinkRoutes` field. The
+    struct holds `history`, `chat_notice`, `alert_registry` and `analyze`;
+    command routes come only from config.
+- **Checked:**
+  - Both callers pass `config::current().notifications`, read per notice.
+  - The gate owns the `kind` rule.
+  - `validate_routes` refuses a `command` key on an `analyze` route.
+  - The acceptance greps print 1, 1/1, and 3/2.
+  - `doc_truth` passes, and `webhook_ghost_e2e_deterministic` passes.
+  - Full gates pass: 3022 lib tests, fmt, and clippy `-D warnings`.
+- **Calibration:** none new. Spec each test by the function it must call
+  and name its negative case first. That held: both gate tests call
+  `analyze_routed` with parsed TOML.
+
