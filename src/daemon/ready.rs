@@ -59,10 +59,47 @@ pub fn report_failure(msg: &str) {
         None => return,
     };
     drop(guard);
-    let sanitized = msg.replace(['\n', '\r'], " ");
-    let payload = format!("ERR {}\n", sanitized);
+    let payload = format!("ERR {}\n", escape_message(msg));
     let mut file = std::fs::File::from(fd);
     let _ = file.write_all(payload.as_bytes());
+}
+
+/// The protocol is one line per report, so a multi-line message (the
+/// removed-config-key migration table) travels with its newlines escaped:
+/// `\` becomes `\\`, a newline `\n`, and a carriage return is dropped.
+fn escape_message(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    for c in msg.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The inverse of [`escape_message`]. An unknown escape is kept as written.
+fn unescape_message(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Block until the child reports or the pipe reaches EOF. Called in the parent.
@@ -83,7 +120,7 @@ pub fn parse_report_line(line: &str) -> ChildReport {
     if trimmed == "READY" {
         ChildReport::Ready
     } else if let Some(rest) = trimmed.strip_prefix("ERR ") {
-        ChildReport::Failed(rest.to_string())
+        ChildReport::Failed(unescape_message(rest))
     } else {
         ChildReport::Died
     }
@@ -164,5 +201,23 @@ mod tests {
         }
         // Must not panic
         report_ready();
+    }
+
+    /// A multi-line failure survives the one-line protocol with its newlines,
+    /// and a literal backslash-n in the message is not turned into one.
+    #[test]
+    fn a_multi_line_failure_round_trips() {
+        let msg = "removed key:\r\n  [[notifications.route]]\n  path = C:\\new";
+        let line = format!("ERR {}\n", escape_message(msg));
+        assert_eq!(line.matches('\n').count(), 1, "one protocol line: {line:?}");
+        match parse_report_line(&line) {
+            ChildReport::Failed(got) => {
+                assert_eq!(
+                    got,
+                    "removed key:\n  [[notifications.route]]\n  path = C:\\new"
+                )
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 }

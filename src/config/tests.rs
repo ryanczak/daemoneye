@@ -1446,6 +1446,41 @@ fn removed_on_alert_is_a_load_error() {
     );
 }
 
+/// Both removed keys are reported in one error, typed as
+/// `RemovedKeysError` so the daemon refuses to start on it rather than
+/// falling back to the defaults.
+#[test]
+fn both_removed_keys_are_one_typed_error() {
+    let toml = r#"
+            [webhook]
+            severity_threshold = "warning"
+
+            [notifications]
+            on_alert = "notify-send x"
+        "#;
+    let path = std::path::Path::new("config.toml");
+    let err = parse_config_text(path, toml).expect_err("removed keys must fail");
+    assert!(
+        err.downcast_ref::<crate::config::RemovedKeysError>()
+            .is_some(),
+        "a removed key is the typed error: {err:#}"
+    );
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("severity_threshold was removed") && text.contains("on_alert was removed"),
+        "one error names both removed keys: {text}"
+    );
+
+    let other = parse_config_text(path, "[webhook]\nport = \"nope\"\n")
+        .expect_err("a type error fails too");
+    assert!(
+        other
+            .downcast_ref::<crate::config::RemovedKeysError>()
+            .is_none(),
+        "any other load error is not the removed-key error: {other:#}"
+    );
+}
+
 /// A config using only the surviving keys parses.
 #[test]
 fn config_without_removed_keys_still_loads() {

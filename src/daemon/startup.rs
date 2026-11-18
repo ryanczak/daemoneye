@@ -115,6 +115,35 @@ fn sweep_stale_var_run_artifacts() {
     }
 }
 
+/// Load the daemon's config at startup. A file that fails to parse runs on
+/// the defaults (and the ghost foreground gate fails closed), except a file
+/// that still sets a key removed in 2.10.0: that is a migration the user must
+/// make, so the daemon refuses to start and the message reaches the terminal.
+fn load_startup_config() -> Result<Config> {
+    match Config::load() {
+        Ok(cfg) => {
+            crate::config::set_startup_error(Ok(()));
+            Ok(cfg)
+        }
+        // A removed key is a migration the user must make, not a typo to
+        // run past: refuse to start, so the message reaches the terminal.
+        Err(e)
+            if e.downcast_ref::<crate::config::RemovedKeysError>()
+                .is_some() =>
+        {
+            log::error!("{e:#}");
+            Err(e)
+        }
+        Err(e) => {
+            log::error!("Failed to load config, using defaults: {e:#}");
+            // Record the failure beside the handle: the ghost foreground gate
+            // fails closed while the daemon runs on these defaults (bug-19-1).
+            crate::config::set_startup_error(Err(anyhow::anyhow!("{e:#}")));
+            Ok(Config::default())
+        }
+    }
+}
+
 /// Start the daemon process.
 ///
 /// Lifecycle:
@@ -197,19 +226,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     // Validate API key before binding the socket so the error is immediate
     // and obvious rather than surfacing as a cryptic 401 mid-conversation.
-    let startup_config = match Config::load() {
-        Ok(cfg) => {
-            crate::config::set_startup_error(Ok(()));
-            cfg
-        }
-        Err(e) => {
-            log::error!("Failed to load config, using defaults: {e:#}");
-            // Record the failure beside the handle: the ghost foreground gate
-            // fails closed while the daemon runs on these defaults (bug-19-1).
-            crate::config::set_startup_error(Err(anyhow::anyhow!("{e:#}")));
-            Config::default()
-        }
-    };
+    let startup_config = load_startup_config()?;
     // Install the process-wide handle every daemon-side reader goes through.
     // After this line, `config::current()` serves the running config and
     // `Config::Reload` swaps it without a restart.

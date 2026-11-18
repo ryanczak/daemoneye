@@ -129,6 +129,21 @@ fn dirs_next() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
 }
 
+/// A config that still sets a key removed in 2.10.0. Unlike other load
+/// errors, the daemon refuses to start on it: falling back to the defaults
+/// would hide the migration message behind an unrelated failure (or run on
+/// the wrong provider) — `run_daemon` downcasts for it.
+#[derive(Debug)]
+pub struct RemovedKeysError(pub String);
+
+impl std::fmt::Display for RemovedKeysError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RemovedKeysError {}
+
 /// Parse `config.toml` text the way [`Config::load`] does: deserialize,
 /// run the validators, and hand back the `Config`. Shared by `load` and
 /// the `edit_file` config path, which validates an edited file in memory
@@ -136,6 +151,7 @@ fn dirs_next() -> PathBuf {
 /// either way.
 pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<Config> {
     if let Ok(table) = text.parse::<toml::Table>() {
+        let mut removed: Vec<String> = Vec::new();
         if table
             .get("webhook")
             .and_then(|w| w.get("severity_threshold"))
@@ -144,7 +160,7 @@ pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<C
             let configured = table["webhook"]["severity_threshold"]
                 .as_str()
                 .unwrap_or("");
-            anyhow::bail!(
+            removed.push(format!(
                 "[webhook] severity_threshold was removed in 2.10.0. Route webhook notices \
                  instead:\n\
                  \x20 [[notifications.route]]\n\
@@ -152,14 +168,14 @@ pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<C
                  \x20 sources = [\"webhook\"]\n\
                  \x20 min_severity = \"{configured}\"\n\
                  Webhook alerts also route by default at warning and above."
-            );
+            ));
         }
         if table
             .get("notifications")
             .and_then(|n| n.get("on_alert"))
             .is_some()
         {
-            anyhow::bail!(
+            removed.push(
                 "[notifications] on_alert was removed in 2.10.0. Reproduce it with two routes \
                  (put your command where the placeholder is):\n\
                  \x20 [[notifications.route]]\n\
@@ -172,7 +188,15 @@ pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<C
                  \x20 sources = [\"webhook\"]\n\
                  \x20 min_severity = \"warning\"\n\
                  \x20 command = \"<your on_alert command>\""
+                    .to_string(),
             );
+        }
+        if !removed.is_empty() {
+            return Err(anyhow::Error::new(RemovedKeysError(format!(
+                "{}: {}",
+                path.display(),
+                removed.join("\n\n")
+            ))));
         }
     }
     let mut cfg: Config =
