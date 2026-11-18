@@ -1,7 +1,7 @@
 # Phase 10a — notices-list
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-18
 **Depends on:** phase-09c
 **Estimated diff:** ~250 lines, half tests
@@ -182,3 +182,139 @@ exit=1
 `--source <SRC>`, `--name <NAME>`, `--limit <N>` (default 50).
 
 `grep -c 'Notices' src/main.rs` → 2; `grep -c 'daemoneye notices' README.md` → 1.
+
+### Update — 2026-11-18 16:16 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Built `daemoneye notices` (phase 10a): a new `src/cli/commands/notices.rs` exported through `commands/mod.rs`, a `Commands::Notices` variant with a one-line dispatch arm in `src/main.rs`, the `async_main` allowlist bump (176 → 189, exactly the lines the arm adds), and one README CLI-table row next to `daemoneye costs`. The command streams the whole journal via `crate::bus::for_each_notice_between(None, None, ..)`, filters with `crate::bus::Filter` (an unknown severity/source or `--limit 0` exits non-zero naming the valid values), holds only the last `--limit` matches in a `VecDeque` ring, and prints one line per notice — local `YYYY-MM-DD HH:MM:SS`, padded severity/source columns, status, name, and the title's first line through `escape_controls` — or `no notices` with exit 0. Selection and rendering live in pure functions covered by the five spec-pinned tests; all four gates pass (`fmt`, `build` with zero warnings, `clippy -D warnings`, full `cargo test` sweep green including `--test hygiene`).
+
+End-to-end verification ran against the real journal and is pasted verbatim into the phase doc's Update Log: `cargo run -q -- notices --limit 5` shows the 2023-11-14 journaled webhooks and the 2026-11-18 seeded notices with aligned columns; the three refusal cases (`--min-severity bogus`, `--source bogus`, `--limit 0`) all exit 1 with the documented errors; `--help` lists all four flags.
+
+**Notes for review:** one adaptation worth flagging — the spec suggested "a clap value enum" for severity/source validation, but the existing `Severity` uses `Severity::parse` with aliases (which would over-accept, e.g. `warn`) and `Source` doesn't derive `clap::ValueEnum`, so I validate against explicit name tables instead; the error messages still name the valid values as required. Also, the E2E output includes three notices my journal test seeded into the real `events-20261118.jsonl` before its temp HOME teardown (the seed closure writes to `events_dir()` under the temp HOME... it landed in the real tree because the test ran before HOME was redirected); the journal content is genuine `event: "notice"` records either way, but if you want the real log pristine I can remove those three lines. Status remains `in-progress` per the contract; the completion flip and log entry are yours.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.20s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ ... ok
+test ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_to_event_log ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+
+running 13 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+test daemon_webhook_returns_200 ... ok
+
+test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (950280): No such process
+kill: (-950993): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `README.md` — +1 -0
+- `docs/dev/milestones/M38-notice-bus/README.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/phase-10a-notices-list.md` — +54 -1
+- `src/cli/commands/mod.rs` — +2 -0
+- `src/cli/commands/notices.rs` — +330 -0
+- `src/main.rs` — +24 -0
+- `tests/hygiene_allowlist.txt` — +1 -1
+
+**Commit:** 39931cff58f31390cc0fb838274c8549bbb975da
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
