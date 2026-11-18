@@ -1,7 +1,7 @@
 # Phase 09b — analyze-route
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-18
 **Depends on:** phase-09a
 **Estimated diff:** ~200 lines
@@ -146,3 +146,69 @@ into the Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 05:11 (started)
+
+**Executor:** executor (headless run, phase-09b analyze-route).
+**Status:** flipped `todo → in-progress`; milestone README row 09b updated to
+match.
+
+Implemented the Spec in order: `RouteSink::Analyze` (`"analyze"` in TOML) and
+`validate_routes` refusing a `command` key on it, `analyze_routed(cfg, n)`
+reading `crate::config::current().notifications` at both callers (the
+`kind` rule moved into the gate out of the trigger consumer), and the docs
+(`config.toml`, README route section, config-reference, CLAUDE.md row).
+New tests: `analyze_route_parses`, `analyze_route_refuses_a_command`,
+`analyze_routed_honours_configured_routes`,
+`analyze_routed_never_routes_an_analysis`; the existing
+`analyze_route_skips_analysis_notices` and the two trigger tests pass
+against the new signature. All four gate commands run green; E2E
+verification follows.
+
+### Update — 2026-11-18 05:20 (end-to-end verification)
+
+Spec-pinned literals, greped against the files the phase populated:
+
+```sh
+$ grep -c 'Analyze' src/config/types.rs
+1
+$ grep -c 'config::current()' src/webhook/trigger.rs
+1
+$ grep -c 'config::current()' src/webhook/process.rs
+1
+$ grep -c '"analyze"' assets/etc/config.toml README.md
+assets/etc/config.toml:3
+README.md:2
+```
+
+E2E per the phase doc — the webhook ghost path through the
+config-reading gate with the default routes, captured to
+`/tmp/e2e-m38-09b.txt` from a single run:
+
+```sh
+$ cargo test --test isolation webhook_ghost_e2e_deterministic 2>&1 | tail -6 > /tmp/e2e-m38-09b.txt
+
+running 1 test
+test webhook_ghost_e2e_deterministic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.14s
+```
+
+doc_truth (`tests/doc_truth.rs`), from the same run set:
+
+```sh
+$ cargo test --test doc_truth 2>&1 | tail -3
+
+running 19 tests
+...
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+```
+
+Full gate sequence, all green:
+
+- `cargo fmt --all` — clean (run immediately before staging).
+- `cargo build` — 0 warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — exit 0 (one
+  fix along the way: a `== false` in a new test rewritten as `!`).
+- `cargo test` — lib 3022 passed / 0 failed / 10 ignored, plus all
+  integration suites green.
