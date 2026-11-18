@@ -34,7 +34,7 @@ fn src/daemon/server/ask.rs handle_ask 573
 fn src/daemon/server/handlers.rs handle_status 200
 fn src/daemon/server/mod.rs handle_client 228
 fn src/daemon/stream/conversation.rs run_conversation_loop 775
-fn src/main.rs async_main 176
+fn src/main.rs async_main 189
 fn src/manifest.rs auto_search_context 211
 fn src/shell/client.rs read_to_marker 236
 fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321

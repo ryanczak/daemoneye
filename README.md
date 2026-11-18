@@ -456,6 +456,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye session import <id> --name <name>` | Import an orphaned ephemeral session log into the named session store (no daemon required) |
 | `daemoneye costs` | Show AI spend from the event log (no daemon required) |
 | `daemoneye costs --since DATE --until DATE --by agent` | Filter and group the cost report; `--agent NAME`, `--json` also available |
+| `daemoneye notices` | Print past notices from the event journal, the last `--limit` (default 50) in oldest-first order, filtered by `--min-severity SEV`, repeatable `--source SRC` and `--name NAME` (no daemon required) |
 | `daemoneye scorecard` | Aggregate finished-run records (`event: "run"`) by model and one secondary dimension: runs, pass rate, tool success, parse failures, turns, wall clock, cost, attributable failures (no daemon required) |
 | `daemoneye scorecard --since DATE --until DATE --by tag --min-runs 3` | Filter and bucket the scorecard; `--by kind|agent|tag`, `--json` also available |
 | `daemoneye profile <model>` | One model's scorecard rows and its failure classes ranked, `(not the model)` marked on classes the model could not have avoided (no daemon required) |

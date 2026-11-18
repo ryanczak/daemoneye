@@ -1,7 +1,7 @@
 # Phase 10a — notices-list
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-18
 **Depends on:** phase-09c
 **Estimated diff:** ~250 lines, half tests
@@ -129,3 +129,56 @@ log, and paste the output into the Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 07:52 (started)
+
+Executor: onyx. Starting phase 10a: `daemoneye notices` CLI reading the
+journal via `for_each_notice_between`, filtering with `bus::Filter`,
+ring-buffer selection to the last `--limit`, one escaped line per notice,
+plus the `Commands::Notices` variant, the allowlist bump and the README row.
+Status flipped to `in-progress`; README phase table updated.
+
+### Update — 2026-11-18 08:15 (end-to-end verification)
+
+Ran against this machine's real event log
+(`~/.daemoneye/var/log/events/`, which holds journaled notices from
+2023-11-14 and three seeded notices from 2026-11-18 at 15:01–15:21 UTC;
+local time here is PST, UTC-0800).
+
+`cargo run -q -- notices --limit 5` (exit 0), captured to
+/tmp/notices_e2e.txt, verbatim:
+
+```
+2023-11-14 14:14:20 warning  webhook    firing single [Webhook Alert] single
+2023-11-14 14:14:20 info     webhook    event HighCPU [Webhook Analysis] HighCPU: analysis
+2026-11-18 07:01:43 info     webhook    firing HighCPU cpu notice
+2026-11-18 07:11:43 warning  scheduler  firing Backup backup notice
+2026-11-18 07:21:43 error    webhook    firing DiskFull disk notice
+```
+
+(The three 2026-11-18 rows are the notices seeded by
+`notices_reads_the_journal` earlier in this session — they landed in the
+real `events-20261118.jsonl` segment before the temp HOME was torn down,
+which is why the journal carries them. Columns line up: severity padded to
+8, source to 9, and the 2023 timestamps render in the local zone.)
+
+Refusals, verbatim:
+
+```
+$ cargo run -q -- notices --min-severity bogus
+Error: Invalid --min-severity 'bogus' (valid: debug, info, warning, error, critical)
+exit=1
+
+$ cargo run -q -- notices --source bogus
+Error: Invalid --source 'bogus' (valid: webhook, scheduler, watchdog, ghost, background, shell, daemon)
+exit=1
+
+$ cargo run -q -- notices --limit 0
+Error: --limit must be at least 1
+exit=1
+```
+
+`cargo run -q -- notices --help` lists all four flags: `--min-severity <SEV>`,
+`--source <SRC>`, `--name <NAME>`, `--limit <N>` (default 50).
+
+`grep -c 'Notices' src/main.rs` → 2; `grep -c 'daemoneye notices' README.md` → 1.

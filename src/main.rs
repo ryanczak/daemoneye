@@ -218,6 +218,22 @@ enum Commands {
     /// single transaction, so a concurrent search sees the old index or the new
     /// one, never a partial one. Needs no daemon and never modifies a memory file.
     Reindex,
+    /// Print past notices from the event journal (no daemon required)
+    Notices {
+        /// Minimum severity (inclusive): debug, info, warning, error or critical
+        #[arg(long, value_name = "SEV")]
+        min_severity: Option<String>,
+        /// Only notices from this source; repeatable (webhook, scheduler,
+        /// watchdog, ghost, background, shell, daemon)
+        #[arg(long, value_name = "SRC")]
+        source: Vec<String>,
+        /// Only notices with this exact name; repeatable
+        #[arg(long, value_name = "NAME")]
+        name: Vec<String>,
+        /// Print at most this many notices, oldest first
+        #[arg(long, value_name = "N", default_value_t = 50)]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -558,6 +574,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Reindex => {
             cli::run_reindex();
+        }
+        Commands::Notices {
+            min_severity,
+            source,
+            name,
+            limit,
+        } => {
+            cli::run_notices(min_severity.as_deref(), &source, &name, limit)?;
         }
     }
 
