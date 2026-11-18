@@ -17,20 +17,18 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 /// session's detach state.
 ///
 /// Mirrors the `Ask`-time brief it replaces (M27 phase 03): when the entry
-/// has `last_detach`, the away time is measured from it and the brief is
-/// built over the messages added since `messages_at_detach`. The detach
-/// state is cleared whether or not a brief was produced. A session with no
-/// entry yields no brief — presence alone carries the attach. Since M29
-/// phase 05 an attach inserts the entry from disk first, so a session that
-/// detached before a daemon restart re-attaches resident and reads the same
-/// branch.
+/// has `last_detach`, the away time is measured from it and the brief lists
+/// the notices the journal holds for `[detach, now)`. The detach state is
+/// cleared whether or not a brief was produced. A session with no entry
+/// yields no brief — presence alone carries the attach. Since M29 phase 05
+/// an attach inserts the entry from disk first, so a session that detached
+/// before a daemon restart re-attaches resident and reads the same branch.
 pub(crate) fn attach_brief_for(sessions: &SessionStore, session_id: &str) -> Option<String> {
     with_sessions(sessions, |store| {
         let entry = store.get_mut(session_id)?;
         let brief = entry.last_detach.and_then(|detach| {
             let away_secs = detach.elapsed().as_secs();
-            let new_msgs = &entry.messages[entry.messages_at_detach.min(entry.messages.len())..];
-            build_catchup_brief(new_msgs, away_secs, entry.detach_time_utc)
+            build_catchup_brief(session_id, away_secs, entry.detach_time_utc)
         });
         entry.last_detach = None;
         entry.detach_time_utc = None;
@@ -206,6 +204,7 @@ mod tests {
     };
     use std::collections::HashMap;
     use std::collections::HashSet;
+    use std::io::Write;
     use std::sync::Mutex;
     use std::time::Instant;
     use tokio::io::AsyncWriteExt;
@@ -255,6 +254,67 @@ mod tests {
             tool_results: None,
             turn: None,
         }
+    }
+
+    /// The serialized-notice journal record `Bus::new` writes, with a pinned
+    /// `ts`, `event: "notice"` and `pid` — the shape
+    /// `for_each_notice_between` parses. The record's `ts` is the notice's
+    /// own, so the notice is pinned with `ts_refire` before this runs.
+    fn journal_record(notice: &crate::bus::Notice) -> serde_json::Value {
+        let mut record = serde_json::to_value(notice).expect("serialize notice");
+        let obj = record.as_object_mut().expect("notice is an object");
+        let mut stamped = serde_json::Map::new();
+        stamped.insert(
+            "ts".to_string(),
+            serde_json::Value::String(notice.ts.to_rfc3339()),
+        );
+        stamped.insert(
+            "event".to_string(),
+            serde_json::Value::String("notice".to_string()),
+        );
+        stamped.insert("pid".to_string(), serde_json::Value::from(4242));
+        for (k, v) in obj.clone() {
+            stamped.insert(k, v);
+        }
+        serde_json::Value::Object(stamped)
+    }
+
+    /// Journal one notice at `ts`: append its record into the dated segment
+    /// the instant names, the way `Bus::new`'s journal records land.
+    fn seed_notice_record(notice: &crate::bus::Notice, ts: chrono::DateTime<chrono::Utc>) {
+        let notice = notice.clone().ts_refire(ts.timestamp());
+        let path =
+            crate::config::events_dir().join(format!("events-{}.jsonl", ts.format("%Y%m%d")));
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("the events dir");
+        }
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .expect("opening the segment");
+        writeln!(
+            f,
+            "{}",
+            serde_json::to_string(&journal_record(&notice)).expect("serializing record")
+        )
+        .expect("appending");
+    }
+
+    /// A webhook alert notice shaped as `process_alert` writes it: `Warning`
+    /// firing, `kind` `alert`, the raw severity label carried on top.
+    fn alert_notice(name: &str, title: &str) -> crate::bus::Notice {
+        crate::bus::Notice::new(
+            crate::bus::Severity::Warning,
+            crate::bus::Source::Webhook,
+            name,
+            title,
+        )
+        .source_id("alertmanager")
+        .status(crate::bus::NoticeStatus::Firing)
+        .fingerprint(format!("fp-{name}"))
+        .label("severity", "warning")
+        .label("kind", "alert")
     }
 
     type ClientRx = tokio::io::BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>;
@@ -552,6 +612,22 @@ mod tests {
             store.insert("s3".to_string(), e);
         });
 
+        // The brief reads the journal, not the history: journal a notice
+        // inside the detach window so the brief has something to list.
+        let detach = with_sessions(&sessions, |store| {
+            store.get("s3").expect("the entry").detach_time_utc
+        })
+        .expect("the detach stamp");
+        let bg = crate::bus::Notice::new(
+            crate::bus::Severity::Info,
+            crate::bus::Source::Background,
+            "run-apt",
+            "[Background Task Completed] apt upgrade finished (exit 0)",
+        )
+        .source_id("run-apt")
+        .label("kind", "completed");
+        seed_notice_record(&bg, detach + chrono::Duration::seconds(5));
+
         let (mut rx, mut client_w, task) = drive(sessions.clone(), "s3").await;
         let replies = read_responses(&mut rx, 2).await;
         match replies.as_slice() {
@@ -562,7 +638,7 @@ mod tests {
                 );
                 assert!(
                     brief.contains("[Background Task Completed] apt upgrade finished"),
-                    "brief must cover the message added after the detach: {brief}"
+                    "brief must cover the notice journaled after the detach: {brief}"
                 );
             }
             other => panic!("expected brief + Ok, got {other:?}"),
@@ -681,13 +757,19 @@ mod tests {
 
         record_chat_detach("away-1", &sessions);
 
-        let alert = msg("[Webhook Alert] disk usage at 95%");
-        crate::webhook::inject_into_sessions(&sessions, &alert);
-
+        // Backdate the detach 60 s — the detach must look ≥ 30 s away — and
+        // journal the alert inside the window it names.
         with_sessions(&sessions, |store| {
             let entry = store.get_mut("away-1").unwrap();
             entry.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
+            entry.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
         });
+        let detach = with_sessions(&sessions, |store| {
+            store.get("away-1").unwrap().detach_time_utc
+        })
+        .expect("the detach stamp");
+        let alert = alert_notice("disk-high", "[Webhook Alert] disk usage at 95%");
+        seed_notice_record(&alert, detach + chrono::Duration::seconds(5));
 
         let brief = attach_brief_for(&sessions, "away-1");
         assert!(
@@ -764,10 +846,8 @@ mod tests {
         );
         record_chat_detach(sid, &sessions);
 
-        let alert = msg("[Webhook Alert] disk usage at 95%");
-        crate::webhook::inject_into_sessions(&sessions, &alert);
-
-        // Backdate the detach 60 s — the detach must look ≥ 30 s away.
+        // Backdate the detach 60 s — the detach must look ≥ 30 s away — and
+        // journal the alert inside the window it names.
         with_sessions(&sessions, |store| {
             let e = store.get_mut(sid).expect("the resident entry");
             assert_eq!(
@@ -777,6 +857,12 @@ mod tests {
             e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
             e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
         });
+        let detach = with_sessions(&sessions, |store| {
+            store.get(sid).expect("the resident entry").detach_time_utc
+        })
+        .expect("the detach stamp");
+        let alert = alert_notice("disk-high", "[Webhook Alert] disk usage at 95%");
+        seed_notice_record(&alert, detach + chrono::Duration::seconds(5));
 
         let brief = attach_brief_for(&sessions, sid);
         assert!(
@@ -907,16 +993,21 @@ mod tests {
             e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
         });
 
-        // The alert arrives after the chat left, while it is still resident.
-        let alert = msg("[Webhook Alert] LiveTicks: ticks resumed");
-        crate::webhook::inject_into_sessions(&sessions, &alert);
+        // The alert arrives after the chat left, while it is still resident:
+        // it is journaled inside the detach window the brief reads.
+        let detach = with_sessions(&sessions, |store| {
+            store.get(sid).expect("the resident entry").detach_time_utc
+        })
+        .expect("the detach stamp");
+        let alert = alert_notice("LiveTicks", "[Webhook Alert] LiveTicks: ticks resumed");
+        seed_notice_record(&alert, detach + chrono::Duration::seconds(5));
 
         let brief = attach_brief_for(&sessions, sid);
         assert!(
             brief
                 .as_deref()
                 .unwrap_or_default()
-                .contains("[Webhook Alert]"),
+                .contains("[Webhook Alert] LiveTicks: ticks resumed"),
             "the catch-up brief names the alert posted after the chat left: {brief:?}"
         );
     }
@@ -1013,9 +1104,14 @@ mod tests {
         );
         record_chat_detach(sid, &sessions);
 
-        // The alert arrives while the chat is away.
-        let alert = msg("[Webhook Alert] LiveTicks: ticks resumed");
-        crate::webhook::inject_into_sessions(&sessions, &alert);
+        // The alert arrives while the chat is away: journaled inside the
+        // detach window the brief reads.
+        let detach = with_sessions(&sessions, |store| {
+            store.get(sid).expect("the resident entry").detach_time_utc
+        })
+        .expect("the detach stamp");
+        let alert = alert_notice("LiveTicks", "[Webhook Alert] LiveTicks: ticks resumed");
+        seed_notice_record(&alert, detach + chrono::Duration::seconds(5));
 
         // Backdate the detach 60 s — the detach must look ≥ 30 s away.
         with_sessions(&sessions, |store| {
@@ -1120,46 +1216,6 @@ mod tests {
 
     // ── M37 phase 08: the away digest rides the attach message ──────────────
 
-    /// Append one journal record with a pinned `ts` into the segment its own
-    /// date names — the seam `for_each_notice_between` reads, mirroring how
-    /// `Bus::new` journals each notice into the segment of its day.
-    fn seed_json_record(record: &serde_json::Value, ts: chrono::DateTime<chrono::Utc>) {
-        let path =
-            crate::config::events_dir().join(format!("events-{}.jsonl", ts.format("%Y%m%d")));
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).expect("the events dir");
-        }
-        let mut f = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .expect("opening the segment");
-        use std::io::Write;
-        writeln!(f, "{}", record).expect("appending");
-    }
-
-    /// Append one journaled-notice record with a pinned `ts` into the
-    /// segment its own date names — the seam `for_each_notice_between`
-    /// reads, mirroring how `Bus::new` journals each notice.
-    fn seed_notice_record(notice: &crate::bus::Notice, ts: chrono::DateTime<chrono::Utc>) {
-        let mut record = serde_json::to_value(notice).expect("serialize notice");
-        let obj = record.as_object_mut().expect("notice is an object");
-        let mut stamped = serde_json::Map::new();
-        stamped.insert("ts".to_string(), serde_json::Value::String(ts.to_rfc3339()));
-        stamped.insert(
-            "event".to_string(),
-            serde_json::Value::String("notice".to_string()),
-        );
-        stamped.insert("pid".to_string(), serde_json::Value::from(4242));
-        for (k, v) in obj.clone() {
-            stamped.insert(k, v);
-        }
-        // The record's `ts` is also the notice's `ts`: pin it after the copy,
-        // or the notice's own wall-clock `ts` lands it outside the window.
-        stamped.insert("ts".to_string(), serde_json::Value::String(ts.to_rfc3339()));
-        seed_json_record(&serde_json::Value::Object(stamped), ts);
-    }
-
     #[tokio::test]
     async fn attach_joins_the_digest_to_the_brief_in_one_system_msg() {
         let _home = crate::test_home_guard();
@@ -1192,10 +1248,21 @@ mod tests {
                 msg("[Background Task Completed] apt upgrade finished (exit 0)"),
             ]);
             e.last_detach = Some(Instant::now() - std::time::Duration::from_secs(60));
-            e.detach_time_utc = Some(chrono::Utc::now() - chrono::Duration::seconds(60));
+            e.detach_time_utc = Some(from + chrono::Duration::minutes(30));
             e.messages_at_detach = 1;
             store.insert("away-1".to_string(), e);
         });
+        // The brief lists what the journal holds for the detach window:
+        // a background notice inside it, after the digest's stamp.
+        let bg = crate::bus::Notice::new(
+            crate::bus::Severity::Info,
+            crate::bus::Source::Background,
+            "run-apt",
+            "[Background Task Completed] apt upgrade finished (exit 0)",
+        )
+        .source_id("run-apt")
+        .label("kind", "completed");
+        seed_notice_record(&bg, from + chrono::Duration::minutes(40));
 
         let (mut rx, mut client_w, task) = drive(sessions.clone(), "away-1").await;
         let replies = read_responses(&mut rx, 2).await;

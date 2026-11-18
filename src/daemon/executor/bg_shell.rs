@@ -307,8 +307,9 @@ fn output_block(o: &CommandOutcome) -> String {
 /// The `[Background Task Completed]` body for a finished background run.
 /// Pure: no locks, no IO, no clock.
 ///
-/// The caller prefixes `[Background Task Completed]\n` — that literal is what
-/// `build_catchup_brief` scans for and must not drift.
+/// The caller prefixes `[Background Task Completed]\n` — that literal is the
+/// title the `Background` notice carries, so the catch-up brief and any
+/// other journal reader see the same tagged line.
 pub(super) fn completion_message(
     cmd: &str,
     run_id: &RunId,
@@ -337,10 +338,11 @@ pub(super) fn completion_message(
 
 /// The `Background` notice a finished background run publishes: severity
 /// follows the outcome (`Info` on exit 0, `Error` otherwise), the session
-/// field targets the run's own chat, the title is the `[Background Task
-/// Completed]` literal `build_catchup_brief` scans for, and the body is the
-/// completion or interrupted message, so `history_text()` equals the content
-/// 2.9.0 delivered. Pure so the mapping is testable without a bus.
+/// field targets the run's own chat, the title carries the `[Background
+/// Task Completed]` literal, and the body is the completion or interrupted
+/// message, so `history_text()` equals the content 2.9.0 delivered — the
+/// line the catch-up brief lists from the journal. Pure so the mapping is
+/// testable without a bus.
 pub(super) fn background_notice(
     session_id: &str,
     run_id: &RunId,

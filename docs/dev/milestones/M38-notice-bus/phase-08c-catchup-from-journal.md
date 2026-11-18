@@ -1,7 +1,7 @@
 # Phase 08c — catchup-from-journal
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-18
 **Depends on:** phase-08b
 **Estimated diff:** ~300 lines, mostly tests
@@ -149,3 +149,38 @@ Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-18 02:02 (started, executor)
+
+Started phase 08c. Plan: (1) add the route-selection function in
+`catchup.rs` and switch `build_catchup_brief` to the journal window;
+(2) update `attach_brief_for` and the four chat-presence tests to journal
+notices; (3) fix the `bg_shell.rs` doc comments and the `CLAUDE.md`
+paragraph. Status flipped to `in-progress` in the phase doc and the
+milestone README.
+
+### Update — 2026-11-18 02:40 (end-to-end verification)
+
+`attach_brief_includes_an_alert_injected_while_away` journals a webhook
+alert notice into a real journal segment and reads it back through
+`attach_brief_for` (the production path the attach handler calls), then
+asserts the brief names the alert. Captured from the run:
+
+```
+running 1 test
+test daemon::server::chat_presence::tests::attach_brief_includes_an_alert_injected_while_away ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3024 filtered out; finished in 0.00s
+```
+
+Acceptance-criterion greps (all as the spec pins):
+
+```
+$ sed -n '/#\[cfg(test)\]/q;p' src/daemon/server/catchup.rs | grep -cE 'contains\("\[|is_bare_tag'
+0
+$ grep -c 'for_each_notice_between' src/daemon/server/catchup.rs
+3
+$ git diff 9e2bc297 -- src/daemon/server/catchup.rs | grep -cE '^-.*(Cost during detach|AI activity while you were away|fn is_valid_pane_id)'
+0
+```
+
