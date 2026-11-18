@@ -5,8 +5,11 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none drafted — next is 10 (`Request::Subscribe` and
-`daemoneye notices`), the last planned M38 phase. 01–09c `done`.
+**Active phase:** 10a — notices-list
+([`phase-10a-notices-list.md`](milestones/M38-notice-bus/phase-10a-notices-list.md)),
+`todo`, ready to dispatch. 10 split into 10a (`daemoneye notices` from the
+journal, no daemon) and 10b (`Request::Subscribe` + `--follow`), the last
+planned M38 phase. 01–09c `done`.
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
