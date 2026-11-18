@@ -423,6 +423,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
 
     let sessions: SessionStore = SessionStore::new();
 
+    // M38 phase 08a: rebuild the active-alert registry from the notice
+    // journal before any sink subscribes, so a live notice never races the
+    // replay and the webhook listener serves an already-rebuilt registry.
+    crate::daemon::notice_sinks::replay_alert_registry_in(crate::webhook::registry());
+
     // M38 phase 02: the notice bus's three sinks subscribe on the global bus
     // right after the store exists, with 2.9.0's default routes. No producer
     // publishes yet (phases 03–05), so this changes no runtime behaviour.

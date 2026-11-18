@@ -128,6 +128,12 @@ impl Notice {
         self
     }
 
+    /// Set `ts` to a fixed instant, for tests that replay a journal window.
+    pub fn ts_refire(mut self, ts_unix: i64) -> Self {
+        self.ts = chrono::DateTime::from_timestamp(ts_unix, 0).unwrap_or(self.ts);
+        self
+    }
+
     /// Set `body`.
     pub fn body(mut self, body: impl Into<String>) -> Self {
         self.body = body.into();

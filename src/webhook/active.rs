@@ -31,7 +31,7 @@ pub(crate) struct ActiveAlert {
 static ACTIVE_ALERTS: std::sync::OnceLock<Mutex<HashMap<String, ActiveAlert>>> =
     std::sync::OnceLock::new();
 
-fn registry() -> &'static Mutex<HashMap<String, ActiveAlert>> {
+pub(crate) fn registry() -> &'static Mutex<HashMap<String, ActiveAlert>> {
     ACTIVE_ALERTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 

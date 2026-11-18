@@ -1,7 +1,7 @@
 # Phase 08a — registry-replay
 
 **Milestone:** M38 — The notice bus
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-17
 **Depends on:** phase-07b
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -138,3 +138,32 @@ Paste the `cargo test --test isolation` result line into the Update Log.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-17 23:55 (started)
+
+**Executor:** executor (headless run)
+
+Started phase 08a. Status flipped to `in-progress` and the milestone README
+row updated. Beginning step 1: the journal reader at `src/bus/journal.rs`.
+
+### Update — 2026-11-17 17:20 (end-to-end verification)
+
+**Ran by:** executor (headless run)
+
+```
+$ cargo test --test isolation daemon_start_replays_active_alerts
+
+running 1 test
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.29s
+```
+
+The test starts a real daemon against a throwaway `$HOME`, appends one firing
+webhook notice (an hour old, fingerprint `fp-08a-replay-e2e`) to the throwaway
+root's current event segment at `config::current_event_segment_path`'s path,
+restarts the daemon, and sends `Request::AlertList` over the daemon's Unix
+socket serialized with the crate's own `daemoneye::ipc` types. The
+`Response::AlertState` reply carried that fingerprint.
+
+The literal grep: `grep -n 'mod journal' src/bus/mod.rs` → `21:mod journal;`.

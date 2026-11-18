@@ -18,10 +18,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde_json::json;
 
 mod filter;
+mod journal;
 mod notice;
 mod severity;
 
 pub use filter::Filter;
+pub use journal::{for_each_notice_between, notice_from_record};
 pub use notice::{Notice, NoticeStatus, Source};
 pub use severity::Severity;
 

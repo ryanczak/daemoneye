@@ -845,3 +845,99 @@ fn an_empty_session_starts_no_tmux_server() {
         "daemon.log should say no tmux session was adopted:\n{log}"
     );
 }
+
+/// The daemon rebuilds the active-alert registry from the notice journal at
+/// startup (M38 phase 08a).
+///
+/// Before `start_daemon`, journal one firing webhook notice an hour old with
+/// a fingerprint no other test uses, into the throwaway root's current event
+/// segment. After the daemon is up, `Request::AlertList` over its socket must
+/// carry that fingerprint.
+#[tokio::test]
+async fn daemon_start_replays_active_alerts() {
+    let env = IsolatedEnv::new();
+
+    // The notice, journaled exactly as `Bus::new` journals it: the serialized
+    // `Notice` (its `ts` is the record's `ts`) plus the `event` and `pid`
+    // keys `log_event` stamps. An hour old — inside the registry's TTL
+    // window, so the replay must pick it up.
+    let notice = daemoneye::bus::Notice::new(
+        daemoneye::bus::Severity::Warning,
+        daemoneye::bus::Source::Webhook,
+        "ReplayHighCPU",
+        "CPU high on web-01",
+    )
+    .status(daemoneye::bus::NoticeStatus::Firing)
+    .fingerprint("fp-08a-replay-e2e")
+    .label("severity", "warning")
+    .ts_refire(chrono::Utc::now().timestamp() - 3600);
+
+    let mut record = serde_json::to_value(&notice).expect("serialize notice");
+    let obj = record.as_object_mut().expect("notice is an object");
+    let mut stamped = serde_json::Map::new();
+    stamped.insert(
+        "ts".to_string(),
+        serde_json::Value::String(notice.ts.to_rfc3339()),
+    );
+    stamped.insert(
+        "event".to_string(),
+        serde_json::Value::String("notice".to_string()),
+    );
+    stamped.insert("pid".to_string(), serde_json::Value::from(1));
+    for (k, v) in obj.clone() {
+        stamped.insert(k, v);
+    }
+
+    // The harness's `start_daemon` runs `daemoneye setup` and writes the test
+    // config, both HOME-confined — the directory tree exists after that, so
+    // start the daemon first, stop it, then write the journal line and start
+    // again. The stop is clean: the registry is rebuilt only from the journal
+    // at startup, never persisted, so the second boot replays it.
+    let mut env = env;
+    env.start_daemon("de-test-replay");
+    env.stop_daemon();
+
+    let segment = env.root().join(".daemoneye/var/log/events").join(format!(
+        "events-{}.jsonl",
+        chrono::Utc::now().format("%Y%m%d")
+    ));
+    std::fs::create_dir_all(segment.parent().expect("segment has a parent"))
+        .expect("create events dir");
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&segment)
+        .expect("open the current event segment");
+    writeln!(
+        file,
+        "{}",
+        serde_json::to_string(&stamped).expect("serialize record")
+    )
+    .expect("append the journal record");
+
+    env.start_daemon("de-test-replay-2");
+
+    // Ask the daemon over its socket, serialized with the crate's own type.
+    let socket = env.root().join(".daemoneye/var/run/daemoneye.sock");
+    let stream = tokio::net::UnixStream::connect(&socket)
+        .await
+        .expect("connect to the daemon socket");
+    let (rx, mut tx) = stream.into_split();
+    let mut rx = tokio::io::BufReader::new(rx);
+    daemoneye::cli::commands::send_request(&mut tx, daemoneye::ipc::Request::AlertList)
+        .await
+        .expect("send AlertList");
+    let reply = daemoneye::cli::commands::recv(&mut rx)
+        .await
+        .expect("read the AlertList reply");
+
+    let daemoneye::ipc::Response::AlertState { alerts } = reply else {
+        panic!("expected Response::AlertState, got {reply:?}");
+    };
+    assert!(
+        alerts.iter().any(|a| a.fingerprint == "fp-08a-replay-e2e"),
+        "the journaled firing alert must be in the AlertList reply (root {}): {alerts:?}",
+        env.root().display()
+    );
+}

@@ -184,39 +184,79 @@ async fn deliver_command(cmd: String, notice: Notice) {
     let _ = command.spawn();
 }
 
+/// The registry update both paths share: a firing notice records the alert
+/// at the notice's `ts`, a resolved notice removes it, an event notice does
+/// neither. The severity recorded is the raw label (`labels["severity"]`),
+/// falling back to the parsed severity's name, so an unrankable raw string
+/// is preserved for the snapshot's ranking.
+pub(crate) fn apply_notice_to_registry_in(
+    map: &std::sync::Mutex<std::collections::HashMap<String, crate::webhook::ActiveAlert>>,
+) -> impl Fn(&Notice) -> bool + '_ {
+    move |notice: &Notice| {
+        let severity = notice
+            .labels
+            .get("severity")
+            .cloned()
+            .unwrap_or_else(|| notice.severity.as_str().to_string());
+        match notice.status {
+            crate::bus::NoticeStatus::Firing => crate::webhook::active_alerts_firing_in(
+                map,
+                &notice.fingerprint,
+                &notice.name,
+                &severity,
+                notice.ts.timestamp() as u64,
+            ),
+            crate::bus::NoticeStatus::Resolved => {
+                crate::webhook::active_alerts_resolved_in(map, &notice.fingerprint)
+            }
+            crate::bus::NoticeStatus::Event => false,
+        }
+    }
+}
+
 /// The alert-registry sink's inline delivery: a firing notice records the
 /// alert, a resolved notice removes it. When either changes the process-wide
 /// registry, broadcast the new snapshot to every attached chat over the
 /// presence connection — the same frame `process_alert` used to send.
 ///
-/// The severity recorded is the raw label (`labels["severity"]`), falling
-/// back to the parsed severity's name, so an unrankable raw string is
-/// preserved for the snapshot's ranking. The registry is process-global:
-/// tests need a fingerprint no other test uses.
+/// The registry is process-global: tests need a fingerprint no other test
+/// uses.
 fn record_alert_registry(notice: &Notice) {
-    let severity = notice
-        .labels
-        .get("severity")
-        .cloned()
-        .unwrap_or_else(|| notice.severity.as_str().to_string());
-    let changed = match notice.status {
-        crate::bus::NoticeStatus::Firing => crate::webhook::active_alerts_firing(
-            &notice.fingerprint,
-            &notice.name,
-            &severity,
-            notice.ts.timestamp() as u64,
-        ),
-        crate::bus::NoticeStatus::Resolved => {
-            crate::webhook::active_alerts_resolved(&notice.fingerprint)
-        }
-        crate::bus::NoticeStatus::Event => false,
-    };
+    let changed = apply_notice_to_registry_in(crate::webhook::registry())(notice);
     if changed {
         let frame = crate::ipc::Response::AlertState {
             alerts: crate::webhook::active_alerts_snapshot(),
         };
         crate::daemon::session::presence_broadcast_frame(&frame);
     }
+}
+
+/// Rebuild the active-alert registry from the notice journal at daemon
+/// startup: replay every notice in `[now - ACTIVE_ALERT_TTL_SECS, now)` the
+/// registry's route matches, in journal order, into `map` — `active.rs`'s
+/// `_in` seam style, so tests fill their own map and production fills the
+/// process-wide registry.
+///
+/// The replay never broadcasts: no chat is attached yet at startup, and the
+/// attach flow reads the registry it just rebuilt.
+pub(crate) fn replay_alert_registry_in(
+    map: &std::sync::Mutex<std::collections::HashMap<String, crate::webhook::ActiveAlert>>,
+) -> usize {
+    let routes = default_routes(crate::bus::Severity::Warning).alert_registry;
+    let now = chrono::Utc::now();
+    let from = now - chrono::Duration::seconds(crate::webhook::ACTIVE_ALERT_TTL_SECS as i64);
+
+    let apply = apply_notice_to_registry_in(map);
+    let mut restored = 0usize;
+    crate::bus::for_each_notice_between(Some(from), Some(now), &mut |notice| {
+        if routes_match(&routes, notice) && apply(notice) {
+            restored += 1;
+        }
+    });
+    if restored > 0 {
+        log::info!("Alert registry replay: {restored} alert(s) restored");
+    }
+    restored
 }
 
 /// A leaked bus with the default sinks registered on it, for tests.
@@ -293,6 +333,144 @@ mod tests {
 
     fn webhook(severity: Severity, name: &str) -> Notice {
         Notice::new(severity, Source::Webhook, name, "title").status(NoticeStatus::Firing)
+    }
+
+    fn fresh_registry_map()
+    -> std::sync::Mutex<std::collections::HashMap<String, crate::webhook::ActiveAlert>> {
+        std::sync::Mutex::new(std::collections::HashMap::new())
+    }
+
+    #[test]
+    fn replay_rebuilds_what_is_still_firing() {
+        let map = fresh_registry_map();
+        let a = webhook(Severity::Warning, "AlertA").fingerprint("fp-replay-a");
+        let b = webhook(Severity::Warning, "AlertB").fingerprint("fp-replay-b");
+        let resolved_a = Notice {
+            status: NoticeStatus::Resolved,
+            ..a.clone()
+        };
+
+        let apply = apply_notice_to_registry_in(&map);
+        apply(&a);
+        apply(&b);
+        apply(&resolved_a);
+
+        let snapshot = crate::webhook::active_alerts_snapshot_in(&map, crate::webhook::now_secs());
+        let fingerprints: Vec<&str> = snapshot
+            .iter()
+            .map(|alert| alert.fingerprint.as_str())
+            .collect();
+        assert_eq!(fingerprints, vec!["fp-replay-b"], "only B is still firing");
+    }
+
+    #[test]
+    fn replay_keeps_first_seen_across_refires() {
+        let map = fresh_registry_map();
+        let b1 = webhook(Severity::Warning, "AlertB")
+            .fingerprint("fp-replay-refire")
+            .ts_refire(1_000);
+        let b2 = webhook(Severity::Warning, "AlertB")
+            .fingerprint("fp-replay-refire")
+            .ts_refire(2_000);
+
+        let apply = apply_notice_to_registry_in(&map);
+        apply(&b1);
+        apply(&b2);
+
+        let snapshot = crate::webhook::active_alerts_snapshot_in(&map, 2_000);
+        let entry = snapshot
+            .iter()
+            .find(|a| a.fingerprint == "fp-replay-refire")
+            .expect("the refired alert is in the snapshot");
+        assert_eq!(entry.first_seen_unix, 1_000, "first_seen is the first fire");
+        assert_eq!(entry.last_seen_unix, 2_000, "last_seen is the latest fire");
+    }
+
+    #[test]
+    fn replay_ignores_what_the_registry_route_does_not_match() {
+        let map = fresh_registry_map();
+
+        // A webhook `Event` notice (an analysis): the registry route matches
+        // only firing/resolved webhook notices.
+        let analysis = Notice::new(
+            Severity::Info,
+            Source::Webhook,
+            "AnalysisDone",
+            "analysis complete",
+        )
+        .fingerprint("fp-replay-analysis");
+
+        // A scheduler notice marked Firing: the registry route names webhook
+        // only.
+        let scheduler_firing = Notice::new(
+            Severity::Warning,
+            Source::Scheduler,
+            "JobDone",
+            "scheduled job finished",
+        )
+        .fingerprint("fp-replay-scheduler")
+        .status(NoticeStatus::Firing);
+
+        let routes = default_routes(crate::bus::Severity::Warning).alert_registry;
+        let apply = apply_notice_to_registry_in(&map);
+        for notice in [&analysis, &scheduler_firing] {
+            if routes_match(&routes, notice) {
+                apply(notice);
+            }
+        }
+
+        assert!(
+            crate::webhook::active_alerts_snapshot_in(&map, crate::webhook::now_secs()).is_empty(),
+            "neither notice is recorded"
+        );
+    }
+
+    #[test]
+    fn replay_reads_only_the_ttl_window() {
+        let _guard = crate::test_home();
+        let map = fresh_registry_map();
+
+        let now = crate::webhook::now_secs();
+        let inside = webhook(Severity::Warning, "InsideTTL")
+            .fingerprint("fp-replay-inside")
+            .ts_refire((now - 3600) as i64);
+        let outside = webhook(Severity::Warning, "OutsideTTL")
+            .fingerprint("fp-replay-outside")
+            .ts_refire((now.saturating_sub(crate::webhook::ACTIVE_ALERT_TTL_SECS) - 60) as i64);
+
+        // Journal both notices exactly as `Bus::new` journals them, then
+        // replay only the TTL window.
+        let window_from = chrono::Utc::now()
+            - chrono::Duration::seconds(crate::webhook::ACTIVE_ALERT_TTL_SECS as i64);
+        for notice in [&inside, &outside] {
+            crate::daemon::utils::log_event(
+                "notice",
+                serde_json::to_value(notice).expect("serialize notice"),
+            );
+        }
+        let apply = apply_notice_to_registry_in(&map);
+        let mut restored = 0;
+        crate::bus::for_each_notice_between(
+            Some(window_from),
+            Some(chrono::Utc::now()),
+            &mut |n| {
+                if apply(n) {
+                    restored += 1;
+                }
+            },
+        );
+
+        let snapshot = crate::webhook::active_alerts_snapshot_in(&map, now);
+        let fingerprints: Vec<&str> = snapshot
+            .iter()
+            .map(|alert| alert.fingerprint.as_str())
+            .collect();
+        assert_eq!(restored, 1, "only the notice inside the window applies");
+        assert_eq!(
+            fingerprints,
+            vec!["fp-replay-inside"],
+            "the notice older than the TTL never enters the registry"
+        );
     }
 
     fn resident_entry() -> SessionEntry {
