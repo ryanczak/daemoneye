@@ -256,12 +256,8 @@ fn scheduled_finished_record(
 ///   refuses to fire, with a logged reason and a failure notification.
 pub async fn run_scheduled_job(
     job: ScheduledJob,
-    store: Arc<ScheduleStore>,
     session: String,
-    sessions: SessionStore,
-    config: Config,
-    cache: Arc<crate::tmux::cache::SessionCache>,
-    bus: &crate::bus::Bus,
+    state: &Arc<crate::daemon::DaemonState>,
 ) -> Result<(), String> {
     let job_id = job.id.clone();
     let job_name = job.name.clone();
@@ -272,9 +268,21 @@ pub async fn run_scheduled_job(
             job: job_name.clone(),
         },
     );
-    let refusal =
-        run_scheduled_job_inner(job, store.clone(), session, sessions, config, cache, bus).await;
-    let record = store
+    // The config goes through the handle at each tick, so a reload follows
+    // the next due job.
+    let config = (*state.config.current()).clone();
+    let refusal = run_scheduled_job_inner(
+        job,
+        Arc::clone(&state.schedules),
+        session,
+        state.sessions.clone(),
+        config,
+        Arc::clone(&state.tmux_cache),
+        &state.bus,
+    )
+    .await;
+    let record = state
+        .schedules
         .list()
         .into_iter()
         .find(|j| j.id == job_id)
@@ -282,11 +290,11 @@ pub async fn run_scheduled_job(
     // A refused watchdog analysis ends the scheduled run `BudgetExceeded` in
     // place of the state the job status alone would give — the job itself
     // still ran and is still marked done as now.
-    let state = scheduled_run_state(refusal, record.as_ref(), &job_name);
-    if let Some(finished) = scheduled_finished_record(&job_name, &action, &state) {
+    let run_state = scheduled_run_state(refusal, record.as_ref(), &job_name);
+    if let Some(finished) = scheduled_finished_record(&job_name, &action, &run_state) {
         log_event("scheduled_job_finished", finished);
     }
-    run_log.finish(state);
+    run_log.finish(run_state);
     Ok(())
 }
 

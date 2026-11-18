@@ -22,19 +22,18 @@ use tokio::net::UnixListener;
 /// The tracker is the daemon's **one** per-session record — the same one the
 /// attach writes and the last close forgets — so a tick after an attach with
 /// unchanged counts pushes nothing, and a tick after the forget pushes again.
-async fn session_counters_loop() {
-    let reg = crate::shell::registry().clone();
+async fn session_counters_loop(state: Arc<super::DaemonState>) {
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     loop {
         tick.tick().await;
-        let session_ids = crate::daemon::session::presence_session_ids();
+        let session_ids = state.presence.session_ids();
         crate::daemon::counters::counters_tick_with_global(
-            &reg,
-            crate::daemon::stats::get_ghosts_active() as u32,
+            &state.shells,
+            state.metrics.ghosts.active() as u32,
             &session_ids,
             |sid, frame| {
                 crate::daemon::counters::presence_push_to_session_in(
-                    crate::daemon::session::presence_registry(),
+                    state.presence.inner(),
                     sid,
                     frame,
                 );
@@ -46,12 +45,10 @@ async fn session_counters_loop() {
 /// The 1 s `SessionCounters` push task (M37 phase 02b), supervised like the
 /// daemon's other background loops. Kept out of `run_daemon` so its
 /// hygiene-cap line does not grow.
-fn spawn_session_counters_task(shutdown: Arc<AtomicBool>) {
-    tokio::spawn(supervise(
-        "session-counters",
-        shutdown,
-        session_counters_loop,
-    ));
+fn spawn_session_counters_task(shutdown: Arc<AtomicBool>, state: Arc<super::DaemonState>) {
+    tokio::spawn(supervise("session-counters", shutdown, move || {
+        session_counters_loop(Arc::clone(&state))
+    }));
 }
 
 /// The 2 s `Shell`-notice tick (M38 phase 06): a program's entry into
@@ -230,9 +227,8 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     // Install the process-wide handle every daemon-side reader goes through.
     // After this line, `config::current()` serves the running config and
     // `Config::Reload` swaps it without a restart.
-    crate::config::install(std::sync::Arc::new(crate::config::ConfigHandle::new(
-        startup_config.clone(),
-    )));
+    let config_handle = Arc::new(crate::config::ConfigHandle::new(startup_config.clone()));
+    crate::config::install(Arc::clone(&config_handle));
 
     // Warn about any limit configuration that is likely unintentional.
     startup_config.limits.validate();
@@ -464,44 +460,39 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     );
     recover_schedules(&schedule_store);
 
+    let state = super::DaemonState::new(
+        config_handle,
+        sessions.clone(),
+        crate::daemon::session::global_presence().clone(),
+        crate::shell::registry().clone(),
+        Arc::clone(&schedule_store),
+        Arc::clone(&cache),
+        crate::bus::global().clone(),
+        crate::webhook::alert_registry().clone(),
+        crate::daemon::stats::global().clone(),
+        *DAEMON_START.get_or_init(Instant::now),
+    );
+
     // Scheduler task: poll every second for due jobs.
     {
-        let store_sup = Arc::clone(&schedule_store);
-        let sessions_sup = sessions.clone();
-        let cache_sup = Arc::clone(&cache);
+        let state_sup = Arc::clone(&state);
         let sn_sup = initial_session.clone().unwrap_or_default();
         tokio::spawn(supervise("scheduler", Arc::clone(&shutdown), move || {
-            let store = Arc::clone(&store_sup);
-            let sessions_sched = sessions_sup.clone();
-            let cache_sched = Arc::clone(&cache_sup);
+            let state_sched = Arc::clone(&state_sup);
             let sn = sn_sup.clone();
             async move {
                 let mut tick = tokio::time::interval(Duration::from_secs(1));
                 loop {
                     tick.tick().await;
-                    let due = scheduled::due_jobs_for_tick(&store, &sn);
+                    let due = scheduled::due_jobs_for_tick(&state_sched.schedules, &sn);
                     for job in due {
-                        let store2 = Arc::clone(&store);
+                        let state2 = Arc::clone(&state_sched);
                         let sn2 = sn.clone();
-                        let sessions2 = sessions_sched.clone();
-                        let cache2 = Arc::clone(&cache_sched);
                         tokio::spawn(async move {
-                            // The config goes through the handle at each
-                            // tick, so a reload follows the next due job.
-                            let cfg2 = crate::config::schedule_config();
                             // The refusal is already recorded on the run's
                             // log; a tick-level caller has nothing to do
                             // with it.
-                            let _ = run_scheduled_job(
-                                job,
-                                store2,
-                                sn2,
-                                sessions2,
-                                cfg2,
-                                cache2,
-                                crate::bus::global(),
-                            )
-                            .await;
+                            let _ = run_scheduled_job(job, sn2, &state2).await;
                         });
                     }
                 }
@@ -523,16 +514,10 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 startup_config.webhook.port
             );
         }
-        let wh_config_sup = startup_config.clone();
-        let wh_sessions_sup = sessions.clone();
-        let wh_cache_sup = Arc::clone(&cache);
-        let wh_schedule_store_sup = Arc::clone(&schedule_store);
+        let wh_state_sup = Arc::clone(&state);
         let listener = Arc::new(tokio::sync::Mutex::new(Some(listener)));
         tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
-            let cfg = wh_config_sup.clone();
-            let sessions = wh_sessions_sup.clone();
-            let cache = Arc::clone(&wh_cache_sup);
-            let schedule_store = Arc::clone(&wh_schedule_store_sup);
+            let wh_state = Arc::clone(&wh_state_sup);
             let listener = Arc::clone(&listener);
             async move {
                 let listener = {
@@ -541,9 +526,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                 };
                 match listener {
                     Some(l) => {
-                        if let Err(e) =
-                            crate::webhook::serve(l, cfg, sessions, cache, schedule_store).await
-                        {
+                        if let Err(e) = crate::webhook::serve(l, wh_state).await {
                             log::error!("Webhook server exited: {}", e);
                         }
                     }
@@ -555,15 +538,15 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }));
     }
 
-    spawn_session_counters_task(Arc::clone(&shutdown));
+    spawn_session_counters_task(Arc::clone(&shutdown), Arc::clone(&state));
     spawn_program_notices_task(Arc::clone(&shutdown));
-    let sessions_cleanup_sup = sessions.clone();
+    let state_cleanup_sup = Arc::clone(&state);
     let log_path_sup = log_file.clone();
     tokio::spawn(supervise(
         "session-cleanup",
         Arc::clone(&shutdown),
         move || {
-            let sessions_cleanup = sessions_cleanup_sup.clone();
+            let state_cleanup = Arc::clone(&state_cleanup_sup);
             let log_path = log_path_sup.clone();
             async move {
                 let mut sweep_counter = 0u32;
@@ -573,7 +556,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     // Locked phase: evict and snapshot. The guard is released
                     // when `cleanup_pass` returns.
                     let (_evicted, active_ids) = crate::daemon::session::cleanup_pass(
-                        &sessions_cleanup,
+                        &state_cleanup.sessions,
                         Instant::now(),
                         Duration::from_secs(1800),
                     );
@@ -583,7 +566,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                     // Every tick (and every sweep burst inside it) reads the
                     // config through the handle, so a reload follows the
                     // next tick's sweeps and reaps.
-                    let tick_config = crate::config::schedule_config();
+                    let tick_config = state_cleanup.config.current();
                     if sweep_counter.is_multiple_of(60) {
                         crate::daemon::utils::sweep_event_segments(
                             tick_config.events.retention_days,
@@ -607,13 +590,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             .map(|d| d.as_secs())
                             .unwrap_or(0);
                         crate::shell::reap_and_sweep(
-                            crate::shell::registry(),
+                            &state_cleanup.shells,
                             &crate::config::shells_dir(),
                             tick_config.shells.exited_retention_secs,
                             now,
                         );
                         crate::daemon::executor::knowledge::reap_idle_shells(
-                            crate::shell::registry(),
+                            &state_cleanup.shells,
                             tick_config.shells.idle_reap_secs,
                             now,
                         )
@@ -623,7 +606,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                         for reaped in
                             crate::daemon::executor::chat_sandbox::reap_idle_chat_sandboxes(
                                 &crate::shell::real_runner(program),
-                                crate::shell::registry(),
+                                &state_cleanup.shells,
                                 now,
                             )
                             .await
@@ -646,7 +629,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
                             );
                         }
                         let mut live_shell_ids = std::collections::BTreeSet::new();
-                        crate::shell::with_shells(crate::shell::registry(), |store| {
+                        crate::shell::with_shells(&state_cleanup.shells, |store| {
                             live_shell_ids.extend(store.keys().cloned());
                         });
                         crate::daemon::utils::sweep_shell_logs(
@@ -706,13 +689,9 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             result = listener.accept() => {
                 match result {
                     Ok((stream, _addr)) => {
-                        let cache_conn = Arc::clone(&cache);
-                        let sessions_conn = sessions.clone();
-                        let sched_conn = Arc::clone(&schedule_store);
+                        let state_conn = Arc::clone(&state);
                         tokio::spawn(async move {
-                            if let Err(e) =
-                                handle_client(stream, cache_conn, sessions_conn, sched_conn).await
-                            {
+                            if let Err(e) = handle_client(stream, state_conn).await {
                                 log::error!("Error handling client: {}", e);
                             }
                         });

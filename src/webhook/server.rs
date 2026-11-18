@@ -195,17 +195,14 @@ pub async fn bind(config: &Config) -> anyhow::Result<tokio::net::TcpListener> {
 /// Serve on an already-bound listener. Runs until the process exits.
 pub async fn serve(
     listener: tokio::net::TcpListener,
-    config: Config,
-    sessions: SessionStore,
-    cache: Arc<crate::tmux::cache::SessionCache>,
-    schedule_store: Arc<crate::scheduler::ScheduleStore>,
+    daemon: Arc<crate::daemon::DaemonState>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(WebhookState {
-        config,
-        sessions,
-        cache,
-        schedule_store,
-        bus: crate::bus::global().clone(),
+        config: (*daemon.config.current()).clone(),
+        sessions: daemon.sessions.clone(),
+        cache: Arc::clone(&daemon.tmux_cache),
+        schedule_store: Arc::clone(&daemon.schedules),
+        bus: Arc::clone(&daemon.bus),
         dedup: Mutex::new(HashMap::new()),
         rate_limit: Mutex::new(HashMap::new()),
         ip_limits: Mutex::new(HashMap::new()),

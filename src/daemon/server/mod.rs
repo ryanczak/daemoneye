@@ -20,11 +20,8 @@ use ask::handle_ask;
 use handlers::*;
 use sessions::*;
 
-use crate::daemon::session::*;
 use crate::daemon::utils::*;
 use crate::ipc::{Request, Response};
-use crate::scheduler::ScheduleStore;
-use crate::tmux::cache::SessionCache;
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt;
@@ -119,16 +116,15 @@ pub(crate) fn check_peer_identity<S: std::os::fd::AsRawFd>(stream: &S) -> anyhow
 /// message count.
 pub async fn handle_client(
     stream: UnixStream,
-    cache: Arc<SessionCache>,
-    sessions: SessionStore,
-    schedule_store: Arc<ScheduleStore>,
+    state: Arc<crate::daemon::DaemonState>,
 ) -> Result<()> {
     // C1: refuse connections from any process not owned by the daemon user.
     // Must happen before parsing a single byte so a foreign attacker cannot
     // even reach the approval gate (which trusts whatever is on the other end).
     check_peer_identity(&stream)?;
 
-    let config = crate::config::current();
+    let config = state.config.current();
+    let (cache, sessions, schedule_store) = (&state.tmux_cache, &state.sessions, &state.schedules);
 
     /// Maximum size of a single incoming IPC message (1 MiB).
     /// Prevents a malicious or buggy client from exhausting daemon memory by
@@ -177,19 +173,19 @@ pub async fn handle_client(
         }
         Request::AlertList => handle_alert_list(&mut tx).await?,
         Request::ShellList => {
-            shells::handle_shell_list(&mut tx, crate::shell::registry()).await?;
+            shells::handle_shell_list(&mut tx, &state.shells).await?;
         }
         Request::ShellInput { id, bytes } => {
-            shells::handle_shell_input(&mut tx, crate::shell::registry(), &id, &bytes).await?;
+            shells::handle_shell_input(&mut tx, &state.shells, &id, &bytes).await?;
         }
         Request::ShellOpen { host } => {
             shells::handle_shell_open(&mut tx, host.as_deref()).await?;
         }
         Request::ShellSignal { id, signal } => {
-            shells::handle_shell_signal(&mut tx, crate::shell::registry(), &id, &signal).await?;
+            shells::handle_shell_signal(&mut tx, &state.shells, &id, &signal).await?;
         }
         Request::ShellResize { id, rows, cols } => {
-            shells::handle_shell_resize(&mut tx, crate::shell::registry(), &id, rows, cols).await?;
+            shells::handle_shell_resize(&mut tx, &state.shells, &id, rows, cols).await?;
         }
         Request::ShellLogList {
             since,
@@ -204,11 +200,10 @@ pub async fn handle_client(
             shells::handle_shell_log_read(&mut tx, &id).await?;
         }
         Request::ShellTail { id, follow } => {
-            shells::handle_shell_tail(&mut rx, &mut tx, crate::shell::registry(), &id, follow)
-                .await?;
+            shells::handle_shell_tail(&mut rx, &mut tx, &state.shells, &id, follow).await?;
         }
         Request::Subscribe { filter } => {
-            notices::handle_subscribe(&mut rx, &mut tx, crate::bus::global(), filter).await?;
+            notices::handle_subscribe(&mut rx, &mut tx, &state.bus, filter).await?;
         }
         Request::Cancel { session_id } => {
             let found = crate::daemon::run::cancel_session(
@@ -221,9 +216,9 @@ pub async fn handle_client(
         Request::ResumeRun { run_id, directive } => {
             handle_resume_run(
                 &mut tx,
-                &Arc::clone(&cache),
-                &sessions,
-                &schedule_store,
+                cache,
+                sessions,
+                schedule_store,
                 &config,
                 &run_id,
                 &directive,
@@ -256,31 +251,31 @@ pub async fn handle_client(
             session_id,
             model: model_name,
         } => {
-            handle_set_model(&mut tx, &sessions, &config, session_id, model_name).await?;
+            handle_set_model(&mut tx, sessions, &config, session_id, model_name).await?;
         }
         Request::ListModels { session_id } => {
-            handle_list_models(&mut tx, &sessions, &config, session_id).await?;
+            handle_list_models(&mut tx, sessions, &config, session_id).await?;
         }
         Request::SetPane {
             session_id,
             pane_id,
         } => {
-            handle_set_pane(&mut tx, &sessions, &cache, session_id, pane_id).await?;
+            handle_set_pane(&mut tx, sessions, cache, session_id, pane_id).await?;
         }
         Request::ListPanesForSession { session_id } => {
-            handle_list_panes(&mut tx, &sessions, &cache, session_id).await?;
+            handle_list_panes(&mut tx, sessions, cache, session_id).await?;
         }
         Request::Status => {
-            handle_status(&mut tx, &sessions, &schedule_store, &config).await?;
+            handle_status(&mut tx, sessions, schedule_store, &config).await?;
         }
         Request::ContainerStatus => {
             handle_container_status(&mut tx, &config).await?;
         }
         Request::QueryLimits { session_id: sid } => {
-            handle_query_limits(&mut tx, &sessions, &config, sid).await?;
+            handle_query_limits(&mut tx, sessions, &config, sid).await?;
         }
         Request::ResetSessionToolCount { session_id: sid } => {
-            handle_reset_tool_count(&mut tx, &sessions, sid).await?;
+            handle_reset_tool_count(&mut tx, sessions, sid).await?;
         }
         Request::SaveSession {
             session_id: sid,
@@ -288,14 +283,14 @@ pub async fn handle_client(
             description,
             force,
         } => {
-            handle_save_session(&mut tx, &sessions, sid, name, description, force).await?;
+            handle_save_session(&mut tx, sessions, sid, name, description, force).await?;
         }
         Request::LoadSession {
             session_id: sid,
             name,
             force,
         } => {
-            handle_load_session(&mut tx, &sessions, &config, sid, name, force).await?;
+            handle_load_session(&mut tx, sessions, &config, sid, name, force).await?;
         }
         Request::ListSavedSessions => {
             handle_list_saved_sessions(&mut tx).await?;
@@ -304,7 +299,7 @@ pub async fn handle_client(
             handle_delete_saved_session(&mut tx, name).await?;
         }
         Request::RenameSavedSession { old_name, new_name } => {
-            handle_rename_saved_session(&mut tx, &sessions, old_name, new_name).await?;
+            handle_rename_saved_session(&mut tx, sessions, old_name, new_name).await?;
         }
 
         Request::ChatAttach { session_id } => {
@@ -333,9 +328,9 @@ pub async fn handle_client(
                 client_target_pane: target_pane,
             };
             let ctx = ask::AskContext {
-                cache,
-                sessions: &sessions,
-                schedule_store,
+                cache: Arc::clone(cache),
+                sessions,
+                schedule_store: Arc::clone(schedule_store),
                 config: &config,
             };
             handle_ask(req, ctx, &mut tx, &mut rx).await?;

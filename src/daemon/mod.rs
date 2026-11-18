@@ -42,10 +42,12 @@ pub mod session;
 pub mod situational;
 pub mod spend;
 mod startup;
+pub mod state;
 pub mod stats;
 pub mod stream;
 pub mod utils;
 pub use startup::run_daemon;
+pub use state::DaemonState;
 
 /// Shared prefix for all daemon-managed tmux windows.  Used by the CLI to
 /// filter windows from `tmux list-windows` output.
