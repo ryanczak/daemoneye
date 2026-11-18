@@ -29,7 +29,7 @@ schedule_command(
 )
 ```
 
-**From a webhook** — configure the runbook with `enabled: true` in frontmatter. When the watchdog analysis emits `GHOST_TRIGGER: YES`, DaemonEye spawns the ghost automatically.
+**From a webhook** — configure the runbook with `enabled: true` in frontmatter. The runbook analysis runs for each alert the `analyze` routes match: by default, webhook alerts firing or resolved at `warning` or above, with `[webhook] auto_analyze = true`. When the analysis emits `GHOST_TRIGGER: YES`, DaemonEye spawns the ghost automatically. To trigger on other alerts, add a `[[notifications.route]]` with `sink = "analyze"`.
 
 ## Runbook Frontmatter for Ghost Shells
 
@@ -89,7 +89,7 @@ The daemon limits concurrent ghosts via `max_concurrent_ghosts` in `config.toml`
 
 ## Lifecycle Events in Catch-up Briefs
 
-All ghost lifecycle events are injected into active sessions and surfaced in catch-up briefs after a detach:
+Ghost lifecycle events are notices. With the default routes they are written to every session's history, shown as a chat notice, and listed in the catch-up brief after a detach:
 - `[Ghost Shell Started]` — session created and first AI turn started — includes `— session log: <path>`
 - `[Ghost Shell Completed]` — ghost finished within its turn budget — includes `— session log: <path>`
 - `[Ghost Shell Failed]` — an error stopped the ghost — includes `— session log: <path>`

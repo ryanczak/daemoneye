@@ -197,9 +197,22 @@ prompt = "sre"
 
 # ── Notifications ─────────────────────────────────────────────────────────────
 
+# Every subsystem publishes notices: webhook, scheduler, watchdog, ghost,
+# background, shell, daemon. Severities, low to high: debug, info, warning,
+# error, critical. Routes decide where each notice goes. The default routes:
+#   history      webhook at warning+, ghost, background
+#   chat_notice  webhook at warning+, ghost, scheduler, watchdog
+#   analyze      webhook alerts, firing or resolved, at warning+
+#   command      none (command routes exist only when you configure them)
+#
+# Removed in 2.10.0: [notifications] on_alert and [webhook] severity_threshold.
+# A config that sets either fails to load, with a message showing the
+# equivalent [[notifications.route]] tables.
+#
 # [notifications]
 # Keep the built-in default routes on (default: true). Set to false to keep
-# only the [[notifications.route]] tables you configure.
+# only the [[notifications.route]] tables you configure. This drops the
+# default analyze route too, so ghost triggering stops unless you add one.
 # default_routes = true
 
 # Route notices to a sink behind a filter. Configured routes add to the
@@ -226,7 +239,7 @@ prompt = "sre"
 # enabled = false
 # port = 9393
 # secret = ""            # Bearer token; empty = no auth (allowed loopback only)
-# auto_analyze = true
+# auto_analyze = true   # analyse the alerts the "analyze" routes match
 # dedup_window_secs = 300
 # bind_addr = "127.0.0.1"          # non-loopback + empty secret -> daemon refuses to start
 # (per-IP rate limit: 30 req per 60 s window, constants in src/webhook/server.rs)

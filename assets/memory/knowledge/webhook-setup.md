@@ -24,6 +24,19 @@ Check current state:
 grep -A5 '\[webhook\]' ~/.daemoneye/etc/config.toml || echo 'not configured'
 ```
 
+## Routing
+
+An accepted alert becomes a notice. With the default routes, an alert at `warning` or above is written to every session's history and shown as a one-line chat notice. It is also passed to the runbook analysis, which needs `auto_analyze = true`, and the analysis may start a ghost shell. Lower severities, and severities the daemon does not recognise, reach only the alert registry and the event log. To change this, add `[[notifications.route]]` tables in `config.toml`, for example to analyse `info` alerts for one alert name:
+
+```toml
+[[notifications.route]]
+sink = "analyze"
+min_severity = "info"
+names = ["HighDiskUsage"]
+```
+
+Routes take effect on `daemoneye reload`. See `config-reference` for the default routes and the filter keys.
+
 ## Prometheus Alert Rule
 
 Create `/etc/prometheus/rules/<topic>.yml` on the Prometheus host. Alert name must be CamelCase:

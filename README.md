@@ -115,12 +115,12 @@ Three properties are load-bearing:
 
 ### 👻 Autonomous Ghost Shells
 
-When a critical alert matches a runbook with `enabled: true`, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem on the daemon host without a human present, in a PTY shell it owns. Watch it with `/tail`, or join it with `/agents` to pause, interrupt or type into it. When you next attach, a catch-up brief tells you what happened.
+When a webhook alert the `analyze` route matches (by default, `warning` or above) has a runbook with `enabled: true`, and the runbook analysis calls for it, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem on the daemon host without a human present, in a PTY shell it owns. Watch it with `/tail`, or join it with `/agents` to pause, interrupt or type into it. When you next attach, a catch-up brief tells you what happened.
 
 - **Unattended Remediation** — Runs pre-approved remediation scripts, monitors output, and escalates when something unexpected happens.
 - **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Two keys are required for every privilege escalation. The gate reads the command as a whole: a sudo invocation must be exactly one approved script call with a plain tail — no chains, substitutions or redirections after the script word — so a whitelisted script cannot be used as a vehicle for a second command. Ghost runs release their concurrency slot on every exit path, so a crashed ghost never wedges the cap.
 - **Turn Budget** — A configurable hard ceiling on AI turns (default 20) ensures the agent cannot loop indefinitely. Individual runbooks may set a lower limit, but never a higher one.
-- **Catch-up Brief** — On re-attach, new completions, alerts, and watchdog results are summarised in a `[Catch-up]` message before the first AI token. AI spend during the detach window is included: `Cost during detach: $0.34 (architect $0.20 · ghost-anonymous $0.14)`.
+- **Catch-up Brief** — On re-attach, a `[Catch-up]` message before the first AI token lists every notice the routes sent to that chat's history or chat notice while you were away: alerts, ghost and background completions, scheduler results and watchdog analyses, read from the event log. AI spend during the detach window is included: `Cost during detach: $0.34 (architect $0.20 · ghost-anonymous $0.14)`.
 
 Full walkthrough: [Ghost Shells & Autonomous Remediation](#ghost-shells--autonomous-remediation).
 
@@ -921,8 +921,6 @@ Each `[[notifications.route]]` table routes notices to one sink behind a filter.
 
 An empty list means "any". Configured routes **add to** the built-in defaults; `[notifications] default_routes = false` turns the defaults off and keeps only what you route. Routes are read per delivery, so `daemoneye reload` applies them.
 
-The default analyze route fires the runbook analysis for webhook alerts at `warning` or above. `[notifications] default_routes = false` drops it too: ghost triggering stops unless you configure an `analyze` route of your own.
-
 ```toml
 [[notifications.route]]
 sink = "command"
@@ -939,6 +937,23 @@ sink = "analyze"
 min_severity = "info"
 names = ["WatchdogHighLoad"]
 ```
+
+#### Default routes
+
+Every subsystem publishes notices: `webhook`, `scheduler`, `watchdog`, `ghost`, `background`, `shell` and `daemon`. Severities, from lowest to highest, are `debug`, `info`, `warning`, `error` and `critical`. An external severity the daemon does not recognise becomes `debug`, which is below every default route.
+
+| Sink | Default routes (a notice matching any one is routed) |
+|---|---|
+| `history` | webhook at `warning` or above; any ghost notice; any background notice |
+| `chat_notice` | webhook at `warning` or above; any ghost, scheduler or watchdog notice |
+| `analyze` | webhook alerts, firing or resolved, at `warning` or above |
+| `command` | none: command routes exist only when you configure them |
+
+The default analyze route runs the runbook analysis for webhook alerts at `warning` or above. `[notifications] default_routes = false` turns it off too, so ghost triggering stops unless you configure an `analyze` route of your own. A `shell` notice (a program in a terminal reporting `blocked`, `error` or `done`) matches no default route and reaches only the event log.
+
+**The alert registry is not a route.** It records every webhook alert, firing or resolved, at every severity, whatever the routes say. On daemon start it is rebuilt from the last 6 hours of the event log.
+
+**Every notice is logged first.** Each notice is written to the event log as an `event: "notice"` record before it is delivered. The catch-up brief and the away digest read these records, so they show what the routes delivered even when no chat was attached.
 
 ### `[approvals]` section
 
@@ -961,7 +976,7 @@ Seeds the approval state at the start of every session — for `daemoneye chat` 
 | `port` | integer | `9393` | TCP port to listen on. |
 | `bind_addr` | string | `"127.0.0.1"` | IP address to bind the webhook listener. Set to `"0.0.0.0"` to expose on all interfaces — **only with `secret` set**: a non-loopback bind with an empty secret is refused and the daemon fails to start, because every webhook post can launch a ghost shell that runs arbitrary commands. |
 | `secret` | string | `""` | Bearer token for authentication. Empty = no auth. |
-| `auto_analyze` | bool | `true` | Run runbook-based AI analysis when a matching runbook exists. |
+| `auto_analyze` | bool | `true` | Run the runbook-based AI analysis for the alerts the `analyze` routes match (by default, webhook alerts at `warning` or above), when a matching runbook exists. `false` turns the analysis off whatever the routes say. |
 | `dedup_window_secs` | integer | `300` | Suppress duplicate alerts with the same fingerprint within this many seconds. |
 
 > **Removed in 2.10.0:** `[webhook] severity_threshold`. A config file that
@@ -971,7 +986,7 @@ Seeds the approval state at the start of every session — for `daemoneye chat` 
 
 The listener also enforces a per-IP rate limit of 30 requests per 60-second window (a compile-time constant, not configurable). A bind failure at startup is fatal — it is treated as a duplicate-instance signal, not a transient error.
 
-Every alert the webhook accepts is recorded in the daemon's active-alert registry (keyed by fingerprint, entries expiring after 6 hours without a re-fire) at every severity — the registry is not gated by the routing defaults, which route webhook alerts at `warning` and above. The registry is visible to a chat client as an `AlertState` frame at attach and to `daemoneye top` in a later release.
+Every alert the webhook accepts is recorded in the daemon's active-alert registry (keyed by fingerprint, entries expiring after 6 hours without a re-fire) at every severity — the registry is not gated by the routing defaults, which route webhook alerts at `warning` and above. A chat client receives the registry as an `AlertState` frame when it attaches, and `daemoneye top` shows it in its Alerts panel. On daemon start the registry is rebuilt from the last 6 hours of the event log, so a restart does not forget an alert that is still firing.
 
 #### Prometheus Alertmanager integration
 
@@ -1226,7 +1241,8 @@ On clean exit: generate_and_save_briefing() writes masked summary to
         ▼
 [Ghost Shell Completed — session log: ~/.daemoneye/var/log/sessions/ghost-<name>-<uuid>.jsonl]
 or [Ghost Shell Failed — session log: ...]
-injected into all active sessions → appears in catch-up brief
+published as a ghost notice → by default, every session's history + chat notice
+  → appears in the catch-up brief
 Use read_file(<path>) to review the full ghost conversation
 ```
 

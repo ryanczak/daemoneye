@@ -77,6 +77,33 @@ restart to land. Everything else swaps into the running config on reload.
 | `notifications.default_routes` | boolean | true/false | true | reload |
 | `notifications.route` | list of route tables (written as repeated `[[notifications.route]]`) | each: `sink` (`history`, `chat_notice`, `command` or `analyze`) + filter keys | `[]` | reload |
 
+Each route table has a `sink` and filter keys:
+- `min_severity`: one of `debug`, `info`, `warning`, `error` or `critical`, from lowest to highest.
+- `sources`: any of `webhook`, `scheduler`, `watchdog`, `ghost`, `background`, `shell` and `daemon`.
+- `names`.
+- `statuses`: any of `firing`, `resolved` and `event`.
+
+An empty list matches anything. A `command` route also needs a `command` key, and only a `command` route may have one. Configured routes add to the default routes:
+
+| Sink | Default routes (a notice matching any one is routed) |
+|---|---|
+| `history` | webhook at `warning` or above; any ghost notice; any background notice |
+| `chat_notice` | webhook at `warning` or above; any ghost, scheduler or watchdog notice |
+| `analyze` | webhook alerts, firing or resolved, at `warning` or above |
+| `command` | none: command routes exist only when configured |
+
+With `default_routes = false` only the configured routes apply, so ghost triggering stops unless an `analyze` route is configured. The alert registry is not routed: it records every webhook alert at every severity.
+
+**Removed in 2.10.0 — never write these keys:** `[notifications] on_alert` and `[webhook] severity_threshold`. A config that sets either fails to load, at start and on `reload`, and the error shows the equivalent routes. The old alert command is now a `command` route:
+
+```toml
+[[notifications.route]]
+sink = "command"
+command = "notify-send '$DAEMONEYE_JOB' '$DAEMONEYE_MSG'"
+sources = ["webhook"]
+min_severity = "warning"
+```
+
 ## `[webhook]`
 
 | Key | Type | Range | Default | Takes effect |
