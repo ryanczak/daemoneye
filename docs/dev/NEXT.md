@@ -7,9 +7,9 @@ as `2.9.0` (2026-11-16).
 
 **Active phase:** none.
 
-**Open from the M38 live check:** a `wait: false` shell that reports
-`blocked` within its first 2 s probe never produces a notice
-(`ProgramWatcher` first-sight baseline). Candidate issue.
+**Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
+that reports `blocked` within its first 2 s probe never produces a notice
+(`ProgramWatcher` first-sight baseline).
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
