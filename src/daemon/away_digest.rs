@@ -15,7 +15,6 @@
 
 use crate::bus::{Notice, NoticeStatus, Source, for_each_notice_between};
 use crate::config::var_run_dir;
-use crate::util::UnpoisonExt;
 use std::collections::BTreeMap;
 use std::io::Write;
 
@@ -263,10 +262,7 @@ pub(crate) fn build_away_digest(
 /// The delivery gate counts connections, not sessions: a second tab on the
 /// same session is also receiving live messages.
 fn live_presence_connections() -> usize {
-    let map = crate::daemon::session::presence_registry()
-        .lock()
-        .unwrap_or_log();
-    map.values().map(Vec::len).sum()
+    crate::daemon::session::global_presence().total_connections()
 }
 
 /// The attach-time delivery: one digest for the window since the stamp, or

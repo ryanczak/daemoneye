@@ -291,17 +291,17 @@ pub(crate) fn replay_alert_registry_in(
     restored
 }
 
-/// A leaked bus with the default sinks registered on it, for tests.
+/// An isolated bus with the default sinks registered on it, for tests.
 ///
 /// `register_default_sinks` spawns tasks, so this must run inside a Tokio
 /// runtime (inside `rt.block_on(async { .. })` or after `rt.enter()`).
 /// Every test passes its **own** [`SessionStore`]: the sinks on a shared
 /// bus deliver one test's notices into another test's sessions, so tests
 /// never use the global bus.
-pub fn test_bus(sessions: SessionStore, threshold: Severity) -> &'static Bus {
-    let leaked: &'static Bus = Box::leak(Box::new(Bus::with_journal(|_| {})));
-    register_default_sinks(leaked, sessions, default_routes(threshold));
-    leaked
+pub fn test_bus(sessions: SessionStore, threshold: Severity) -> std::sync::Arc<Bus> {
+    let bus = std::sync::Arc::new(Bus::with_journal(|_| {}));
+    register_default_sinks(&bus, sessions, default_routes(threshold));
+    bus
 }
 
 /// Subscribe the four sinks on `bus` and spawn the two queued tasks.

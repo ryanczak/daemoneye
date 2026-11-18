@@ -11,7 +11,7 @@
 //! key.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ipc::AlertBadge;
 use crate::util::UnpoisonExt;
@@ -27,12 +27,45 @@ pub(crate) struct ActiveAlert {
     last_seen_unix: u64,
 }
 
+/// Shared registry of active alerts (fingerprint → record).
+#[derive(Clone, Default)]
+pub struct AlertRegistry(Arc<Mutex<HashMap<String, ActiveAlert>>>);
+
+impl AlertRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn inner(&self) -> &Mutex<HashMap<String, ActiveAlert>> {
+        &self.0
+    }
+
+    pub fn firing(&self, fingerprint: &str, name: &str, severity: &str, now_unix: u64) -> bool {
+        active_alerts_firing_in(&self.0, fingerprint, name, severity, now_unix)
+    }
+
+    pub fn resolved(&self, fingerprint: &str) -> bool {
+        active_alerts_resolved_in(&self.0, fingerprint)
+    }
+
+    pub fn snapshot_at(&self, now_unix: u64) -> Vec<AlertBadge> {
+        active_alerts_snapshot_in(&self.0, now_unix)
+    }
+
+    pub fn snapshot(&self) -> Vec<AlertBadge> {
+        self.snapshot_at(super::process::now_secs_pub())
+    }
+}
+
 /// Process-wide registry: fingerprint → the alert's record.
-static ACTIVE_ALERTS: std::sync::OnceLock<Mutex<HashMap<String, ActiveAlert>>> =
-    std::sync::OnceLock::new();
+static ACTIVE_ALERTS: OnceLock<AlertRegistry> = OnceLock::new();
+
+pub fn alert_registry() -> &'static AlertRegistry {
+    ACTIVE_ALERTS.get_or_init(AlertRegistry::new)
+}
 
 pub(crate) fn registry() -> &'static Mutex<HashMap<String, ActiveAlert>> {
-    ACTIVE_ALERTS.get_or_init(|| Mutex::new(HashMap::new()))
+    alert_registry().inner()
 }
 
 /// Rank a severity string, reusing `process.rs`'s table — the one ranking

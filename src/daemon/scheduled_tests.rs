@@ -57,7 +57,7 @@ async fn scheduled_job_result_is_pushed_to_attached_clients() {
     let sessions = SessionStore::new();
     let bus = crate::daemon::notice_sinks::test_bus(sessions, crate::bus::Severity::Warning);
     notify_job_result(
-        bus,
+        &bus,
         alert_job_notice(
             &test_job("nightly-backup", ActionOn::Alert, "job-notify-1"),
             "Watchdog alert: nightly-backup",
@@ -606,8 +606,7 @@ async fn run_refusal_arm(job: &ScheduledJob, store: &Arc<ScheduleStore>) -> (Str
         }),
     );
     let bus = crate::bus::Bus::with_journal(|_| {});
-    let leaked: &'static crate::bus::Bus = Box::leak(Box::new(bus));
-    fail_job_terminal(job, store, leaked, reason.clone()).await;
+    fail_job_terminal(job, store, &bus, reason.clone()).await;
     (reason, 1)
 }
 
@@ -646,19 +645,17 @@ fn fake_runner() -> (crate::shell::SbxRunner, Calls, Canned) {
 // ── M38 phase 04: the job notices the bus producers publish ───────────────
 
 /// A recording journal's sink, so a test can read the notices a producer
-/// published without registering any consumer. Leaked to `&'static Bus`,
-/// the shape `run_scheduled_job` and every helper take.
+/// published without registering any consumer.
 fn recording_bus() -> (
-    &'static crate::bus::Bus,
+    crate::bus::Bus,
     std::sync::Arc<std::sync::Mutex<Vec<crate::bus::Notice>>>,
 ) {
     let journal: std::sync::Arc<std::sync::Mutex<Vec<crate::bus::Notice>>> =
         std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = std::sync::Arc::clone(&journal);
-    let bus: &'static crate::bus::Bus =
-        Box::leak(Box::new(crate::bus::Bus::with_journal(move |n| {
-            sink.lock().unwrap().push(n.clone())
-        })));
+    let bus = crate::bus::Bus::with_journal(move |n| {
+        sink.lock().unwrap().push(n.clone());
+    });
     (bus, journal)
 }
 
@@ -756,7 +753,7 @@ async fn fail_job_publishes_one_error_notice() {
     );
     let store = test_store(&job);
     let (bus, journal) = recording_bus();
-    fail_job(&job, &store, bus, "boom: exit 7".to_string()).await;
+    fail_job(&job, &store, &bus, "boom: exit 7".to_string()).await;
 
     let notices = journal.lock().unwrap();
     assert_eq!(

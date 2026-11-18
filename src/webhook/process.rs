@@ -289,12 +289,7 @@ pub fn ghost_event_notice(kind: GhostEvent, name: &str, content: &str) -> crate:
 
 /// Publish a ghost shell lifecycle event on the bus and mirror it to
 /// `ghost_lifecycle` in events.jsonl for troubleshooting.
-pub fn publish_ghost_event(
-    bus: &'static crate::bus::Bus,
-    kind: GhostEvent,
-    name: &str,
-    content: &str,
-) {
+pub fn publish_ghost_event(bus: &crate::bus::Bus, kind: GhostEvent, name: &str, content: &str) {
     bus.publish(ghost_event_notice(kind, name, content));
     crate::daemon::utils::log_event("ghost_lifecycle", serde_json::json!({ "content": content }));
 }
@@ -513,7 +508,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
                     state.config.ghost.max_concurrent_ghosts
                 );
                 publish_ghost_event(
-                    state.bus,
+                    &state.bus,
                     GhostEvent::Skipped,
                     &notice.name,
                     &format!(
@@ -530,7 +525,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
             let config_clone = state.config.clone();
             let cache_clone = state.cache.clone();
             let schedule_store_clone = state.schedule_store.clone();
-            let bus = state.bus;
+            let bus = state.bus.clone();
 
             let _handle = tokio::spawn(async move {
                 let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
@@ -549,7 +544,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
                             .display()
                             .to_string();
                         publish_ghost_event(
-                            bus,
+                            &bus,
                             GhostEvent::Started,
                             &rb_clone.name,
                             &format!(
@@ -569,7 +564,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
                         {
                             Ok(()) => {
                                 publish_ghost_event(
-                                    bus,
+                                    &bus,
                                     GhostEvent::Completed,
                                     &rb_clone.name,
                                     &format!(
@@ -581,7 +576,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
                             Err(e) => {
                                 log::error!("Ghost Turn: failed for {}: {}", sid, e);
                                 publish_ghost_event(
-                                    bus,
+                                    &bus,
                                     GhostEvent::Failed,
                                     &rb_clone.name,
                                     &format!(
@@ -1059,7 +1054,7 @@ mod tests {
             "[Ghost Shell Completed] Autonomous remediation finished for alert: disk-full";
         let bus =
             crate::daemon::notice_sinks::test_bus(sessions.clone(), crate::bus::Severity::Warning);
-        publish_ghost_event(bus, GhostEvent::Completed, "disk-full", content);
+        publish_ghost_event(&bus, GhostEvent::Completed, "disk-full", content);
 
         for id in ["a", "b"] {
             let content_there = with_sessions(&sessions, |store| {

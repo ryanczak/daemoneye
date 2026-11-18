@@ -37,7 +37,7 @@ pub struct WebhookState {
     /// The notice bus the producers publish on. Production passes
     /// [`crate::bus::global`]; a test passes [`crate::daemon::notice_sinks::test_bus`]
     /// so its notices reach only its own sinks.
-    pub bus: &'static crate::bus::Bus,
+    pub bus: Arc<crate::bus::Bus>,
     /// Fingerprint → last-seen timestamp (seconds since UNIX epoch).
     pub dedup: Mutex<HashMap<String, u64>>,
     /// Alert-name → last-analysis timestamp for rate-limiting AI analysis.
@@ -205,7 +205,7 @@ pub async fn serve(
         sessions,
         cache,
         schedule_store,
-        bus: crate::bus::global(),
+        bus: crate::bus::global().clone(),
         dedup: Mutex::new(HashMap::new()),
         rate_limit: Mutex::new(HashMap::new()),
         ip_limits: Mutex::new(HashMap::new()),
@@ -324,7 +324,7 @@ mod tests {
             sessions: SessionStore::new(),
             cache: Arc::new(crate::tmux::cache::SessionCache::new("unused")), // unused in these tests
             schedule_store: Arc::new(crate::scheduler::ScheduleStore::new_empty()),
-            bus: crate::bus::global(),
+            bus: crate::bus::global().clone(),
             dedup: Mutex::new(HashMap::new()),
             rate_limit: Mutex::new(HashMap::new()),
             ip_limits: Mutex::new(HashMap::new()),

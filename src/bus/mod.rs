@@ -267,9 +267,9 @@ impl Default for Bus {
 }
 
 /// The process-wide bus.
-pub fn global() -> &'static Bus {
-    static BUS: OnceLock<Bus> = OnceLock::new();
-    BUS.get_or_init(Bus::new)
+pub fn global() -> &'static Arc<Bus> {
+    static BUS: OnceLock<Arc<Bus>> = OnceLock::new();
+    BUS.get_or_init(|| Arc::new(Bus::new()))
 }
 
 /// Publish onto [`global`].

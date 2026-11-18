@@ -383,7 +383,7 @@ pub(super) fn background_notice(
 /// delivery — the two would deadlock. The session-gone check runs under the
 /// lock; the publish happens after it is released.
 pub(super) async fn await_and_notify(
-    bus: &'static crate::bus::Bus,
+    bus: std::sync::Arc<crate::bus::Bus>,
     sessions: SessionStore,
     session_id: String,
     cmd: String,
@@ -490,7 +490,7 @@ fn record_command_completion(
 /// comes **after** the message lands — closing first would hang the command
 /// up before its reader has drained it.
 pub(super) async fn await_notify_and_close<F, Fut>(
-    bus: &'static crate::bus::Bus,
+    bus: std::sync::Arc<crate::bus::Bus>,
     sessions: SessionStore,
     session_id: String,
     cmd: String,

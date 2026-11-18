@@ -181,7 +181,7 @@ fn watchdog_notice(job: &ScheduledJob, response: &str) -> crate::bus::Notice {
 /// diverge on it. The bus fans the notice out to the sinks — the chat
 /// notice, the command sink — each behind its own routes; delivering
 /// to nobody is the normal no-chat case.
-async fn notify_job_result(bus: &'static crate::bus::Bus, notice: crate::bus::Notice) {
+async fn notify_job_result(bus: &crate::bus::Bus, notice: crate::bus::Notice) {
     bus.publish(notice);
 }
 
@@ -190,7 +190,7 @@ async fn notify_job_result(bus: &'static crate::bus::Bus, notice: crate::bus::No
 async fn fail_job(
     job: &ScheduledJob,
     store: &Arc<ScheduleStore>,
-    bus: &'static crate::bus::Bus,
+    bus: &crate::bus::Bus,
     reason: String,
 ) {
     store.mark_done(&job.id, false, Some(reason.clone()));
@@ -202,7 +202,7 @@ async fn fail_job(
 async fn fail_job_terminal(
     job: &ScheduledJob,
     store: &Arc<ScheduleStore>,
-    bus: &'static crate::bus::Bus,
+    bus: &crate::bus::Bus,
     reason: String,
 ) {
     store.mark_failed_terminal(&job.id, reason.clone());
@@ -261,7 +261,7 @@ pub async fn run_scheduled_job(
     sessions: SessionStore,
     config: Config,
     cache: Arc<crate::tmux::cache::SessionCache>,
-    bus: &'static crate::bus::Bus,
+    bus: &crate::bus::Bus,
 ) -> Result<(), String> {
     let job_id = job.id.clone();
     let job_name = job.name.clone();
@@ -297,7 +297,7 @@ async fn run_scheduled_job_inner(
     sessions: SessionStore,
     config: Config,
     cache: Arc<crate::tmux::cache::SessionCache>,
-    bus: &'static crate::bus::Bus,
+    bus: &crate::bus::Bus,
 ) -> Option<String> {
     crate::daemon::stats::inc_schedules_executed();
 
@@ -490,7 +490,7 @@ async fn run_script_job(
     host_path: &str,
     store: &Arc<ScheduleStore>,
     config: &Config,
-    bus: &'static crate::bus::Bus,
+    bus: &crate::bus::Bus,
 ) -> Option<String> {
     let owner = Owner::Scheduler(job.id.clone());
     let reg = crate::shell::registry();
@@ -664,7 +664,7 @@ async fn run_watchdog(
     job: &ScheduledJob,
     output: &str,
     config: &Config,
-    bus: &'static crate::bus::Bus,
+    bus: &crate::bus::Bus,
 ) -> Result<(), String> {
     let Some(rb_name) = job.runbook.as_ref() else {
         return Ok(());

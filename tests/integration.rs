@@ -1404,10 +1404,9 @@ fn webhook_alert_publishes_one_notice() {
     let journal: Arc<std::sync::Mutex<Vec<daemoneye::bus::Notice>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&journal);
-    let bus: &'static daemoneye::bus::Bus =
-        Box::leak(Box::new(daemoneye::bus::Bus::with_journal(move |n| {
-            sink.lock().expect("journal").push(n.clone())
-        })));
+    let bus = Arc::new(daemoneye::bus::Bus::with_journal(move |n| {
+        sink.lock().expect("journal").push(n.clone())
+    }));
 
     let config = daemoneye::config::Config::default();
     let state = std::sync::Arc::new(WebhookState {
@@ -1495,8 +1494,7 @@ fn webhook_alert_without_sinks_reaches_no_history() {
             daemoneye::daemon::session::SessionEntry::from_disk("bus-sess"),
         );
     });
-    let bus: &'static daemoneye::bus::Bus =
-        Box::leak(Box::new(daemoneye::bus::Bus::with_journal(|_| {})));
+    let bus = Arc::new(daemoneye::bus::Bus::with_journal(|_| {}));
     let state = std::sync::Arc::new(WebhookState {
         config: daemoneye::config::Config::default(),
         sessions: sessions.clone(),
@@ -1575,10 +1573,9 @@ fn webhook_alert_unknown_severity_publishes_debug() {
     let journal: Arc<std::sync::Mutex<Vec<daemoneye::bus::Notice>>> =
         Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = Arc::clone(&journal);
-    let bus: &'static daemoneye::bus::Bus =
-        Box::leak(Box::new(daemoneye::bus::Bus::with_journal(move |n| {
-            sink.lock().expect("journal").push(n.clone())
-        })));
+    let bus = Arc::new(daemoneye::bus::Bus::with_journal(move |n| {
+        sink.lock().expect("journal").push(n.clone())
+    }));
     let state = std::sync::Arc::new(WebhookState {
         config: daemoneye::config::Config::default(),
         sessions: sessions.clone(),

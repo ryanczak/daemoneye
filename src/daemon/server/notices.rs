@@ -84,7 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_acks_then_streams_matching_notices() {
-        let bus: &'static Bus = Box::leak(Box::new(crate::bus::Bus::with_journal(|_| {})));
+        let bus = std::sync::Arc::new(crate::bus::Bus::with_journal(|_| {}));
         let filter = Filter {
             sources: vec![Source::Webhook],
             ..Filter::default()
@@ -93,8 +93,9 @@ mod tests {
         let (server_rx, mut server_tx) = tokio::io::split(server_side);
         let mut server_rx = tokio::io::BufReader::new(server_rx);
 
+        let bus_for_handler = std::sync::Arc::clone(&bus);
         let handler = tokio::spawn(async move {
-            handle_subscribe(&mut server_rx, &mut server_tx, bus, filter)
+            handle_subscribe(&mut server_rx, &mut server_tx, &bus_for_handler, filter)
                 .await
                 .expect("handler runs");
         });
@@ -130,13 +131,13 @@ mod tests {
 
     #[tokio::test]
     async fn subscribe_ends_when_the_client_disconnects() {
-        let bus: &'static Bus = Box::leak(Box::new(crate::bus::Bus::with_journal(|_| {})));
+        let bus = std::sync::Arc::new(crate::bus::Bus::with_journal(|_| {}));
         let (mut client, server_side) = tokio::io::duplex(4096);
         let (server_rx, mut server_tx) = tokio::io::split(server_side);
         let mut server_rx = tokio::io::BufReader::new(server_rx);
 
         let handler = tokio::spawn(async move {
-            handle_subscribe(&mut server_rx, &mut server_tx, bus, Filter::default())
+            handle_subscribe(&mut server_rx, &mut server_tx, &bus, Filter::default())
                 .await
                 .expect("handler runs")
         });

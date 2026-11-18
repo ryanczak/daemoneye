@@ -100,7 +100,7 @@ mod tests {
     /// for the test's whole body — the guard is not reentrant, so a test
     /// that builds two states must not take it twice.
     fn state(auto_analyze: bool) -> Arc<WebhookState> {
-        let bus: &'static Bus = Box::leak(Box::new(Bus::with_journal(|_| {})));
+        let bus = Arc::new(Bus::with_journal(|_| {}));
         let mut config = Config::default();
         config.webhook.auto_analyze = auto_analyze;
         Arc::new(WebhookState {
