@@ -109,7 +109,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 08b | digest-from-journal ([phase-08b-digest-from-journal.md](phase-08b-digest-from-journal.md)) | done |
 | 08c | catchup-from-journal ([phase-08c-catchup-from-journal.md](phase-08c-catchup-from-journal.md)) | done |
 | 09a | ghost-trigger-consumer ([phase-09a-ghost-trigger-consumer.md](phase-09a-ghost-trigger-consumer.md)) | done |
-| 09b | the `analyze` route sink in `[[notifications.route]]` | planned |
+| 09b | analyze-route ([phase-09b-analyze-route.md](phase-09b-analyze-route.md)) | todo |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
 
 ## Notes
