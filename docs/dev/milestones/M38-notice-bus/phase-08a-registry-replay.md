@@ -1,7 +1,7 @@
 # Phase 08a — registry-replay
 
 **Milestone:** M38 — The notice bus
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-17
 **Depends on:** phase-07b
 **Estimated diff:** ~300 lines, more than half of it tests
@@ -167,3 +167,147 @@ socket serialized with the crate's own `daemoneye::ipc` types. The
 `Response::AlertState` reply carried that fingerprint.
 
 The literal grep: `grep -n 'mod journal' src/bus/mod.rs` → `21:mod journal;`.
+
+### Update — 2026-11-18 00:50 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 08a (registry-replay) is implemented and committed (`51d53e7b`). `src/bus/journal.rs` is the shared journal reader (`notice_from_record`, `for_each_notice_between`) built on `for_each_event_between`; `notice_sinks.rs` now factors the registry update both paths share behind an `_in(map, …)` seam, and `replay_alert_registry_in` replays exactly the notices the registry's route matches from the last `ACTIVE_ALERT_TTL_SECS` in journal order, never broadcasting; `run_daemon` calls it right before `register_default_sinks`, ahead of the webhook listener. `CLAUDE.md`'s `src/bus/` row names `journal.rs`, and the phase doc carries a started entry plus an end-to-end verification entry quoting the real `cargo test --test isolation daemon_start_replays_active_alerts` line (`ok. 1 passed … 0.29s`).
+
+**Notes for review**
+
+- The E2E test had to start → stop → journal → start (two boots) because `start_daemon`'s `daemoneye setup` recreates the tree; the first boot exists purely to establish the throwaway root, and the assertion runs against the second boot's socket. The spec's "write before `start_daemon`" is satisfied in spirit — the record is on disk before the daemon that must replay it ever starts.
+- One accepted spec divergence in test construction: `replay_ignores_what_the_registry_route_does_not_match` applies notices through the same `routes_match` gate the replay uses, rather than calling the shared update function raw — the raw call bypasses the route and would record a scheduler notice the real replay filters out.
+- `webhook::active::registry()` and `ActiveAlert` were made `pub(crate)` and re-exported from `webhook` so `notice_sinks.rs` and `startup.rs` can fill the process-wide map; the `_in` snapshot helper and `now_secs` are `#[cfg(test)]`-gated re-exports so the non-test build stays warning-free.
+- All five pre-existing `active_alerts_*` tests and the existing alert-registry sink tests pass unchanged; full `cargo test` is green (3012 lib + integration suites), clippy `-D warnings` and fmt pass, and the tree is clean.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.9.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.87s
+
+
+LINT
+    Checking daemoneye v2.9.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.01s
+
+
+TEST
+tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test g4_briefing_masking_applied ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.17s
+
+
+running 13 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 12 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.9.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.25s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-be1094999a9dca70)
+kill: (610238): No such process
+kill: (-610956): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-b8585d869a796627)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-6cbc19420996c806)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-3fb2c691dd962733)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-4f2c6668d96a79df)
+     Running tests/integration.rs (target/debug/deps/integration-77b5711c91e98a6c)
+     Running tests/isolation.rs (target/debug/deps/isolation-1ac695f945812242)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-92b086f9df7140f9)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-70b357fc5c8ec2c6)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/README.md` — +1 -1
+- `docs/dev/milestones/M38-notice-bus/phase-08a-registry-replay.md` — +30 -1
+- `src/bus/journal.rs` — +120 -0
+- `src/bus/mod.rs` — +2 -0
+- `src/bus/notice.rs` — +6 -0
+- `src/daemon/notice_sinks.rs` — +199 -21
+- `src/daemon/startup.rs` — +5 -0
+- `src/webhook/active.rs` — +1 -1
+- `src/webhook/mod.rs` — +7 -0
+- `tests/isolation.rs` — +96 -0
+
+**Commit:** 51d53e7bf4777a2a44e3e1c5065c40a006f049f3
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
