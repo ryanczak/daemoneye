@@ -7,7 +7,7 @@ every consumer (chat history, the chat notice, the status bar and `top`,
 the `on_alert` command, the ghost trigger, external subscribers) decides
 what to take by filtering on those fields.
 
-**Status:** in-progress
+**Status:** closing — retrospective written; live check, doc sweep and release pending PE sign-off
 
 **Release:** 2.10.0
 
@@ -153,3 +153,73 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
   **after** `rt.enter()` (or inside `block_on`). Built before, the spawned
   tasks never run and a test that waits on them hangs — it cost phase 03
   about an hour in `webhook_ghost_e2e_deterministic`.
+
+## Retrospective (2026-11-18)
+
+**Exit criteria.**
+- **Met:**
+  - **Every producer publishes through the bus.** The only remaining calls
+    to `inject_into_sessions` / `notify_chat_panes` / `presence_broadcast`
+    are inside the sink primitives themselves and in tests.
+  - **The default routes reproduce 2.9.0.** The issue-#3 and
+    below-threshold tests pass unchanged in meaning.
+  - **Routes filter on severity, source, name and status.** Both removed
+    keys fail to load, on start and on `reload`.
+  - **Journal readers:** the catch-up brief and away digest read the
+    journal by field, and the registry replays the last 6 h on start.
+  - **The ghost trigger** is a queued consumer behind the routable
+    `analyze` sink.
+  - **`daemoneye notices`** lists from the journal and streams with
+    `--follow`.
+- **Not yet met:** the live check on pinky (an Alertmanager alert, a
+  failing scheduled script, a background command and a terminal `blocked`
+  report, all four seen under `notices --follow`).
+
+**Outcomes:** 16 phases.
+- 9 `approved_first_try`: 02, 03, 06, 07b, 08a, 08c, 09b, 10a, 10b. In
+  five of these (08a, 08c, 09b, 10a, 10b) the reviewer fixed defects
+  instead of bouncing, per the PE's standing preference for small fixes.
+- 3 `approved_after_1`: 04, 05, 07a.
+- 4 `escalated`:
+  - 01: two `hard_fail` runs.
+  - 08b: `hard_fail` on a repeated grep.
+  - 09a: `budget_exceeded`, a test-guard deadlock.
+  - 09c: `hard_fail`, docs-only, no edits.
+
+The executor was GLM-5.3-Flash throughout. The split of 07, 08, 09 and 10
+into sub-phases held: no sub-phase exceeded one run.
+
+**What went wrong, by class:**
+- **Tests that restate the code under test:** 08a, 10a, and 08b's journal
+  fixture. A spec saying "do not restate the rules" was ignored. Naming the
+  seam function each test must call worked in 10b.
+- **Read paralysis:** 09c read for 428 turns without an edit, despite a
+  closed file list, an edit deadline and pre-verified facts. Two other
+  stalls came from repeated tool calls: 08b on a grep, and 09c's last 60
+  turns on another. Docs-only phases on this model are cheaper taken over.
+- **Bus/journal test mechanics cost three phases their finish:**
+  - 03: a queued consumer spawned before `rt.enter`.
+  - 09a: `test_home_guard` taken twice; a consumer registered after the
+    publish.
+  - 08b and 08c: fixture `ts` not pinned, or set in the future.
+- **Order-for-correctness was reversed in 10b.** `--follow` read the
+  backlog before subscribing; the reviewer fixed it.
+- **Cap pressure.** 10b cut doc comments to fit `src/ipc.rs` under 800
+  lines; the reviewer restored them and allowlisted the file at 806.
+
+**Found, not yet fixed:**
+- **Tests write into the real event log.** A full `cargo test` writes 5
+  records into the real `~/.daemoneye` event log: `ssh_connect_failed`
+  for `de-test-unreachable.invalid`, and four `scheduler_job_recovered`.
+  These come from older tests calling `log_event` without a temporary
+  `HOME`. Earlier M38 executor runs also left fixture records there
+  (pid `4242`): 3 in `events-20261118.jsonl` and all of
+  `events-20231114.jsonl`.
+- **Stale docs.** `docs/REQUIREMENTS.md` (FR-1.2.11, FR-1.2.14) and
+  `docs/design-reference.md` still describe `on_alert` and
+  `severity_threshold`.
+
+**Calibration fold candidate (3 occurrences, held for PE sign-off):** a
+test-plan entry names the function the test must call, not just the
+behaviour, and a spec that orders steps for correctness says what breaks
+if the order is reversed.

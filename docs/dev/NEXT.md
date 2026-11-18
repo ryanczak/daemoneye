@@ -5,9 +5,11 @@
 target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
 (M40). M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** 10b — notices-follow
-([`phase-10b-notices-follow.md`](milestones/M38-notice-bus/phase-10b-notices-follow.md)),
-`todo`, ready to dispatch. The last planned M38 phase. 01–10a `done`.
+**Active phase:** none. Every M38 phase (01–10b) is `done`, and the
+retrospective is in the milestone README. Before the 2.10.0 release, all
+pending PE sign-off: the live check on pinky (exit criterion 7), the
+REQUIREMENTS / design-reference sweep, and the fix for the tests that write
+into the real `~/.daemoneye` event log.
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).
