@@ -108,7 +108,8 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 08a | registry-replay ([phase-08a-registry-replay.md](phase-08a-registry-replay.md)) | done |
 | 08b | digest-from-journal ([phase-08b-digest-from-journal.md](phase-08b-digest-from-journal.md)) | done |
 | 08c | catchup-from-journal ([phase-08c-catchup-from-journal.md](phase-08c-catchup-from-journal.md)) | done |
-| 09 | ghost trigger as a consumer | planned |
+| 09a | ghost-trigger-consumer ([phase-09a-ghost-trigger-consumer.md](phase-09a-ghost-trigger-consumer.md)) | todo |
+| 09b | the `analyze` route sink in `[[notifications.route]]` | planned |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
 
 ## Notes
@@ -140,6 +141,11 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
   lists the notices routed to history **or** the chat notice, so scheduler
   job results and watchdog analyses join it (2.9.0 showed them only as an
   overlay). Accepted delta.
+- **PE decisions at phase-09 drafting (2026-11-18):** the ghost trigger
+  becomes a routable sink, `sink = "analyze"`, whose default route
+  reproduces today's gate (webhook alerts at or above `warning`). This
+  retires the fixed-`warning` interim. Phase 09 splits into 09a (the
+  queued consumer, with a fixed filter) and 09b (the route sink).
 - **Gotcha for producer phases (from phase 03):** `notice_sinks::test_bus`
   spawns the queued sinks, so on a current-thread runtime it must be built
   **after** `rt.enter()` (or inside `block_on`). Built before, the spawned
