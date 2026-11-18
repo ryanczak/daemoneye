@@ -110,6 +110,7 @@ Drafted one at a time; the list past 01 is the plan, not a commitment.
 | 08c | catchup-from-journal ([phase-08c-catchup-from-journal.md](phase-08c-catchup-from-journal.md)) | done |
 | 09a | ghost-trigger-consumer ([phase-09a-ghost-trigger-consumer.md](phase-09a-ghost-trigger-consumer.md)) | done |
 | 09b | analyze-route ([phase-09b-analyze-route.md](phase-09b-analyze-route.md)) | done |
+| 09c | notice-docs ([phase-09c-notice-docs.md](phase-09c-notice-docs.md)) | todo |
 | 10 | `Request::Subscribe` and `daemoneye notices` | planned |
 
 ## Notes
