@@ -44,6 +44,14 @@ thread_local! {
     pub(crate) static HOLDS_HOME_GUARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The process's real `HOME`, captured the first time a test takes
+/// [`test_home_guard`]. Every test that sets `HOME` holds the guard and
+/// restores `HOME` on drop, so at acquisition `HOME` is always the real one.
+/// `log_event` refuses to write while `HOME` still equals it: holding the
+/// lock is not enough, `HOME` must point at a temporary directory (issue #10).
+#[cfg(test)]
+pub(crate) static REAL_HOME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
 /// Acquire [`TEST_HOME_LOCK`], recovering if a previous holder panicked.
 ///
 /// A test that panics while holding the lock poisons it. Every later
@@ -59,6 +67,8 @@ pub fn test_home_guard() -> TestHomeGuard {
     #[cfg(test)]
     HOLDS_HOME_GUARD.with(|c| c.set(true));
     let lock = crate::util::UnpoisonExt::unwrap_or_log(TEST_HOME_LOCK.lock());
+    #[cfg(test)]
+    REAL_HOME.get_or_init(|| std::env::var("HOME").ok());
     TestHomeGuard {
         home: std::env::var("HOME").ok(),
         _lock: lock,

@@ -14,6 +14,15 @@ pub fn log_event(event: &str, mut fields: serde_json::Value) {
         "log_event({event:?}) from a test that does not hold the HOME lock: take \
          crate::test_home() first, or the event lands in another test's HOME (M32 #11)"
     );
+    #[cfg(test)]
+    assert!(
+        crate::REAL_HOME
+            .get()
+            .is_none_or(|real| std::env::var("HOME").ok() != *real),
+        "log_event({event:?}) from a test whose HOME is not redirected: \
+         test_home_guard() only takes the lock; use crate::test_home(), or the \
+         event lands in the real ~/.daemoneye event log (issue #10)"
+    );
 
     crate::ai::mask_json_value(&mut fields);
 

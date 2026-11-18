@@ -809,3 +809,13 @@ fn log_event_offsets_point_at_their_own_lines_under_concurrent_writers() {
         );
     }
 }
+
+/// Issue #10: holding the HOME lock is not enough. A test that takes only
+/// `test_home_guard()` leaves `HOME` at the real home, and `log_event` must
+/// refuse before it writes into the real event log.
+#[test]
+#[should_panic(expected = "HOME is not redirected")]
+fn log_event_refuses_a_test_whose_home_is_not_redirected() {
+    let _lock = crate::test_home_guard();
+    log_event("issue10_canary", serde_json::json!({}));
+}
