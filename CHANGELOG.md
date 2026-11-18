@@ -8,6 +8,51 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.10.0] — 2026-11-18 — M38 The notice bus
+
+Every subsystem that tells someone something now publishes one `Notice`
+onto one in-process bus. This covers webhook alerts and analyses,
+scheduler results, the watchdog, ghost runs, background completions and
+OSC 7501 terminal reports. Each consumer chooses what it takes by
+filtering on the notice's fields. The retrospective and the live check
+are in `docs/dev/milestones/M38-notice-bus/README.md`.
+
+> **Breaking — migrate your config before upgrading.** `[webhook]
+> severity_threshold` and `[notifications] on_alert` are removed. A
+> config that still sets either refuses to start (and to `reload`), and
+> the error prints the equivalent `[[notifications.route]]` tables.
+> `on_alert` becomes two `command` routes: one for `scheduler` and
+> `watchdog`, and one for `webhook` at `min_severity = "warning"`.
+
+- **One notice, common fields** — `id`, `ts`, a five-level `severity`
+  (`debug` … `critical`), `source`, `name`, `status`, `fingerprint`,
+  `session`, `title`, `body` and `labels`. Masked once at publish, and
+  journalled in the event log as `event: "notice"` before any delivery.
+- **Routes** — `[[notifications.route]]` sends notices to a sink
+  (`history`, `chat_notice`, `alert_registry`, `analyze` or `command`),
+  filtered on severity, source, name and status. The default routes
+  (`[notifications] default_routes = true`) reproduce 2.9.0's delivery.
+  Routes are read per delivery, so `daemoneye reload` applies them.
+- **Command sink** — runs a shell command with `$DAEMONEYE_JOB`,
+  `$DAEMONEYE_MSG`, `$DAEMONEYE_SEVERITY` and `$DAEMONEYE_SOURCE` set.
+- **Terminal notices** — a program reporting `blocked`, `error` or `done`
+  over OSC 7501 in a daemon shell publishes a `shell` notice. The default
+  routes send it only to the journal.
+- **Readers from the journal** — the catch-up brief and the away digest
+  read notices by field, not by text prefix. The alert registry rebuilds
+  from the last six hours of journal on daemon start, so active alerts
+  survive a restart.
+- **Ghost trigger** — `auto_analyze`'s watchdog-to-ghost path is a queued
+  bus consumer behind the routable `analyze` sink.
+- **`daemoneye notices`** — lists past notices from the journal (filters
+  `--min-severity`, `--source`, `--name`, `--limit`). `--follow` then
+  streams live ones over the new `Request::Subscribe`.
+- **Fixes** — a daemon whose config sets a removed key refuses to start,
+  and prints the migration on the terminal instead of falling back to
+  the defaults. The daemon readiness pipe keeps multi-line errors intact.
+  `cargo test` no longer writes into the real `~/.daemoneye` event log
+  (issue #10).
+
 ## [2.9.0] — 2026-11-16 — M37 Alerts out of history, onto the status bar and `top`
 
 Fixes GitHub issue #3. A webhook alert below `[webhook] severity_threshold`

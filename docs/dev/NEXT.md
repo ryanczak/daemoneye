@@ -1,13 +1,15 @@
 # NEXT
 
-**Active milestone:** M38 — The notice bus
-([`README.md`](milestones/M38-notice-bus/README.md)). Scoped 2026-11-16,
-target `2.10.0`. After M38 comes the MCP surface (M39), then Knowledge
-(M40). M37 closed as `2.9.0` (2026-11-16).
+**Active milestone:** none. M38 (The notice bus) closed 2026-11-18 as
+`2.10.0` ([`README.md`](milestones/M38-notice-bus/README.md)). Next is the
+MCP surface (M39), then Knowledge (M40); M39 is not yet scoped. M37 closed
+as `2.9.0` (2026-11-16).
 
-**Active phase:** none. Every M38 phase (01–10b) is `done`, every exit
-criterion is met (the live check passed 2026-11-18), and the retrospective
-is in the milestone README. The 2.10.0 release waits on PE sign-off.
+**Active phase:** none.
+
+**Open from the M38 live check:** a `wait: false` shell that reports
+`blocked` within its first 2 s probe never produces a notice
+(`ProgramWatcher` first-sight baseline). Candidate issue.
 
 **Absorbed by M38:** the M37 registry-restart gap (alert registry rebuilt
 from the journal at start, phase 08).

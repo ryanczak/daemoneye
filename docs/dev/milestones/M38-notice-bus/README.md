@@ -7,7 +7,7 @@ every consumer (chat history, the chat notice, the status bar and `top`,
 the `on_alert` command, the ghost trigger, external subscribers) decides
 what to take by filtering on those fields.
 
-**Status:** closing — exit criteria met, live check passed 2026-11-18; release pending PE sign-off
+**Status:** closed 2026-11-18 — released as 2.10.0 on PE sign-off
 
 **Release:** 2.10.0
 
