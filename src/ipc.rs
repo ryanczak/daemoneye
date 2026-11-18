@@ -261,8 +261,10 @@ pub enum Request {
     /// phase 01). The daemon answers with `Response::AlertState` over the
     /// current snapshot.
     AlertList,
-    /// Re-read the config file and report the keys that changed. The daemon
-    /// replies with `Response::Reloaded`, or `Response::Error` when invalid.
+    /// Re-read `~/.daemoneye/etc/config.toml`, swap what is safe to swap at
+    /// runtime, and report the keys that changed. The daemon replies with
+    /// `Response::Reloaded`, or `Response::Error` when the file is invalid —
+    /// an invalid file is refused and the running config stays.
     Reload,
     /// Subscribe this connection to the notice bus.
     Subscribe {
@@ -567,7 +569,8 @@ pub enum Response {
     /// Sent after each AI turn completes, carrying the prompt token count from
     /// that turn. The client uses this to update the context-budget display.
     /// `output_tokens` is the turn's total over every model call in it (M37
-    /// phase 02b). Defaulted so a frame from an older daemon still decodes.
+    /// phase 02b) — the throughput slot's numerator. Defaulted so a frame
+    /// from an older daemon still decodes.
     UsageUpdate {
         prompt_tokens: u32,
         #[serde(default)]
@@ -735,14 +738,17 @@ pub enum Response {
     LimitsInfo {
         /// Effective limits from `config.limits`.
         limits: LimitsSummary,
-        /// Turn, tool-call and history counters for this session.
+        /// Number of turns completed so far in this session.
         turn_count: usize,
+        /// Cumulative non-approval-gated tool calls executed in this session.
         tool_calls_this_session: usize,
+        /// Current number of messages in this session's history.
         history_len: usize,
     },
     /// One notice streamed to a `Subscribe` connection.
     Notice { notice: crate::bus::Notice },
 }
+
 impl Response {
     /// A stable, human-readable label for this variant — its PascalCase
     /// name. Used in user-facing "unexpected reply" messages instead of a

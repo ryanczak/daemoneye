@@ -172,8 +172,31 @@ pub async fn run_notices_follow(
     }
     let filter = filter_from_flags(min_severity, sources, names)?;
 
-    // The backlog first, with the ids it printed — the daemon may already
-    // have queued notices that the journal also holds.
+    // Subscribe first and wait for the ack: from then on every publish
+    // reaches this connection. Only then read the backlog, so a notice
+    // published in between is in the journal, on the live stream, or both
+    // (and `live_line` prints it once) — never in neither.
+    let subscribed = match connect().await {
+        Ok(stream) => {
+            let (rx, mut tx) = stream.into_split();
+            let mut rx = BufReader::new(rx);
+            send_request(
+                &mut tx,
+                Request::Subscribe {
+                    filter: filter.clone(),
+                },
+            )
+            .await?;
+            match recv(&mut rx).await {
+                Ok(Response::Ok) => {}
+                Ok(other) => anyhow::bail!("unexpected reply to Subscribe: {}", other.kind()),
+                Err(e) => anyhow::bail!("reading the Subscribe ack: {e}"),
+            }
+            Some((rx, tx))
+        }
+        Err(_) => None,
+    };
+
     let selected = select_notices(&filter, limit);
     let printed: std::collections::HashSet<String> =
         selected.iter().map(|n| n.id.clone()).collect();
@@ -181,22 +204,11 @@ pub async fn run_notices_follow(
     use std::io::Write as _;
     std::io::stdout().flush()?;
 
-    let stream = connect().await;
-    let stream = match stream {
-        Ok(s) => s,
-        Err(_) => {
-            eprintln!("daemon not running — cannot follow");
-            std::process::exit(1);
-        }
+    // The backlog prints even without a daemon; following needs one.
+    let Some((mut rx, _tx)) = subscribed else {
+        eprintln!("daemon not running — cannot follow");
+        std::process::exit(1);
     };
-    let (rx, mut tx) = stream.into_split();
-    let mut rx = BufReader::new(rx);
-    send_request(&mut tx, Request::Subscribe { filter }).await?;
-    match recv(&mut rx).await {
-        Ok(Response::Ok) => {}
-        Ok(other) => anyhow::bail!("unexpected reply to Subscribe: {}", other.kind()),
-        Err(e) => anyhow::bail!("reading the Subscribe ack: {e}"),
-    }
 
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     loop {

@@ -16,6 +16,7 @@ fn src/cli/commands/chat_loop.rs run_chat_ratatui 544
 fn src/cli/commands/setup.rs run_setup 257
 file src/cli/commands/top_tui.rs 918
 file src/daemon/executor/shell_exec.rs 826
+file src/ipc.rs 806
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/status.rs run_status 449
