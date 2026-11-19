@@ -583,17 +583,17 @@ where
                             }
                         }
 
-                        let sessions_for_exec = sessions.clone();
                         let outcome = match executor::execute_tool_call(
                             call,
                             tx,
                             rx,
-                            SessionCtx {
-                                session_id: session_id.as_deref(),
+                            SessionCtx::new(
+                                session_id.as_deref(),
                                 session_name,
-                                chat_pane: chat_pane.as_deref(),
-                                sessions: &sessions_for_exec,
-                            },
+                                chat_pane.as_deref(),
+                                &sessions,
+                                crate::shell::registry(),
+                            ),
                             &cache,
                             &schedule_store,
                         )

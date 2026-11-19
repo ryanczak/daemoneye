@@ -250,7 +250,7 @@ pub(crate) fn apply_notice_to_registry_in(
 /// The registry is process-global: tests need a fingerprint no other test
 /// uses.
 fn record_alert_registry(notice: &Notice) {
-    let changed = apply_notice_to_registry_in(crate::webhook::registry())(notice);
+    let changed = apply_notice_to_registry_in(crate::webhook::alert_registry().inner())(notice);
     if changed {
         let frame = crate::ipc::Response::AlertState {
             alerts: crate::webhook::active_alerts_snapshot(),
@@ -261,30 +261,23 @@ fn record_alert_registry(notice: &Notice) {
 
 /// Rebuild the active-alert registry from the notice journal at daemon
 /// startup: replay every notice in `[now - ACTIVE_ALERT_TTL_SECS, now)` the
-/// registry's route matches, in journal order, into `map` — `active.rs`'s
-/// `_in` seam style, so tests fill their own map and production fills the
-/// process-wide registry.
+/// registry's route matches, in journal order, into `alerts`.
 ///
 /// The replay never broadcasts: no chat is attached yet at startup, and the
 /// attach flow reads the registry it just rebuilt.
-pub(crate) fn replay_alert_registry_in(
-    map: &std::sync::Mutex<std::collections::HashMap<String, crate::webhook::ActiveAlert>>,
-) -> usize {
+pub(crate) fn replay_alert_registry(alerts: &crate::webhook::AlertRegistry) -> usize {
     let routes = default_routes(crate::bus::Severity::Warning).alert_registry;
     let now = chrono::Utc::now();
     let from = now - chrono::Duration::seconds(crate::webhook::ACTIVE_ALERT_TTL_SECS as i64);
 
-    let apply = apply_notice_to_registry_in(map);
+    let apply = apply_notice_to_registry_in(alerts.inner());
     crate::bus::for_each_notice_between(Some(from), Some(now), &mut |notice| {
         if routes_match(&routes, notice) {
             apply(notice);
         }
     });
     // What survived the replay — a fire later resolved restores nothing.
-    let restored = {
-        use crate::util::UnpoisonExt;
-        map.lock().unwrap_or_log().len()
-    };
+    let restored = alerts.len();
     if restored > 0 {
         log::info!("Alert registry replay: {restored} alert(s) restored");
     }
@@ -430,13 +423,13 @@ mod tests {
                 serde_json::to_value(notice).expect("serialize notice"),
             );
         }
-        let map = fresh_registry_map();
-        let restored = replay_alert_registry_in(&map);
-        let fingerprints =
-            crate::webhook::active_alerts_snapshot_in(&map, crate::webhook::now_secs())
-                .into_iter()
-                .map(|alert| alert.fingerprint)
-                .collect();
+        let alerts = crate::webhook::AlertRegistry::new();
+        let restored = replay_alert_registry(&alerts);
+        let fingerprints = alerts
+            .snapshot_at(crate::webhook::now_secs())
+            .into_iter()
+            .map(|alert| alert.fingerprint)
+            .collect();
         (restored, fingerprints)
     }
 

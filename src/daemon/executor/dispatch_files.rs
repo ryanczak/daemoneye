@@ -185,6 +185,7 @@ mod tests {
                 session_name: "sess-79",
                 chat_pane: None,
                 sessions: &store,
+                shells: crate::shell::registry(),
             },
             &Arc::new(SessionCache::new("home")),
             &Arc::new(crate::scheduler::ScheduleStore::new_empty()),

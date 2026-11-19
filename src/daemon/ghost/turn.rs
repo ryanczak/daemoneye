@@ -599,12 +599,13 @@ pub(super) async fn do_ghost_turn(
                 call,
                 &mut tx,
                 &mut rx,
-                crate::daemon::executor::SessionCtx {
-                    session_id: Some(session_id),
-                    session_name: "",
-                    chat_pane: None,
+                crate::daemon::executor::SessionCtx::new(
+                    Some(session_id),
+                    "",
+                    None,
                     sessions,
-                },
+                    crate::shell::registry(),
+                ),
                 cache,
                 schedule_store,
             )

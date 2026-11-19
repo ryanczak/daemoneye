@@ -25,9 +25,7 @@ pub use active::ACTIVE_ALERT_TTL_SECS;
 #[cfg(test)]
 pub(crate) use active::active_alerts_snapshot_in;
 pub use active::active_severity_rank;
-pub(crate) use active::{
-    ActiveAlert, active_alerts_firing_in, active_alerts_resolved_in, registry,
-};
+pub(crate) use active::{ActiveAlert, active_alerts_firing_in, active_alerts_resolved_in};
 pub use active::{
     AlertRegistry, active_alerts_firing, active_alerts_resolved, active_alerts_snapshot,
     alert_registry,

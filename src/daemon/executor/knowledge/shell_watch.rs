@@ -48,11 +48,7 @@ struct ShellHits {
     matches: Vec<ShellBufferMatch>,
 }
 
-pub fn find_in_shells(pattern: &str, scope: Option<&str>, caller: &Owner) -> String {
-    find_in_shells_in(crate::shell::registry(), pattern, scope, caller)
-}
-
-pub(super) fn find_in_shells_in(
+pub fn find_in_shells(
     reg: &ShellRegistry,
     pattern: &str,
     scope: Option<&str>,

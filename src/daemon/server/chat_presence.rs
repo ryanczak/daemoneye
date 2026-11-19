@@ -124,8 +124,8 @@ where
             crate::daemon::stats::get_ghosts_active() as u32,
         );
         crate::daemon::counters::record_session_counters(&session_id, counters, |frame| {
-            crate::daemon::counters::presence_push_to_session_in(
-                crate::daemon::session::presence_registry(),
+            crate::daemon::counters::presence_push_to_session(
+                crate::daemon::session::global_presence(),
                 &session_id,
                 frame,
             );

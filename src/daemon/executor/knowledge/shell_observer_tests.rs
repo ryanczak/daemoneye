@@ -640,7 +640,7 @@ async fn the_users_shell_is_visible_and_drivable_from_chat_only() {
     insert(&reg, 3, Owner::Chat("a".into()), NOW);
     insert(&reg, 7, Owner::User, NOW);
     insert(&reg, 8, Owner::Chat("b".into()), NOW);
-    let mine = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
+    let mine = list_shells(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(mine.contains("s3") && mine.contains("s7"), "{mine}");
     assert!(
         !mine.contains("s8"),
@@ -846,7 +846,7 @@ async fn send_input_text_never_reaches_read_shell() {
 fn send_input_text_never_reaches_read_shell_in_a_reachable_cast() {
     let (tmp, reg) = unreachable_cast_fixture();
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, "s12", None, None, None);
+        let out = read_shell(&reg, "s12", None, None, None);
         assert!(
             out.contains("READY to go"),
             "the \"o\" output the fixture wrote is what the read tool returns: {out}"
@@ -2162,7 +2162,7 @@ async fn program_status_surface_list_shells_shows_a_blocked_report_without_a_scr
     )
     .await;
     wait_until_host_reports(&id, "Program x (blocked (permission))", &reg).await;
-    let out = list_shells_in(
+    let out = list_shells(
         &reg,
         Some("all"),
         &Owner::Chat("watcher".into()),
@@ -2217,7 +2217,7 @@ async fn program_status_surface_list_shells_survives_a_host_that_does_not_answer
     let listener = std::os::unix::net::UnixListener::bind(crate::shell::socket_path("s0"))
         .expect("binding the silent host's socket");
     let began = std::time::Instant::now();
-    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("a".into()), started).await;
+    let out = list_shells(&reg, Some("all"), &Owner::Chat("a".into()), started).await;
     let elapsed = began.elapsed();
     assert!(
         elapsed < Duration::from_secs(5),

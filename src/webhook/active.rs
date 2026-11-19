@@ -55,6 +55,14 @@ impl AlertRegistry {
     pub fn snapshot(&self) -> Vec<AlertBadge> {
         self.snapshot_at(super::process::now_secs_pub())
     }
+
+    pub fn len(&self) -> usize {
+        self.0.lock().unwrap_or_log().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// Process-wide registry: fingerprint → the alert's record.
@@ -62,10 +70,6 @@ static ACTIVE_ALERTS: OnceLock<AlertRegistry> = OnceLock::new();
 
 pub fn alert_registry() -> &'static AlertRegistry {
     ACTIVE_ALERTS.get_or_init(AlertRegistry::new)
-}
-
-pub(crate) fn registry() -> &'static Mutex<HashMap<String, ActiveAlert>> {
-    alert_registry().inner()
 }
 
 /// Rank a severity string, reusing `process.rs`'s table — the one ranking
@@ -115,7 +119,7 @@ pub(crate) fn active_alerts_firing_in(
 
 /// Record a firing alert in the process-wide registry.
 pub fn active_alerts_firing(fingerprint: &str, name: &str, severity: &str, now_unix: u64) -> bool {
-    active_alerts_firing_in(registry(), fingerprint, name, severity, now_unix)
+    alert_registry().firing(fingerprint, name, severity, now_unix)
 }
 
 /// Record a resolved alert: remove its entry. Returns `true` when an entry
@@ -129,7 +133,7 @@ pub(crate) fn active_alerts_resolved_in(
 
 /// Record a resolved alert in the process-wide registry.
 pub fn active_alerts_resolved(fingerprint: &str) -> bool {
-    active_alerts_resolved_in(registry(), fingerprint)
+    alert_registry().resolved(fingerprint)
 }
 
 /// Prune entries not re-seen within the TTL, then snapshot what is left:
@@ -163,7 +167,7 @@ pub(crate) fn active_alerts_snapshot_in(
 
 /// Snapshot the process-wide registry.
 pub fn active_alerts_snapshot() -> Vec<AlertBadge> {
-    active_alerts_snapshot_in(registry(), super::process::now_secs_pub())
+    alert_registry().snapshot()
 }
 
 #[cfg(test)]

@@ -87,16 +87,14 @@ impl CountersTracker {
 
 /// Push `frame` to every live presence connection of `session_id` only —
 /// the per-session seam the 1 s task and the attach send drive, the way
-/// [`crate::daemon::session::presence_broadcast_frame_in`] broadcasts. The
-/// global map is `crate::daemon::session::presence_map()`; tests drive
-/// explicit maps, since `CHAT_PRESENCE` is process-global and cargo runs
-/// tests in parallel.
-pub fn presence_push_to_session_in(
-    map: &Mutex<HashMap<String, Vec<crate::daemon::session::PresenceConnection>>>,
+/// [`crate::daemon::session::PresenceRegistry::broadcast_frame`] broadcasts.
+/// Tests pass an explicit [`crate::daemon::session::PresenceRegistry`].
+pub fn presence_push_to_session(
+    presence: &crate::daemon::session::PresenceRegistry,
     session_id: &str,
     frame: &Response,
 ) -> usize {
-    let map = map.lock().unwrap_or_log();
+    let map = presence.inner().lock().unwrap_or_log();
     let mut pushed = 0;
     let Ok(line) = serde_json::to_string(frame) else {
         return 0;
@@ -206,7 +204,6 @@ mod tests {
     use super::*;
     use crate::daemon::session::PresenceConnection;
     use crate::shell::{ShellId, ShellRecord, set_in_flight};
-    use std::sync::Arc;
 
     fn record(index: u32, owner: Owner, dedicated: bool, exited: bool) -> ShellRecord {
         ShellRecord {
@@ -307,28 +304,19 @@ mod tests {
 
     #[test]
     fn presence_push_to_session_reaches_only_that_sessions_connections() {
-        let map: Arc<Mutex<HashMap<String, Vec<PresenceConnection>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let presence = crate::daemon::session::PresenceRegistry::new();
         let (tx_a, mut rx_a) = tokio::sync::mpsc::unbounded_channel();
         let (tx_b, mut rx_b) = tokio::sync::mpsc::unbounded_channel();
         let (tx_c, mut rx_c) = tokio::sync::mpsc::unbounded_channel();
-        map.lock().unwrap().insert(
-            "sess-a".to_string(),
-            vec![
-                PresenceConnection { push: tx_a },
-                PresenceConnection { push: tx_b },
-            ],
-        );
-        map.lock().unwrap().insert(
-            "sess-b".to_string(),
-            vec![PresenceConnection { push: tx_c }],
-        );
+        presence.register("sess-a", PresenceConnection { push: tx_a });
+        presence.register("sess-a", PresenceConnection { push: tx_b });
+        presence.register("sess-b", PresenceConnection { push: tx_c });
         let frame = Response::SessionCounters {
             background: 1,
             ghosts: 0,
             shells: 2,
         };
-        let pushed = presence_push_to_session_in(&map, "sess-a", &frame);
+        let pushed = presence_push_to_session(&presence, "sess-a", &frame);
         assert_eq!(pushed, 2, "both of session A's connections got the frame");
         assert!(rx_c.try_recv().is_err(), "session B got nothing");
         for (which, rx) in [("conn a", &mut rx_a), ("conn b", &mut rx_b)] {

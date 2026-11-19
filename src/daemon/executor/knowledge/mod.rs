@@ -26,17 +26,14 @@ pub(crate) use shell::{program_line, refresh_programs};
 pub(crate) use shell::visible_text;
 pub(super) use shell::{
     close_shell, compose_input, find_in_shells, input_panel, list_shell_logs, list_shells,
-    open_shell, read_shell, read_shell_log, read_shell_screen, send_input, watch_shell,
+    open_shell, read_shell_log, read_shell_screen, send_input, watch_shell,
 };
 // `read_shell_screen_in` is the injected-registry form the interactive
 // launch (`shell_exec.rs`) reads the screen through — wider than the group
 // above for the same reason `format_err_chain` is.
 pub(crate) use shell::SCREEN_TIMEOUT;
+pub(crate) use shell::read_shell;
 pub(crate) use shell::read_shell_screen_in;
-// Only the tests reach the injected-registry read directly; the daemon-side
-// `bg_shell` tests drive it through the plain read path.
-#[cfg(test)]
-pub(crate) use shell::read_shell_in;
 // The launch's change-wait prefix (`wait_screen_change`) and its baseline
 // read (`screen_text`) are the same caller's, for the same reason.
 pub(crate) use shell::{screen_text, wait_screen_change};

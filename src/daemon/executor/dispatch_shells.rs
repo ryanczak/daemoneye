@@ -7,13 +7,20 @@ pub(super) async fn dispatch<W>(
     call: &PendingCall,
     tx: &mut W,
     session_id: Option<&str>,
+    shells: &crate::shell::ShellRegistry,
 ) -> anyhow::Result<ToolCallOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     match call {
         PendingCall::ListShells { scope, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::list_shells(scope.as_deref(), &chat_owner(session_id)).await,
+            knowledge::list_shells(
+                shells,
+                scope.as_deref(),
+                &chat_owner(session_id),
+                crate::shell::now_unix(),
+            )
+            .await,
         )),
 
         PendingCall::ReadShell {
@@ -23,6 +30,7 @@ where
             filter,
             ..
         } => Ok(ToolCallOutcome::Result(knowledge::read_shell(
+            shells,
             shell,
             *lines,
             *since_command,
@@ -57,7 +65,7 @@ where
         )),
 
         PendingCall::FindInShells { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::find_in_shells(pattern, scope.as_deref(), &chat_owner(session_id)),
+            knowledge::find_in_shells(shells, pattern, scope.as_deref(), &chat_owner(session_id)),
         )),
 
         PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(

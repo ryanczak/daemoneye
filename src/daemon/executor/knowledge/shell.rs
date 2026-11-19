@@ -42,7 +42,7 @@ impl ShellIndex {
     }
 }
 
-/// Resolve `scope` against the registry and return the formatted listing.
+/// Resolve `scope` against `reg` and return the formatted listing.
 ///
 /// `None` and `Some("mine")` list the shells `caller` owns; `Some("all")` lists
 /// every live shell. Matching is on [`Owner::key`], so a chat session and a
@@ -55,13 +55,7 @@ impl ShellIndex {
 /// `pub` rather than `pub(super)`: `knowledge/mod.rs` re-exports it for
 /// `executor` the way every sibling module's functions are re-exported, and a
 /// `pub(super)` item cannot be given wider visibility on re-export.
-pub async fn list_shells(scope: Option<&str>, caller: &Owner) -> String {
-    list_shells_in(crate::shell::registry(), scope, caller, now_unix()).await
-}
-
-/// The same listing against an injected registry, with the clock injected with
-/// it — the seam tests drive instead of the process-wide singleton.
-pub(super) async fn list_shells_in(
+pub async fn list_shells(
     reg: &ShellRegistry,
     scope: Option<&str>,
     caller: &Owner,

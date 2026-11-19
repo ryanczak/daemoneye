@@ -114,12 +114,6 @@ pub fn global_presence() -> &'static PresenceRegistry {
     CHAT_PRESENCE.get_or_init(PresenceRegistry::new)
 }
 
-/// The process-global presence map, read-only: the 1 s counters task (M37
-/// phase 02b) iterates it per session to push `SessionCounters` frames.
-pub(crate) fn presence_registry() -> &'static Mutex<HashMap<String, Vec<PresenceConnection>>> {
-    global_presence().inner()
-}
-
 /// Register one live presence connection for `session_id`, returning the new
 /// count for that session.
 pub fn presence_register(session_id: &str, conn: PresenceConnection) -> usize {

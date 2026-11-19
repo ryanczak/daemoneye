@@ -545,6 +545,7 @@ mod tests {
                 session_name: "de-test",
                 chat_pane: None,
                 sessions,
+                shells: crate::shell::registry(),
             },
             GhostCtx {
                 policy: ghost_policy,
@@ -668,6 +669,7 @@ mod refusal_gate_tests {
             session_name,
             chat_pane: None,
             sessions,
+            shells: crate::shell::registry(),
         };
         let ghost_ctx = GhostCtx {
             policy: Some(policy),

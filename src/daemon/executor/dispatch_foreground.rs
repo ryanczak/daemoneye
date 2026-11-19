@@ -708,6 +708,7 @@ mod approved_path_tests {
                 session_name: sid,
                 chat_pane: None,
                 sessions: &store,
+                shells: crate::shell::registry(),
             },
             &Arc::new(SessionCache::new("home")),
             &Arc::new(ScheduleStore::new_empty()),

@@ -163,11 +163,9 @@ fn compile_depth(requested: Option<u64>) -> usize {
     }
 }
 
-/// The registry + cast-file half of `read_shell`. `registry` is
-/// a parameter rather than a module read: `list_shells`'s `list_shells_in` seam,
-/// so the lookup can be driven from a hand-built registry without touching the
-/// process-global one.
-pub(crate) fn read_shell_in(
+/// Resolve a shell id to its recorded output against `reg`: registry lookup →
+/// cast path → meta index → byte-range slice → clamp → filter → mask.
+pub(crate) fn read_shell(
     reg: &ShellRegistry,
     id: &str,
     lines: Option<u64>,
@@ -239,19 +237,6 @@ pub(crate) fn read_shell_in(
             }
         }
     }
-}
-
-/// Resolve a shell id to its recorded output: registry lookup → cast path →
-/// meta index → byte-range slice → clamp → filter → mask. Splits like
-/// `list_shells`: the registry and filesystem access live here, the selection
-/// and formatting below it are pure and hand-buildable in tests.
-pub fn read_shell(
-    id: &str,
-    lines: Option<u64>,
-    since_command: Option<u32>,
-    filter: Option<&str>,
-) -> String {
-    read_shell_in(crate::shell::registry(), id, lines, since_command, filter)
 }
 
 // ---------------------------------------------------------------------------

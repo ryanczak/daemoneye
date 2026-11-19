@@ -555,7 +555,7 @@ async fn list_shells_defaults_to_the_callers_own_shells() {
     insert(&reg, 3, Owner::Chat("a".into()), NOW - 100);
     insert(&reg, 4, Owner::Ghost("a".into()), NOW - 100);
     insert(&reg, 5, Owner::Chat("b".into()), NOW - 100);
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
+    let out = list_shells(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(out.contains("s3"), "chat a's own shell must appear: {out}");
     assert!(
         !out.contains("s4"),
@@ -570,7 +570,7 @@ async fn list_shells_all_scope_includes_other_owners() {
     insert(&reg, 3, Owner::Chat("a".into()), NOW - 100);
     insert(&reg, 5, Owner::Chat("b".into()), NOW - 100);
     insert(&reg, 9, Owner::Adopted, NOW - 100);
-    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("a".into()), NOW).await;
+    let out = list_shells(&reg, Some("all"), &Owner::Chat("a".into()), NOW).await;
     assert!(out.contains("s3"), "own shell listed under all: {out}");
     assert!(out.contains("s5"), "another session's shell listed: {out}");
     assert!(
@@ -582,7 +582,7 @@ async fn list_shells_all_scope_includes_other_owners() {
 #[tokio::test]
 async fn list_shells_rejects_an_unknown_scope() {
     for bad in ["run", "session", ""] {
-        let out = list_shells_in(
+        let out = list_shells(
             &ShellRegistry::default(),
             Some(bad),
             &Owner::Chat("a".into()),
@@ -603,7 +603,7 @@ async fn list_shells_rejects_an_unknown_scope() {
 #[tokio::test]
 async fn list_shells_scope_match_is_case_sensitive() {
     for bad in ["MINE", "All", "ALL", "Mine"] {
-        let out = list_shells_in(
+        let out = list_shells(
             &ShellRegistry::default(),
             Some(bad),
             &Owner::Chat("a".into()),
@@ -622,7 +622,7 @@ async fn list_shells_orders_numerically_not_lexicographically() {
     let reg = ShellRegistry::default();
     insert(&reg, 10, Owner::Chat("a".into()), NOW - 200);
     insert(&reg, 2, Owner::Chat("a".into()), NOW - 100);
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
+    let out = list_shells(&reg, None, &Owner::Chat("a".into()), NOW).await;
     let s2 = out.find("  s2 ").expect("s2 must be listed");
     let s10 = out.find("  s10 ").expect("s10 must be listed");
     assert!(s2 < s10, "s2 must sort before s10, got: {out}");
@@ -631,7 +631,7 @@ async fn list_shells_orders_numerically_not_lexicographically() {
 #[tokio::test]
 async fn list_shells_empty_registry_says_so() {
     let reg = ShellRegistry::default();
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
+    let out = list_shells(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(
         out.starts_with("No shells") && out.ends_with("demand."),
         "an empty registry needs a sentence, not a bare header or empty string: {out}"
@@ -639,7 +639,7 @@ async fn list_shells_empty_registry_says_so() {
 
     // Only *another* owner's shells present: `mine` is empty for this caller.
     insert(&reg, 7, Owner::Chat("b".into()), NOW - 100);
-    let out = list_shells_in(&reg, Some("mine"), &Owner::Chat("a".into()), NOW).await;
+    let out = list_shells(&reg, Some("mine"), &Owner::Chat("a".into()), NOW).await;
     assert!(
         out.contains("No shells"),
         "another owner's shells must not satisfy mine: {out}"
@@ -686,7 +686,7 @@ async fn list_shells_omits_exited_shells() {
         store.get_mut("s2").unwrap().exited_unix = Some(NOW - 5);
     });
 
-    let out = list_shells_in(&reg, None, &Owner::Chat("a".into()), NOW).await;
+    let out = list_shells(&reg, None, &Owner::Chat("a".into()), NOW).await;
     assert!(out.contains("s1"), "the live shell lists under mine: {out}");
     assert!(
         !out.contains("s2"),
@@ -697,7 +697,7 @@ async fn list_shells_omits_exited_shells() {
         "the count names only the live shell: {out}"
     );
 
-    let out = list_shells_in(&reg, Some("all"), &Owner::Chat("b".into()), NOW).await;
+    let out = list_shells(&reg, Some("all"), &Owner::Chat("b".into()), NOW).await;
     assert!(out.contains("s1"), "the live shell lists under all: {out}");
     assert!(
         !out.contains("s2"),
@@ -720,7 +720,7 @@ async fn list_shells_of_only_exited_shells_says_so() {
         store.get_mut("s2").unwrap().exited_unix = Some(NOW - 5);
     });
     for scope in [None, Some("all")] {
-        let out = list_shells_in(&reg, scope, &Owner::Chat("a".into()), NOW).await;
+        let out = list_shells(&reg, scope, &Owner::Chat("a".into()), NOW).await;
         assert!(
             out.starts_with("No shells"),
             "only exited shells is a no-shell answer, scope {scope:?}: {out}"
@@ -1268,7 +1268,7 @@ fn find_in_shells_reports_matches_with_context() {
         &["unrelated"],
     );
     let out = with_home(&tmp, || {
-        find_in_shells_in(&reg, "needle", None, &Owner::Chat("a".into()))
+        find_in_shells(&reg, "needle", None, &Owner::Chat("a".into()))
     });
     assert!(out.contains("s3"), "shell id in match output: {out}");
     assert!(
@@ -1291,7 +1291,7 @@ fn find_in_shells_searches_only_scoped_shells() {
         &["foreign needle line"],
     );
     let out = with_home(&tmp, || {
-        find_in_shells_in(&reg, "needle", None, &Owner::Chat("a".into()))
+        find_in_shells(&reg, "needle", None, &Owner::Chat("a".into()))
     });
     assert!(
         out.contains("s3") && out.contains("own needle line"),
@@ -1302,7 +1302,7 @@ fn find_in_shells_searches_only_scoped_shells() {
         "another owner's hit is absent under scope mine: {out}"
     );
     let all = with_home(&tmp, || {
-        find_in_shells_in(&reg, "needle", Some("all"), &Owner::Chat("a".into()))
+        find_in_shells(&reg, "needle", Some("all"), &Owner::Chat("a".into()))
     });
     assert!(
         all.contains("own needle line") && all.contains("foreign needle line"),
@@ -1323,7 +1323,7 @@ fn find_in_shells_caps_total_matches_across_shells() {
         &owned,
     );
     let out = with_home(&tmp, || {
-        find_in_shells_in(&reg, "needle", None, &Owner::Chat("a".into()))
+        find_in_shells(&reg, "needle", None, &Owner::Chat("a".into()))
     });
     assert!(out.contains("[capped at 50 matches"), "cap reported: {out}");
     let match_lines = out.matches(": hit needle").count();
@@ -1352,7 +1352,7 @@ fn find_in_shells_skips_an_unreadable_shell() {
     // unreadable-shell shape.
     with_home(&tmp, || remove_cast(&reg, "s4"));
     let out = with_home(&tmp, || {
-        find_in_shells_in(&reg, "needle", None, &Owner::Chat("a".into()))
+        find_in_shells(&reg, "needle", None, &Owner::Chat("a".into()))
     });
     assert!(
         out.contains("good needle one"),
@@ -1375,7 +1375,7 @@ fn find_in_shells_invalid_pattern_is_an_error() {
         &["beta"],
     );
     let out = with_home(&tmp, || {
-        find_in_shells_in(&reg, "[", None, &Owner::Chat("a".into()))
+        find_in_shells(&reg, "[", None, &Owner::Chat("a".into()))
     });
     assert!(out.contains("Error:"), "an error, not a result: {out}");
     assert!(
@@ -1399,7 +1399,7 @@ fn find_in_shells_no_matches_differs_from_no_shells() {
         &["more innocent"],
     );
     let no_match = with_home(&tmp, || {
-        find_in_shells_in(&reg, "zzz-no-match", None, &Owner::Chat("a".into()))
+        find_in_shells(&reg, "zzz-no-match", None, &Owner::Chat("a".into()))
     });
     assert!(
         no_match.contains("No recorded shell output matched"),
@@ -1411,7 +1411,7 @@ fn find_in_shells_no_matches_differs_from_no_shells() {
     );
 
     let empty = ShellRegistry::default();
-    let no_shells = find_in_shells_in(&empty, "zzz-no-match", None, &Owner::Chat("a".into()));
+    let no_shells = find_in_shells(&empty, "zzz-no-match", None, &Owner::Chat("a".into()));
     assert!(
         no_shells.contains("No shells to search"),
         "nothing-to-search is its own sentence: {no_shells}"
@@ -1427,7 +1427,7 @@ fn find_in_shells_no_matches_differs_from_no_shells() {
 fn read_shell_returns_recorded_output() {
     let (tmp, reg, id) = fixture(&["alpha-1", "alpha-2"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, None, None, None);
+        let out = read_shell(&reg, &id, None, None, None);
         assert!(out.contains("alpha-1"), "command 1's output present: {out}");
         assert!(out.contains("alpha-2"), "command 2's output present: {out}");
         assert!(out.contains("s3"), "the id is named in the header: {out}");
@@ -1438,7 +1438,7 @@ fn read_shell_returns_recorded_output() {
 fn read_shell_since_command_selects_from_that_index() {
     let (tmp, reg, id) = fixture(&["one", "two", "three"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, None, Some(2), None);
+        let out = read_shell(&reg, &id, None, Some(2), None);
         assert!(
             out.contains("three"),
             "command 3 must be included (index >= 2): {out}"
@@ -1454,7 +1454,7 @@ fn read_shell_since_command_selects_from_that_index() {
 fn read_shell_since_command_past_the_end_says_so() {
     let (tmp, reg, id) = fixture(&["only"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, None, Some(9), None);
+        let out = read_shell(&reg, &id, None, Some(9), None);
         assert!(
             out.starts_with("Error:"),
             "out-of-range says so as an error the model reads: {out}"
@@ -1474,7 +1474,7 @@ fn read_shell_since_command_past_the_end_says_so() {
 fn read_shell_filter_selects_matching_lines() {
     let (tmp, reg, id) = fixture(&["alpha-noise", "beta-treasure", "alpha-noise-2"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, None, None, Some("treasure"));
+        let out = read_shell(&reg, &id, None, None, Some("treasure"));
         assert!(
             out.contains("beta-treasure"),
             "the matching line is present: {out}"
@@ -1488,7 +1488,7 @@ fn read_shell_filter_selects_matching_lines() {
     // A regex that matches nothing: a sentence, not an empty body.
     let (tmp, reg, id) = fixture(&["plenty", "of", "output"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, None, None, Some("never-present"));
+        let out = read_shell(&reg, &id, None, None, Some("never-present"));
         assert!(
             out.contains("no lines matched /never-present/"),
             "filtered-empty is a sentence naming the pattern: {out}"
@@ -1508,7 +1508,7 @@ fn read_shell_filter_selects_matching_lines() {
 fn read_shell_invalid_filter_regex_is_an_error() {
     let (tmp, reg, id) = fixture(&["has [ in it", "clean line"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, None, None, Some("["));
+        let out = read_shell(&reg, &id, None, None, Some("["));
         assert!(
             out.starts_with("Error:"),
             "a malformed regex is an error, not a fallback: {out}"
@@ -1529,7 +1529,7 @@ fn read_shell_invalid_filter_regex_is_an_error() {
 fn read_shell_unknown_id_is_an_error_naming_live_shells() {
     let (tmp, reg, _id) = fixture(&["present"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, "s99", None, None, None);
+        let out = read_shell(&reg, "s99", None, None, None);
         assert!(
             out.starts_with("Error:"),
             "an unknown id is an error, returned as a value not a Result: {out}"
@@ -1544,7 +1544,7 @@ fn read_shell_unknown_id_is_an_error_naming_live_shells() {
     // An empty registry: different sentence, same error contract.
     let empty = ShellRegistry::default();
     with_home(&tmp, || {
-        let out = read_shell_in(&empty, "s99", None, None, None);
+        let out = read_shell(&empty, "s99", None, None, None);
         assert!(
             out.starts_with("Error:"),
             "even with nothing live, the answer is a sentence: {out}"
@@ -1560,7 +1560,7 @@ fn read_shell_unknown_id_is_an_error_naming_live_shells() {
 fn read_shell_lines_clamps_to_the_tail() {
     let (tmp, reg, id) = fixture(&["line-1", "line-2", "line-3", "line-4", "line-5"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, Some(2), None, None);
+        let out = read_shell(&reg, &id, Some(2), None, None);
         assert!(
             out.contains("line-5") && out.contains("line-4"),
             "the tail is what survives a clamp: {out}"
@@ -1574,7 +1574,7 @@ fn read_shell_lines_clamps_to_the_tail() {
     // Shorter than `lines`: everything is returned without padding.
     let (tmp, reg, id) = fixture(&["short-a", "short-b"]);
     with_home(&tmp, || {
-        let out = read_shell_in(&reg, &id, Some(50), None, None);
+        let out = read_shell(&reg, &id, Some(50), None, None);
         assert!(
             out.contains("short-a") && out.contains("short-b"),
             "output shorter than the limit is returned whole: {out}"

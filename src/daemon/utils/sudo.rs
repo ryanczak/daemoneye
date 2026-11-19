@@ -58,7 +58,7 @@ fn sudo_command_word(word: &str) -> bool {
 /// word there too: `FOO=1 sudo id`.
 fn is_assignment(word: &str) -> bool {
     let name = word.split('=').next().unwrap_or("");
-    !word.split_once('=').is_none()
+    word.split_once('=').is_some()
         && name
             .chars()
             .next()

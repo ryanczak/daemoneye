@@ -1105,7 +1105,7 @@ mod tests {
             "the record carries the run's real exit code: {:?}",
             meta.commands[0]
         );
-        let out = crate::daemon::executor::knowledge::read_shell_in(
+        let out = crate::daemon::executor::knowledge::read_shell(
             &reg,
             start.shell_id.as_str(),
             None,

@@ -47,6 +47,7 @@ pub struct SessionCtx<'a> {
     pub session_name: &'a str,
     pub chat_pane: Option<&'a str>,
     pub sessions: &'a SessionStore,
+    pub shells: &'a crate::shell::ShellRegistry,
 }
 
 /// Ghost shell policy context.
@@ -1178,6 +1179,7 @@ mod tests {
                 session_name: "sess-a",
                 chat_pane: None,
                 sessions: &store,
+                shells: &reg,
             },
             &Arc::new(SessionCache::new("home")),
             &Arc::new(crate::scheduler::ScheduleStore::new_empty()),
@@ -1238,6 +1240,7 @@ mod tests {
                 session_name: "sess-a",
                 chat_pane: None,
                 sessions: &store,
+                shells: &reg,
             },
             &Arc::new(SessionCache::new("home")),
             &Arc::new(crate::scheduler::ScheduleStore::new_empty()),

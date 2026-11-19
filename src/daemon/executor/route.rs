@@ -4,6 +4,24 @@
 
 use super::*;
 
+impl<'a> SessionCtx<'a> {
+    pub fn new(
+        session_id: Option<&'a str>,
+        session_name: &'a str,
+        chat_pane: Option<&'a str>,
+        sessions: &'a SessionStore,
+        shells: &'a crate::shell::ShellRegistry,
+    ) -> Self {
+        Self {
+            session_id,
+            session_name,
+            chat_pane,
+            sessions,
+            shells,
+        }
+    }
+}
+
 /// The session state `execute_tool_call` reads, taken in one acquisition.
 pub(super) fn load_snapshot(session_id: Option<&str>, sessions: &SessionStore) -> DispatchSnapshot {
     use crate::daemon::session::SessionMode;
@@ -161,7 +179,9 @@ where
         | PendingCall::CloseShell { .. }
         | PendingCall::WatchShell { .. }
         | PendingCall::ListShellLogs { .. }
-        | PendingCall::ReadShellLog { .. } => dispatch_shells::dispatch(call, tx, session_id).await,
+        | PendingCall::ReadShellLog { .. } => {
+            dispatch_shells::dispatch(call, tx, session_id, ctx.shells).await
+        }
 
         PendingCall::OpenShell { .. } => {
             dispatch_open_shell::dispatch(call, tx, rx, session_id, &ghost_policy, is_ghost).await

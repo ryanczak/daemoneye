@@ -554,7 +554,7 @@ async fn read_shell_returns_clean_output_after_a_real_command() {
         "the second call reuses that shell"
     );
 
-    let out = crate::daemon::executor::knowledge::read_shell(id.as_str(), None, None, None);
+    let out = crate::daemon::executor::knowledge::read_shell(reg, id.as_str(), None, None, None);
     assert!(
         out.contains("SENTINEL_TWO"),
         "the command's output is recorded and readable: {out}"
@@ -592,7 +592,7 @@ async fn read_shell_since_command_excludes_the_previous_commands_output() {
             "both commands land in the one shell"
         );
     }
-    let out = crate::daemon::executor::knowledge::read_shell(id.as_str(), None, Some(1), None);
+    let out = crate::daemon::executor::knowledge::read_shell(reg, id.as_str(), None, Some(1), None);
     assert!(
         out.contains("SENTINEL_BETA"),
         "command 1's own output is readable from its index: {out}"
