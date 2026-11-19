@@ -25,6 +25,107 @@ fn invalid_interval(iso: &str) -> String {
     )
 }
 
+fn resolve_schedule_action(
+    command: &str,
+    is_script: bool,
+    runbook: Option<&str>,
+    ghost_runbook: Option<&str>,
+) -> Result<(ActionOn, Option<String>), String> {
+    if let Some(rb) = ghost_runbook {
+        return Ok((
+            ActionOn::Ghost {
+                runbook: rb.to_string(),
+            },
+            None,
+        ));
+    }
+    if command.is_empty() {
+        if !is_script && let Some(rb) = runbook {
+            // AI put the runbook name in the watchdog `runbook` field instead of `ghost_runbook`.
+            // Infer ghost mode and clear the runbook field so it isn't misused as a watchdog key.
+            log::warn!(
+                "schedule_command: ghost_runbook not set but command is empty and runbook='{}'; \
+                 inferring ghost mode. Use ghost_runbook for ghost jobs.",
+                rb
+            );
+            return Ok((
+                ActionOn::Ghost {
+                    runbook: rb.to_string(),
+                },
+                None,
+            ));
+        }
+        return Err("Error: command is empty and ghost_runbook is not set. \
+             To schedule a Ghost Shell job set ghost_runbook to a runbook name. \
+             To schedule a script job set command to a script name and is_script=true."
+            .to_string());
+    }
+    if is_script {
+        Ok((
+            ActionOn::Script(command.to_string()),
+            runbook.map(str::to_string),
+        ))
+    } else {
+        Err(format!(
+            "Error: raw command scheduling is not supported (got command={command:?} with is_script=false). \
+             Write the script to ~/.daemoneye/scripts/ with write_script and schedule it with is_script=true, \
+             or set ghost_runbook to schedule a Ghost Shell job."
+        ))
+    }
+}
+
+fn resolve_schedule_kind(
+    cron: Option<&str>,
+    interval: Option<&str>,
+    run_at: Option<&str>,
+) -> Result<ScheduleKind, String> {
+    if let Some(expr) = cron {
+        match crate::scheduler::parse_cron(expr) {
+            Ok(sched) => match sched.upcoming(chrono::Utc).next() {
+                Some(next) => Ok(ScheduleKind::Cron {
+                    expression: expr.to_string(),
+                    next_run: next,
+                }),
+                None => Err(format!(
+                    "Cron expression '{}' has no future occurrences.",
+                    expr
+                )),
+            },
+            Err(e) => Err(format!(
+                "Invalid cron expression '{}': {}. \
+                 Use 5-field format: minute hour day-of-month month day-of-week. \
+                 Example: '*/5 * * * *' (every 5 minutes).",
+                expr, e
+            )),
+        }
+    } else if let Some(iso) = interval {
+        let Some(secs) = crate::scheduler::parse_iso_duration(iso) else {
+            return Err(invalid_interval(iso));
+        };
+        let Some(next) = crate::scheduler::checked_next_run(chrono::Utc::now(), secs) else {
+            return Err(invalid_interval(iso));
+        };
+        Ok(ScheduleKind::Every {
+            interval_secs: secs,
+            next_run: next,
+        })
+    } else if let Some(at_str) = run_at {
+        let dt = chrono::DateTime::parse_from_rfc3339(at_str).map_err(|e| {
+            format!(
+                "Invalid run_at '{}': {}. Use ISO 8601 / RFC 3339 UTC datetime format, e.g. '2026-03-01T15:00:00Z'.",
+                at_str, e
+            )
+        })?;
+        Ok(ScheduleKind::Once {
+            at: dt.with_timezone(&chrono::Utc),
+        })
+    } else {
+        Ok(ScheduleKind::Once {
+            at: chrono::Utc::now() + chrono::Duration::seconds(60),
+        })
+    }
+}
+
 pub(super) async fn run_schedule_command<W, R>(
     args: ScheduleArgs<'_>,
     session_id: Option<&str>,
@@ -48,86 +149,14 @@ where
         ghost_runbook,
         cron,
     } = args;
-    let (action, runbook) = if let Some(rb) = ghost_runbook {
-        (
-            ActionOn::Ghost {
-                runbook: rb.to_string(),
-            },
-            None,
-        )
-    } else if command.is_empty() && !is_script {
-        if let Some(rb) = runbook {
-            // AI put the runbook name in the watchdog `runbook` field instead of `ghost_runbook`.
-            // Infer ghost mode and clear the runbook field so it isn't misused as a watchdog key.
-            log::warn!(
-                "schedule_command: ghost_runbook not set but command is empty and runbook='{}'; \
-                 inferring ghost mode. Use ghost_runbook for ghost jobs.",
-                rb
-            );
-            (
-                ActionOn::Ghost {
-                    runbook: rb.to_string(),
-                },
-                None,
-            )
-        } else {
-            // No ghost_runbook, no command, no script — nothing to run.
-            return Ok(ToolCallOutcome::Result(
-                "Error: command is empty and ghost_runbook is not set. \
-                 To schedule a Ghost Shell job set ghost_runbook to a runbook name. \
-                 To schedule a script job set command to a script name and is_script=true."
-                    .to_string(),
-            ));
-        }
-    } else if is_script {
-        (ActionOn::Script(command.to_string()), runbook)
-    } else {
-        (ActionOn::Command(command.to_string()), runbook)
-    };
-
-    let kind = if let Some(expr) = cron {
-        match crate::scheduler::parse_cron(expr) {
-            Ok(sched) => match sched.upcoming(chrono::Utc).next() {
-                Some(next) => ScheduleKind::Cron {
-                    expression: expr.to_string(),
-                    next_run: next,
-                },
-                None => {
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Cron expression '{}' has no future occurrences.",
-                        expr
-                    )));
-                }
-            },
-            Err(e) => {
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Invalid cron expression '{}': {}. \
-                 Use 5-field format: minute hour day-of-month month day-of-week. \
-                 Example: '*/5 * * * *' (every 5 minutes).",
-                    expr, e
-                )));
-            }
-        }
-    } else if let Some(iso) = interval {
-        let Some(secs) = crate::scheduler::parse_iso_duration(iso) else {
-            return Ok(ToolCallOutcome::Result(invalid_interval(iso)));
+    let (action, runbook) =
+        match resolve_schedule_action(command, is_script, runbook, ghost_runbook) {
+            Ok(pair) => pair,
+            Err(msg) => return Ok(ToolCallOutcome::Result(msg)),
         };
-        let Some(next) = crate::scheduler::checked_next_run(chrono::Utc::now(), secs) else {
-            return Ok(ToolCallOutcome::Result(invalid_interval(iso)));
-        };
-        ScheduleKind::Every {
-            interval_secs: secs,
-            next_run: next,
-        }
-    } else if let Some(at_str) = run_at {
-        let at = chrono::DateTime::parse_from_rfc3339(at_str)
-            .map(|d| d.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::seconds(60));
-        ScheduleKind::Once { at }
-    } else {
-        ScheduleKind::Once {
-            at: chrono::Utc::now() + chrono::Duration::seconds(60),
-        }
+    let kind = match resolve_schedule_kind(cron, interval, run_at) {
+        Ok(k) => k,
+        Err(msg) => return Ok(ToolCallOutcome::Result(msg)),
     };
 
     if is_ghost {
@@ -162,12 +191,7 @@ where
     };
 
     if approved {
-        let job = ScheduledJob::new(
-            name.to_string(),
-            kind.clone(),
-            action,
-            runbook.map(|s| s.to_string()),
-        );
+        let job = ScheduledJob::new(name.to_string(), kind.clone(), action, runbook);
         match schedule_store.add(job) {
             Ok(job_id) => {
                 log::info!("Job scheduled: '{}' ({})", name, &job_id[..8]);
@@ -293,5 +317,144 @@ pub(super) fn delete_schedule(
         }
         Ok(false) => format!("Job {} not found", job_id),
         Err(e) => format!("Failed to delete job: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_schedule_action_supports_script_and_ghost_modes() {
+        let (action, rb) = resolve_schedule_action("backup.sh", true, Some("disk-check"), None)
+            .expect("script mode with watchdog runbook succeeds");
+        assert!(matches!(action, ActionOn::Script(ref s) if s == "backup.sh"));
+        assert_eq!(rb.as_deref(), Some("disk-check"));
+
+        let (action, rb) = resolve_schedule_action("", false, None, Some("disk-alert"))
+            .expect("explicit ghost_runbook mode succeeds");
+        assert!(matches!(action, ActionOn::Ghost { ref runbook } if runbook == "disk-alert"));
+        assert_eq!(rb, None);
+
+        let (action, rb) = resolve_schedule_action("", false, Some("inferred-rb"), None)
+            .expect("empty command with runbook infers ghost mode");
+        assert!(matches!(action, ActionOn::Ghost { ref runbook } if runbook == "inferred-rb"));
+        assert_eq!(rb, None);
+    }
+
+    #[test]
+    fn resolve_schedule_action_refuses_raw_commands_and_empty_args() {
+        let err = resolve_schedule_action("echo hi", false, None, None)
+            .expect_err("raw command with is_script=false must be refused");
+        assert!(
+            err.contains("raw command scheduling is not supported")
+                && err.contains("is_script=true"),
+            "error guides the model to write_script + is_script=true: {err}"
+        );
+
+        let empty_err = resolve_schedule_action("", false, None, None)
+            .expect_err("empty command without runbook must be refused");
+        assert!(
+            empty_err.contains("command is empty and ghost_runbook is not set"),
+            "empty error names both missing parameters: {empty_err}"
+        );
+    }
+
+    #[test]
+    fn resolve_schedule_kind_validates_cron_interval_and_run_at() {
+        let cron = resolve_schedule_kind(Some("*/5 * * * *"), None, None).expect("valid cron");
+        assert!(matches!(cron, ScheduleKind::Cron { .. }));
+
+        let bad_cron =
+            resolve_schedule_kind(Some("not a cron"), None, None).expect_err("invalid cron");
+        assert!(bad_cron.contains("Invalid cron expression"));
+
+        let every = resolve_schedule_kind(None, Some("PT5M"), None).expect("valid ISO interval");
+        assert!(matches!(
+            every,
+            ScheduleKind::Every {
+                interval_secs: 300,
+                ..
+            }
+        ));
+
+        let bad_interval =
+            resolve_schedule_kind(None, Some("5m"), None).expect_err("invalid interval");
+        assert!(bad_interval.contains("Invalid interval '5m'"));
+
+        let once = resolve_schedule_kind(None, None, Some("2026-03-01T15:00:00Z"))
+            .expect("valid RFC 3339 run_at");
+        assert!(matches!(once, ScheduleKind::Once { .. }));
+
+        let bad_run_at = resolve_schedule_kind(None, None, Some("tomorrow at 3pm"))
+            .expect_err("malformed run_at must be rejected instead of falling back to +60s");
+        assert!(
+            bad_run_at.contains("Invalid run_at 'tomorrow at 3pm'")
+                && bad_run_at.contains("RFC 3339"),
+            "error guides the model to RFC 3339 format: {bad_run_at}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_schedule_command_refuses_invalid_calls_before_prompting() {
+        let store = Arc::new(ScheduleStore::new_empty());
+        let mut out = Vec::new();
+        let mut empty_rx = tokio::io::BufReader::new(tokio::io::empty());
+
+        // 1. Raw command (is_script=false) refused without writing a prompt.
+        let outcome = run_schedule_command(
+            ScheduleArgs {
+                call_id: "c1",
+                name: "raw-cmd",
+                command: "rm -rf /tmp/foo",
+                is_script: false,
+                run_at: None,
+                interval: Some("PT5M"),
+                runbook: None,
+                ghost_runbook: None,
+                cron: None,
+            },
+            Some("sess-1"),
+            false,
+            &store,
+            &mut out,
+            &mut empty_rx,
+        )
+        .await
+        .expect("refusal returns Ok(ToolCallOutcome)");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("raw command scheduling is not supported"));
+        assert!(out.is_empty(), "no prompt sent on invalid action");
+        assert!(store.list().is_empty(), "no job added to store");
+
+        // 2. Malformed run_at refused without writing a prompt.
+        let outcome = run_schedule_command(
+            ScheduleArgs {
+                call_id: "c2",
+                name: "bad-time",
+                command: "check.sh",
+                is_script: true,
+                run_at: Some("2026-03-01 15:00"),
+                interval: None,
+                runbook: None,
+                ghost_runbook: None,
+                cron: None,
+            },
+            Some("sess-1"),
+            false,
+            &store,
+            &mut out,
+            &mut empty_rx,
+        )
+        .await
+        .expect("refusal returns Ok(ToolCallOutcome)");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("Invalid run_at '2026-03-01 15:00'"));
+        assert!(out.is_empty(), "no prompt sent on invalid run_at");
+        assert!(store.list().is_empty(), "no job added to store");
     }
 }

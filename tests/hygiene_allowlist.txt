@@ -14,7 +14,6 @@ fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/viewer.rs viewer_loop 234
 fn src/daemon/context/background.rs run_compaction 184
-fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
 fn src/daemon/ghost.rs trigger_ghost_turn 183
 fn src/daemon/server/handlers.rs handle_status 200
