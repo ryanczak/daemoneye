@@ -1,10 +1,12 @@
 //! Daemon startup: `run_daemon` and the tmux-session choice it makes.
 
-use super::scheduled::run_scheduled_job;
+#[path = "startup_tasks.rs"]
+mod tasks;
+
 use super::server::handle_client;
 use super::session::SessionStore;
 use super::utils::log_event;
-use super::{DAEMON_START, detect_session, instance, ready, scheduled, supervise};
+use super::{DAEMON_START, DaemonState, detect_session, instance, ready};
 use crate::config::{Config, default_socket_path};
 use crate::scheduler::ScheduleStore;
 use crate::tmux::cache::SessionCache;
@@ -12,53 +14,17 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use std::time::Instant;
 use tokio::net::UnixListener;
 
-/// The 1 s `SessionCounters` push loop (M37 phase 02b): every present session
-/// gets its counters computed and, when they changed, pushed to its presence
-/// connections. Kept out of `run_daemon` to leave its hygiene-cap line alone.
-/// The tracker is the daemon's **one** per-session record — the same one the
-/// attach writes and the last close forgets — so a tick after an attach with
-/// unchanged counts pushes nothing, and a tick after the forget pushes again.
-async fn session_counters_loop(state: Arc<super::DaemonState>) {
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    loop {
-        tick.tick().await;
-        let session_ids = state.presence.session_ids();
-        crate::daemon::counters::counters_tick_with_global(
-            &state.shells,
-            state.metrics.ghosts.active() as u32,
-            &session_ids,
-            |sid, frame| {
-                crate::daemon::counters::presence_push_to_session(&state.presence, sid, frame);
-            },
-        );
-    }
-}
-
-/// The 1 s `SessionCounters` push task (M37 phase 02b), supervised like the
-/// daemon's other background loops. Kept out of `run_daemon` so its
-/// hygiene-cap line does not grow.
-fn spawn_session_counters_task(shutdown: Arc<AtomicBool>, state: Arc<super::DaemonState>) {
-    tokio::spawn(supervise("session-counters", shutdown, move || {
-        session_counters_loop(Arc::clone(&state))
-    }));
-}
-
-/// The 2 s `Shell`-notice tick (M38 phase 06): a program's entry into
-/// `blocked` / `done` / `error` over OSC 7501 publishes one `Shell` notice.
-/// Supervised like the counters task beside it; kept out of `run_daemon`
-/// so its hygiene-cap line does not grow.
-fn spawn_program_notices_task(shutdown: Arc<AtomicBool>) {
-    crate::daemon::program_notices::spawn_program_notices_task(shutdown);
-}
+use tasks::{
+    spawn_cache_poller_task, spawn_program_notices_task, spawn_scheduler_task,
+    spawn_session_cleanup_task, spawn_session_counters_task, spawn_webhook_task,
+};
 
 /// The startup host warnings (M37 phase-06): each `[hosts.<name>]` problem
 /// the config validator finds, then each entry whose `ssh` names the daemon's
-/// own machine — that entry's `host:` is refused by the host gate. Kept out
-/// of `run_daemon` so its hygiene-cap line does not grow.
+/// own machine — that entry's `host:` is refused by the host gate.
 fn warn_host_problems(startup_config: &crate::config::Config) {
     for warn in startup_config.validate_hosts() {
         log::warn!("{warn}");
@@ -69,10 +35,7 @@ fn warn_host_problems(startup_config: &crate::config::Config) {
 }
 
 /// Reconcile the schedule store right after it loads: jobs a daemon restart
-/// left `Running` must not stay `Running` forever. Kept out of `run_daemon`
-/// so its hygiene-cap line does not grow, and called here only — the CLI
-/// loads the same store too, and a reset there could double-fire a job a
-/// live daemon is running.
+/// left `Running` must not stay `Running` forever.
 fn recover_schedules(store: &ScheduleStore) {
     let recovered = store.recover_interrupted();
     if !recovered.is_empty() {
@@ -83,11 +46,7 @@ fn recover_schedules(store: &ScheduleStore) {
     }
 }
 
-/// Remove pipe logs and stop sentinels left behind by a previous daemon run:
-/// stale pipe content must never be shown to the AI, and a `daemoneye stop
-/// <run>` from a terminal whose daemon died would otherwise still be honoured
-/// on restart. Only `stop-*` entries are removed — everything else in
-/// var/run (pid, socket, schedules, pane prefs, the shells subtree) survives.
+/// Remove pipe logs and stop sentinels left behind by a previous daemon run.
 fn sweep_stale_var_run_artifacts() {
     if let Ok(entries) = std::fs::read_dir(crate::config::pipe_log_dir()) {
         for entry in entries.flatten() {
@@ -110,16 +69,13 @@ fn sweep_stale_var_run_artifacts() {
 
 /// Load the daemon's config at startup. A file that fails to parse runs on
 /// the defaults (and the ghost foreground gate fails closed), except a file
-/// that still sets a key removed in 2.10.0: that is a migration the user must
-/// make, so the daemon refuses to start and the message reaches the terminal.
+/// that still sets a key removed in 2.10.0.
 fn load_startup_config() -> Result<Config> {
     match Config::load() {
         Ok(cfg) => {
             crate::config::set_startup_error(Ok(()));
             Ok(cfg)
         }
-        // A removed key is a migration the user must make, not a typo to
-        // run past: refuse to start, so the message reaches the terminal.
         Err(e)
             if e.downcast_ref::<crate::config::RemovedKeysError>()
                 .is_some() =>
@@ -129,31 +85,13 @@ fn load_startup_config() -> Result<Config> {
         }
         Err(e) => {
             log::error!("Failed to load config, using defaults: {e:#}");
-            // Record the failure beside the handle: the ghost foreground gate
-            // fails closed while the daemon runs on these defaults (bug-19-1).
             crate::config::set_startup_error(Err(anyhow::anyhow!("{e:#}")));
             Ok(Config::default())
         }
     }
 }
 
-/// Start the daemon process.
-///
-/// Lifecycle:
-/// 1. Redirect stdout/stderr to `log_file` (if provided).
-/// 2. Validate the configured AI API key; bail immediately if absent.
-/// 3. Detect or create a tmux session to monitor.
-/// 4. Spawn the pane-cache refresh loop (every 2 s).
-/// 5. Bind the Unix domain socket and enter the accept loop.
-/// 6. Optionally open the chat pane if the daemon just created the tmux session.
-/// 7. Shut down cleanly on SIGTERM or SIGINT.
-pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<String>) -> Result<()> {
-    // Record daemon start time for uptime reporting (F1).
-    DAEMON_START.get_or_init(Instant::now);
-
-    // Initialise env_logger once.  DAEMONEYE_LOG=debug|info|warn|error controls verbosity.
-    // Default is `info` which shows lifecycle events, connections, and command execution.
-    // Color is disabled and a human-readable UTC timestamp is prepended to every line.
+fn init_logging_and_stdio(log_file: &Option<PathBuf>) -> Result<()> {
     if let Err(e) =
         env_logger::Builder::from_env(env_logger::Env::new().filter_or("DAEMONEYE_LOG", "info"))
             .write_style(env_logger::WriteStyle::Never)
@@ -169,7 +107,7 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         );
     }
 
-    if let Some(ref path) = log_file {
+    if let Some(path) = log_file {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -177,8 +115,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             .with_context(|| format!("Failed to open log file {}", path.display()))?;
         use std::os::unix::io::AsRawFd;
         let fd = file.as_raw_fd();
-        // Redirect stdout (1) and stderr (2) to the log file.
-        // dup2 creates independent FDs 1/2 pointing to the file; `file` can drop safely after.
         unsafe {
             if libc::dup2(fd, 1) < 0 {
                 return Err(std::io::Error::last_os_error()).context(format!(
@@ -194,51 +130,17 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             }
         }
     }
-    // Acquire the instance lock before any startup side effect. The lock is
-    // held for the lifetime of the daemon — the kernel releases it on death.
-    let _instance = match instance::InstanceLock::acquire(&crate::config::default_pid_path()) {
-        Ok(lock) => lock,
-        Err(e) => {
-            log::error!("{e}");
-            anyhow::bail!("{e}");
-        }
-    };
+    Ok(())
+}
 
-    log::info!(
-        "daemoneye {} starting — PID {}, exe {}, log {}",
-        env!("CARGO_PKG_VERSION"),
-        std::process::id(),
-        std::env::current_exe()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "<unknown>".to_string()),
-        log_file
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| "<stdout>".to_string()),
-    );
-
-    // Validate API key before binding the socket so the error is immediate
-    // and obvious rather than surfacing as a cryptic 401 mid-conversation.
-    let startup_config = load_startup_config()?;
-    // Install the process-wide handle every daemon-side reader goes through.
-    // After this line, `config::current()` serves the running config and
-    // `Config::Reload` swaps it without a restart.
-    let config_handle = Arc::new(crate::config::ConfigHandle::new(startup_config.clone()));
-    crate::config::install(Arc::clone(&config_handle));
-
-    // Warn about any limit configuration that is likely unintentional.
+fn validate_and_init_config(startup_config: &Config) -> Result<()> {
     startup_config.limits.validate();
-
-    // Warn about sandbox configuration that would silently defeat the sandbox.
     startup_config.sandbox.validate();
-
     startup_config.execution.validate();
-    // Warn about an unknown `[chat] glyphs` dialect (behaves as "emoji").
     startup_config.chat.validate();
-    warn_host_problems(&startup_config);
+    warn_host_problems(startup_config);
 
-    // Warn about retention settings that are off by default (keep forever).
-    for warn in crate::daemon::utils::retention_warnings(&startup_config) {
+    for warn in crate::daemon::utils::retention_warnings(startup_config) {
         log::warn!(
             "retention off for {}: {} — {}",
             warn.artifact_class,
@@ -247,19 +149,13 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         );
     }
 
-    // Initialise the masking filter with built-in patterns + any user-defined extras.
     crate::ai::filter::init_masking(&startup_config.masking.extra_patterns);
-
-    // Initialise the two-phase stream-timeout budgets from `[ai]` config.
     crate::ai::init_stream_timeouts(&startup_config.ai);
 
-    // G2: migrate any legacy memory files to include namespace frontmatter.
     if let Err(e) = crate::memory::migrate_namespace() {
         log::warn!("Memory namespace migration failed: {e}");
     }
 
-    // R1: clean up any pipe log files left behind by a previous daemon run so
-    // stale content from a different session is never shown to the AI.
     sweep_stale_var_run_artifacts();
 
     let default_model = startup_config.resolve_model(None);
@@ -273,8 +169,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             env_var = env_var,
         );
     }
-    // Warn early if the key format looks wrong for known providers, so the
-    // user sees a clear message at startup rather than a cryptic 401 mid-chat.
     match default_model.provider.as_str() {
         "anthropic" if !api_key.starts_with("sk-ant-") => {
             log::warn!(
@@ -295,98 +189,83 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         default_model.provider,
         default_model.model
     );
+    Ok(())
+}
 
-    // Determine the initial tmux session, read-only.
-    //
-    // The daemon never creates a tmux session. It adopts one when it can:
-    //   1. If launched inside tmux ($TMUX is set), adopt the current session.
-    //   2. Otherwise, use the configured name (CLI override > config.daemon
-    //      .tmux_session) when such a session already exists.
-    // Anything else means no tmux at all: no session, no cache poll. Never fatal.
+async fn resolve_initial_tmux_session(
+    startup_config: &Config,
+    session_override: Option<&str>,
+) -> Option<String> {
     let inside_session = crate::process::off_runtime("detect-session", detect_session)
         .await
         .flatten();
     let configured: String = session_override
-        .clone()
+        .map(str::to_string)
         .unwrap_or_else(|| startup_config.daemon.tmux_session.clone());
-    let exists =
-        if inside_session.is_none() && tmux_wanted(session_override.as_deref(), &configured) {
-            let n = configured.clone();
-            crate::process::off_runtime("session-exists", move || crate::tmux::session_exists(&n))
-                .await
-                .unwrap_or(false)
-        } else {
-            false
-        };
+    let exists = if inside_session.is_none() && tmux_wanted(session_override, &configured) {
+        let n = configured.clone();
+        crate::process::off_runtime("session-exists", move || crate::tmux::session_exists(&n))
+            .await
+            .unwrap_or(false)
+    } else {
+        false
+    };
     let initial_session = startup_session(inside_session, &configured, exists);
     if initial_session.is_none() {
         log::info!("No tmux session to adopt; the daemon starts tmux-free.");
     }
+    initial_session
+}
 
-    log_event(
-        "daemon_start",
-        serde_json::json!({
-            "version": env!("CARGO_PKG_VERSION"),
-            "session": initial_session.as_deref().unwrap_or(""),
-            "socket":  default_socket_path().display().to_string(),
-        }),
-    );
-
-    let cache = Arc::new(SessionCache::new(initial_session.as_deref().unwrap_or("")));
-    // The live shell registry: clear dead hosts' leftovers out of the shells
-    // directory, then re-register the shells that survived a daemon restart.
-    // The PTY substrate is the only substrate, so this always runs.
-    let _shells = {
-        let swept = crate::shell::sweep_stale(&crate::config::shells_dir());
-        if !swept.is_empty() {
-            let ids: Vec<&str> = swept.iter().map(|id| id.as_str()).collect();
-            log::info!(
-                "shell registry: swept {} dead host(s): {ids:?}",
-                swept.len()
-            );
-        }
-        let reg = crate::shell::registry().clone();
-        let adopted = crate::shell::adopt_at_startup(
-            &reg,
-            &crate::config::shells_dir(),
-            &crate::config::shell_logs_dir(),
+fn adopt_shells_and_sandboxes(sandbox_enabled: bool) -> crate::shell::ShellRegistry {
+    let swept = crate::shell::sweep_stale(&crate::config::shells_dir());
+    if !swept.is_empty() {
+        let ids: Vec<&str> = swept.iter().map(|id| id.as_str()).collect();
+        log::info!(
+            "shell registry: swept {} dead host(s): {ids:?}",
+            swept.len()
         );
-        if !adopted.is_empty() {
-            let ids: Vec<&str> = adopted.iter().map(|id| id.as_str()).collect();
-            log::info!(
-                "shell registry: adopted {} surviving shell(s): {ids:?}",
-                adopted.len()
+    }
+    let reg = crate::shell::registry().clone();
+    let adopted = crate::shell::adopt_at_startup(
+        &reg,
+        &crate::config::shells_dir(),
+        &crate::config::shell_logs_dir(),
+    );
+    if !adopted.is_empty() {
+        let ids: Vec<&str> = adopted.iter().map(|id| id.as_str()).collect();
+        log::info!(
+            "shell registry: adopted {} surviving shell(s): {ids:?}",
+            adopted.len()
+        );
+    }
+    if sandbox_enabled {
+        let live: Vec<String> = crate::shell::with_shells(&reg, |store| {
+            store.values().filter_map(|r| r.sandbox.clone()).collect()
+        });
+        let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+        tokio::spawn(async move {
+            let report = crate::daemon::executor::sbx_lifecycle::sweep_daemon_sandboxes(
+                &crate::shell::real_runner(program),
+                &live,
+            )
+            .await;
+            crate::daemon::utils::log_event(
+                "sbx_startup_sweep",
+                serde_json::json!({
+                    "removed": report.removed,
+                    "stopped": report.stopped,
+                    "failed": report.failed,
+                    "list_error": report.list_error,
+                }),
             );
-        }
-        // 06c: a daemon that died with `sbx` sandboxes live sweeps the ones
-        // no surviving shell record owns, off the startup path.
-        if startup_config.sandbox.enabled {
-            let live: Vec<String> = crate::shell::with_shells(&reg, |store| {
-                store.values().filter_map(|r| r.sandbox.clone()).collect()
-            });
-            let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
-            tokio::spawn(async move {
-                let report = crate::daemon::executor::sbx_lifecycle::sweep_daemon_sandboxes(
-                    &crate::shell::real_runner(program),
-                    &live,
-                )
-                .await;
-                crate::daemon::utils::log_event(
-                    "sbx_startup_sweep",
-                    serde_json::json!({
-                        "removed": report.removed,
-                        "stopped": report.stopped,
-                        "failed": report.failed,
-                        "list_error": report.list_error,
-                    }),
-                );
-            });
-        }
-        Some(reg)
-    };
+        });
+    }
+    reg
+}
 
-    // N7: seed the initial client viewport dimensions now that the cache exists.
-    if let Some(ref sn) = initial_session {
+async fn seed_initial_viewport(cache: &SessionCache, initial_session: &Option<String>) {
+    if let Some(sn) = initial_session {
         let s = sn.to_string();
         let (w, h) = crate::process::off_runtime("client-dimensions", move || {
             crate::tmux::client_dimensions(&s)
@@ -403,256 +282,11 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
             );
         }
     }
+}
 
-    // Shutdown flag shared with all supervisor tasks so they know not to restart
-    // after the accept loop exits on SIGTERM/SIGINT (A1).
-    let shutdown: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-
-    log::info!("Cache poller started");
-    let cache_sup = Arc::clone(&cache);
-    tokio::spawn(supervise(
-        "cache-poller",
-        Arc::clone(&shutdown),
-        move || {
-            let c = Arc::clone(&cache_sup);
-            async move {
-                loop {
-                    if let Err(e) = c.refresh() {
-                        log::warn!("Failed to refresh tmux cache: {}", e);
-                        log_event(
-                            "cache_refresh_error",
-                            serde_json::json!({ "error": e.to_string() }),
-                        );
-                    }
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                }
-            }
-        },
-    ));
-
-    let sessions: SessionStore = SessionStore::new();
-
-    // M38 phase 08a: rebuild the active-alert registry from the notice
-    // journal before any sink subscribes, so a live notice never races the
-    // replay and the webhook listener serves an already-rebuilt registry.
-    crate::daemon::notice_sinks::replay_alert_registry(crate::webhook::alert_registry());
-
-    // M38 phase 02: the notice bus's three sinks subscribe on the global bus
-    // right after the store exists, with 2.9.0's default routes. No producer
-    // publishes yet (phases 03–05), so this changes no runtime behaviour.
-    crate::daemon::notice_sinks::register_default_sinks(
-        crate::bus::global(),
-        sessions.clone(),
-        crate::daemon::notice_sinks::default_routes(crate::bus::Severity::Warning),
-    );
-
-    // Load or create the schedule store.
-    let schedules_path = Config::schedules_path();
-    let schedule_store = Arc::new(
-        ScheduleStore::load_or_create(schedules_path).unwrap_or_else(|e| {
-            log::error!("Could not load schedules from primary path: {e} — schedules will not persist this session");
-            ScheduleStore::new_empty()
-        }),
-    );
-    recover_schedules(&schedule_store);
-
-    let state = super::DaemonState::new(
-        config_handle,
-        sessions.clone(),
-        crate::daemon::session::global_presence().clone(),
-        crate::shell::registry().clone(),
-        Arc::clone(&schedule_store),
-        Arc::clone(&cache),
-        crate::bus::global().clone(),
-        crate::webhook::alert_registry().clone(),
-        crate::daemon::stats::global().clone(),
-        *DAEMON_START.get_or_init(Instant::now),
-    );
-
-    // Scheduler task: poll every second for due jobs.
-    {
-        let state_sup = Arc::clone(&state);
-        let sn_sup = initial_session.clone().unwrap_or_default();
-        tokio::spawn(supervise("scheduler", Arc::clone(&shutdown), move || {
-            let state_sched = Arc::clone(&state_sup);
-            let sn = sn_sup.clone();
-            async move {
-                let mut tick = tokio::time::interval(Duration::from_secs(1));
-                loop {
-                    tick.tick().await;
-                    let due = scheduled::due_jobs_for_tick(&state_sched.schedules, &sn);
-                    for job in due {
-                        let state2 = Arc::clone(&state_sched);
-                        let sn2 = sn.clone();
-                        tokio::spawn(async move {
-                            // The refusal is already recorded on the run's
-                            // log; a tick-level caller has nothing to do
-                            // with it.
-                            let _ = run_scheduled_job(job, sn2, &state2).await;
-                        });
-                    }
-                }
-            }
-        }));
-    }
-
-    // Optional webhook ingestion endpoint.
-    if startup_config.webhook.enabled {
-        let listener = crate::webhook::bind(&startup_config).await?;
-        if startup_config.webhook.secret.is_empty() {
-            log::warn!(
-                "Webhook listener enabled on port {} — no auth (set webhook.secret in config.toml to require a Bearer token)",
-                startup_config.webhook.port
-            );
-        } else {
-            log::info!(
-                "Webhook listener enabled on port {} — Bearer token auth required",
-                startup_config.webhook.port
-            );
-        }
-        let wh_state_sup = Arc::clone(&state);
-        let listener = Arc::new(tokio::sync::Mutex::new(Some(listener)));
-        tokio::spawn(supervise("webhook", Arc::clone(&shutdown), move || {
-            let wh_state = Arc::clone(&wh_state_sup);
-            let listener = Arc::clone(&listener);
-            async move {
-                let listener = {
-                    let mut guard = listener.lock().await;
-                    guard.take()
-                };
-                match listener {
-                    Some(l) => {
-                        if let Err(e) = crate::webhook::serve(l, wh_state).await {
-                            log::error!("Webhook server exited: {}", e);
-                        }
-                    }
-                    None => {
-                        log::error!("webhook listener was consumed; not restarting");
-                    }
-                }
-            }
-        }));
-    }
-
-    spawn_session_counters_task(Arc::clone(&shutdown), Arc::clone(&state));
-    spawn_program_notices_task(Arc::clone(&shutdown));
-    let state_cleanup_sup = Arc::clone(&state);
-    let log_path_sup = log_file.clone();
-    tokio::spawn(supervise(
-        "session-cleanup",
-        Arc::clone(&shutdown),
-        move || {
-            let state_cleanup = Arc::clone(&state_cleanup_sup);
-            let log_path = log_path_sup.clone();
-            async move {
-                let mut sweep_counter = 0u32;
-                loop {
-                    tokio::time::sleep(Duration::from_secs(60)).await;
-
-                    // Locked phase: evict and snapshot. The guard is released
-                    // when `cleanup_pass` returns.
-                    let (_evicted, active_ids) = crate::daemon::session::cleanup_pass(
-                        &state_cleanup.sessions,
-                        Instant::now(),
-                        Duration::from_secs(1800),
-                    );
-
-                    // Unlocked phase: everything blocking happens out here.
-                    sweep_counter = sweep_counter.wrapping_add(1);
-                    // Every tick (and every sweep burst inside it) reads the
-                    // config through the handle, so a reload follows the
-                    // next tick's sweeps and reaps.
-                    let tick_config = state_cleanup.config.current();
-                    if sweep_counter.is_multiple_of(60) {
-                        crate::daemon::utils::sweep_event_segments(
-                            tick_config.events.retention_days,
-                        );
-                        crate::daemon::utils::sweep_session_archives(
-                            tick_config.sessions.archive_retention_days,
-                            &active_ids,
-                        );
-                        crate::daemon::utils::sweep_session_logs(
-                            tick_config.sessions.log_retention_days,
-                            &active_ids,
-                        );
-                        crate::daemon::utils::sweep_pane_logs(
-                            tick_config.retention.pane_log_retention_days,
-                        );
-                        crate::daemon::utils::sweep_agent_mailboxes(
-                            tick_config.retention.mailbox_retention_days,
-                        );
-                        let now = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        crate::shell::reap_and_sweep(
-                            &state_cleanup.shells,
-                            &crate::config::shells_dir(),
-                            tick_config.shells.exited_retention_secs,
-                            now,
-                        );
-                        crate::daemon::executor::knowledge::reap_idle_shells(
-                            &state_cleanup.shells,
-                            tick_config.shells.idle_reap_secs,
-                            now,
-                        )
-                        .await;
-                        let program =
-                            crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
-                        for reaped in
-                            crate::daemon::executor::chat_sandbox::reap_idle_chat_sandboxes(
-                                &crate::shell::real_runner(program),
-                                &state_cleanup.shells,
-                                now,
-                            )
-                            .await
-                        {
-                            // 08b: the log is read before `rm` (reap_idle_in
-                            // orders it), because it survives `rm` and
-                            // accumulates across sandboxes that reuse a name.
-                            if let Some(audit) = reaped.egress {
-                                crate::daemon::utils::log_event(
-                                    "sandbox_egress",
-                                    crate::daemon::executor::sbx::egress_event(
-                                        &reaped.name,
-                                        &audit,
-                                    ),
-                                );
-                            }
-                            crate::daemon::utils::log_event(
-                                "chat_sandbox_teardown",
-                                serde_json::json!({ "sandbox": reaped.name, "outcome": format!("{:?}", reaped.teardown) }),
-                            );
-                        }
-                        let mut live_shell_ids = std::collections::BTreeSet::new();
-                        crate::shell::with_shells(&state_cleanup.shells, |store| {
-                            live_shell_ids.extend(store.keys().cloned());
-                        });
-                        crate::daemon::utils::sweep_shell_logs(
-                            startup_config.shells.log_retention_days,
-                            &live_shell_ids,
-                        );
-                        if let Some(ref lp) = log_path
-                            && crate::daemon::utils::rotate_log_file(
-                                lp,
-                                startup_config.logging.log_max_bytes,
-                                startup_config.logging.log_keep_count,
-                            )
-                        {
-                            crate::daemon::utils::reattach_log_fds(lp);
-                        }
-                    }
-                }
-            }
-        },
-    ));
-
+async fn bind_and_serve_ipc(state: Arc<DaemonState>, shutdown: Arc<AtomicBool>) -> Result<()> {
     let socket_path: PathBuf = default_socket_path();
 
-    // The instance lock is held, so no other daemon is alive: any socket file at
-    // this path is definitionally stale and safe to remove. symlink_metadata()
-    // (does not follow symlinks) so a symlink at the socket path removes the
-    // symlink itself rather than its target (S3).
     match socket_path.symlink_metadata() {
         Ok(_) => {
             std::fs::remove_file(&socket_path).context("Failed to remove stale socket file")?;
@@ -664,7 +298,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     let listener = UnixListener::bind(&socket_path)
         .with_context(|| format!("Failed to bind to socket at {}", socket_path.display()))?;
 
-    // Record the bound socket's identity for identity-checked teardown below.
     let socket_id = socket_path.symlink_metadata().ok().map(|m| {
         (
             std::os::unix::fs::MetadataExt::dev(&m),
@@ -712,10 +345,6 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
         }
     }
 
-    // ── Graceful shutdown ────────────────────────────────────────────────────
-    // 1. Remove the socket so new clients get a clean "not running" error.
-    // Only unlink the socket this daemon bound. If the identity differs, another
-    // process replaced the path and removing it would strip a successor's address.
     let current_id = socket_path.symlink_metadata().ok().map(|m| {
         (
             std::os::unix::fs::MetadataExt::dev(&m),
@@ -735,6 +364,104 @@ pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<Stri
     Ok(())
 }
 
+/// Start the daemon process.
+///
+/// Lifecycle:
+/// 1. Redirect stdout/stderr to `log_file` (if provided).
+/// 2. Validate the configured AI API key; bail immediately if absent.
+/// 3. Detect or adopt an existing tmux session to monitor.
+/// 4. Spawn background supervisor tasks (cache, scheduler, webhook, counters, cleanup).
+/// 5. Bind the Unix domain socket and enter the accept loop until SIGTERM/SIGINT.
+pub async fn run_daemon(log_file: Option<PathBuf>, session_override: Option<String>) -> Result<()> {
+    let started_at = *DAEMON_START.get_or_init(Instant::now);
+    init_logging_and_stdio(&log_file)?;
+
+    let _instance = match instance::InstanceLock::acquire(&crate::config::default_pid_path()) {
+        Ok(lock) => lock,
+        Err(e) => {
+            log::error!("{e}");
+            anyhow::bail!("{e}");
+        }
+    };
+
+    log::info!(
+        "daemoneye {} starting — PID {}, exe {}, log {}",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id(),
+        std::env::current_exe()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string()),
+        log_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "<stdout>".to_string()),
+    );
+
+    let startup_config = load_startup_config()?;
+    let config_handle = Arc::new(crate::config::ConfigHandle::new(startup_config.clone()));
+    crate::config::install(Arc::clone(&config_handle));
+    validate_and_init_config(&startup_config)?;
+
+    let initial_session =
+        resolve_initial_tmux_session(&startup_config, session_override.as_deref()).await;
+    log_event(
+        "daemon_start",
+        serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "session": initial_session.as_deref().unwrap_or(""),
+            "socket":  default_socket_path().display().to_string(),
+        }),
+    );
+
+    let cache = Arc::new(SessionCache::new(initial_session.as_deref().unwrap_or("")));
+    let shells = adopt_shells_and_sandboxes(startup_config.sandbox.enabled);
+    seed_initial_viewport(&cache, &initial_session).await;
+
+    let shutdown: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+    spawn_cache_poller_task(Arc::clone(&shutdown), Arc::clone(&cache));
+
+    let sessions: SessionStore = SessionStore::new();
+    crate::daemon::notice_sinks::replay_alert_registry(crate::webhook::alert_registry());
+    crate::daemon::notice_sinks::register_default_sinks(
+        crate::bus::global(),
+        sessions.clone(),
+        crate::daemon::notice_sinks::default_routes(crate::bus::Severity::Warning),
+    );
+
+    let schedule_store = Arc::new(
+        ScheduleStore::load_or_create(Config::schedules_path()).unwrap_or_else(|e| {
+            log::error!("Could not load schedules from primary path: {e} — schedules will not persist this session");
+            ScheduleStore::new_empty()
+        }),
+    );
+    recover_schedules(&schedule_store);
+
+    let state = DaemonState::new(
+        config_handle,
+        sessions,
+        crate::daemon::session::global_presence().clone(),
+        shells,
+        schedule_store,
+        cache,
+        crate::bus::global().clone(),
+        crate::webhook::alert_registry().clone(),
+        crate::daemon::stats::global().clone(),
+        started_at,
+    );
+
+    spawn_scheduler_task(
+        Arc::clone(&shutdown),
+        Arc::clone(&state),
+        initial_session.unwrap_or_default(),
+    );
+    spawn_webhook_task(Arc::clone(&shutdown), Arc::clone(&state), &startup_config).await?;
+    spawn_session_counters_task(Arc::clone(&shutdown), Arc::clone(&state));
+    spawn_program_notices_task(Arc::clone(&shutdown));
+    spawn_session_cleanup_task(Arc::clone(&shutdown), Arc::clone(&state), log_file);
+
+    bind_and_serve_ipc(state, shutdown).await
+}
+
 /// Whether the daemon should use tmux when launched outside it: an empty
 /// (or all-whitespace) session name, from `--session` or `[daemon]
 /// tmux_session`, means no tmux at all.
@@ -743,10 +470,6 @@ pub(super) fn tmux_wanted(session_override: Option<&str>, configured: &str) -> b
 }
 
 /// Resolve the session the daemon adopts at startup — never creates one.
-///
-/// Launched inside tmux: adopt that session. Otherwise a non-empty
-/// configured `[daemon] tmux_session` that exists is adopted. Anything else
-/// is `None`, and the caller logs a single `info` line. Never fatal.
 fn startup_session(inside: Option<String>, configured: &str, exists: bool) -> Option<String> {
     if let Some(name) = inside {
         return Some(name);
@@ -781,7 +504,12 @@ mod startup_session_tests {
         assert_eq!(
             startup_session(None, "", true),
             None,
-            "an empty configured name must yield no session"
+            "an empty configured name means no tmux"
+        );
+        assert_eq!(
+            startup_session(None, "   ", true),
+            None,
+            "a whitespace-only configured name means no tmux"
         );
     }
 }
