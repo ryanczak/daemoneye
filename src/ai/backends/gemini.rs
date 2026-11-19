@@ -633,7 +633,10 @@ mod tests {
         assert_eq!(usage.output_tokens, 20);
         assert!(matches!(rx.try_recv(), Ok(AiEvent::Notice(n)) if n.contains("truncated")));
         assert!(matches!(rx.try_recv(), Ok(AiEvent::Token(t)) if t == "hello"));
-        assert!(matches!(rx.try_recv(), Ok(AiEvent::ListShells { .. })));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AiEvent::Tool(crate::ai::PendingCall::ListShells { .. }))
+        ));
 
         let err = handler
             .on_frame(

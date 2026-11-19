@@ -493,7 +493,10 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(AiEvent::Notice(n)) if n.contains("truncated")));
 
         handler.on_stream_end(&tx);
-        assert!(matches!(rx.try_recv(), Ok(AiEvent::ListShells { id, .. }) if id == "call_7"));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AiEvent::Tool(crate::ai::PendingCall::ListShells { id, .. })) if id == "call_7"
+        ));
 
         let err = handler
             .on_frame(

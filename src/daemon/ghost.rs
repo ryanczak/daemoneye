@@ -800,26 +800,26 @@ mod tests {
 
     #[test]
     fn ghost_event_to_pending_call_collects_add_memory_read_file_and_load_tools() {
-        let add_mem = turn::ghost_event_to_pending_call(AiEvent::AddMemory {
+        let add_mem = turn::ghost_event_to_pending_call(AiEvent::Tool(PendingCall::AddMemory {
             id: "tc_mem".into(),
             key: "followup".into(),
             value: "disk cleaned".into(),
             category: "incident".into(),
             thought_signature: None,
-        })
+        }))
         .expect("AddMemory must be collected in ghost turns (required by wrap-up prompt)");
         assert_eq!(add_mem.tool_name(), "add_memory");
 
-        let del_mem = turn::ghost_event_to_pending_call(AiEvent::DeleteMemory {
+        let del_mem = turn::ghost_event_to_pending_call(AiEvent::Tool(PendingCall::DeleteMemory {
             id: "tc_del".into(),
             key: "old".into(),
             category: "incident".into(),
             thought_signature: None,
-        })
+        }))
         .expect("DeleteMemory must be collected in ghost turns");
         assert_eq!(del_mem.tool_name(), "delete_memory");
 
-        let read_file = turn::ghost_event_to_pending_call(AiEvent::ReadFile {
+        let read_file = turn::ghost_event_to_pending_call(AiEvent::Tool(PendingCall::ReadFile {
             id: "tc_rf".into(),
             path: "/var/log/syslog".into(),
             offset: None,
@@ -827,15 +827,15 @@ mod tests {
             pattern: None,
             host: None,
             thought_signature: None,
-        })
+        }))
         .expect("ReadFile must be collected in ghost turns");
         assert_eq!(read_file.tool_name(), "read_file");
 
-        let load_tools = turn::ghost_event_to_pending_call(AiEvent::LoadTools {
+        let load_tools = turn::ghost_event_to_pending_call(AiEvent::Tool(PendingCall::LoadTools {
             id: "tc_lt".into(),
             groups: vec!["memory".into()],
             thought_signature: None,
-        })
+        }))
         .expect("LoadTools must be collected in ghost turns");
         assert_eq!(load_tools.tool_name(), "load_tools");
 

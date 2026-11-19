@@ -493,14 +493,14 @@ fn create_agent_accepts_array_and_string_scripts() {
         }),
         None,
     );
-    if let Some(AiEvent::CreateAgent {
+    if let Some(AiEvent::Tool(PendingCall::CreateAgent {
         auto_approve_scripts,
         ..
-    }) = ev_array
+    })) = ev_array
     {
         assert_eq!(auto_approve_scripts, vec!["a.sh"]);
     } else {
-        panic!("expected AiEvent::CreateAgent from array input");
+        panic!("expected PendingCall::CreateAgent from array input");
     }
 
     // As a JSON-encoded string
@@ -515,14 +515,14 @@ fn create_agent_accepts_array_and_string_scripts() {
         }),
         None,
     );
-    if let Some(AiEvent::CreateAgent {
+    if let Some(AiEvent::Tool(PendingCall::CreateAgent {
         auto_approve_scripts,
         ..
-    }) = ev_string
+    })) = ev_string
     {
         assert_eq!(auto_approve_scripts, vec!["a.sh"]);
     } else {
-        panic!("expected AiEvent::CreateAgent from string input");
+        panic!("expected PendingCall::CreateAgent from string input");
     }
 
     // Omitted — defaults to empty
@@ -536,14 +536,14 @@ fn create_agent_accepts_array_and_string_scripts() {
         }),
         None,
     );
-    if let Some(AiEvent::CreateAgent {
+    if let Some(AiEvent::Tool(PendingCall::CreateAgent {
         auto_approve_scripts,
         ..
-    }) = ev_omit
+    })) = ev_omit
     {
         assert!(auto_approve_scripts.is_empty());
     } else {
-        panic!("expected AiEvent::CreateAgent from omitted input");
+        panic!("expected PendingCall::CreateAgent from omitted input");
     }
 }
 
@@ -691,10 +691,10 @@ fn load_tools_catalog_lists_all_groups() {
 #[test]
 fn load_tools_accepts_array_and_string_groups() {
     let ev_array = dispatch_tool_event("tc_1", "load_tools", &json!({"groups": ["agents"]}), None);
-    if let Some(AiEvent::LoadTools { groups, .. }) = ev_array {
+    if let Some(AiEvent::Tool(PendingCall::LoadTools { groups, .. })) = ev_array {
         assert_eq!(groups, vec!["agents".to_string()]);
     } else {
-        panic!("expected AiEvent::LoadTools from array input");
+        panic!("expected PendingCall::LoadTools from array input");
     }
 
     let ev_string = dispatch_tool_event(
@@ -703,10 +703,10 @@ fn load_tools_accepts_array_and_string_groups() {
         &json!({"groups": "[\"agents\"]"}),
         None,
     );
-    if let Some(AiEvent::LoadTools { groups, .. }) = ev_string {
+    if let Some(AiEvent::Tool(PendingCall::LoadTools { groups, .. })) = ev_string {
         assert_eq!(groups, vec!["agents".to_string()]);
     } else {
-        panic!("expected AiEvent::LoadTools from string input");
+        panic!("expected PendingCall::LoadTools from string input");
     }
 }
 
@@ -822,8 +822,8 @@ fn send_input_enter_defaults_on_only_without_keys() {
         None,
     )
     .expect("text dispatches");
-    let AiEvent::SendInput { enter, .. } = ev else {
-        panic!("expected AiEvent::SendInput")
+    let AiEvent::Tool(PendingCall::SendInput { enter, .. }) = ev else {
+        panic!("expected PendingCall::SendInput")
     };
     assert!(enter, "text alone presses Enter by default");
 
@@ -834,11 +834,11 @@ fn send_input_enter_defaults_on_only_without_keys() {
         None,
     )
     .expect("keys dispatch");
-    let AiEvent::SendInput {
+    let AiEvent::Tool(PendingCall::SendInput {
         enter, text, keys, ..
-    } = ev
+    }) = ev
     else {
-        panic!("expected AiEvent::SendInput")
+        panic!("expected PendingCall::SendInput")
     };
     assert!(!enter, "a keys-only send does not press Enter by default");
     assert_eq!(keys, vec!["Escape".to_string()], "the keys land");
@@ -851,8 +851,8 @@ fn send_input_enter_defaults_on_only_without_keys() {
         None,
     )
     .expect("keys with an explicit enter dispatch");
-    let AiEvent::SendInput { enter, .. } = ev else {
-        panic!("expected AiEvent::SendInput")
+    let AiEvent::Tool(PendingCall::SendInput { enter, .. }) = ev else {
+        panic!("expected PendingCall::SendInput")
     };
     assert!(enter, "an explicit enter wins over the keys default");
 }
@@ -1031,20 +1031,20 @@ fn edit_file_takes_a_root_flag() {
     )
     .expect("the args dispatch");
     match ev {
-        AiEvent::EditFile { sudo, host, .. } => {
+        AiEvent::Tool(PendingCall::EditFile { sudo, host, .. }) => {
             assert_eq!(sudo, Some(true), "the flag lands in the event");
             assert_eq!(host.as_deref(), Some("pinky"), "the host lands too");
         }
-        other => panic!("expected AiEvent::EditFile, got {other:?}"),
+        other => panic!("expected PendingCall::EditFile, got {other:?}"),
     }
 
     let ev = dispatch_tool_event("tc_1", "edit_file", &json!({"path": "/tmp/f"}), None)
         .expect("the args dispatch");
     match ev {
-        AiEvent::EditFile { sudo, .. } => {
+        AiEvent::Tool(PendingCall::EditFile { sudo, .. }) => {
             assert_eq!(sudo, None, "absent is None, never a silent default");
         }
-        other => panic!("expected AiEvent::EditFile, got {other:?}"),
+        other => panic!("expected PendingCall::EditFile, got {other:?}"),
     }
 }
 
@@ -1060,16 +1060,16 @@ fn open_shell_args_carry_rows_and_cols() {
         None,
     )
     .expect("the sized form dispatches");
-    let AiEvent::OpenShell { rows, cols, .. } = ev else {
-        panic!("expected AiEvent::OpenShell, got {ev:?}")
+    let AiEvent::Tool(PendingCall::OpenShell { rows, cols, .. }) = ev else {
+        panic!("expected PendingCall::OpenShell, got {ev:?}")
     };
     assert_eq!(rows, Some(50), "the rows request lands in the event");
     assert_eq!(cols, Some(160), "the cols request lands in the event");
 
     let ev = dispatch_tool_event("tc_1", "open_shell", &json!({}), None)
         .expect("the bare form dispatches");
-    let AiEvent::OpenShell { rows, cols, .. } = ev else {
-        panic!("expected AiEvent::OpenShell, got {ev:?}")
+    let AiEvent::Tool(PendingCall::OpenShell { rows, cols, .. }) = ev else {
+        panic!("expected PendingCall::OpenShell, got {ev:?}")
     };
     assert_eq!(rows, None, "an absent rows is None, never a default");
     assert_eq!(cols, None, "an absent cols is None, never a default");
@@ -1084,15 +1084,15 @@ fn invalid_args_event_names_the_mistyped_param() {
         None,
     )
     .expect("a known tool always yields an event");
-    let AiEvent::InvalidToolArgs {
+    let AiEvent::Tool(PendingCall::InvalidArgs {
         id,
         name,
         arguments,
         error,
         thought_signature,
-    } = ev
+    }) = ev
     else {
-        panic!("expected InvalidToolArgs, got {ev:?}");
+        panic!("expected InvalidArgs, got {ev:?}");
     };
     assert_eq!(id, "tc_1");
     assert_eq!(name, "run_terminal_command", "the tool is named exactly");
@@ -1108,8 +1108,8 @@ fn invalid_args_event_names_the_mistyped_param() {
 
     let ev = invalid_args_event("tc_2", "run_terminal_command", &json!({"wait": true}), None)
         .expect("a known tool always yields an event");
-    let AiEvent::InvalidToolArgs { error, .. } = ev else {
-        panic!("expected InvalidToolArgs");
+    let AiEvent::Tool(PendingCall::InvalidArgs { error, .. }) = ev else {
+        panic!("expected InvalidArgs");
     };
     assert!(
         error.contains("command"),
@@ -1150,8 +1150,8 @@ fn send_input_keys_accept_an_array_a_json_string_or_one_name() {
     ] {
         let ev = dispatch_tool_event("tc_1", "send_input", &args, None)
             .unwrap_or_else(|| panic!("dispatch failed for {args}: {why}"));
-        let AiEvent::SendInput { keys, .. } = ev else {
-            panic!("expected AiEvent::SendInput for {args}")
+        let AiEvent::Tool(PendingCall::SendInput { keys, .. }) = ev else {
+            panic!("expected PendingCall::SendInput for {args}")
         };
         assert_eq!(keys, want, "{why}");
     }
@@ -1175,8 +1175,8 @@ fn send_input_keys_empty_array_string_is_no_keys() {
         let args = json!({"shell": "s3", "text": "exit", "keys": keys});
         let ev = dispatch_tool_event("tc_1", "send_input", &args, None)
             .unwrap_or_else(|| panic!("dispatch failed for {args}: {why}"));
-        let AiEvent::SendInput { text, keys, .. } = ev else {
-            panic!("expected AiEvent::SendInput for {args}")
+        let AiEvent::Tool(PendingCall::SendInput { text, keys, .. }) = ev else {
+            panic!("expected PendingCall::SendInput for {args}")
         };
         assert_eq!(keys, want, "{why}");
         assert_eq!(text, "exit", "the text send survives the keys parsing");
@@ -1220,8 +1220,8 @@ fn string_booleans_parse_where_glm_sends_them() {
         None,
     )
     .expect("string booleans dispatch");
-    let AiEvent::SendInput { enter, paste, .. } = ev else {
-        panic!("expected AiEvent::SendInput, got {ev:?}")
+    let AiEvent::Tool(PendingCall::SendInput { enter, paste, .. }) = ev else {
+        panic!("expected PendingCall::SendInput, got {ev:?}")
     };
     assert!(!enter, "enter:'false' parses");
     assert_eq!(paste, Some(true), "paste:'TRUE' parses case-insensitively");
@@ -1262,8 +1262,8 @@ fn a_garbage_value_is_still_invalid_and_named() {
     );
     let ev = invalid_args_event("tc_1", "run_terminal_command", &args, None)
         .expect("a known tool always yields an event");
-    let AiEvent::InvalidToolArgs { error, .. } = ev else {
-        panic!("expected AiEvent::InvalidToolArgs, got {ev:?}");
+    let AiEvent::Tool(PendingCall::InvalidArgs { error, .. }) = ev else {
+        panic!("expected PendingCall::InvalidArgs, got {ev:?}");
     };
     assert!(
         error.contains("background"),
@@ -1284,8 +1284,8 @@ fn a_type_mismatch_says_whether_the_parameter_is_required() {
         None,
     )
     .expect("a known tool always yields an event");
-    let AiEvent::InvalidToolArgs { error, .. } = ev else {
-        panic!("expected InvalidToolArgs, got {ev:?}");
+    let AiEvent::Tool(PendingCall::InvalidArgs { error, .. }) = ev else {
+        panic!("expected InvalidArgs, got {ev:?}");
     };
     assert!(
         error.contains("'command (string, required)'"),
@@ -1303,8 +1303,8 @@ fn a_type_mismatch_says_whether_the_parameter_is_required() {
         None,
     )
     .expect("a known tool always yields an event");
-    let AiEvent::InvalidToolArgs { error, .. } = ev else {
-        panic!("expected InvalidToolArgs, got {ev:?}");
+    let AiEvent::Tool(PendingCall::InvalidArgs { error, .. }) = ev else {
+        panic!("expected InvalidArgs, got {ev:?}");
     };
     assert!(
         error.contains("'timeout_secs (integer, optional)'"),
@@ -1328,15 +1328,15 @@ fn tool_args_json_known_tool_event() {
         None,
     )
     .expect("a known tool yields an event");
-    let AiEvent::InvalidToolArgs {
+    let AiEvent::Tool(PendingCall::InvalidArgs {
         id,
         name,
         arguments,
         error,
         thought_signature,
-    } = ev
+    }) = ev
     else {
-        panic!("expected InvalidToolArgs, got {ev:?}");
+        panic!("expected InvalidArgs, got {ev:?}");
     };
     assert_eq!(id, "tc_1");
     assert_eq!(name, "run_terminal_command");
@@ -1365,8 +1365,8 @@ fn tool_args_json_raw_truncated() {
     let raw: String = "\u{00e9}\u{1F642}".repeat(1500);
     let ev = malformed_args_event("tc_1", "list_shells", &raw, "no", None)
         .expect("a known tool yields an event");
-    let AiEvent::InvalidToolArgs { arguments, .. } = ev else {
-        panic!("expected InvalidToolArgs");
+    let AiEvent::Tool(PendingCall::InvalidArgs { arguments, .. }) = ev else {
+        panic!("expected InvalidArgs");
     };
     assert!(
         arguments.len() <= 2000 + 4,
@@ -1384,8 +1384,8 @@ fn tool_args_json_raw_truncated() {
 fn tool_args_json_raw_under_limit_is_untouched() {
     let ev = malformed_args_event("tc_1", "list_shells", "{\"short\":", "no", None)
         .expect("a known tool yields an event");
-    let AiEvent::InvalidToolArgs { arguments, .. } = ev else {
-        panic!("expected InvalidToolArgs");
+    let AiEvent::Tool(PendingCall::InvalidArgs { arguments, .. }) = ev else {
+        panic!("expected InvalidArgs");
     };
     assert_eq!(arguments, "{\"short\":", "a short raw text is not trimmed");
 }
@@ -1397,8 +1397,8 @@ fn tool_args_json_cut_respects_char_boundary() {
     let raw: String = "é".repeat(1500);
     let ev = malformed_args_event("tc_1", "list_shells", &raw, "no", None)
         .expect("a known tool yields an event");
-    let AiEvent::InvalidToolArgs { arguments, .. } = ev else {
-        panic!("expected InvalidToolArgs");
+    let AiEvent::Tool(PendingCall::InvalidArgs { arguments, .. }) = ev else {
+        panic!("expected InvalidArgs");
     };
     assert_eq!(
         arguments.len(),

@@ -486,7 +486,9 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         super::flush_tool_call(&tx, "tc_2", "list_shells", "", None);
         match rx.try_recv().expect("an event must be sent") {
-            crate::ai::AiEvent::ListShells { id, .. } => assert_eq!(id, "tc_2"),
+            crate::ai::AiEvent::Tool(crate::ai::PendingCall::ListShells { id, .. }) => {
+                assert_eq!(id, "tc_2")
+            }
             other => panic!("expected ListShells event, got {other:?}"),
         }
     }
@@ -589,7 +591,10 @@ mod tests {
             )
             .unwrap();
         handler.on_stream_end(&tx);
-        assert!(matches!(rx.try_recv(), Ok(AiEvent::ListShells { id, .. }) if id == "tc_9"));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AiEvent::Tool(crate::ai::PendingCall::ListShells { id, .. })) if id == "tc_9"
+        ));
 
         let err = handler
             .on_frame(
@@ -620,15 +625,15 @@ fn tool_args_json_anthropic_flush_is_tool_result() {
         None,
     );
     let ev = rx.try_recv().expect("an event must be sent");
-    let crate::ai::AiEvent::InvalidToolArgs {
+    let crate::ai::AiEvent::Tool(crate::ai::PendingCall::InvalidArgs {
         id,
         name,
         arguments,
         error,
         ..
-    } = ev
+    }) = ev
     else {
-        panic!("expected InvalidToolArgs, got {ev:?}");
+        panic!("expected InvalidArgs, got {ev:?}");
     };
     assert_eq!(id, "tc_1");
     assert_eq!(name, "list_shells");

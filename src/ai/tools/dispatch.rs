@@ -1,7 +1,7 @@
 use super::args::*;
 use super::schema::{ParamTy, ToolDef};
 use crate::ai::tools::defs::TOOLS;
-use crate::ai::types::AiEvent;
+use crate::ai::types::{AiEvent, PendingCall};
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
@@ -26,28 +26,28 @@ pub fn dispatch_tool_event(
         "run_terminal_command" => dispatch::<RunTerminalCommandArgs>(id, args, ts),
         "load_tools" => dispatch::<LoadToolsArgs>(id, args, ts),
         "schedule_command" => dispatch::<ScheduleCommandArgs>(id, args, ts),
-        "list_schedules" => Some(AiEvent::ListSchedules {
+        "list_schedules" => Some(AiEvent::Tool(PendingCall::ListSchedules {
             id: id.to_string(),
             thought_signature: ts,
-        }),
-        "list_scripts" => Some(AiEvent::ListScripts {
+        })),
+        "list_scripts" => Some(AiEvent::Tool(PendingCall::ListScripts {
             id: id.to_string(),
             thought_signature: ts,
-        }),
-        "list_runbooks" => Some(AiEvent::ListRunbooks {
+        })),
+        "list_runbooks" => Some(AiEvent::Tool(PendingCall::ListRunbooks {
             id: id.to_string(),
             thought_signature: ts,
-        }),
+        })),
         "get_shell_context" => dispatch::<GetShellContextArgs>(id, args, ts),
         "list_shells" => dispatch::<ListShellsArgs>(id, args, ts),
         "cancel_schedule" => {
-            schedule_id_event(args, ts.clone(), |jid, t| AiEvent::CancelSchedule {
+            schedule_id_event(args, ts.clone(), |jid, t| PendingCall::CancelSchedule {
                 id: id.to_string(),
                 job_id: jid,
                 thought_signature: t,
             })
         }
-        "delete_schedule" => schedule_id_event(args, ts, |jid, t| AiEvent::DeleteSchedule {
+        "delete_schedule" => schedule_id_event(args, ts, |jid, t| PendingCall::DeleteSchedule {
             id: id.to_string(),
             job_id: jid,
             thought_signature: t,
@@ -67,7 +67,7 @@ pub fn dispatch_tool_event(
         "read_shell_log" => dispatch::<ReadShellLogArgs>(id, args, ts),
         "edit_file" => dispatch::<EditFileArgs>(id, args, ts),
         "write_runbook" => dispatch::<WriteRunbookArgs>(id, args, ts),
-        "delete_runbook" => runbook_name_event(args, ts, |nm, t| AiEvent::DeleteRunbook {
+        "delete_runbook" => runbook_name_event(args, ts, |nm, t| PendingCall::DeleteRunbook {
             id: id.to_string(),
             name: nm,
             thought_signature: t,
@@ -86,11 +86,11 @@ pub fn dispatch_tool_event(
         "spawn_ghost_shell" => dispatch::<SpawnGhostArgs>(id, args, ts),
         "create_agent" => dispatch::<CreateAgentArgs>(id, args, ts),
         "read_agent" => dispatch::<ReadAgentArgs>(id, args, ts),
-        "list_agents" => Some(AiEvent::ListAgents {
+        "list_agents" => Some(AiEvent::Tool(PendingCall::ListAgents {
             id: id.to_string(),
             thought_signature: ts,
-        }),
-        "delete_agent" => runbook_name_event(args, ts, |nm, t| AiEvent::DeleteAgent {
+        })),
+        "delete_agent" => runbook_name_event(args, ts, |nm, t| PendingCall::DeleteAgent {
             id: id.to_string(),
             name: nm,
             thought_signature: t,
@@ -184,18 +184,18 @@ pub fn invalid_args_event(
         )
     };
 
-    Some(AiEvent::InvalidToolArgs {
+    Some(AiEvent::Tool(PendingCall::InvalidArgs {
         id: id.to_string(),
         name: def.name,
         arguments: args.to_string(),
         error,
         thought_signature: ts,
-    })
+    }))
 }
 
 /// A tool call whose argument JSON did not parse at all (B15): the
 /// deserialiser failed before any schema check could run, so `invalid_args_event`
-/// has nothing to inspect.  Build the same [`AiEvent::InvalidToolArgs`]
+/// has nothing to inspect.  Build the same [`PendingCall::InvalidArgs`]
 /// result directly — the conversation loop already turns that variant into
 /// a tool result, so the model sees its mistake and the turn still runs to
 /// `Done(usage)`, keeping the ledger in balance.
@@ -215,13 +215,13 @@ pub fn malformed_args_event(
         "the arguments were not valid JSON ({parse_error}); expected: {}",
         expected_params(def)
     );
-    Some(AiEvent::InvalidToolArgs {
+    Some(AiEvent::Tool(PendingCall::InvalidArgs {
         id: id.to_string(),
         name: def.name,
         arguments: crate::util::truncate_chars(raw, 2000).to_string(),
         error,
         thought_signature: ts,
-    })
+    }))
 }
 
 /// The whole invalid-arguments warning line, with the arguments masked. The
