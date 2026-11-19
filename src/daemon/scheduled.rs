@@ -1,4 +1,3 @@
-use crate::ai::{AiEvent, Message};
 use crate::config::Config;
 use crate::daemon::ghost::{GhostManager, check_ghost_capacity, trigger_ghost_turn};
 use crate::daemon::run::{Briefing, RunId, RunKind, RunLogGuard, RunState};
@@ -311,128 +310,7 @@ async fn run_scheduled_job_inner(
 
     // Ghost-mode: hand off entirely to the ghost shell infrastructure.
     if let ActionOn::Ghost { runbook: rb_name } = &job.action {
-        if !check_ghost_capacity(&config) {
-            log::warn!(
-                "Scheduled ghost job '{}': skipped — concurrency limit ({}) reached",
-                job.name,
-                config.ghost.max_concurrent_ghosts
-            );
-            publish_ghost_event(
-                bus,
-                GhostEvent::Skipped,
-                &job.name,
-                &format!(
-                    "[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached",
-                    job.name
-                ),
-            );
-            store.mark_done(
-                &job.id,
-                false,
-                Some("ghost concurrency limit reached".to_string()),
-            );
-            return None;
-        }
-
-        let alert_msg = format!(
-            "Scheduled job '{}' fired ({})",
-            job.name,
-            job.kind.describe()
-        );
-        match crate::runbook::load_runbook(rb_name) {
-            Err(e) => {
-                let msg = format!(
-                    "Scheduled ghost job '{}': failed to load runbook '{}': {}",
-                    job.name, rb_name, e
-                );
-                log::error!("{}", msg);
-                store.mark_done(&job.id, false, Some(msg));
-            }
-            Ok(rb) => {
-                let merged_config = crate::agents::merge_runbook_ghost_config(&rb);
-                match GhostManager::start_session_with_config(
-                    sessions.clone(),
-                    &rb,
-                    &merged_config,
-                    &alert_msg,
-                    crate::daemon::GhostTrigger::Scheduled,
-                    config.approvals.ghost_commands,
-                )
-                .await
-                {
-                    Err(e) => {
-                        let msg = format!(
-                            "Scheduled ghost job '{}': failed to start session: {}",
-                            job.name, e
-                        );
-                        log::error!("{}", msg);
-                        publish_ghost_event(
-                            bus,
-                            GhostEvent::Failed,
-                            &job.name,
-                            &format!(
-                                "[Ghost Shell Failed] Scheduled job '{}' could not start: {}",
-                                job.name, e
-                            ),
-                        );
-                        store.mark_done(&job.id, false, Some(msg));
-                    }
-                    Ok(sid) => {
-                        let session_log = crate::daemon::session::session_file(&sid)
-                            .display()
-                            .to_string();
-                        publish_ghost_event(
-                            bus,
-                            GhostEvent::Started,
-                            &job.name,
-                            &format!(
-                                "[Ghost Shell Started] Scheduled job '{}' started autonomous session — session log: {}",
-                                job.name, session_log
-                            ),
-                        );
-                        let result = trigger_ghost_turn(
-                            &sid,
-                            &sessions,
-                            &config,
-                            &cache,
-                            &Arc::clone(&store),
-                        )
-                        .await;
-                        match result {
-                            Ok(()) => {
-                                publish_ghost_event(
-                                    bus,
-                                    GhostEvent::Completed,
-                                    &job.name,
-                                    &format!(
-                                        "[Ghost Shell Completed] Scheduled job '{}' finished — session log: {}",
-                                        job.name, session_log
-                                    ),
-                                );
-                                store.mark_done(&job.id, true, None);
-                            }
-                            Err(e) => {
-                                log::error!("Scheduled ghost job '{}' failed: {}", job.name, e);
-                                publish_ghost_event(
-                                    bus,
-                                    GhostEvent::Failed,
-                                    &job.name,
-                                    &format!(
-                                        "[Ghost Shell Failed] Scheduled job '{}' error: {} — session log: {}",
-                                        job.name, e, session_log
-                                    ),
-                                );
-                                store.mark_done(
-                                    &job.id,
-                                    false,
-                                    Some(format!("ghost error: {}", e)),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        run_scheduled_ghost_job(&job, rb_name, &store, &sessions, &config, &cache, bus).await;
         return None;
     }
 
@@ -446,6 +324,7 @@ async fn run_scheduled_job_inner(
             store.mark_done(&job.id, true, None);
             let msg = format!("Watchdog alert: {}", job.name);
             notify_job_result(bus, alert_job_notice(&job, &msg)).await;
+            None
         }
         ActionOn::Command(_) => {
             // Removed: the job still loads from old schedules.json files but
@@ -471,6 +350,7 @@ async fn run_scheduled_job_inner(
                 format!("refused: {}", COMMAND_REFUSAL_REASON),
             )
             .await;
+            None
         }
         ActionOn::Script(s) => {
             let host_path = match scripts::resolve_script(s) {
@@ -482,11 +362,136 @@ async fn run_scheduled_job_inner(
                     return None;
                 }
             };
-            run_script_job(&job, &host_path.to_string_lossy(), &store, &config, bus).await;
+            run_script_job(&job, &host_path.to_string_lossy(), &store, &config, bus).await
         }
-        ActionOn::Ghost { .. } => {}
+        ActionOn::Ghost { .. } => None,
     }
-    None
+}
+
+/// Run a scheduled `ActionOn::Ghost` job synchronously under the schedule
+/// runner's `RunLogGuard`, publishing `Ghost` lifecycle notices and marking
+/// the schedule entry done.
+async fn run_scheduled_ghost_job(
+    job: &ScheduledJob,
+    rb_name: &str,
+    store: &Arc<ScheduleStore>,
+    sessions: &SessionStore,
+    config: &Config,
+    cache: &Arc<crate::tmux::cache::SessionCache>,
+    bus: &crate::bus::Bus,
+) {
+    if !check_ghost_capacity(config) {
+        log::warn!(
+            "Scheduled ghost job '{}': skipped — concurrency limit ({}) reached",
+            job.name,
+            config.ghost.max_concurrent_ghosts
+        );
+        publish_ghost_event(
+            bus,
+            GhostEvent::Skipped,
+            &job.name,
+            &format!(
+                "[Ghost Shell Skipped] Scheduled job '{}' skipped — concurrency limit reached",
+                job.name
+            ),
+        );
+        store.mark_done(
+            &job.id,
+            false,
+            Some("ghost concurrency limit reached".to_string()),
+        );
+        return;
+    }
+
+    let alert_msg = format!(
+        "Scheduled job '{}' fired ({})",
+        job.name,
+        job.kind.describe()
+    );
+    let rb = match crate::runbook::load_runbook(rb_name) {
+        Ok(rb) => rb,
+        Err(e) => {
+            let msg = format!(
+                "Scheduled ghost job '{}': failed to load runbook '{}': {}",
+                job.name, rb_name, e
+            );
+            log::error!("{}", msg);
+            store.mark_done(&job.id, false, Some(msg));
+            return;
+        }
+    };
+
+    let merged_config = crate::agents::merge_runbook_ghost_config(&rb);
+    let sid = match GhostManager::start_session_with_config(
+        sessions.clone(),
+        &rb,
+        &merged_config,
+        &alert_msg,
+        crate::daemon::GhostTrigger::Scheduled,
+        config.approvals.ghost_commands,
+    )
+    .await
+    {
+        Ok(sid) => sid,
+        Err(e) => {
+            let msg = format!(
+                "Scheduled ghost job '{}': failed to start session: {}",
+                job.name, e
+            );
+            log::error!("{}", msg);
+            publish_ghost_event(
+                bus,
+                GhostEvent::Failed,
+                &job.name,
+                &format!(
+                    "[Ghost Shell Failed] Scheduled job '{}' could not start: {}",
+                    job.name, e
+                ),
+            );
+            store.mark_done(&job.id, false, Some(msg));
+            return;
+        }
+    };
+
+    let session_log = crate::daemon::session::session_file(&sid)
+        .display()
+        .to_string();
+    publish_ghost_event(
+        bus,
+        GhostEvent::Started,
+        &job.name,
+        &format!(
+            "[Ghost Shell Started] Scheduled job '{}' started autonomous session — session log: {}",
+            job.name, session_log
+        ),
+    );
+    match trigger_ghost_turn(&sid, sessions, config, cache, &Arc::clone(store)).await {
+        Ok(()) => {
+            publish_ghost_event(
+                bus,
+                GhostEvent::Completed,
+                &job.name,
+                &format!(
+                    "[Ghost Shell Completed] Scheduled job '{}' finished — session log: {}",
+                    job.name, session_log
+                ),
+            );
+            store.mark_done(&job.id, true, None);
+        }
+        Err(e) => {
+            log::error!("Scheduled ghost job '{}' failed: {}", job.name, e);
+            publish_ghost_event(
+                bus,
+                GhostEvent::Failed,
+                &job.name,
+                &format!(
+                    "[Ghost Shell Failed] Scheduled job '{}' error: {} — session log: {}",
+                    job.name, e, session_log
+                ),
+            );
+            store.mark_done(&job.id, false, Some(format!("ghost error: {}", e)));
+        }
+    }
 }
 
 /// Run an `ActionOn::Script` job: resolve, then run the script in a
@@ -689,54 +694,20 @@ async fn run_watchdog(
         );
         return Err(message);
     }
-    let model_entry = config.resolve_model(None);
-    let client = crate::ai::make_client(
-        &model_entry.provider,
-        model_entry.resolve_api_key(),
-        model_entry.model.clone(),
-        model_entry.effective_base_url(),
-        model_entry.effective_max_tokens(),
-    );
-    let system = crate::runbook::watchdog_system_prompt(&rb);
-    let msgs = vec![Message {
-        role: "user".to_string(),
-        content: format!("Command output:\n```\n{output}\n```"),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    }];
-    let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-    let api_err = client
-        .chat(&system, msgs, ai_tx, false, Vec::new())
-        .await
-        .is_err();
-    let mut ai_response = String::new();
-    while let Some(ev) = ai_rx.recv().await {
-        match ev {
-            AiEvent::Token(t) => ai_response.push_str(&t),
-            AiEvent::Done(usage) => {
-                crate::cost::emit_cost(crate::cost::CostCall {
-                    model_entry,
-                    usage: &usage,
-                    attribution: &crate::cost::side_call_attribution("watchdog"),
-                    session_id: "-",
-                    run_id: "",
-                    now: chrono::Utc::now(),
-                });
-            }
-            _ => {}
-        }
-    }
-    let (should_act, trigger_reason) =
-        crate::webhook::evaluate_watchdog_response(&ai_response, api_err);
+    let wd = crate::webhook::run_watchdog_query(
+        config,
+        &rb,
+        format!("Command output:\n```\n{output}\n```"),
+    )
+    .await;
     log::info!(
         "Scheduler watchdog for '{}': should_act={} reason='{}'",
         job.name,
-        should_act,
-        trigger_reason
+        wd.should_act,
+        wd.trigger_reason
     );
-    if should_act {
-        notify_job_result(bus, watchdog_notice(job, &ai_response)).await;
+    if wd.should_act {
+        notify_job_result(bus, watchdog_notice(job, &wd.response)).await;
     }
     Ok(())
 }

@@ -368,6 +368,74 @@ fn find_runbook_for_alert(alert_name: &str) -> Option<crate::runbook::Runbook> {
     None
 }
 
+/// Outcome of a single-turn, tool-free watchdog analysis against a runbook.
+pub(crate) struct WatchdogResult {
+    pub response: String,
+    pub api_error: Option<String>,
+    pub should_act: bool,
+    pub trigger_reason: &'static str,
+}
+
+/// Run a single-turn, tool-free watchdog LLM query against `runbook` with
+/// `user_content`, emit its `watchdog` cost attribution, and evaluate its
+/// structured `GHOST_TRIGGER: YES/NO` verdict. Shared by webhook alert
+/// analysis and scheduled script watchdog analysis.
+pub(crate) async fn run_watchdog_query(
+    config: &crate::config::Config,
+    runbook: &crate::runbook::Runbook,
+    user_content: String,
+) -> WatchdogResult {
+    let system = crate::runbook::watchdog_system_prompt(runbook);
+    let msgs = vec![Message {
+        role: "user".to_string(),
+        content: user_content,
+        tool_calls: None,
+        tool_results: None,
+        turn: None,
+    }];
+    let model_entry = config.resolve_model(None);
+    let client = crate::ai::make_client(
+        &model_entry.provider,
+        model_entry.resolve_api_key(),
+        model_entry.model.clone(),
+        model_entry.effective_base_url(),
+        model_entry.effective_max_tokens(),
+    );
+
+    let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+    let api_error = client
+        .chat(&system, msgs, ai_tx, false, Vec::new())
+        .await
+        .err()
+        .map(|e| e.to_string());
+
+    let mut response = String::new();
+    while let Some(ev) = ai_rx.recv().await {
+        match ev {
+            AiEvent::Token(t) => response.push_str(&t),
+            AiEvent::Done(usage) => {
+                crate::cost::emit_cost(crate::cost::CostCall {
+                    model_entry,
+                    usage: &usage,
+                    attribution: &crate::cost::side_call_attribution("watchdog"),
+                    session_id: "-",
+                    run_id: "",
+                    now: chrono::Utc::now(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let (should_act, trigger_reason) = evaluate_watchdog_response(&response, api_error.is_some());
+    WatchdogResult {
+        response,
+        api_error,
+        should_act,
+        trigger_reason,
+    }
+}
+
 /// Run runbook-based AI analysis for the alert, rate-limited per alert name.
 pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &WebhookState) {
     // Rate limit: skip if we analysed the same alert_name within dedup_window_secs.
@@ -416,75 +484,35 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
         .strip_prefix("[Webhook Alert] ")
         .unwrap_or(&notice.history_text())
         .to_string();
-    let system = crate::runbook::watchdog_system_prompt(&rb);
-    let msgs = vec![Message {
-        role: "user".to_string(),
-        content: format!("Incoming alert:\n{alert_msg}"),
-        tool_calls: None,
-        tool_results: None,
-        turn: None,
-    }];
 
-    let model_entry = state.config.resolve_model(None);
-    let client = crate::ai::make_client(
-        &model_entry.provider,
-        model_entry.resolve_api_key(),
-        model_entry.model.clone(),
-        model_entry.effective_base_url(),
-        model_entry.effective_max_tokens(),
-    );
-
-    let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-    let api_err = if let Err(e) = client.chat(&system, msgs, ai_tx, false, Vec::new()).await {
+    let wd = run_watchdog_query(&state.config, &rb, format!("Incoming alert:\n{alert_msg}")).await;
+    if let Some(ref e) = wd.api_error {
         log::error!(
             "Webhook: runbook analysis API call failed for '{}': {}",
             notice.name,
             e
         );
-        Some(e.to_string())
-    } else {
-        None
-    };
-
-    let mut response = String::new();
-    while let Some(ev) = ai_rx.recv().await {
-        match ev {
-            AiEvent::Token(t) => response.push_str(&t),
-            AiEvent::Done(usage) => {
-                crate::cost::emit_cost(crate::cost::CostCall {
-                    model_entry,
-                    usage: &usage,
-                    attribution: &crate::cost::side_call_attribution("watchdog"),
-                    session_id: "-",
-                    run_id: "",
-                    now: chrono::Utc::now(),
-                });
-            }
-            _ => {}
-        }
     }
-
-    let (should_act, trigger_reason) = evaluate_watchdog_response(&response, api_err.is_some());
 
     log::info!(
         "Webhook: analysis for '{}' complete — should_act={} reason='{}' ghost_enabled={} (response: {} chars)",
         notice.name,
-        should_act,
-        trigger_reason,
+        wd.should_act,
+        wd.trigger_reason,
         rb.ghost_config.enabled,
-        response.len()
+        wd.response.len()
     );
-    if !should_act && rb.ghost_config.enabled {
+    if !wd.should_act && rb.ghost_config.enabled {
         log::info!(
             "Webhook: ghost shell NOT triggered for '{}' — reason: {}",
             notice.name,
-            trigger_reason
+            wd.trigger_reason
         );
     }
     log::debug!(
         "Webhook: analysis response for '{}':\n{}",
         notice.name,
-        response.trim()
+        wd.response.trim()
     );
 
     log_event(
@@ -492,109 +520,119 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
         serde_json::json!({
             "alert_name": notice.name,
             "runbook": rb.name,
-            "ghost_trigger": should_act,
-            "trigger_reason": trigger_reason,
+            "ghost_trigger": wd.should_act,
+            "trigger_reason": wd.trigger_reason,
             "ghost_enabled": rb.ghost_config.enabled,
         }),
     );
 
-    if should_act {
-        // If the runbook has ghost mode enabled, trigger a ghost shell.
-        if rb.ghost_config.enabled {
-            if !crate::daemon::ghost::check_ghost_capacity(&state.config) {
-                log::warn!(
-                    "Webhook: ghost shell skipped for '{}' — concurrency limit ({}) reached",
-                    notice.name,
-                    state.config.ghost.max_concurrent_ghosts
-                );
+    if wd.should_act {
+        if rb.ghost_config.enabled && !spawn_webhook_ghost(&notice.name, &alert_msg, &rb, state) {
+            return;
+        }
+        let analysis = analysis_notice(notice, &wd.response);
+        state.bus.publish(analysis);
+    }
+}
+
+/// Spawn a webhook-triggered Ghost Shell session if capacity allows.
+/// Returns `false` when the concurrency limit is reached and the ghost is skipped.
+fn spawn_webhook_ghost(
+    alert_name: &str,
+    alert_msg: &str,
+    rb: &crate::runbook::Runbook,
+    state: &WebhookState,
+) -> bool {
+    if !crate::daemon::ghost::check_ghost_capacity(&state.config) {
+        log::warn!(
+            "Webhook: ghost shell skipped for '{}' — concurrency limit ({}) reached",
+            alert_name,
+            state.config.ghost.max_concurrent_ghosts
+        );
+        publish_ghost_event(
+            &state.bus,
+            GhostEvent::Skipped,
+            alert_name,
+            &format!(
+                "[Ghost Shell Skipped] Concurrency limit reached for alert: {}",
+                alert_name
+            ),
+        );
+        return false;
+    }
+    log::info!("Webhook: triggering Ghost Shell for '{}'", alert_name);
+    let sessions = state.sessions.clone();
+    let alert_msg = alert_msg.to_string();
+    let rb_clone = rb.clone();
+    let config_clone = state.config.clone();
+    let cache_clone = state.cache.clone();
+    let schedule_store_clone = state.schedule_store.clone();
+    let bus = state.bus.clone();
+
+    let _handle = tokio::spawn(async move {
+        let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
+        match GhostManager::start_session_with_config(
+            sessions.clone(),
+            &rb_clone,
+            &merged_config,
+            &alert_msg,
+            crate::daemon::GhostTrigger::Webhook,
+            config_clone.approvals.ghost_commands,
+        )
+        .await
+        {
+            Ok(sid) => {
+                let session_log = crate::daemon::session::session_file(&sid)
+                    .display()
+                    .to_string();
                 publish_ghost_event(
-                    &state.bus,
-                    GhostEvent::Skipped,
-                    &notice.name,
+                    &bus,
+                    GhostEvent::Started,
+                    &rb_clone.name,
                     &format!(
-                        "[Ghost Shell Skipped] Concurrency limit reached for alert: {}",
-                        notice.name
+                        "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
+                        rb_clone.name, session_log
                     ),
                 );
-                return;
-            }
-            log::info!("Webhook: triggering Ghost Shell for '{}'", notice.name);
-            let sessions = state.sessions.clone();
-            let alert_msg = alert_msg.clone();
-            let rb_clone = rb.clone();
-            let config_clone = state.config.clone();
-            let cache_clone = state.cache.clone();
-            let schedule_store_clone = state.schedule_store.clone();
-            let bus = state.bus.clone();
 
-            let _handle = tokio::spawn(async move {
-                let merged_config = crate::agents::merge_runbook_ghost_config(&rb_clone);
-                match GhostManager::start_session_with_config(
-                    sessions.clone(),
-                    &rb_clone,
-                    &merged_config,
-                    &alert_msg,
-                    crate::daemon::GhostTrigger::Webhook,
-                    config_clone.approvals.ghost_commands,
+                match crate::daemon::ghost::trigger_ghost_turn(
+                    &sid,
+                    &sessions,
+                    &config_clone,
+                    &cache_clone,
+                    &schedule_store_clone,
                 )
                 .await
                 {
-                    Ok(sid) => {
-                        let session_log = crate::daemon::session::session_file(&sid)
-                            .display()
-                            .to_string();
+                    Ok(()) => {
                         publish_ghost_event(
                             &bus,
-                            GhostEvent::Started,
+                            GhostEvent::Completed,
                             &rb_clone.name,
                             &format!(
-                                "[Ghost Shell Started] Autonomous remediation triggered for alert: {} — session log: {}",
+                                "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
                                 rb_clone.name, session_log
                             ),
                         );
-
-                        match crate::daemon::ghost::trigger_ghost_turn(
-                            &sid,
-                            &sessions,
-                            &config_clone,
-                            &cache_clone,
-                            &schedule_store_clone,
-                        )
-                        .await
-                        {
-                            Ok(()) => {
-                                publish_ghost_event(
-                                    &bus,
-                                    GhostEvent::Completed,
-                                    &rb_clone.name,
-                                    &format!(
-                                        "[Ghost Shell Completed] Autonomous remediation finished for alert: {} — session log: {}",
-                                        rb_clone.name, session_log
-                                    ),
-                                );
-                            }
-                            Err(e) => {
-                                log::error!("Ghost Turn: failed for {}: {}", sid, e);
-                                publish_ghost_event(
-                                    &bus,
-                                    GhostEvent::Failed,
-                                    &rb_clone.name,
-                                    &format!(
-                                        "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
-                                        rb_clone.name, e, session_log
-                                    ),
-                                );
-                            }
-                        }
                     }
-                    Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
+                    Err(e) => {
+                        log::error!("Ghost Turn: failed for {}: {}", sid, e);
+                        publish_ghost_event(
+                            &bus,
+                            GhostEvent::Failed,
+                            &rb_clone.name,
+                            &format!(
+                                "[Ghost Shell Failed] Autonomous remediation failed for alert: {} — {} — session log: {}",
+                                rb_clone.name, e, session_log
+                            ),
+                        );
+                    }
                 }
-            });
+            }
+            Err(e) => log::error!("Ghost Shell: failed to start: {}", e),
         }
-
-        let analysis = analysis_notice(notice, &response);
-        state.bus.publish(analysis);
-    }
+    });
+    true
 }
 
 /// The `[Webhook Analysis]` notice: the alert's severity (parsed from the

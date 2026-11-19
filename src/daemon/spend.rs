@@ -239,6 +239,31 @@ pub fn cost_gate(config: &crate::config::Config, path: SpendPath) -> Result<(), 
     }
 }
 
+/// Test-only RAII guard that temporarily pins today's spend in [`LEDGER`] and
+/// restores the previous value on drop.
+#[cfg(test)]
+pub(crate) struct TestSpendGuard(Option<Ledger>);
+
+#[cfg(test)]
+impl TestSpendGuard {
+    pub(crate) fn set(spent_today_usd: f64) -> Self {
+        let today = Local::now().date_naive();
+        let mut guard = LEDGER.lock().unwrap_or_log();
+        let prev = guard.replace(Ledger {
+            day: today,
+            total: spent_today_usd,
+        });
+        Self(prev)
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestSpendGuard {
+    fn drop(&mut self) {
+        *LEDGER.lock().unwrap_or_log() = self.0.take();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,7 +17,6 @@ fn src/daemon/context/background.rs run_compaction 184
 fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
 fn src/daemon/ghost.rs trigger_ghost_turn 183
-fn src/daemon/scheduled.rs run_scheduled_job_inner 193
 fn src/daemon/server/handlers.rs handle_status 200
 fn src/daemon/server/mod.rs handle_client 229
 fn src/main.rs async_main 189
@@ -25,7 +24,6 @@ fn src/manifest.rs auto_search_context 211
 fn src/shell/client.rs read_to_marker 236
 fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321
 fn src/tmux/cache.rs SessionCache::refresh 171
-fn src/webhook/process.rs maybe_analyze_alert 227
 # M37 phase-06 — `resolve_edit_host_consults_the_self_host_refusal` (the
 # edit_file self-host refusal, driven through run_edit_file) grew the inline
 # tests 2344 → 2397; test lines only.

@@ -792,3 +792,50 @@ async fn fail_job_publishes_one_error_notice() {
         "the job's failure reason is recorded"
     );
 }
+
+#[tokio::test]
+async fn run_scheduled_job_inner_propagates_watchdog_budget_refusal() {
+    let _home = crate::test_home_guard();
+    let dir = tempfile::tempdir().expect("tempdir");
+    unsafe { std::env::set_var("HOME", dir.path()) }
+    crate::config::Config::ensure_dirs().ok();
+
+    crate::scripts::write_script("check.sh", "#!/bin/sh\necho ok\n").expect("write script");
+    crate::runbook::write_runbook(
+        "disk-check",
+        "# Runbook: disk-check\n## Alert Criteria\nVerify disk usage.\n",
+    )
+    .expect("write runbook");
+
+    let mut job = test_job(
+        "disk-check",
+        ActionOn::Script("check.sh".into()),
+        "job-budget-1",
+    );
+    job.runbook = Some("disk-check".to_string());
+    let store = test_store(&job);
+
+    let mut config = crate::config::Config::default();
+    config.sandbox.enabled = true;
+    config.budget.max_cost_per_day = 2.0;
+
+    let _spend = crate::daemon::spend::TestSpendGuard::set(3.0);
+    let (bus, _journal) = recording_bus();
+    let refusal = run_scheduled_job_inner(
+        job,
+        Arc::clone(&store),
+        String::new(),
+        SessionStore::new(),
+        config,
+        Arc::new(crate::tmux::cache::SessionCache::new("")),
+        &bus,
+    )
+    .await;
+
+    let expected = crate::daemon::spend::refusal_message(3.0, 2.0);
+    assert_eq!(
+        refusal.as_deref(),
+        Some(expected.as_str()),
+        "run_scheduled_job_inner must return run_script_job's watchdog budget refusal"
+    );
+}
