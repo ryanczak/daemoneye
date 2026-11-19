@@ -4,12 +4,11 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{
-    dispatch_tool_event, get_tool_definition, invalid_args_event, invalid_args_log_line,
-    malformed_args_event,
-};
+use crate::ai::tools::get_tool_definition;
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
-use crate::ai::{AiClient, http, send_with_retry};
+use crate::ai::{AiClient, http};
+
+use super::{SseFrameHandler, drive_sse_stream, emit_tool_call_raw_json};
 
 /// Parse the `message_start.message.usage` object from an Anthropic SSE event
 /// into a `TokenBreakdown`.  Extracts `input_tokens`, `cache_creation_input_tokens`,
@@ -60,39 +59,180 @@ fn flush_tool_call(
     tool_args: &str,
     thought_sig: Option<String>,
 ) {
-    // A tool that takes no arguments streams no input_json_delta at all.
-    let args_str = if tool_args.trim().is_empty() {
-        "{}"
-    } else {
-        tool_args
-    };
-    match serde_json::from_str::<Value>(args_str) {
-        Ok(args) => {
-            if let Some(ev) = dispatch_tool_event(tool_id, tool_name, &args, thought_sig.clone()) {
-                let _ = tx.send(ev);
-            } else if let Some(ev) = invalid_args_event(tool_id, tool_name, &args, thought_sig) {
-                log::warn!("{}", invalid_args_log_line(tool_name, &args));
-                let _ = tx.send(ev);
-            } else {
-                log::warn!("model called unknown tool '{tool_name}' — call dropped");
-                let _ = tx.send(AiEvent::Notice(format!(
-                    "the model called unknown tool '{tool_name}' — the call was dropped"
-                )));
-            }
+    emit_tool_call_raw_json(tx, tool_id, tool_name, tool_args, thought_sig);
+}
+
+struct AnthropicFrameHandler<'a> {
+    model: &'a str,
+    tool_id: String,
+    tool_name: String,
+    tool_args: String,
+    in_thinking: bool,
+    thinking_text: String,
+    thinking_sig: String,
+    pending_thought_sig: Option<String>,
+}
+
+impl<'a> AnthropicFrameHandler<'a> {
+    fn new(model: &'a str) -> Self {
+        Self {
+            model,
+            tool_id: String::new(),
+            tool_name: String::new(),
+            tool_args: String::new(),
+            in_thinking: false,
+            thinking_text: String::new(),
+            thinking_sig: String::new(),
+            pending_thought_sig: None,
         }
-        Err(e) => {
-            log::warn!("model emitted malformed JSON arguments for tool '{tool_name}': {e}");
-            match malformed_args_event(tool_id, tool_name, tool_args, &e.to_string(), thought_sig) {
-                Some(ev) => {
-                    let _ = tx.send(ev);
-                }
-                None => {
-                    log::warn!("model called unknown tool '{tool_name}' — malformed call dropped");
-                    let _ = tx.send(AiEvent::Notice(format!(
-                        "the model called unknown tool '{tool_name}' — the call was dropped"
-                    )));
+    }
+}
+
+impl SseFrameHandler for AnthropicFrameHandler<'_> {
+    fn provider_name(&self) -> &'static str {
+        "Anthropic"
+    }
+
+    fn on_frame(
+        &mut self,
+        v: &Value,
+        tx: &UnboundedSender<AiEvent>,
+        first_token_seen: &mut bool,
+        usage: &mut TokenBreakdown,
+    ) -> Result<()> {
+        let msg_type = v["type"].as_str().unwrap_or("");
+        if !*first_token_seen && is_content_event(msg_type) {
+            *first_token_seen = true;
+        }
+
+        // Anthropic reports failures (overloaded, invalid request discovered
+        // mid-stream) as an in-stream error event after the 200; dropping it
+        // would surface as a silent empty response.
+        if msg_type == "error" {
+            let msg = v["error"]["message"]
+                .as_str()
+                .unwrap_or("unknown provider error");
+            anyhow::bail!("AI stream returned an error: {msg}");
+        }
+
+        match msg_type {
+            "content_block_start" => {
+                if v["content_block"]["type"] == "tool_use" {
+                    if let Some(id) = v["content_block"]["id"].as_str() {
+                        self.tool_id = id.to_string();
+                        self.tool_name = v["content_block"]["name"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        self.tool_args.clear();
+                    }
+                } else if v["content_block"]["type"] == "thinking" {
+                    self.in_thinking = true;
+                    self.thinking_text.clear();
+                    self.thinking_sig.clear();
                 }
             }
+            "content_block_delta" => match v["delta"]["type"].as_str() {
+                Some("text_delta") => {
+                    if let Some(t) = v["delta"]["text"].as_str()
+                        && !t.is_empty()
+                    {
+                        let _ = tx.send(AiEvent::Token(t.to_string()));
+                    }
+                }
+                Some("input_json_delta") => {
+                    if let Some(partial) = v["delta"]["partial_json"].as_str() {
+                        self.tool_args.push_str(partial);
+                    }
+                }
+                Some("thinking_delta") => {
+                    if let Some(t) = v["delta"]["thinking"].as_str() {
+                        self.thinking_text.push_str(t);
+                    }
+                }
+                Some("signature_delta") => {
+                    if let Some(s) = v["delta"]["signature"].as_str() {
+                        self.thinking_sig.push_str(s);
+                    }
+                }
+                _ => {}
+            },
+            "content_block_stop" => {
+                if self.in_thinking {
+                    if !self.thinking_sig.is_empty() {
+                        self.pending_thought_sig = Some(
+                            json!({
+                                "thinking": self.thinking_text,
+                                "signature": self.thinking_sig
+                            })
+                            .to_string(),
+                        );
+                    }
+                    self.in_thinking = false;
+                } else if !self.tool_id.is_empty() {
+                    flush_tool_call(
+                        tx,
+                        &self.tool_id,
+                        &self.tool_name,
+                        &self.tool_args,
+                        self.pending_thought_sig.take(),
+                    );
+                    self.tool_id.clear();
+                    self.tool_name.clear();
+                    self.tool_args.clear();
+                }
+            }
+            "message_start" => {
+                if let Some(u) = v["message"]["usage"].as_object() {
+                    *usage = parse_anthropic_start_usage(u);
+                }
+            }
+            "message_delta" => {
+                match v["delta"]["stop_reason"].as_str() {
+                    Some("max_tokens") => {
+                        log::warn!(
+                            "Anthropic response truncated: stop_reason=max_tokens for model {}",
+                            self.model
+                        );
+                        let _ = tx.send(AiEvent::Notice(
+                            "response truncated: the model hit its max_tokens limit — the answer may be incomplete"
+                                .to_string(),
+                        ));
+                    }
+                    Some("refusal") => {
+                        log::warn!(
+                            "Anthropic response stopped: stop_reason=refusal for model {}",
+                            self.model
+                        );
+                        let _ = tx.send(AiEvent::Notice(
+                            "the provider stopped this response (refusal)".to_string(),
+                        ));
+                    }
+                    _ => {}
+                }
+                if let Some(u) = v["usage"].as_object() {
+                    apply_anthropic_output_tokens(usage, u);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn on_stream_end(&mut self, tx: &UnboundedSender<AiEvent>) {
+        // Flush any buffered tool call that ended without a content_block_stop
+        // event (e.g. network disconnect mid-stream).
+        if !self.tool_id.is_empty() {
+            flush_tool_call(
+                tx,
+                &self.tool_id,
+                &self.tool_name,
+                &self.tool_args,
+                self.pending_thought_sig.take(),
+            );
+            self.tool_id.clear();
+            self.tool_name.clear();
+            self.tool_args.clear();
         }
     }
 }
@@ -206,231 +346,17 @@ impl AiClient for AnthropicClient {
             body["tools"] = json!(get_tool_definition(&loaded_tools));
         }
 
-        const MAX_FIRST_TOKEN_RETRIES: u32 = 2;
-        const MAX_STREAM_RETRIES: u32 = 3;
-        let mut first_token_seen = false;
-        let mut stall_retries: u32 = 0;
-        let mut transport_retries: u32 = 0;
-
-        'attempt: loop {
-            let response = send_with_retry(|| {
+        drive_sse_stream(
+            || {
                 http()
                     .post("https://api.anthropic.com/v1/messages")
                     .headers(headers.clone())
                     .json(&body)
-            })
-            .await?;
-
-            let mut stream = response.bytes_stream();
-            let mut tool_id = String::new();
-            let mut tool_name = String::new();
-            let mut tool_args = String::new();
-            // Extended thinking support: collect thinking text + signature so they can be
-            // echoed back in subsequent turns (Anthropic requires the full thinking block).
-            let mut in_thinking = false;
-            let mut thinking_text = String::new();
-            let mut thinking_sig = String::new();
-            // Holds the JSON-encoded thinking block from the most recent thinking content
-            // block; passed to the next tool call dispatched in this response.
-            let mut pending_thought_sig: Option<String> = None;
-            let mut sse = crate::ai::SseBuffer::new();
-            let mut usage = TokenBreakdown::default();
-            let mut malformed_frames: u32 = 0;
-
-            let drain: anyhow::Result<()> = 'drain: loop {
-                let timeout =
-                    crate::ai::select_timeout(first_token_seen, crate::ai::stream_timeouts());
-                match crate::ai::stream_next_with_timeout(&mut stream, timeout, first_token_seen)
-                    .await
-                {
-                    Some(Ok(bytes)) => {
-                        if let Err(e) = sse.push(&bytes) {
-                            break 'drain Err(e);
-                        }
-                        while let Some(data) = sse.next_data() {
-                            if data == "[DONE]" {
-                                break 'drain Ok(());
-                            }
-                            match serde_json::from_str::<Value>(&data) {
-                                Ok(v) => {
-                                    let msg_type = v["type"].as_str().unwrap_or("");
-                                    if !first_token_seen && is_content_event(msg_type) {
-                                        first_token_seen = true;
-                                    }
-
-                                    // Anthropic reports failures (overloaded, invalid request
-                                    // discovered mid-stream) as an in-stream error event after
-                                    // the 200; dropping it would surface as a silent empty
-                                    // response.
-                                    if msg_type == "error" {
-                                        let msg = v["error"]["message"]
-                                            .as_str()
-                                            .unwrap_or("unknown provider error");
-                                        break 'drain Err(anyhow::anyhow!(
-                                            "AI stream returned an error: {msg}"
-                                        ));
-                                    }
-
-                                    if msg_type == "content_block_start" {
-                                        if v["content_block"]["type"] == "tool_use" {
-                                            if let Some(id) = v["content_block"]["id"].as_str() {
-                                                tool_id = id.to_string();
-                                                tool_name = v["content_block"]["name"]
-                                                    .as_str()
-                                                    .unwrap_or("")
-                                                    .to_string();
-                                                tool_args.clear();
-                                            }
-                                        } else if v["content_block"]["type"] == "thinking" {
-                                            in_thinking = true;
-                                            thinking_text.clear();
-                                            thinking_sig.clear();
-                                        }
-                                    } else if msg_type == "content_block_delta" {
-                                        if v["delta"]["type"] == "text_delta" {
-                                            if let Some(t) = v["delta"]["text"].as_str()
-                                                && !t.is_empty()
-                                            {
-                                                let _ = tx.send(AiEvent::Token(t.to_string()));
-                                            }
-                                        } else if v["delta"]["type"] == "input_json_delta" {
-                                            if let Some(partial) =
-                                                v["delta"]["partial_json"].as_str()
-                                            {
-                                                tool_args.push_str(partial);
-                                            }
-                                        } else if v["delta"]["type"] == "thinking_delta" {
-                                            if let Some(t) = v["delta"]["thinking"].as_str() {
-                                                thinking_text.push_str(t);
-                                            }
-                                        } else if v["delta"]["type"] == "signature_delta"
-                                            && let Some(s) = v["delta"]["signature"].as_str()
-                                        {
-                                            thinking_sig.push_str(s);
-                                        }
-                                    } else if msg_type == "content_block_stop" {
-                                        if in_thinking {
-                                            // Encode both fields so convert_messages can reconstruct
-                                            // the full thinking block for the round-trip.
-                                            if !thinking_sig.is_empty() {
-                                                pending_thought_sig = Some(
-                                                    json!({
-                                                        "thinking": thinking_text,
-                                                        "signature": thinking_sig
-                                                    })
-                                                    .to_string(),
-                                                );
-                                            }
-                                            in_thinking = false;
-                                        } else if !tool_id.is_empty() {
-                                            flush_tool_call(
-                                                &tx,
-                                                &tool_id,
-                                                &tool_name,
-                                                &tool_args,
-                                                pending_thought_sig.take(),
-                                            );
-                                            tool_id.clear();
-                                            tool_name.clear();
-                                            tool_args.clear();
-                                        }
-                                    } else if msg_type == "message_start" {
-                                        if let Some(u) = v["message"]["usage"].as_object() {
-                                            usage = parse_anthropic_start_usage(u);
-                                        }
-                                    } else if msg_type == "message_delta" {
-                                        match v["delta"]["stop_reason"].as_str() {
-                                            Some("max_tokens") => {
-                                                log::warn!(
-                                                    "Anthropic response truncated: stop_reason=max_tokens \
-                                                 for model {}",
-                                                    self.model
-                                                );
-                                                let _ = tx.send(AiEvent::Notice("response truncated: the model hit its max_tokens limit — the answer may be incomplete".to_string()));
-                                            }
-                                            Some("refusal") => {
-                                                log::warn!(
-                                                    "Anthropic response stopped: stop_reason=refusal \
-                                                 for model {}",
-                                                    self.model
-                                                );
-                                                let _ = tx.send(AiEvent::Notice(
-                                                    "the provider stopped this response (refusal)"
-                                                        .to_string(),
-                                                ));
-                                            }
-                                            _ => {}
-                                        }
-                                        if let Some(u) = v["usage"].as_object() {
-                                            apply_anthropic_output_tokens(&mut usage, u);
-                                        }
-                                    }
-                                }
-                                Err(_e) => {
-                                    malformed_frames += 1;
-                                    if malformed_frames == 1 {
-                                        log::warn!(
-                                            "malformed SSE frame from Anthropic: {}",
-                                            crate::util::truncate_chars(&data, 120)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Some(Err(e)) => break 'drain Err(e),
-                    None => break 'drain Ok(()),
-                }
-            };
-
-            match drain {
-                Ok(()) => {
-                    crate::ai::record_stream_success();
-                    if malformed_frames > 0 {
-                        let _ = tx.send(AiEvent::Notice(format!(
-                            "provider sent {malformed_frames} malformed stream frame(s) — the response may be incomplete"
-                        )));
-                    }
-                    // Flush any buffered tool call that ended without a
-                    // content_block_stop event (e.g. network disconnect mid-stream).
-                    if !tool_id.is_empty() {
-                        flush_tool_call(
-                            &tx,
-                            &tool_id,
-                            &tool_name,
-                            &tool_args,
-                            pending_thought_sig.take(),
-                        );
-                    }
-                    let _ = tx.send(AiEvent::Done(usage));
-                    return Ok(());
-                }
-                Err(e) => {
-                    if !first_token_seen {
-                        if crate::ai::is_retriable_transport(&e)
-                            && transport_retries < MAX_STREAM_RETRIES
-                        {
-                            transport_retries += 1;
-                            log::warn!(
-                                "AI stream transport error before first token (attempt {transport_retries}/{MAX_STREAM_RETRIES}): {e}"
-                            );
-                            tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
-                                .await;
-                            continue 'attempt;
-                        }
-                        if stall_retries < MAX_FIRST_TOKEN_RETRIES {
-                            stall_retries += 1;
-                            log::warn!(
-                                "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
-                            );
-                            continue 'attempt;
-                        }
-                    }
-                    crate::ai::record_stream_failure();
-                    return Err(e);
-                }
-            }
-        }
+            },
+            || AnthropicFrameHandler::new(&self.model),
+            tx,
+        )
+        .await
     }
 }
 
@@ -622,6 +548,58 @@ mod tests {
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.cache_read_tokens, 0);
         assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn frame_handler_streams_tokens_flushes_tool_and_rejects_error_frame() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut handler = AnthropicFrameHandler::new("claude-sonnet-4-6");
+        let mut first_token_seen = false;
+        let mut usage = TokenBreakdown::default();
+
+        handler
+            .on_frame(
+                &json!({"type": "message_start", "message": {"usage": {"input_tokens": 100}}}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+        assert!(!first_token_seen, "message_start does not count as a token");
+        assert_eq!(usage.input_tokens, 100);
+
+        handler
+            .on_frame(
+                &json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hello"}}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+        assert!(first_token_seen);
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::Token(t)) if t == "hello"));
+
+        // Unclosed tool_use block should flush on_stream_end
+        handler
+            .on_frame(
+                &json!({"type": "content_block_start", "content_block": {"type": "tool_use", "id": "tc_9", "name": "list_shells"}}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+        handler.on_stream_end(&tx);
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::ListShells { id, .. }) if id == "tc_9"));
+
+        let err = handler
+            .on_frame(
+                &json!({"type": "error", "error": {"message": "overloaded"}}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("overloaded"));
     }
 }
 

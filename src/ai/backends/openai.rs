@@ -3,12 +3,11 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{
-    dispatch_tool_event, get_openai_tool_definition, invalid_args_event, invalid_args_log_line,
-    malformed_args_event,
-};
+use crate::ai::tools::get_openai_tool_definition;
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
-use crate::ai::{AiClient, http, send_with_retry};
+use crate::ai::{AiClient, http};
+
+use super::{SseFrameHandler, drive_sse_stream, emit_tool_call_raw_json};
 
 /// Parse the `usage` object from an OpenAI SSE event into a `TokenBreakdown`.
 /// Reads `prompt_tokens`, `completion_tokens`, and `prompt_tokens_details.cached_tokens`;
@@ -41,30 +40,6 @@ pub(crate) struct ToolCallAcc {
     pub id: String,
     pub name: String,
     pub args: String,
-}
-
-/// Send the malformed-arguments event for a tool call (B15): a known tool
-/// becomes an `InvalidToolArgs` tool result so the turn still records usage
-/// and the model can correct the arguments; an unknown tool keeps the
-/// `Notice` path.  Never `AiEvent::Error`.
-fn emit_malformed_args(
-    tx: &UnboundedSender<AiEvent>,
-    id: &str,
-    name: &str,
-    raw: &str,
-    parse_error: &str,
-) {
-    match malformed_args_event(id, name, raw, parse_error, None) {
-        Some(ev) => {
-            let _ = tx.send(ev);
-        }
-        None => {
-            log::warn!("model called unknown tool '{name}' — malformed call dropped");
-            let _ = tx.send(AiEvent::Notice(format!(
-                "the model called unknown tool '{name}' — the call was dropped"
-            )));
-        }
-    }
 }
 
 /// Whether a delta carries a real token (non-empty content, reasoning, or tool calls).
@@ -118,6 +93,104 @@ pub(crate) fn apply_tool_call_delta(calls: &mut Vec<ToolCallAcc>, tc: &Value) {
         }
         if let Some(a) = f.get("arguments").and_then(|a| a.as_str()) {
             acc.args.push_str(a);
+        }
+    }
+}
+
+struct OpenAiFrameHandler<'a> {
+    model: &'a str,
+    calls: Vec<ToolCallAcc>,
+}
+
+impl<'a> OpenAiFrameHandler<'a> {
+    fn new(model: &'a str) -> Self {
+        Self {
+            model,
+            calls: Vec::new(),
+        }
+    }
+}
+
+impl SseFrameHandler for OpenAiFrameHandler<'_> {
+    fn provider_name(&self) -> &'static str {
+        "OpenAI"
+    }
+
+    fn on_frame(
+        &mut self,
+        v: &Value,
+        tx: &UnboundedSender<AiEvent>,
+        first_token_seen: &mut bool,
+        usage: &mut TokenBreakdown,
+    ) -> Result<()> {
+        if let Some(err) = v.get("error") {
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| err.to_string());
+            anyhow::bail!("AI stream returned an error: {msg}");
+        }
+        if let Some(delta) = v["choices"].get(0).and_then(|c| c["delta"].as_object()) {
+            if !*first_token_seen && delta_carries_token(delta) {
+                *first_token_seen = true;
+            }
+            if let Some(content) = delta.get("content").and_then(|c| c.as_str())
+                && !content.is_empty()
+            {
+                let _ = tx.send(AiEvent::Token(content.to_string()));
+            }
+            if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                for tc in tool_calls {
+                    apply_tool_call_delta(&mut self.calls, tc);
+                }
+            }
+        }
+        if let Some(reason) = v["choices"]
+            .get(0)
+            .and_then(|c| c["finish_reason"].as_str())
+        {
+            match reason {
+                "length" => {
+                    log::warn!(
+                        "OpenAI response truncated: finish_reason=length (max_tokens reached) for model {}",
+                        self.model
+                    );
+                    let _ = tx.send(AiEvent::Notice(
+                        "response truncated: the model hit its max_tokens limit — the answer may be incomplete"
+                            .to_string(),
+                    ));
+                }
+                "content_filter" => {
+                    log::warn!(
+                        "OpenAI response stopped by content filter for model {}",
+                        self.model
+                    );
+                    let _ = tx.send(AiEvent::Notice(
+                        "the provider stopped this response (content_filter)".to_string(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
+            *usage = parse_openai_usage(u);
+        }
+        Ok(())
+    }
+
+    fn on_stream_end(&mut self, tx: &UnboundedSender<AiEvent>) {
+        for acc in std::mem::take(&mut self.calls) {
+            if acc.name.is_empty() {
+                continue;
+            }
+            let id = if acc.id.is_empty() {
+                // Compat servers may omit ids; results still need one to correlate.
+                crate::ai::next_tool_id()
+            } else {
+                acc.id
+            };
+            emit_tool_call_raw_json(tx, &id, &acc.name, &acc.args, None);
         }
     }
 }
@@ -226,203 +299,17 @@ impl AiClient for OpenAiClient {
         // `tool_choice` without `tools` is a 400 on api.openai.com, so the
         // use_tools=false case simply omits both.
 
-        const MAX_FIRST_TOKEN_RETRIES: u32 = 2;
-        const MAX_STREAM_RETRIES: u32 = 3;
-        let mut first_token_seen = false;
-        let mut stall_retries: u32 = 0;
-        let mut transport_retries: u32 = 0;
-
-        'attempt: loop {
-            let response = send_with_retry(|| {
+        drive_sse_stream(
+            || {
                 http()
                     .post(format!("{}/chat/completions", self.base_url))
                     .bearer_auth(&self.api_key)
                     .json(&body)
-            })
-            .await?;
-
-            let mut stream = response.bytes_stream();
-            let mut calls: Vec<ToolCallAcc> = Vec::new();
-            let mut sse = crate::ai::SseBuffer::new();
-            let mut usage = TokenBreakdown::default();
-            let mut malformed_frames: u32 = 0;
-
-            let drain: anyhow::Result<()> = 'drain: loop {
-                let timeout =
-                    crate::ai::select_timeout(first_token_seen, crate::ai::stream_timeouts());
-                match crate::ai::stream_next_with_timeout(&mut stream, timeout, first_token_seen)
-                    .await
-                {
-                    Some(Ok(bytes)) => {
-                        if let Err(e) = sse.push(&bytes) {
-                            break 'drain Err(e);
-                        }
-                        while let Some(data) = sse.next_data() {
-                            if data == "[DONE]" {
-                                break 'drain Ok(());
-                            }
-                            match serde_json::from_str::<Value>(&data) {
-                                // Providers can report failures as an in-stream error
-                                // payload after the 200; dropping it would surface as
-                                // a silent empty response.
-                                Ok(v) => {
-                                    if let Some(err) = v.get("error") {
-                                        let msg = err
-                                            .get("message")
-                                            .and_then(|m| m.as_str())
-                                            .map(str::to_string)
-                                            .unwrap_or_else(|| err.to_string());
-                                        break 'drain Err(anyhow::anyhow!(
-                                            "AI stream returned an error: {msg}"
-                                        ));
-                                    }
-                                    if let Some(delta) =
-                                        v["choices"].get(0).and_then(|c| c["delta"].as_object())
-                                    {
-                                        if !first_token_seen && delta_carries_token(delta) {
-                                            first_token_seen = true;
-                                        }
-                                        if let Some(content) =
-                                            delta.get("content").and_then(|c| c.as_str())
-                                            && !content.is_empty()
-                                        {
-                                            let _ = tx.send(AiEvent::Token(content.to_string()));
-                                        }
-                                        if let Some(tool_calls) =
-                                            delta.get("tool_calls").and_then(|t| t.as_array())
-                                        {
-                                            for tc in tool_calls {
-                                                apply_tool_call_delta(&mut calls, tc);
-                                            }
-                                        }
-                                    }
-                                    if let Some(reason) = v["choices"]
-                                        .get(0)
-                                        .and_then(|c| c["finish_reason"].as_str())
-                                    {
-                                        match reason {
-                                            "length" => {
-                                                log::warn!(
-                                                    "OpenAI response truncated: finish_reason=length \
-                                                     (max_tokens reached) for model {}",
-                                                    self.model
-                                                );
-                                                let _ = tx.send(AiEvent::Notice("response truncated: the model hit its max_tokens limit — the answer may be incomplete".to_string()));
-                                            }
-                                            "content_filter" => {
-                                                log::warn!(
-                                                    "OpenAI response stopped by content filter for model {}",
-                                                    self.model
-                                                );
-                                                let _ = tx.send(AiEvent::Notice("the provider stopped this response (content_filter)".to_string()));
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    if let Some(u) = v.get("usage").and_then(|u| u.as_object()) {
-                                        usage = parse_openai_usage(u);
-                                    }
-                                }
-                                Err(_e) => {
-                                    malformed_frames += 1;
-                                    if malformed_frames == 1 {
-                                        log::warn!(
-                                            "malformed SSE frame from OpenAI: {}",
-                                            crate::util::truncate_chars(&data, 120)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Some(Err(e)) => break 'drain Err(e),
-                    None => break 'drain Ok(()),
-                }
-            };
-
-            match drain {
-                Ok(()) => {
-                    crate::ai::record_stream_success();
-                    if malformed_frames > 0 {
-                        let _ = tx.send(AiEvent::Notice(format!(
-                            "provider sent {malformed_frames} malformed stream frame(s) — the response may be incomplete"
-                        )));
-                    }
-                    for acc in calls {
-                        if acc.name.is_empty() {
-                            continue;
-                        }
-                        let id = if acc.id.is_empty() {
-                            // Compat servers may omit ids; results still need one to correlate.
-                            crate::ai::next_tool_id()
-                        } else {
-                            acc.id
-                        };
-                        // A tool that takes no arguments may arrive with an empty string
-                        // rather than "{}" from some compat servers.
-                        let args_str = if acc.args.trim().is_empty() {
-                            "{}"
-                        } else {
-                            acc.args.as_str()
-                        };
-                        match serde_json::from_str::<Value>(args_str) {
-                            Ok(args) => {
-                                if let Some(ev) = dispatch_tool_event(&id, &acc.name, &args, None) {
-                                    let _ = tx.send(ev);
-                                } else if let Some(ev) =
-                                    invalid_args_event(&id, &acc.name, &args, None)
-                                {
-                                    log::warn!("{}", invalid_args_log_line(&acc.name, &args));
-                                    let _ = tx.send(ev);
-                                } else {
-                                    log::warn!(
-                                        "model called unknown tool '{}' — call dropped",
-                                        acc.name
-                                    );
-                                    let _ = tx.send(AiEvent::Notice(format!(
-                                        "the model called unknown tool '{}' — the call was dropped",
-                                        acc.name
-                                    )));
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "model emitted malformed JSON arguments for tool '{}': {e}",
-                                    acc.name
-                                );
-                                emit_malformed_args(&tx, &id, &acc.name, args_str, &e.to_string());
-                            }
-                        }
-                    }
-                    let _ = tx.send(AiEvent::Done(usage));
-                    return Ok(());
-                }
-                Err(e) => {
-                    if !first_token_seen {
-                        if crate::ai::is_retriable_transport(&e)
-                            && transport_retries < MAX_STREAM_RETRIES
-                        {
-                            transport_retries += 1;
-                            log::warn!(
-                                "AI stream transport error before first token (attempt {transport_retries}/{MAX_STREAM_RETRIES}): {e}"
-                            );
-                            tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
-                                .await;
-                            continue 'attempt;
-                        }
-                        if stall_retries < MAX_FIRST_TOKEN_RETRIES {
-                            stall_retries += 1;
-                            log::warn!(
-                                "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
-                            );
-                            continue 'attempt;
-                        }
-                    }
-                    crate::ai::record_stream_failure();
-                    return Err(e);
-                }
-            }
-        }
+            },
+            || OpenAiFrameHandler::new(&self.model),
+            tx,
+        )
+        .await
     }
 }
 
@@ -558,5 +445,64 @@ mod tests {
         assert!(!delta_carries_token(
             json!({"role": "assistant"}).as_object().unwrap()
         ));
+    }
+
+    #[test]
+    fn frame_handler_streams_tokens_flushes_tools_and_propagates_error() {
+        use super::{OpenAiFrameHandler, SseFrameHandler};
+        use crate::ai::types::{AiEvent, TokenBreakdown};
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut handler = OpenAiFrameHandler::new("gpt-5");
+        let mut first_token_seen = false;
+        let mut usage = TokenBreakdown::default();
+
+        handler
+            .on_frame(
+                &json!({"choices": [{"delta": {"content": "hi"}}]}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+        assert!(first_token_seen);
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::Token(t)) if t == "hi"));
+
+        handler
+            .on_frame(
+                &json!({
+                    "choices": [{
+                        "delta": {
+                            "tool_calls": [{
+                                "index": 0,
+                                "id": "call_7",
+                                "function": {"name": "list_shells", "arguments": "{}"}
+                            }]
+                        },
+                        "finish_reason": "length"
+                    }],
+                    "usage": {"prompt_tokens": 50, "completion_tokens": 10}
+                }),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+        assert_eq!(usage.input_tokens, 50);
+        assert_eq!(usage.output_tokens, 10);
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::Notice(n)) if n.contains("truncated")));
+
+        handler.on_stream_end(&tx);
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::ListShells { id, .. }) if id == "call_7"));
+
+        let err = handler
+            .on_frame(
+                &json!({"error": {"message": "quota exceeded"}}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("quota exceeded"));
     }
 }

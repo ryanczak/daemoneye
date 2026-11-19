@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::ai::tools::{
-    dispatch_tool_event, get_gemini_tool_definition, invalid_args_event, invalid_args_log_line,
-};
+use crate::ai::tools::{dispatch_tool_event, get_gemini_tool_definition};
 use crate::ai::types::{AiEvent, Message, TokenBreakdown};
-use crate::ai::{AiClient, http, next_tool_id, send_with_retry};
+use crate::ai::{AiClient, http, next_tool_id};
+
+use super::{SseFrameHandler, drive_sse_stream, emit_tool_call_value};
 
 /// Whether a Gemini SSE frame counts as real output (a non-empty text part or a
 /// `functionCall` part) for first-token purposes. A frame carrying only
@@ -162,6 +162,121 @@ fn gemini_stream_request(
         .json(body)
 }
 
+struct GeminiFrameHandler<'a> {
+    model: &'a str,
+}
+
+impl<'a> GeminiFrameHandler<'a> {
+    fn new(model: &'a str) -> Self {
+        Self { model }
+    }
+}
+
+impl SseFrameHandler for GeminiFrameHandler<'_> {
+    fn provider_name(&self) -> &'static str {
+        "Gemini"
+    }
+
+    fn on_frame(
+        &mut self,
+        v: &Value,
+        tx: &UnboundedSender<AiEvent>,
+        first_token_seen: &mut bool,
+        usage: &mut TokenBreakdown,
+    ) -> Result<()> {
+        if let Some(err) = v.get("error") {
+            let msg = err
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| err.to_string());
+            anyhow::bail!("AI stream returned an error: {msg}");
+        }
+        if let Some(candidates) = v.get("candidates").and_then(|c| c.as_array())
+            && let Some(candidate) = candidates.first()
+        {
+            if part_counts_as_token(v) && !*first_token_seen {
+                *first_token_seen = true;
+            }
+            match candidate.get("finishReason").and_then(|r| r.as_str()) {
+                Some("MAX_TOKENS") => {
+                    log::warn!(
+                        "Gemini response truncated: finishReason=MAX_TOKENS for model {}",
+                        self.model
+                    );
+                    let _ = tx.send(AiEvent::Notice(
+                        "response truncated: the model hit its max_tokens limit — the answer may be incomplete"
+                            .to_string(),
+                    ));
+                }
+                Some("SAFETY") => {
+                    log::warn!(
+                        "Gemini response stopped by safety filter for model {}",
+                        self.model
+                    );
+                    let _ = tx.send(AiEvent::Notice(
+                        "the provider stopped this response (SAFETY)".to_string(),
+                    ));
+                }
+                Some("MALFORMED_FUNCTION_CALL") => {
+                    if let Some(msg) = candidate.get("finishMessage").and_then(|m| m.as_str()) {
+                        if let Some((cmd, bg)) = parse_malformed_gemini_call(msg) {
+                            *first_token_seen = true;
+                            let _ = tx.send(AiEvent::ToolCall {
+                                id: next_tool_id(),
+                                cmd,
+                                wait: Some(!bg),
+                                interactive: false,
+                                thought_signature: None,
+                                shell: None,
+                                host: None,
+                                timeout_secs: None,
+                            });
+                        } else {
+                            let _ = tx.send(AiEvent::Error(format!(
+                                "Gemini produced a malformed function call that could not be recovered.\nRaw: {msg}"
+                            )));
+                            anyhow::bail!("unrecoverable malformed function call");
+                        }
+                    }
+                    if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
+                        *usage = parse_gemini_usage(u);
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
+
+            if let Some(parts) = candidate["content"].get("parts").and_then(|p| p.as_array()) {
+                for part in parts {
+                    if let Some(t) = part.get("text").and_then(|text| text.as_str())
+                        && !t.is_empty()
+                    {
+                        *first_token_seen = true;
+                        let _ = tx.send(AiEvent::Token(t.to_string()));
+                    }
+                    if let Some(call) = part.get("functionCall") {
+                        let fn_name = call["name"].as_str().unwrap_or("");
+                        let args = call.get("args").cloned().unwrap_or_else(|| json!({}));
+                        let id = next_tool_id();
+                        let thought_sig = part
+                            .get("thoughtSignature")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                        if emit_tool_call_value(tx, &id, fn_name, &args, thought_sig) {
+                            *first_token_seen = true;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(u) = v.get("usageMetadata").and_then(|m| m.as_object()) {
+            *usage = parse_gemini_usage(u);
+        }
+        Ok(())
+    }
+}
+
 /// Google Gemini API backend.
 pub struct GeminiClient {
     api_key: String,
@@ -259,243 +374,12 @@ impl AiClient for GeminiClient {
             });
         }
 
-        const MAX_FIRST_TOKEN_RETRIES: u32 = 2;
-        const MAX_STREAM_RETRIES: u32 = 3;
-        let mut first_token_seen = false;
-        let mut stall_retries: u32 = 0;
-        let mut transport_retries: u32 = 0;
-
-        'attempt: loop {
-            let response = send_with_retry(|| {
-                gemini_stream_request(http(), &self.model, &self.api_key, &body)
-            })
-            .await?;
-
-            let mut stream = response.bytes_stream();
-            let mut sse = crate::ai::SseBuffer::new();
-            let mut usage = TokenBreakdown::default();
-            let mut malformed_frames: u32 = 0;
-
-            let drain: anyhow::Result<()> = 'drain: loop {
-                let timeout =
-                    crate::ai::select_timeout(first_token_seen, crate::ai::stream_timeouts());
-                match crate::ai::stream_next_with_timeout(&mut stream, timeout, first_token_seen)
-                    .await
-                {
-                    Some(Ok(bytes)) => {
-                        if let Err(e) = sse.push(&bytes) {
-                            break 'drain Err(e);
-                        }
-
-                        while let Some(data) = sse.next_data() {
-                            match serde_json::from_str::<Value>(&data) {
-                                Ok(v) => {
-                                    // Gemini reports failures as an in-stream error payload
-                                    // after the 200; dropping it would surface as a silent
-                                    // empty response.
-                                    if let Some(err) = v.get("error") {
-                                        let msg = err
-                                            .get("message")
-                                            .and_then(|m| m.as_str())
-                                            .map(str::to_string)
-                                            .unwrap_or_else(|| err.to_string());
-                                        break 'drain Err(anyhow::anyhow!(
-                                            "AI stream returned an error: {msg}"
-                                        ));
-                                    }
-                                    if let Some(candidates) =
-                                        v.get("candidates").and_then(|c| c.as_array())
-                                        && let Some(candidate) = candidates.first()
-                                    {
-                                        if part_counts_as_token(&v) && !first_token_seen {
-                                            first_token_seen = true;
-                                        }
-                                        match candidate.get("finishReason").and_then(|r| r.as_str())
-                                        {
-                                            Some("MAX_TOKENS") => {
-                                                log::warn!(
-                                                    "Gemini response truncated: finishReason=MAX_TOKENS \
-                                     for model {}",
-                                                    self.model
-                                                );
-                                                let _ = tx.send(AiEvent::Notice("response truncated: the model hit its max_tokens limit — the answer may be incomplete".to_string()));
-                                            }
-                                            Some("SAFETY") => {
-                                                log::warn!(
-                                                    "Gemini response stopped by safety filter for model {}",
-                                                    self.model
-                                                );
-                                                let _ = tx.send(AiEvent::Notice(
-                                                    "the provider stopped this response (SAFETY)"
-                                                        .to_string(),
-                                                ));
-                                            }
-                                            _ => {}
-                                        }
-                                        // Gemini 2.5 Flash (thinking model) sometimes produces a
-                                        // Python-style function call string instead of a structured
-                                        // functionCall block.  The API signals this with finishReason
-                                        // "MALFORMED_FUNCTION_CALL" and a finishMessage containing
-                                        // the raw call text.  Recover by parsing the finishMessage.
-                                        if candidate.get("finishReason").and_then(|r| r.as_str())
-                                            == Some("MALFORMED_FUNCTION_CALL")
-                                        {
-                                            if let Some(msg) = candidate
-                                                .get("finishMessage")
-                                                .and_then(|m| m.as_str())
-                                            {
-                                                if let Some((cmd, bg)) =
-                                                    parse_malformed_gemini_call(msg)
-                                                {
-                                                    if !first_token_seen {
-                                                        first_token_seen = true;
-                                                    }
-                                                    let _ = tx.send(AiEvent::ToolCall {
-                                                        id: next_tool_id(),
-                                                        cmd,
-                                                        wait: Some(!bg),
-                                                        interactive: false,
-                                                        thought_signature: None,
-                                                        shell: None,
-                                                        host: None,
-                                                        timeout_secs: None,
-                                                    });
-                                                } else {
-                                                    let _ = tx.send(AiEvent::Error(format!(
-                                                        "Gemini produced a malformed function call \
-                                                 that could not be recovered.\n\
-                                                 Raw: {msg}"
-                                                    )));
-                                                    break 'drain Err(anyhow::anyhow!(
-                                                        "unrecoverable malformed function call"
-                                                    ));
-                                                }
-                                            }
-                                            continue;
-                                        }
-
-                                        if let Some(parts) = candidate["content"]
-                                            .get("parts")
-                                            .and_then(|p| p.as_array())
-                                        {
-                                            for part in parts {
-                                                if let Some(t) =
-                                                    part.get("text").and_then(|text| text.as_str())
-                                                    && !t.is_empty()
-                                                {
-                                                    if !first_token_seen {
-                                                        first_token_seen = true;
-                                                    }
-                                                    let _ = tx.send(AiEvent::Token(t.to_string()));
-                                                }
-                                                if let Some(call) = part.get("functionCall") {
-                                                    let fn_name =
-                                                        call["name"].as_str().unwrap_or("");
-                                                    // Gemini omits `args` entirely for calls
-                                                    // that take no arguments.
-                                                    let args = call
-                                                        .get("args")
-                                                        .cloned()
-                                                        .unwrap_or_else(|| json!({}));
-                                                    let id = next_tool_id();
-                                                    let thought_sig = part
-                                                        .get("thoughtSignature")
-                                                        .and_then(|v| v.as_str())
-                                                        .map(String::from);
-                                                    if let Some(ev) = dispatch_tool_event(
-                                                        &id,
-                                                        fn_name,
-                                                        &args,
-                                                        thought_sig.clone(),
-                                                    ) {
-                                                        if !first_token_seen {
-                                                            first_token_seen = true;
-                                                        }
-                                                        let _ = tx.send(ev);
-                                                    } else if let Some(ev) = invalid_args_event(
-                                                        &id,
-                                                        fn_name,
-                                                        &args,
-                                                        thought_sig,
-                                                    ) {
-                                                        log::warn!(
-                                                            "{}",
-                                                            invalid_args_log_line(fn_name, &args)
-                                                        );
-                                                        let _ = tx.send(ev);
-                                                    } else {
-                                                        log::warn!(
-                                                            "model called unknown tool '{fn_name}' — \
-                                             call dropped"
-                                                        );
-                                                        let _ = tx.send(AiEvent::Notice(format!(
-                                                        "the model called unknown tool '{fn_name}' — the call was dropped"
-                                                    )));
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    if let Some(u) =
-                                        v.get("usageMetadata").and_then(|m| m.as_object())
-                                    {
-                                        usage = parse_gemini_usage(u);
-                                    }
-                                }
-                                Err(_e) => {
-                                    malformed_frames += 1;
-                                    if malformed_frames == 1 {
-                                        log::warn!(
-                                            "malformed SSE frame from Gemini: {}",
-                                            crate::util::truncate_chars(&data, 120)
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Some(Err(e)) => break 'drain Err(e),
-                    None => break 'drain Ok(()),
-                }
-            };
-
-            match drain {
-                Ok(()) => {
-                    crate::ai::record_stream_success();
-                    if malformed_frames > 0 {
-                        let _ = tx.send(AiEvent::Notice(format!(
-                            "provider sent {malformed_frames} malformed stream frame(s) — the response may be incomplete"
-                        )));
-                    }
-                    let _ = tx.send(AiEvent::Done(usage));
-                    return Ok(());
-                }
-                Err(e) => {
-                    if !first_token_seen {
-                        if crate::ai::is_retriable_transport(&e)
-                            && transport_retries < MAX_STREAM_RETRIES
-                        {
-                            transport_retries += 1;
-                            log::warn!(
-                                "AI stream transport error before first token (attempt {transport_retries}/{MAX_STREAM_RETRIES}): {e}"
-                            );
-                            tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
-                                .await;
-                            continue 'attempt;
-                        }
-                        if stall_retries < MAX_FIRST_TOKEN_RETRIES {
-                            stall_retries += 1;
-                            log::warn!(
-                                "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
-                            );
-                            continue 'attempt;
-                        }
-                    }
-                    crate::ai::record_stream_failure();
-                    return Err(e);
-                }
-            }
-        }
+        drive_sse_stream(
+            || gemini_stream_request(http(), &self.model, &self.api_key, &body),
+            || GeminiFrameHandler::new(&self.model),
+            tx,
+        )
+        .await
     }
 }
 
@@ -716,5 +600,49 @@ mod tests {
             header, api_key,
             "the key must travel in the x-goog-api-key header"
         );
+    }
+
+    #[test]
+    fn frame_handler_streams_tokens_dispatches_tools_and_propagates_error() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut handler = GeminiFrameHandler::new("gemini-2.5-flash");
+        let mut first_token_seen = false;
+        let mut usage = TokenBreakdown::default();
+
+        handler
+            .on_frame(
+                &json!({
+                    "candidates": [{
+                        "content": {
+                            "parts": [
+                                {"text": "hello"},
+                                {"functionCall": {"name": "list_shells"}}
+                            ]
+                        },
+                        "finishReason": "MAX_TOKENS"
+                    }],
+                    "usageMetadata": {"promptTokenCount": 80, "candidatesTokenCount": 20}
+                }),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+        assert!(first_token_seen);
+        assert_eq!(usage.input_tokens, 80);
+        assert_eq!(usage.output_tokens, 20);
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::Notice(n)) if n.contains("truncated")));
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::Token(t)) if t == "hello"));
+        assert!(matches!(rx.try_recv(), Ok(AiEvent::ListShells { .. })));
+
+        let err = handler
+            .on_frame(
+                &json!({"error": {"message": "internal error"}}),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("internal error"));
     }
 }
