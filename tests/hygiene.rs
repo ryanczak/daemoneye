@@ -36,10 +36,6 @@ const FN_CAP: usize = 150;
 /// Files exempt from the file and function caps (PE decision, M31 README).
 const EXEMPT: &[(&str, &str)] = &[
     (
-        "src/ai/types/pending.rs",
-        "one enum with a variant per AI tool, and its impl: flat data",
-    ),
-    (
         "src/ai/tools/args.rs",
         "one argument struct per AI tool: flat data",
     ),

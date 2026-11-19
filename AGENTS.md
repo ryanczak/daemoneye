@@ -44,8 +44,8 @@ Rust daemon embedding an AI assistant into tmux. Forks to background, binds `~/.
 
 ## Adding a new AI tool (5 steps)
 
-1. `src/ai/types/pending.rs`: `PendingCall::ToolName` variant + `to_tool_call()`/`id()`/`tool_name()` arms
-2. `src/ai/types/pending.rs`: `summary()` arm + `should_emit_tool_feedback()` arm (`true` = silent tool, `false` = approval-gated)
+1. `src/ai/types/pending.rs` + `pending_wire.rs`: `PendingCall::ToolName` variant + `pending_field!`/`tool_name()`/`should_emit_tool_feedback()` arms + argument serialization arm
+2. `src/ai/types/pending_summary.rs`: `summary()` (or `shell_summary()`) arm
 3. `src/ai/tools/defs.rs` + `src/ai/tools/dispatch.rs`: `ToolDef` in `TOOLS` slice + dispatch arm emitting `AiEvent::Tool(PendingCall::ToolName { ... })`
 4. `src/daemon/executor/route.rs` + `src/daemon/executor/dispatch_*.rs`: `PendingCall::ToolName` arm in the matching family dispatcher
 5. `assets/prompts/sre.toml` + `CLAUDE.md` + `README.md`: document the new tool
