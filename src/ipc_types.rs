@@ -274,3 +274,57 @@ pub struct AlertBadge {
     /// Seconds since the UNIX epoch when this alert was last re-seen firing.
     pub last_seen_unix: u64,
 }
+
+impl Response {
+    /// A stable, human-readable label for this variant — its PascalCase
+    /// name. Used in user-facing "unexpected reply" messages instead of a
+    /// `{:?}` debug dump, which would leak internal field values.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Response::Ok => "Ok",
+            Response::SessionCounters { .. } => "SessionCounters",
+            Response::ShellList { .. } => "ShellList",
+            Response::ShellLogList { .. } => "ShellLogList",
+            Response::ShellLog { .. } => "ShellLog",
+            Response::ShellScreen { .. } => "ShellScreen",
+            Response::ShellChunk { .. } => "ShellChunk",
+            Response::ShellSignalled { .. } => "ShellSignalled",
+            Response::ShellOpened { .. } => "ShellOpened",
+            Response::ShellExited => "ShellExited",
+            Response::Error(_) => "Error",
+            Response::SessionInfo { .. } => "SessionInfo",
+            Response::Token(_) => "Token",
+            Response::SystemMsg(_) => "SystemMsg",
+            Response::ToolCallPrompt { .. } => "ToolCallPrompt",
+            Response::CredentialPrompt { .. } => "CredentialPrompt",
+            Response::ToolResult { .. } => "ToolResult",
+            Response::ToolStarted { .. } => "ToolStarted",
+            Response::ToolFinished { .. } => "ToolFinished",
+            Response::PaneSelectPrompt { .. } => "PaneSelectPrompt",
+            Response::ScriptDeletePrompt { .. } => "ScriptDeletePrompt",
+            Response::ScriptWritePrompt { .. } => "ScriptWritePrompt",
+            Response::ScheduleWritePrompt { .. } => "ScheduleWritePrompt",
+            Response::ScheduleList { .. } => "ScheduleList",
+            Response::ScriptList { .. } => "ScriptList",
+            Response::RunbookWritePrompt { .. } => "RunbookWritePrompt",
+            Response::RunbookDeletePrompt { .. } => "RunbookDeletePrompt",
+            Response::RunbookList { .. } => "RunbookList",
+            Response::AlertState { .. } => "AlertState",
+            Response::EditFilePrompt { .. } => "EditFilePrompt",
+            Response::UsageUpdate { .. } => "UsageUpdate",
+            Response::KeepAlive => "KeepAlive",
+            Response::ModelChanged { .. } => "ModelChanged",
+            Response::ModelList { .. } => "ModelList",
+            Response::PaneChanged { .. } => "PaneChanged",
+            Response::PaneList { .. } => "PaneList",
+            Response::ContainerStatus { .. } => "ContainerStatus",
+            Response::DaemonStatus { .. } => "DaemonStatus",
+            Response::SessionSaved { .. } => "SessionSaved",
+            Response::SessionLoaded { .. } => "SessionLoaded",
+            Response::SavedSessionList { .. } => "SavedSessionList",
+            Response::Reloaded { .. } => "Reloaded",
+            Response::LimitsInfo { .. } => "LimitsInfo",
+            Response::Notice { .. } => "Notice",
+        }
+    }
+}

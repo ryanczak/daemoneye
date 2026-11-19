@@ -132,11 +132,16 @@ where
 /// Open a shell owned by the user (`/shell [host]`): the same path the
 /// model's `open_shell` takes, with `Owner::User` as the owner. Answers with
 /// the new shell's id, or the refusal (an unknown host, the per-owner cap).
-pub(super) async fn handle_shell_open<W>(tx: &mut W, host: Option<&str>) -> Result<()>
+pub(super) async fn handle_shell_open<W>(
+    tx: &mut W,
+    reg: &ShellRegistry,
+    host: Option<&str>,
+) -> Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
     let response = match crate::daemon::executor::knowledge::open_shell_id(
+        reg,
         &crate::shell::Owner::User,
         host,
         None,

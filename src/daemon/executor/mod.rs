@@ -247,113 +247,10 @@ struct DispatchSnapshot {
     turn_count: usize,
 }
 
-/// Whether a ghost shell may use `send_input`.
-///
-/// Typing into a PTY displaces whatever the shell is doing, and no
-/// `GhostPolicy` auto-approve category covers it, so the default is deny — a
-/// ghost needs an explicit agent `ToolPolicy` allow. Deliberately **not**
-/// routed through `prompt_and_await_approval`, whose ghost branch
-/// auto-approves any non-sudo string via `GhostPolicy::is_safe`: a ghost
-/// typing into the user's panes is exactly the displacement that gate exists
-/// to prevent.
-pub(crate) fn ghost_may_send_input(
-    is_ghost: bool,
-    policy: Option<&crate::agents::policy::ToolPolicy>,
-) -> bool {
-    !is_ghost || policy.is_some_and(|p| p.explicitly_allows("send_input")) // ghost needs an explicit allow
-}
-
-/// Whether a ghost may type into a shell held by `fg`.
-///
-/// A ghost that answered "yes" is allowed at a prompt always, and into a
-/// running program only when its runbook opted in with `allow_tui_input`:
-/// there the bytes land inside whatever holds the shell, which is exactly
-/// what the runbook author asked for. The `Foreground` argument is what the
-/// live probe classified, so the gate follows the terminal's actual state
-/// at the moment of the call, not a cached one.
-pub(crate) fn ghost_may_type_into(fg: &crate::shell::Foreground, allow_tui_input: bool) -> bool {
-    match fg {
-        crate::shell::Foreground::Prompt => true,
-        crate::shell::Foreground::Program { .. } => allow_tui_input,
-        // A paused job is not reading input, an exited shell is gone and an
-        // unknown state may be either; the opt-in does not reach these, so
-        // the answer stays no.
-        crate::shell::Foreground::Paused { .. }
-        | crate::shell::Foreground::Exited
-        | crate::shell::Foreground::Unknown => false,
-    }
-}
-
-/// The tool result when the ghost gate refuses: it names the shell, what
-/// holds it, and that nothing was sent. Deliberately informative — the ghost
-/// reads the `Foreground` wording and can answer with `list_shells` or a
-/// fresh shell rather than retrying blind. For a `Program` foreground the
-/// refusal names the runbook field that lifts it; for `Paused`, `Exited`
-/// and `Unknown` it does not, because no field does.
-pub(crate) fn ghost_input_refusal(shell: &str, fg: &crate::shell::Foreground) -> String {
-    let lift = match fg {
-        crate::shell::Foreground::Program { .. } => {
-            " A runbook that sets `allow_tui_input: true` may type into a \
-             running program."
-        }
-        _ => "",
-    };
-    format!(
-        "Error: shell {shell} is {fg}, not a shell at its prompt. A ghost may \
-         type only into a shell at its prompt; typing here would reach whatever \
-         holds the shell now, and nothing was sent. Use list_shells to find a \
-         shell at its prompt, or open one with open_shell.{lift}"
-    )
-}
-
-/// True when this session may run a **foreground** command.
-///
-/// Foreground execution is deliberately outside the container — the user is
-/// present and approving it. A ghost shell has no user, so with the sandbox
-/// enabled a ghost foreground command would be an unsandboxed command on the
-/// host. Ghosts are background-only by design; this makes that a condition
-/// rather than a line of prompt text.
-pub(crate) fn ghost_may_run_foreground(is_ghost: bool, sandbox_enabled: bool) -> bool {
-    !is_ghost || !sandbox_enabled // a ghost gets no unsandboxed door out
-}
-
-/// Connect first for a named host; `None`, `"local"` and a malformed name
-/// pass through untouched — the tool itself refuses a malformed one with
-/// its existing wording.
-async fn connect_named_host<W, R>(
-    host: Option<&str>,
-    batch: bool,
-    id: &str,
-    tx: &mut W,
-    rx: &mut R,
-) -> Result<(), String>
-where
-    W: tokio::io::AsyncWriteExt + Unpin,
-    R: tokio::io::AsyncBufReadExt + Unpin,
-{
-    let Ok(crate::host::HostId::Named(name)) = host
-        .map(crate::host::HostId::parse)
-        .unwrap_or(Ok(crate::host::HostId::Local))
-    else {
-        return Ok(());
-    };
-    shell_exec::ensure_connected(&name, batch, id, tx, rx).await
-}
-
-/// Does the `edit_file` arm run its connect step? `edit_file` refuses every
-/// ghost **inside** the operation ("cannot run in a Ghost Shell"), so a
-/// ghost's call must never reach the connect step — it would open a
-/// BatchMode ControlMaster to a host its runbook never named before being
-/// refused. Chat (`is_ghost = false`) with a well-formed name connects
-/// first; `None`, `"local"` and a malformed name pass through (the
-/// operation refuses a malformed one with its own wording).
-fn edit_file_connects_first(is_ghost: bool, host: Option<&str>) -> bool {
-    !is_ghost
-        && matches!(
-            host.map(crate::host::HostId::parse),
-            Some(Ok(crate::host::HostId::Named(_)))
-        )
-}
+use route::{connect_named_host, edit_file_connects_first};
+pub(crate) use route::{
+    ghost_input_refusal, ghost_may_run_foreground, ghost_may_send_input, ghost_may_type_into,
+};
 
 /// What a shell-command failure tells the model. Both PTY arms render the
 /// run error through this one helper so they cannot diverge.
@@ -1143,7 +1040,6 @@ mod tests {
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().ok();
         let reg = crate::shell::ShellRegistry::default();
-        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
         crate::shell::with_shells(&reg, |store| {
             store.insert(
                 "s0".to_string(),
@@ -1221,7 +1117,6 @@ mod tests {
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().ok();
         let reg = crate::shell::ShellRegistry::default();
-        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
         let store: SessionStore = SessionStore::new();
         let call = PendingCall::GetShellContext {
             id: "t1".to_string(),

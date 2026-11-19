@@ -127,8 +127,14 @@ async fn open_shell_on_an_unknown_host_names_the_host_not_the_shell_limit() {
     )
     .expect("write config");
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
-    let out = open_shell(&Owner::Chat("hosted".into()), Some("nope"), None, None).await;
+    let out = open_shell(
+        &reg,
+        &Owner::Chat("hosted".into()),
+        Some("nope"),
+        None,
+        None,
+    )
+    .await;
     assert!(
         out.contains("nope"),
         "the refusal must name the host the model asked for: {out}"
@@ -193,8 +199,7 @@ async fn open_shell_on_a_named_host_records_the_host() {
 async fn open_shell_without_a_host_records_the_local_host() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
-    let out = open_shell(&Owner::Chat("local".into()), None, None, None).await;
+    let out = open_shell(&reg, &Owner::Chat("local".into()), None, None, None).await;
     assert!(
         out.contains("Opened shell"),
         "the precondition is a ready local shell: {out}"
@@ -220,8 +225,7 @@ async fn open_shell_without_a_host_records_the_local_host() {
 async fn open_shell_local_result_names_the_size() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
-    let out = open_shell(&Owner::Chat("sentinel".into()), None, None, None).await;
+    let out = open_shell(&reg, &Owner::Chat("sentinel".into()), None, None, None).await;
     let id = out
         .split_whitespace()
         .map(|w| {
@@ -253,8 +257,14 @@ async fn open_shell_local_result_names_the_size() {
 async fn open_shell_names_the_requested_size() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
-    let out = open_shell(&Owner::Chat("sized".into()), None, Some(50), Some(160)).await;
+    let out = open_shell(
+        &reg,
+        &Owner::Chat("sized".into()),
+        None,
+        Some(50),
+        Some(160),
+    )
+    .await;
     assert!(
         out.contains("Opened shell"),
         "the precondition is a ready shell: {out}"
@@ -271,8 +281,14 @@ async fn open_shell_names_the_requested_size() {
 async fn open_shell_rejects_a_malformed_host_name_before_any_spawn() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
-    let out = open_shell(&Owner::Chat("weird".into()), Some("bad name!"), None, None).await;
+    let out = open_shell(
+        &reg,
+        &Owner::Chat("weird".into()),
+        Some("bad name!"),
+        None,
+        None,
+    )
+    .await;
     assert!(
         out.starts_with("Error:"),
         "a malformed name is refused: {out}"
@@ -285,74 +301,6 @@ async fn open_shell_rejects_a_malformed_host_name_before_any_spawn() {
         with_shells(&reg, |store| store.len()),
         0,
         "a refused name must not leave a record behind"
-    );
-}
-
-/// Task 1's contract: the guard restores what `REPLACE` held *before* the
-/// swap, so a nested swap's drop puts the outer swap back rather than
-/// clearing to `None`.
-///
-/// `test_home_guard()` is here for its **lock**, not its `HOME` swap: the
-/// `REPLACE` global below is shared with the five `open_shell` seam tests
-/// (`#[test]`s run in parallel threads), and this test both reads it as a
-/// precondition and mutates it twice. The other five serialize on
-/// `crate::test_home()`, which bundles the same lock; this test needs no
-/// `$HOME`, so it takes the lock by itself.
-#[test]
-fn swap_in_restores_the_previous_registry_on_drop() {
-    let _home = crate::test_home_guard();
-    let outer = ShellRegistry::default();
-    let inner = ShellRegistry::default();
-    assert!(
-        open_shell_test_seam::swapped().is_none(),
-        "precondition: no swap is in scope (this test must not depend on another)"
-    );
-    let _outer = open_shell_test_seam::swap_in(&outer);
-    {
-        let _inner = open_shell_test_seam::swap_in(&inner);
-        assert!(
-            open_shell_test_seam::swapped().is_some(),
-            "the inner swap is in force while its guard lives"
-        );
-    }
-    assert!(
-        open_shell_test_seam::swapped().is_some(),
-        "the inner drop restores the outer swap, it does not clear to none"
-    );
-    drop(_outer);
-    assert!(
-        open_shell_test_seam::swapped().is_none(),
-        "the outer drop restores the empty state the test found"
-    );
-}
-
-/// The case 04b's review named as the seam's latent flake: a caller that
-/// goes through the public `open_shell` with **no** swap in scope must
-/// resolve the daemon singleton — a fresh, empty registry — not whatever
-/// an earlier test left in the seam. An unresolved (leaked or stale)
-/// seam is what would make this test order-dependent.
-#[tokio::test]
-async fn open_shell_without_a_swap_uses_the_daemon_registry() {
-    let (_home, _dir) = crate::test_home();
-    assert!(
-        open_shell_test_seam::swapped().is_none(),
-        "precondition: no swap is in scope (this test must not depend on another)"
-    );
-    let out = open_shell(&Owner::Chat("no-swap".into()), None, None, None).await;
-    assert!(
-        out.contains("Opened shell"),
-        "the precondition is a ready local shell: {out}"
-    );
-    // The record landed in the daemon singleton, and the seam is still
-    // empty — nothing was installed.
-    let singleton_ids = with_shells(crate::shell::registry(), |store| store.len());
-    assert!(
-        singleton_ids >= 1,
-        "the record must land in the daemon registry, not a swapped one: {singleton_ids}"
-    );
-    assert!(
-        open_shell_test_seam::swapped().is_none(),
-        "the path must not install a registry of its own"
     );
 }
 

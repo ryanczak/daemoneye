@@ -1897,7 +1897,6 @@ pub(super) async fn wait_until_host_reports(id: &str, want: &str, _reg: &ShellRe
 async fn program_status_surface_watch_returns_on_blocked() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
     let opened = open_shell_with(
         &reg,
         &Owner::Chat("watcher".into()),
@@ -1944,7 +1943,6 @@ async fn program_status_surface_watch_returns_on_blocked() {
 async fn program_status_surface_watch_returns_on_done() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
     let opened = open_shell_with(
         &reg,
         &Owner::Chat("watcher".into()),
@@ -1991,7 +1989,6 @@ async fn program_status_surface_watch_returns_on_done() {
 async fn program_status_surface_watch_returns_on_error() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
     let opened = open_shell_with(
         &reg,
         &Owner::Chat("watcher".into()),
@@ -2038,7 +2035,6 @@ async fn program_status_surface_watch_returns_on_error() {
 async fn program_status_surface_watch_ignores_a_record_already_blocked_at_the_start() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
     let opened = open_shell_with(
         &reg,
         &Owner::Chat("watcher".into()),
@@ -2086,7 +2082,6 @@ async fn program_status_surface_watch_ignores_a_record_already_blocked_at_the_st
 async fn program_status_surface_watch_keeps_waiting_through_a_working_report() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
     let opened = open_shell_with(
         &reg,
         &Owner::Chat("watcher".into()),
@@ -2133,7 +2128,6 @@ async fn program_status_surface_watch_keeps_waiting_through_a_working_report() {
 async fn program_status_surface_list_shells_shows_a_blocked_report_without_a_screen_read() {
     let (_home, _dir) = crate::test_home();
     let reg = ShellRegistry::default();
-    let _swap = open_shell_test_seam::swap_in(&reg);
     let opened = open_shell_with(
         &reg,
         &Owner::Chat("watcher".into()),

@@ -69,12 +69,13 @@ mod resolve_size_tests {
 /// through `open_shell_error`, which would wrap a host problem in per-owner
 /// shell-limit advice the model cannot act on.
 pub async fn open_shell(
+    reg: &ShellRegistry,
     caller: &Owner,
     host: Option<&str>,
     rows: Option<u64>,
     cols: Option<u64>,
 ) -> String {
-    match open_shell_id(caller, host, rows, cols).await {
+    match open_shell_id(reg, caller, host, rows, cols).await {
         Ok((id, host, size)) => opened_shell_sentence(&id, &host, size),
         Err(msg) => msg,
     }
@@ -85,6 +86,7 @@ pub async fn open_shell(
 /// it landed on and the size it was opened at; `Err` carries the same
 /// sentence `open_shell` returns.
 pub async fn open_shell_id(
+    reg: &ShellRegistry,
     caller: &Owner,
     host: Option<&str>,
     rows: Option<u64>,
@@ -103,7 +105,7 @@ pub async fn open_shell_id(
     let id = match &host {
         crate::host::HostId::Local => {
             open_shell_with_id(
-                &open_shell_test_registry(),
+                reg,
                 caller,
                 crate::host::HostId::Local,
                 max_per_owner,
@@ -123,7 +125,7 @@ pub async fn open_shell_id(
             }
             let name = name.clone();
             open_shell_with_id(
-                &open_shell_test_registry(),
+                reg,
                 caller,
                 crate::host::HostId::Named(name.clone()),
                 max_per_owner,
@@ -256,53 +258,6 @@ fn opened_shell_sentence(id: &ShellId, host: &crate::host::HostId, size: (u16, u
     )
 }
 
-/// The registry `open_shell`'s tests drive. The daemon-wide singleton is a
-/// `OnceLock` that survives across tests, so a test that goes through the
-/// public form needs a registry it can assert on afterwards — swap in a fresh
-/// one and restore the old when the returned guard drops.
-#[cfg(test)]
-pub(crate) mod open_shell_test_seam {
-    use std::sync::Mutex;
-
-    use crate::util::UnpoisonExt;
-
-    static REPLACE: Mutex<Option<crate::shell::ShellRegistry>> = Mutex::new(None);
-
-    /// Install `fresh` as the registry `open_shell` resolves, for as long as
-    /// the returned guard is alive: dropping it puts back whatever `REPLACE`
-    /// held before the swap, so nested swaps unwind in order and an outer
-    /// test's registry survives an inner test's.
-    pub(crate) fn swap_in(fresh: &crate::shell::ShellRegistry) -> SwapGuard {
-        let previous = REPLACE.lock().unwrap_or_log().replace(fresh.clone());
-        SwapGuard { previous }
-    }
-
-    /// The swapped-in registry, if any test currently holds one.
-    pub(crate) fn swapped() -> Option<crate::shell::ShellRegistry> {
-        REPLACE.lock().unwrap_or_log().clone()
-    }
-
-    /// Restores the pre-swap contents of `REPLACE` when dropped. Holds the
-    /// *previous* value rather than clearing, so nesting restores in order.
-    pub(crate) struct SwapGuard {
-        previous: Option<crate::shell::ShellRegistry>,
-    }
-
-    impl Drop for SwapGuard {
-        fn drop(&mut self) {
-            *REPLACE.lock().unwrap_or_log() = self.previous.take();
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn open_shell_test_registry() -> crate::shell::ShellRegistry {
-    match open_shell_test_seam::swapped() {
-        Some(swapped) => swapped,
-        None => crate::shell::registry().clone(),
-    }
-}
-
 #[cfg(test)]
 pub(super) async fn spawn_in_process_host(id: ShellId) -> anyhow::Result<()> {
     tests::spawn_in_process_host(id).await
@@ -348,11 +303,6 @@ pub(crate) async fn spawn_pinky_ssh(id: ShellId) -> anyhow::Result<()> {
     std::mem::forget(lock);
     std::mem::forget(dir);
     Ok(())
-}
-
-#[cfg(not(test))]
-pub(super) fn open_shell_test_registry() -> crate::shell::ShellRegistry {
-    crate::shell::registry().clone()
 }
 
 async fn spawn_on_named_host(id: ShellId, name: &str, size: (u16, u16)) -> anyhow::Result<()> {

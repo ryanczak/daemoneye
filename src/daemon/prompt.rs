@@ -67,13 +67,18 @@ pub fn format_current_time_line() -> String {
 
 /// Build the first-turn prompt: full host context + terminal snapshot + query.
 pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
+    build_first_turn_prompt_in(ctx, crate::shell::registry())
+}
+
+pub fn build_first_turn_prompt_in(ctx: &PromptCtx, shells: &crate::shell::ShellRegistry) -> String {
     let in_tmux = ctx.chat_pane.is_some();
     let session_summary = if in_tmux {
         ctx.cache.get_labeled_context(ctx.chat_pane)
     } else {
-        crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
-            ctx.session_id.unwrap_or_default().to_string(),
-        ))
+        crate::daemon::executor::knowledge::shells_only_context(
+            shells,
+            &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
+        )
     };
     let sys_ctx = crate::sys_context::get_or_init_sys_context().format_for_ai();
     let daemon_host = crate::daemon::daemon_hostname();
@@ -106,6 +111,7 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
         String::new()
     };
     let shell_block = crate::daemon::executor::knowledge::shell_context_block(
+        shells,
         &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
     );
     let hosts_block = crate::daemon::executor::knowledge::hosts_context_block(ctx.config);
@@ -134,6 +140,13 @@ pub fn build_first_turn_prompt(ctx: &PromptCtx) -> String {
 
 /// Build the subsequent-turn prompt: budget note + optional snapshot + query.
 pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
+    build_subsequent_turn_prompt_in(ctx, crate::shell::registry())
+}
+
+pub fn build_subsequent_turn_prompt_in(
+    ctx: &PromptCtx,
+    shells: &crate::shell::ShellRegistry,
+) -> String {
     let context_window = ctx.config.resolve_model(None).context_window();
     let token_pct = if context_window > 0 {
         (ctx.last_prompt_tokens as f64 / context_window as f64 * 100.0) as u32
@@ -191,6 +204,7 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         String::new()
     };
     let shell_block = crate::daemon::executor::knowledge::shell_context_block(
+        shells,
         &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
     );
     let hosts_block = crate::daemon::executor::knowledge::hosts_context_block(ctx.config);
@@ -231,9 +245,10 @@ pub fn build_subsequent_turn_prompt(ctx: &PromptCtx) -> String {
         let session_summary = if ctx.chat_pane.is_some() {
             ctx.cache.get_labeled_context(ctx.chat_pane)
         } else {
-            crate::daemon::executor::knowledge::shells_only_context(&crate::shell::Owner::Chat(
-                ctx.session_id.unwrap_or_default().to_string(),
-            ))
+            crate::daemon::executor::knowledge::shells_only_context(
+                shells,
+                &crate::shell::Owner::Chat(ctx.session_id.unwrap_or_default().to_string()),
+            )
         };
         format!(
             "{budget_note}{hosts_block}{shell_block}{tool_restriction_block}{dynamic_memory}{situational}{pane_map}{current_time_line}\
@@ -336,7 +351,6 @@ mod tests {
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().ok();
         let reg = crate::shell::ShellRegistry::default();
-        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
         crate::shell::with_shells(&reg, |store| {
             store.insert(
                 "s0".to_string(),
@@ -355,14 +369,10 @@ mod tests {
             );
         });
         let cache = cache_with_one_pane("home");
-        let prompt = build_first_turn_prompt(&ctx_with(
-            &cache,
-            &plain_config(),
-            None,
-            None,
-            Some("sess-a"),
-            false,
-        ));
+        let prompt = build_first_turn_prompt_in(
+            &ctx_with(&cache, &plain_config(), None, None, Some("sess-a"), false),
+            &reg,
+        );
         assert!(
             prompt.contains("[SHELLS] 1"),
             "the shells block must count the fixture shell: {prompt}"
@@ -462,7 +472,6 @@ mod tests {
         unsafe { std::env::set_var("HOME", dir.path()) };
         crate::config::Config::ensure_dirs().ok();
         let reg = crate::shell::ShellRegistry::default();
-        let _swap = crate::daemon::executor::knowledge::open_shell_test_seam::swap_in(&reg);
         crate::shell::with_shells(&reg, |store| {
             store.insert(
                 "s0".to_string(),
@@ -481,14 +490,10 @@ mod tests {
             );
         });
         let cache = cache_with_one_pane("home");
-        let prompt = build_subsequent_turn_prompt(&ctx_with(
-            &cache,
-            &plain_config(),
-            None,
-            None,
-            Some("sess-a"),
-            true,
-        ));
+        let prompt = build_subsequent_turn_prompt_in(
+            &ctx_with(&cache, &plain_config(), None, None, Some("sess-a"), true),
+            &reg,
+        );
         assert!(
             prompt.contains("[SHELLS]"),
             "the shells block replaces the pane snapshot: {prompt}"

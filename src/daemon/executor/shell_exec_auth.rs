@@ -364,3 +364,113 @@ where
     )
     .await
 }
+
+/// Record one completed command in the shell's `.meta.json` index, so
+/// `read_shell` / `find_in_shells` return what the user would have seen.
+/// Everything here is best-effort: the index is derived data, exactly like the
+/// memory FTS index, and a failure must never change what the command returns
+/// to the model.
+pub(in super::super) async fn index_command_output(
+    reg: &ShellRegistry,
+    cmd: &str,
+    id: &ShellId,
+    outcome: &CommandOutcome,
+    before: Option<u64>,
+) {
+    let (started_unix, owner, host) = with_shells(reg, |store| {
+        store
+            .get(id.as_str())
+            .map(|record| {
+                (
+                    record.started_unix,
+                    Some(record.owner.key()),
+                    Some(record.host.as_str().to_string()),
+                )
+            })
+            .unwrap_or((0, None, None))
+    });
+    let cast = crate::shell::resolve_cast(id.as_str(), started_unix);
+    let Some(before) = before else {
+        log::warn!(
+            "meta index: no cast file before the command in shell {}; not indexed: {cmd}",
+            id.as_str()
+        );
+        return;
+    };
+    let range = settle_markers(&cast, before, &outcome.nonce).await;
+    let Some((first_byte, end_byte)) = range else {
+        log::warn!(
+            "meta index: markers for shell {} command `{cmd}` never landed in {} \
+             within {CAST_SETTLE_TIMEOUT:?}; not indexed",
+            id.as_str(),
+            cast.display()
+        );
+        return;
+    };
+    let record = CommandRecord {
+        index: 0,
+        command: cmd.to_owned(),
+        started: before as f64,
+        ended: after_cast_len(&cast, before) as f64,
+        exit_code: outcome.exit_code,
+        first_byte,
+        end_byte,
+    };
+    let meta_path = meta_path_for(&cast);
+    if let Err(e) = MetaIndex::append(
+        &meta_path,
+        &cast,
+        id.as_str(),
+        started_unix,
+        owner.as_deref(),
+        host.as_deref(),
+        record,
+    ) {
+        log::warn!(
+            "meta index: appending to {} failed, command output is unaffected: {e}",
+            meta_path.display()
+        );
+    }
+}
+
+async fn settle_markers(
+    cast: &Path,
+    before: u64,
+    nonce: &crate::shell::Nonce,
+) -> Option<(u64, u64)> {
+    let deadline = tokio::time::Instant::now() + CAST_SETTLE_TIMEOUT;
+    loop {
+        let after = match std::fs::metadata(cast) {
+            Ok(m) => m.len(),
+            Err(e) => {
+                log::warn!("meta index: cast {} vanished mid-read: {e}", cast.display());
+                return None;
+            }
+        };
+        if after > before
+            && let Ok(slice) = read_cast_slice(cast, before, after)
+            && let Some((first, end)) = marked_inner_range(&slice, nonce)
+        {
+            return Some((before + first, before + end));
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(CAST_SETTLE_POLL).await;
+    }
+}
+
+fn after_cast_len(cast: &Path, before: u64) -> u64 {
+    std::fs::metadata(cast)
+        .map(|m| m.len())
+        .unwrap_or(before)
+        .max(before)
+}
+
+fn read_cast_slice(cast: &Path, before: u64, after: u64) -> std::io::Result<Vec<u8>> {
+    let mut file = File::open(cast)?;
+    file.seek(SeekFrom::Start(before))?;
+    let mut buf = vec![0u8; (after - before) as usize];
+    file.read_exact(&mut buf)?;
+    Ok(buf)
+}

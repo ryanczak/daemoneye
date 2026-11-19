@@ -8,6 +8,7 @@ pub(super) fn dispatch(
     session_id: Option<&str>,
     chat_pane: Option<&str>,
     cache: &Arc<SessionCache>,
+    shells: &crate::shell::ShellRegistry,
 ) -> anyhow::Result<ToolCallOutcome> {
     match call {
         PendingCall::GetShellContext { scope, .. } => 'arm: {
@@ -17,6 +18,7 @@ pub(super) fn dispatch(
             };
             if breadth == knowledge::ContextBreadth::ShellsOnly {
                 break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
+                    shells,
                     &chat_owner(session_id),
                 )));
             }
@@ -24,6 +26,7 @@ pub(super) fn dispatch(
             // shells only — no pane blocks, no pane map.
             if chat_pane.is_none() {
                 break 'arm Ok(ToolCallOutcome::Result(knowledge::shells_only_context(
+                    shells,
                     &chat_owner(session_id),
                 )));
             }
@@ -33,7 +36,7 @@ pub(super) fn dispatch(
             };
             let ctx = cache.get_labeled_context_scoped(chat_pane, ctx_scope);
             let pane_map = cache.pane_map_summary(chat_pane);
-            let shells_line = knowledge::shell_context_block(&chat_owner(session_id));
+            let shells_line = knowledge::shell_context_block(shells, &chat_owner(session_id));
             Ok(ToolCallOutcome::Result(format!(
                 "{shells_line}{ctx}\n{pane_map}"
             )))

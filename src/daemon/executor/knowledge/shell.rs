@@ -423,12 +423,8 @@ pub(crate) fn shell_context_block_in(reg: &ShellRegistry, caller: &Owner, now_un
 /// `executor` and the prompt builders the way every sibling module's functions
 /// are re-exported, and a `pub(super)` item cannot be given wider visibility on
 /// re-export.
-pub fn shell_context_block(caller: &Owner) -> String {
-    #[cfg(test)]
-    let reg = open_shell_test_registry();
-    #[cfg(not(test))]
-    let reg = crate::shell::registry().clone();
-    shell_context_block_in(&reg, caller, now_unix())
+pub fn shell_context_block(reg: &ShellRegistry, caller: &Owner) -> String {
+    shell_context_block_in(reg, caller, now_unix())
 }
 
 /// Format the ambient hosts block: the implicit `local` host, then each
@@ -516,8 +512,8 @@ pub fn resolve_context_scope(scope: Option<&str>) -> Result<ContextBreadth, Stri
 /// The `scope: "shells"` result: 08a's ambient block, or a sentence saying
 /// there is nothing, because a tool result of `""` reads to the model as a
 /// failed call.
-pub fn shells_only_context(caller: &Owner) -> String {
-    let block = shell_context_block(caller);
+pub fn shells_only_context(reg: &ShellRegistry, caller: &Owner) -> String {
+    let block = shell_context_block(reg, caller);
     if block.is_empty() {
         "[SHELLS] none — this session has no open shells. \
          run_terminal_command or open_shell starts one.\n"

@@ -534,7 +534,8 @@ fn context_scope_rejects_unknown_value() {
 #[test]
 fn shells_only_context_without_shells_is_not_empty() {
     let (_home, _dir) = crate::test_home();
-    let out = shells_only_context(&Owner::Chat("empty".into()));
+    let reg = ShellRegistry::default();
+    let out = shells_only_context(&reg, &Owner::Chat("empty".into()));
     assert!(
         !out.is_empty(),
         "an empty tool result reads as a failed call; got: {out:?}"

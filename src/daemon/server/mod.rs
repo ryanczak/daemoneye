@@ -179,7 +179,7 @@ pub async fn handle_client(
             shells::handle_shell_input(&mut tx, &state.shells, &id, &bytes).await?;
         }
         Request::ShellOpen { host } => {
-            shells::handle_shell_open(&mut tx, host.as_deref()).await?;
+            shells::handle_shell_open(&mut tx, &state.shells, host.as_deref()).await?;
         }
         Request::ShellSignal { id, signal } => {
             shells::handle_shell_signal(&mut tx, &state.shells, &id, &signal).await?;

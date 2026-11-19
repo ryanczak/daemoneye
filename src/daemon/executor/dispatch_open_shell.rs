@@ -7,7 +7,7 @@ pub(super) async fn dispatch<W, R>(
     call: &PendingCall,
     tx: &mut W,
     rx: &mut R,
-    session_id: Option<&str>,
+    ctx: SessionCtx<'_>,
     ghost_policy: &Option<GhostPolicy>,
     is_ghost: bool,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -15,6 +15,9 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let SessionCtx {
+        session_id, shells, ..
+    } = ctx;
     match call {
         PendingCall::OpenShell {
             host, rows, cols, ..
@@ -44,7 +47,14 @@ where
                 break 'arm Ok(ToolCallOutcome::Result(format!("Error: {msg}")));
             }
             Ok(ToolCallOutcome::Result(
-                knowledge::open_shell(&chat_owner(session_id), host.as_deref(), *rows, *cols).await,
+                knowledge::open_shell(
+                    shells,
+                    &chat_owner(session_id),
+                    host.as_deref(),
+                    *rows,
+                    *cols,
+                )
+                .await,
             ))
         }
 

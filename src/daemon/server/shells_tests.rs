@@ -745,18 +745,19 @@ async fn shell_input_records_a_user_input_event_without_its_content() {
 #[tokio::test]
 async fn shell_open_opens_a_user_owned_shell() {
     let (_guard, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
     let mut tx: Vec<u8> = Vec::new();
-    handle_shell_open(&mut tx, None).await.unwrap();
+    handle_shell_open(&mut tx, &reg, None).await.unwrap();
     let Response::ShellOpened { id } = parse_response(&tx) else {
         panic!("expected ShellOpened, got {tx:?}");
     };
-    let owner = with_shells(crate::shell::registry(), |store| {
+    let owner = with_shells(&reg, |store| {
         store.get(&id).map(|record| record.owner.key())
     });
     assert_eq!(owner.as_deref(), Some("user"), "the user owns it");
 
     let mut tx: Vec<u8> = Vec::new();
-    handle_shell_open(&mut tx, Some("no-such-host-08x"))
+    handle_shell_open(&mut tx, &reg, Some("no-such-host-08x"))
         .await
         .unwrap();
     let Response::Error(msg) = parse_response(&tx) else {
@@ -769,7 +770,7 @@ async fn shell_open_opens_a_user_owned_shell() {
     );
 
     let _ = crate::daemon::executor::knowledge::close_shell_with(
-        crate::shell::registry(),
+        &reg,
         &id,
         &crate::shell::Owner::User,
         std::time::Duration::from_millis(3000),
