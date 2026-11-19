@@ -1,5 +1,6 @@
 pub mod ansi;
 pub mod cache;
+mod cache_format;
 pub mod pane;
 pub mod session;
 pub mod window;
