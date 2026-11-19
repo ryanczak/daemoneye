@@ -22,10 +22,6 @@ fn src/daemon/server/mod.rs handle_client 229
 fn src/main.rs async_main 189
 fn src/manifest.rs auto_search_context 211
 fn src/shell/client.rs read_to_marker 236
-# M37 phase-06 — `resolve_edit_host_consults_the_self_host_refusal` (the
-# edit_file self-host refusal, driven through run_edit_file) grew the inline
-# tests 2344 → 2397; test lines only.
-test src/daemon/executor/file_ops/ops.rs 2397
 # M37 phase-01 — the gate-order tests (history + registry + fail-closed
 # inversions) grew the file past the cap. M37 phase-02b adds the attach
 # counters tests (bug-02b-1's second-connection case included); the file is a

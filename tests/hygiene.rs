@@ -34,16 +34,10 @@ const TEST_FILE_CAP: usize = 2000;
 const FN_CAP: usize = 150;
 
 /// Files exempt from the file and function caps (PE decision, M31 README).
-const EXEMPT: &[(&str, &str)] = &[
-    (
-        "src/ai/tools/args.rs",
-        "one argument struct per AI tool: flat data",
-    ),
-    (
-        "src/ai/tools/defs.rs",
-        "the `TOOLS` table, one `ToolDef` per AI tool: flat data",
-    ),
-];
+const EXEMPT: &[(&str, &str)] = &[(
+    "src/ai/tools/defs.rs",
+    "the `TOOLS` table, one `ToolDef` per AI tool: flat data",
+)];
 
 const ALLOWLIST: &str = "tests/hygiene_allowlist.txt";
 

@@ -5,8 +5,10 @@ use serde_json::Value;
 /// Trait for typed tool-argument deserialization + AiEvent construction.
 /// Every tool in `TOOLS` must have a corresponding impl — the
 /// `dispatch_roundtrip` test verifies coverage at compile time.
-pub(super) trait ToolArgs: Sized {
-    fn from_value(value: Value) -> Option<Self>;
+pub(super) trait ToolArgs: serde::de::DeserializeOwned {
+    fn from_value(value: Value) -> Option<Self> {
+        serde_json::from_value(value).ok()
+    }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent;
 }
 
@@ -109,15 +111,9 @@ pub(super) struct ScheduleCommandArgs {
     cron: Option<String>,
 }
 
+#[derive(Deserialize)]
 pub(super) struct LoadToolsArgs {
     groups: Value,
-}
-
-impl LoadToolsArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        let groups = value.get("groups")?.clone();
-        Some(Self { groups })
-    }
 }
 
 #[derive(Deserialize)]
@@ -413,10 +409,21 @@ pub(super) fn default_all() -> String {
 
 // ── ToolArgs impls ────────────────────────────────────────────────────────
 
+macro_rules! impl_tool_args {
+    ($args:ty => $variant:ident { $($field:ident),* $(,)? }) => {
+        impl ToolArgs for $args {
+            fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
+                AiEvent::Tool(PendingCall::$variant {
+                    id: id.to_string(),
+                    thought_signature: ts,
+                    $($field: self.$field,)*
+                })
+            }
+        }
+    };
+}
+
 impl ToolArgs for RunTerminalCommandArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         AiEvent::ToolCall {
             id: id.to_string(),
@@ -431,29 +438,10 @@ impl ToolArgs for RunTerminalCommandArgs {
     }
 }
 
-impl ToolArgs for ScheduleCommandArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ScheduleCommand {
-            id: id.to_string(),
-            name: self.name,
-            command: self.command,
-            is_script: self.is_script,
-            run_at: self.run_at,
-            interval: self.interval,
-            runbook: self.runbook,
-            ghost_runbook: self.ghost_runbook,
-            cron: self.cron,
-            thought_signature: ts,
-        })
-    }
-}
-
 impl ToolArgs for LoadToolsArgs {
     fn from_value(value: Value) -> Option<Self> {
-        LoadToolsArgs::from_value(value)
+        let groups = value.get("groups")?.clone();
+        Some(Self { groups })
     }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         let groups = extract_string_vec(&self.groups).unwrap_or_default();
@@ -465,204 +453,38 @@ impl ToolArgs for LoadToolsArgs {
     }
 }
 
-impl ToolArgs for CancelDeleteScheduleArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, _id: &str, _ts: Option<String>) -> AiEvent {
-        // Never called directly — cancel/delete schedule use schedule_id_event()
-        unreachable!("use schedule_id_event instead")
-    }
-}
-
 /// Build CancelSchedule or DeleteSchedule from the shared arg shape.
 pub(super) fn schedule_id_event<T>(args: Value, ts: Option<String>, mk: T) -> Option<AiEvent>
 where
     T: FnOnce(String, Option<String>) -> PendingCall,
 {
-    CancelDeleteScheduleArgs::from_value(args).map(|a| AiEvent::Tool(mk(a.id, ts)))
+    serde_json::from_value::<CancelDeleteScheduleArgs>(args)
+        .ok()
+        .map(|a| AiEvent::Tool(mk(a.id, ts)))
 }
 
-impl ToolArgs for WriteScriptArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::WriteScript {
-            id: id.to_string(),
-            script_name: self.script_name,
-            content: self.content,
-            thought_signature: ts,
-        })
-    }
+/// Shared helper for read/delete runbook — same arg shape, different event.
+pub(super) fn runbook_name_event<T>(args: Value, ts: Option<String>, mk: T) -> Option<AiEvent>
+where
+    T: FnOnce(String, Option<String>) -> PendingCall,
+{
+    ReadRunbookArgs::from_value(args).map(|a| AiEvent::Tool(mk(a.name, ts)))
 }
 
-impl ToolArgs for ReadScriptArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadScript {
-            id: id.to_string(),
-            script_name: self.script_name,
-            thought_signature: ts,
+/// Helpers for the dual-format tags/relates_to fields (JSON string or array).
+pub(super) fn extract_string_vec(v: &Value) -> Option<Vec<String>> {
+    v.as_str()
+        .and_then(|s| serde_json::from_str(s).ok())
+        .or_else(|| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                    .collect()
+            })
         })
-    }
-}
-
-impl ToolArgs for DeleteScriptArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::DeleteScript {
-            id: id.to_string(),
-            script_name: self.script_name,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ReadFileArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadFile {
-            id: id.to_string(),
-            path: self.path,
-            offset: self.offset,
-            limit: self.limit,
-            pattern: self.pattern,
-            host: self.host,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ReadShellArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadShell {
-            id: id.to_string(),
-            shell: self.shell,
-            lines: self.lines,
-            since_command: self.since_command,
-            filter: self.filter,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ReadShellScreenArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadShellScreen {
-            id: id.to_string(),
-            shell: self.shell,
-            lines: self.lines,
-            scrollback: self.scrollback,
-            pattern: self.pattern,
-            annotated: self.annotated,
-            wait_for: self.wait_for,
-            settle_ms: self.settle_ms,
-            timeout_secs: self.timeout_secs,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for GetShellContextArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::GetShellContext {
-            id: id.to_string(),
-            thought_signature: ts,
-            scope: self.scope,
-        })
-    }
-}
-
-impl ToolArgs for ListShellsArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ListShells {
-            id: id.to_string(),
-            thought_signature: ts,
-            scope: self.scope,
-        })
-    }
-}
-
-impl ToolArgs for FindInShellsArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::FindInShells {
-            id: id.to_string(),
-            pattern: self.pattern,
-            scope: self.scope,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for OpenShellArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::OpenShell {
-            id: id.to_string(),
-            host: self.host,
-            rows: self.rows,
-            cols: self.cols,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for CloseShellArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::CloseShell {
-            id: id.to_string(),
-            shell: self.shell,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for WatchShellArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::WatchShell {
-            id: id.to_string(),
-            shell: self.shell,
-            timeout_secs: self.timeout_secs,
-            pattern: self.pattern,
-            thought_signature: ts,
-        })
-    }
 }
 
 impl ToolArgs for SendInputArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         // `enter` defaults to true only for a text-only send: `keys:
         // ["Escape"]` must not also press Enter. Resolved here, at the tool
@@ -681,166 +503,7 @@ impl ToolArgs for SendInputArgs {
     }
 }
 
-impl ToolArgs for ListShellLogsArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ListShellLogs {
-            id: id.to_string(),
-            since: self.since,
-            limit: self.limit,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ReadShellLogArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadShellLog {
-            id: id.to_string(),
-            log: self.log,
-            command_index: self.command_index,
-            lines: self.lines,
-            filter: self.filter,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for EditFileArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::EditFile {
-            id: id.to_string(),
-            path: self.path,
-            operation: self.operation,
-            old_string: self.old_string,
-            new_string: self.new_string,
-            content: self.content,
-            dest_path: self.dest_path,
-            host: self.host,
-            sudo: self.sudo,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for WriteRunbookArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::WriteRunbook {
-            id: id.to_string(),
-            name: self.name,
-            content: self.content,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ReadRunbookArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadRunbook {
-            id: id.to_string(),
-            name: self.name,
-            thought_signature: ts,
-        })
-    }
-}
-
-/// Shared helper for read/delete runbook — same arg shape, different event.
-pub(super) fn runbook_name_event<T>(args: Value, ts: Option<String>, mk: T) -> Option<AiEvent>
-where
-    T: FnOnce(String, Option<String>) -> PendingCall,
-{
-    ReadRunbookArgs::from_value(args).map(|a| AiEvent::Tool(mk(a.name, ts)))
-}
-
-impl ToolArgs for RunLogTailArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::RunLogTail {
-            id: id.to_string(),
-            run_id: self.run_id,
-            limit: self.limit,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for RunLogSearchArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::RunLogSearch {
-            id: id.to_string(),
-            run_id: self.run_id,
-            query: self.query,
-            limit: self.limit,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for GetTurnArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::GetTurn {
-            id: id.to_string(),
-            run_id: self.run_id,
-            turn: self.turn,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for AddMemoryArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::AddMemory {
-            id: id.to_string(),
-            key: self.key,
-            value: self.value,
-            category: self.category,
-            thought_signature: ts,
-        })
-    }
-}
-
-/// Helpers for the dual-format tags/relates_to fields (JSON string or array).
-pub(super) fn extract_string_vec(v: &Value) -> Option<Vec<String>> {
-    v.as_str()
-        .and_then(|s| serde_json::from_str(s).ok())
-        .or_else(|| {
-            v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|item| item.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-        })
-}
-
 impl ToolArgs for UpdateMemoryArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         AiEvent::Tool(PendingCall::UpdateMemory {
             id: id.to_string(),
@@ -857,117 +520,7 @@ impl ToolArgs for UpdateMemoryArgs {
     }
 }
 
-impl ToolArgs for DeleteMemoryArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::DeleteMemory {
-            id: id.to_string(),
-            key: self.key,
-            category: self.category,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ReadMemoryArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadMemory {
-            id: id.to_string(),
-            key: self.key,
-            category: self.category,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for ListMemoriesArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ListMemories {
-            id: id.to_string(),
-            category: self.category,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for SearchRepositoryArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::SearchRepository {
-            id: id.to_string(),
-            query: self.query,
-            kind: self.kind,
-            thought_signature: ts,
-        })
-    }
-}
-pub(super) struct RecallContextArgs {
-    pub query: Option<String>,
-    pub turn_start: Option<u32>,
-    pub turn_end: Option<u32>,
-    pub scope: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct RecallContextDeserialize {
-    pub query: Option<String>,
-    pub turn_start: Option<u32>,
-    pub turn_end: Option<u32>,
-    pub scope: Option<String>,
-}
-
-impl ToolArgs for RecallContextArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        let deserialized: RecallContextDeserialize = serde_json::from_value(value).ok()?;
-        Some(Self {
-            query: deserialized.query,
-            turn_start: deserialized.turn_start,
-            turn_end: deserialized.turn_end,
-            scope: deserialized.scope,
-        })
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::RecallContext {
-            id: id.to_string(),
-            query: self.query,
-            turn_start: self.turn_start,
-            turn_end: self.turn_end,
-            scope: self.scope,
-            thought_signature: ts,
-        })
-    }
-}
-
-impl ToolArgs for SpawnGhostArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::SpawnGhost {
-            id: id.to_string(),
-            runbook: self.runbook,
-            message: self.message,
-            agent: self.agent,
-            host: self.host,
-            thought_signature: ts,
-        })
-    }
-}
-
 impl ToolArgs for CreateAgentArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
     fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
         AiEvent::Tool(PendingCall::CreateAgent {
             id: id.to_string(),
@@ -988,33 +541,71 @@ impl ToolArgs for CreateAgentArgs {
     }
 }
 
-impl ToolArgs for ReadAgentArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::ReadAgent {
-            id: id.to_string(),
-            name: self.name,
-            thought_signature: ts,
-        })
-    }
+#[derive(Deserialize)]
+pub(super) struct RecallContextArgs {
+    pub query: Option<String>,
+    pub turn_start: Option<u32>,
+    pub turn_end: Option<u32>,
+    pub scope: Option<String>,
 }
 
-impl ToolArgs for AwaitAgentResultArgs {
-    fn from_value(value: Value) -> Option<Self> {
-        serde_json::from_value(value).ok()
-    }
-    fn to_event(self, id: &str, ts: Option<String>) -> AiEvent {
-        AiEvent::Tool(PendingCall::AwaitAgentResult {
-            id: id.to_string(),
-            job_id: self.job_id,
-            agent_name: self.agent_name,
-            timeout_secs: self.timeout_secs,
-            thought_signature: ts,
-        })
-    }
-}
+impl_tool_args!(ScheduleCommandArgs => ScheduleCommand {
+    name,
+    command,
+    is_script,
+    run_at,
+    interval,
+    runbook,
+    ghost_runbook,
+    cron,
+});
+impl_tool_args!(WriteScriptArgs => WriteScript { script_name, content });
+impl_tool_args!(ReadScriptArgs => ReadScript { script_name });
+impl_tool_args!(DeleteScriptArgs => DeleteScript { script_name });
+impl_tool_args!(ReadFileArgs => ReadFile { path, offset, limit, pattern, host });
+impl_tool_args!(ReadShellArgs => ReadShell { shell, lines, since_command, filter });
+impl_tool_args!(ReadShellScreenArgs => ReadShellScreen {
+    shell,
+    lines,
+    scrollback,
+    pattern,
+    annotated,
+    wait_for,
+    settle_ms,
+    timeout_secs,
+});
+impl_tool_args!(GetShellContextArgs => GetShellContext { scope });
+impl_tool_args!(ListShellsArgs => ListShells { scope });
+impl_tool_args!(FindInShellsArgs => FindInShells { pattern, scope });
+impl_tool_args!(OpenShellArgs => OpenShell { host, rows, cols });
+impl_tool_args!(CloseShellArgs => CloseShell { shell });
+impl_tool_args!(WatchShellArgs => WatchShell { shell, timeout_secs, pattern });
+impl_tool_args!(ListShellLogsArgs => ListShellLogs { since, limit });
+impl_tool_args!(ReadShellLogArgs => ReadShellLog { log, command_index, lines, filter });
+impl_tool_args!(EditFileArgs => EditFile {
+    path,
+    operation,
+    old_string,
+    new_string,
+    content,
+    dest_path,
+    host,
+    sudo,
+});
+impl_tool_args!(WriteRunbookArgs => WriteRunbook { name, content });
+impl_tool_args!(ReadRunbookArgs => ReadRunbook { name });
+impl_tool_args!(RunLogTailArgs => RunLogTail { run_id, limit });
+impl_tool_args!(RunLogSearchArgs => RunLogSearch { run_id, query, limit });
+impl_tool_args!(GetTurnArgs => GetTurn { run_id, turn });
+impl_tool_args!(AddMemoryArgs => AddMemory { key, value, category });
+impl_tool_args!(DeleteMemoryArgs => DeleteMemory { key, category });
+impl_tool_args!(ReadMemoryArgs => ReadMemory { key, category });
+impl_tool_args!(ListMemoriesArgs => ListMemories { category });
+impl_tool_args!(SearchRepositoryArgs => SearchRepository { query, kind });
+impl_tool_args!(RecallContextArgs => RecallContext { query, turn_start, turn_end, scope });
+impl_tool_args!(SpawnGhostArgs => SpawnGhost { runbook, message, agent, host });
+impl_tool_args!(ReadAgentArgs => ReadAgent { name });
+impl_tool_args!(AwaitAgentResultArgs => AwaitAgentResult { job_id, agent_name, timeout_secs });
 
 #[cfg(test)]
 mod args_tests {
