@@ -799,6 +799,69 @@ mod tests {
     }
 
     #[test]
+    fn ghost_event_to_pending_call_collects_add_memory_read_file_and_load_tools() {
+        let add_mem = turn::ghost_event_to_pending_call(AiEvent::AddMemory {
+            id: "tc_mem".into(),
+            key: "followup".into(),
+            value: "disk cleaned".into(),
+            category: "incident".into(),
+            thought_signature: None,
+        })
+        .expect("AddMemory must be collected in ghost turns (required by wrap-up prompt)");
+        assert_eq!(add_mem.tool_name(), "add_memory");
+
+        let del_mem = turn::ghost_event_to_pending_call(AiEvent::DeleteMemory {
+            id: "tc_del".into(),
+            key: "old".into(),
+            category: "incident".into(),
+            thought_signature: None,
+        })
+        .expect("DeleteMemory must be collected in ghost turns");
+        assert_eq!(del_mem.tool_name(), "delete_memory");
+
+        let read_file = turn::ghost_event_to_pending_call(AiEvent::ReadFile {
+            id: "tc_rf".into(),
+            path: "/var/log/syslog".into(),
+            offset: None,
+            limit: Some(100),
+            pattern: None,
+            host: None,
+            thought_signature: None,
+        })
+        .expect("ReadFile must be collected in ghost turns");
+        assert_eq!(read_file.tool_name(), "read_file");
+
+        let load_tools = turn::ghost_event_to_pending_call(AiEvent::LoadTools {
+            id: "tc_lt".into(),
+            groups: vec!["memory".into()],
+            thought_signature: None,
+        })
+        .expect("LoadTools must be collected in ghost turns");
+        assert_eq!(load_tools.tool_name(), "load_tools");
+
+        let term_bg = turn::ghost_event_to_pending_call(AiEvent::ToolCall {
+            id: "tc_cmd".into(),
+            cmd: "df -h".into(),
+            wait: Some(true),
+            interactive: false,
+            thought_signature: None,
+            shell: None,
+            host: None,
+            timeout_secs: None,
+        })
+        .expect("ToolCall must route through ghost_pending_for_tool_call");
+        assert!(
+            matches!(term_bg, PendingCall::Background { .. }),
+            "ghost ToolCall without interactive becomes PendingCall::Background"
+        );
+
+        assert!(
+            turn::ghost_event_to_pending_call(AiEvent::Token("hi".into())).is_none(),
+            "non-tool events return None"
+        );
+    }
+
+    #[test]
     fn ghost_start_records_how_its_ssh_target_resolved() {
         let _lock = crate::test_home_guard();
         let tmp = tempfile::tempdir().expect("tempdir");

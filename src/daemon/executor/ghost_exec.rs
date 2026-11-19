@@ -6,6 +6,10 @@ use crate::daemon::session::with_sessions;
 use crate::daemon::utils::log_command;
 use crate::ipc::Response;
 
+#[path = "ghost_exec_helpers.rs"]
+mod helpers;
+use helpers::*;
+
 pub(super) struct FgArgs<'a> {
     pub id: &'a str,
     pub cmd: &'a str,
@@ -66,154 +70,29 @@ where
 {
     let SessionCtx {
         session_id,
-        session_name: _,
         sessions,
         ..
     } = ctx;
     let GhostCtx {
-        policy: ghost_policy,
+        policy: initial_policy,
         is_ghost,
         ..
     } = ghost_ctx;
-    // A ghost may name the host a command runs on (`host`), overriding the
-    // runbook's `ssh_target` binding: rebind the policy to it, so every
-    // gate and route below works as if the runbook had named that host.
-    // The `hosts:` fence that follows still applies — now to the named
-    // host — with its existing wording and event.
-    let rebound;
-    let ghost_policy = match (is_ghost, host, ghost_policy) {
-        (true, Some(name), Some(policy)) => {
-            let refusal = match crate::host::HostId::parse(name) {
-                Err(e) => Err(format!("Error: {e}")),
-                Ok(h) => policy
-                    .for_host(&h, &crate::config::current().hosts)
-                    .map_err(|e| format!("Error: {e}")),
-            };
-            match refusal {
-                Ok(p) => {
-                    rebound = p;
-                    Some(&rebound)
-                }
-                Err(msg) => {
-                    crate::daemon::utils::log_event(
-                        "ghost_host_refused",
-                        serde_json::json!({
-                            "session": session_id.unwrap_or("-"),
-                            "tool": "run_terminal_command",
-                            "requested_host": name,
-                            "allowed_hosts": policy.hosts,
-                        }),
-                    );
-                    send_response_split(
-                        tx,
-                        Response::ToolResult {
-                            tool_call_id: id.to_string(),
-                            output: msg.clone(),
-                        },
-                    )
-                    .await?;
-                    return Ok(ToolCallOutcome::Result(msg));
-                }
-            }
-        }
-        _ => ghost_policy,
+
+    let PreparedGhostPolicy {
+        policy: owned_policy,
+        remote_script,
+        remote_script_is_sudo,
+    } = match rebind_and_fence_ghost_policy(id, cmd, host, session_id, is_ghost, initial_policy, tx)
+        .await?
+    {
+        Ok(p) => p,
+        Err(refusal_outcome) => return Ok(refusal_outcome),
     };
-    // § 2.4 remote execution: a ghost ssh_target whitelisted-script invocation ships to
-    // the remote either by streaming (default, no remote disk) or — under sudo — by a
-    // persistent materialize to the sudoers-authorized path.
-    let remote_script = ghost_policy
-        .as_ref()
-        .filter(|_| is_ghost)
-        .and_then(|p| p.remote_script_call(cmd)); // Option<(String, String)>
-    let remote_script_is_sudo = remote_script.is_some()
-        && (crate::daemon::utils::command_has_sudo(cmd)
-            || ghost_policy
-                .as_ref()
-                .map(|p| p.run_with_sudo)
-                .unwrap_or(false));
+    let ghost_policy = owned_policy.as_ref();
 
-    // The runbook's `hosts:` list fences `ssh_target` before anything runs:
-    // a non-empty list must grant the host the value resolved to, and a
-    // value that resolved to no configured host cannot be granted at all.
-    if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost)
-        && !policy.may_use_ssh_target()
-    {
-        let (requested_host, msg) = match policy.remote_host.as_ref() {
-            Some(h) => (h.as_str().to_string(), ghost_host_refusal(policy, h)),
-            None => {
-                let target = policy.ssh_target.clone().unwrap_or_default();
-                let list = policy.hosts.join(", ");
-                let msg = format!(
-                    "Error: this runbook's ssh_target {target} is not a configured host, \
-                     so its `hosts:` list cannot grant it. Hosts this runbook allows: \
-                     {list} ({}). Configure a [hosts.<name>] entry whose ssh is {target}, \
-                     or work on the daemon host.",
-                    policy.hosts.len()
-                );
-                (target, msg)
-            }
-        };
-        crate::daemon::utils::log_event(
-            "ghost_host_refused",
-            serde_json::json!({
-                "session": session_id.unwrap_or("-"),
-                "tool": "run_terminal_command",
-                "requested_host": requested_host,
-                "allowed_hosts": policy.hosts,
-            }),
-        );
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: id.to_string(),
-                output: msg.clone(),
-            },
-        )
-        .await?;
-        return Ok(ToolCallOutcome::Result(msg));
-    }
-
-    // The resolved host's `sudo_scripts` gates elevated script runs: a host
-    // that declares a whitelist refuses anything it does not name.
-    if remote_script_is_sudo
-        && let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost)
-        && let Some((name, _)) = remote_script.as_ref()
-        && !policy.may_elevate_script(name)
-    {
-        let host = policy
-            .remote_host
-            .as_ref()
-            .map(|h| h.as_str().to_string())
-            .unwrap_or_default();
-        let list = policy.remote_sudo_scripts.join(", ");
-        let msg = format!(
-            "Error: script {name} is not in host {host}'s sudo_scripts ({list}), so it may \
-             not run under sudo there. Add it to [hosts.{host}] sudo_scripts, or run it \
-             without sudo."
-        );
-        crate::daemon::utils::log_event(
-            "ghost_elevation_refused",
-            serde_json::json!({
-                "session": session_id.unwrap_or("-"),
-                "host": host,
-                "script": name,
-                "allowed_scripts": policy.remote_sudo_scripts,
-            }),
-        );
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: id.to_string(),
-                output: msg.clone(),
-            },
-        )
-        .await?;
-        return Ok(ToolCallOutcome::Result(msg));
-    }
-
-    // Ghost shells: resolve bare/relative script names to absolute path.
     let resolved_cmd;
-    let cmd = if let Some(policy) = ghost_policy.as_ref().filter(|_| is_ghost) {
+    let cmd = if let Some(policy) = ghost_policy.filter(|_| is_ghost) {
         resolved_cmd = policy.resolve_command(cmd);
         resolved_cmd.as_str()
     } else {
@@ -242,240 +121,41 @@ where
         Err(outcome) => return Ok(outcome),
     };
 
-    // Ghost shells: build the remote command — stream by default, persist only for sudo.
-    let remote_built_cmd;
-    let cmd = if let Some((name, args)) = remote_script.as_ref() {
-        match crate::scripts::read_script(name) {
-            Ok(content) => {
-                remote_built_cmd = if remote_script_is_sudo {
-                    // Sudo: persistent materialize to the sudoers-authorized path, then
-                    // run the resolved `sudo ~/.daemoneye/scripts/<name> …` command.
-                    format!(
-                        "{} && {}",
-                        crate::scripts::remote_materialize_cmd(name, &content),
-                        cmd
-                    )
-                } else {
-                    // Default: stream content to the interpreter's stdin — no remote disk.
-                    crate::scripts::remote_stream_cmd(&content, args)
-                };
-                remote_built_cmd.as_str()
-            }
-            Err(e) => {
-                let msg = format!(
-                    "Error: cannot run script '{}' on the remote host — it is not \
-                     available on the daemon host: {}. Use write_script to create it first.",
-                    name, e
-                );
-                send_response_split(
-                    tx,
-                    Response::ToolResult {
-                        tool_call_id: id.to_string(),
-                        output: msg.clone(),
-                    },
-                )
-                .await?;
-                log_command(session_id, "background", "", cmd, "transfer-failed", &msg);
-                return Ok(ToolCallOutcome::Result(msg));
-            }
-        }
-    } else {
-        cmd
+    let built_cmd = match build_remote_script_command(
+        id,
+        cmd,
+        session_id,
+        remote_script.as_ref(),
+        remote_script_is_sudo,
+        tx,
+    )
+    .await?
+    {
+        Ok(c) => c,
+        Err(outcome) => return Ok(outcome),
     };
+    let cmd = built_cmd.as_str();
 
-    // 08c: a ghost whose `ssh_target` resolved to a configured host runs the
-    // approved command in a PTY shell **on that host** — the same substrate
-    // chat uses — synchronously, capped at the ghost turn budget, instead of
-    // wrapping it in `ssh <target> <cmd>` in a tmux window. Everything above
-    // (the two 08a gates, resolve_command, the approval, the remote-script
-    // build) already ran; everything below serves a local ghost, an
-    // unresolved ssh_target, and `backend = "tmux"`.
     if let Some(host) = super::ghost_remote::ghost_remote_host(is_ghost, ghost_policy)
         && let crate::host::HostId::Named(name) = &host
     {
-        // Connect before any shell spawns on the host — with `BatchMode`,
-        // so a host needing a credential fails here instead of hanging the
-        // ghost (its transport cannot answer a prompt).
-        if let Err(msg) = super::shell_exec::ensure_connected(
-            name,
-            true,
-            id,
-            &mut tokio::io::sink(),
-            &mut tokio::io::BufReader::new(tokio::io::empty()),
-        )
-        .await
-        {
-            let output = format!("Error: {msg}");
-            crate::daemon::stats::finish_command(cmd_id, 1);
-            send_response_split(
-                tx,
-                Response::ToolResult {
-                    tool_call_id: id.to_string(),
-                    output: output.clone(),
-                },
-            )
-            .await?;
-            log_command(
-                session_id,
-                "background",
-                name,
-                cmd,
-                "connect-failed",
-                &output,
-            );
-            return Ok(ToolCallOutcome::Result(output));
-        }
-        let owner = crate::shell::Owner::Ghost(session_id.unwrap_or_default().to_string());
-        let (output, exit_code) = super::ghost_remote::run_ghost_remote(
-            crate::shell::registry(),
-            owner,
-            host.clone(),
-            cmd,
-            id,
-            |shell_id| {
-                let (rows, cols) = crate::shell::spawn_size();
-                crate::shell::spawn_ghost_ssh_host(shell_id, name, rows, cols)
-            },
-        )
-        .await;
-        crate::daemon::stats::finish_command(cmd_id, exit_code);
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: id.to_string(),
-                output: output.clone(),
-            },
-        )
-        .await?;
-        log_command(session_id, "background", name, cmd, "approved", &output);
-        return Ok(ToolCallOutcome::Result(output));
+        return run_ghost_remote_branch(id, cmd, cmd_id, session_id, &host, name, tx).await;
     }
 
-    // A **sandboxed** local ghost runs the approved command in a PTY shell
-    // inside the ghost run's own sbx sandbox: the sandbox is created on the
-    // first command behind a fail-closed preflight (a failure returns the
-    // reason as the tool result and the command is never run on the host).
-    // The ghost's sandbox profile is its agent name.
     let sandbox_cfg = crate::config::current().sandbox.clone();
     if super::ghost_sandbox::ghost_sandbox_pty(is_ghost, &sandbox_cfg, ghost_policy) {
-        let sid = session_id.unwrap_or_default().to_string();
-        let profile = with_sessions(sessions, |store| {
-            store
-                .get(sid.as_str())
-                .and_then(|e| e.ghost_config().and_then(|g| g.agent.clone()))
-        });
-        let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
-        let run = crate::shell::real_runner(program);
-        let (output, exit_code) = match super::ghost_sandbox::ensure_ghost_sandbox(
-            &run,
-            &sandbox_cfg,
-            &sid,
-            profile.as_deref(),
-        )
-        .await
-        {
-            Ok(sandbox) => {
-                // An approved-script invocation runs the operator's copy of
-                // the script, staged into the sandbox on every call, never
-                // the sandbox's own (overwritable) one. A staging failure is
-                // an operator-facing reason: the command never runs.
-                let staged: Result<String, String> =
-                    match crate::daemon::executor::sbx::script_invocation(cmd, |n| {
-                        crate::scripts::resolve_script(n).is_ok()
-                    }) {
-                        Some((name, args_tail)) => {
-                            let host_path = crate::config::scripts_dir().join(&name);
-                            match super::ghost_sandbox::stage_script(
-                                &run,
-                                &sandbox,
-                                &name,
-                                &host_path.to_string_lossy(),
-                            )
-                            .await
-                            {
-                                Ok(()) => Ok(crate::daemon::executor::sbx::staged_script_command(
-                                    &name, &args_tail,
-                                )),
-                                Err(reason) => Err(reason),
-                            }
-                        }
-                        None => Ok(cmd.to_string()),
-                    };
-                match staged {
-                    Ok(cmd_to_run) => {
-                        let spawn_sandbox = sandbox.clone();
-                        super::ghost_sandbox::run_ghost_in_sandbox(
-                            crate::shell::registry(),
-                            crate::shell::Owner::Ghost(sid.clone()),
-                            &sandbox,
-                            &cmd_to_run,
-                            id,
-                            move |shell_id| {
-                                let (rows, cols) = crate::shell::spawn_size();
-                                let s = spawn_sandbox.clone();
-                                async move {
-                                    crate::shell::spawn_sbx_host(shell_id, &s, rows, cols).await
-                                }
-                            },
-                        )
-                        .await
-                    }
-                    Err(reason) => (reason, 1),
-                }
-            }
-            Err(reason) => (reason, 1),
-        };
-        crate::daemon::stats::finish_command(cmd_id, exit_code);
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: id.to_string(),
-                output: output.clone(),
-            },
-        )
-        .await?;
-        log_command(session_id, "background", "", cmd, "approved", &output);
-        return Ok(ToolCallOutcome::Result(output));
+        return run_ghost_sandbox_branch(id, cmd, cmd_id, session_id, sessions, &sandbox_cfg, tx)
+            .await;
     }
 
-    // A local ghost runs the approved command in a PTY shell on the daemon
-    // host, owned by the ghost and reused for its later commands, as the
-    // remote branch above does on its host. The sandbox keeps the tmux
-    // window path below: its container is launched there.
     if super::ghost_remote::ghost_local_pty(
         is_ghost,
         crate::config::current().sandbox.enabled,
         ghost_policy,
     ) {
-        let owner = crate::shell::Owner::Ghost(session_id.unwrap_or_default().to_string());
-        let (output, exit_code) = super::ghost_remote::run_ghost_remote(
-            crate::shell::registry(),
-            owner,
-            crate::host::HostId::Local,
-            cmd,
-            id,
-            |shell_id| {
-                let (rows, cols) = crate::shell::spawn_size();
-                crate::shell::spawn_detached_host(shell_id, &[], rows, cols)
-            },
-        )
-        .await;
-        crate::daemon::stats::finish_command(cmd_id, exit_code);
-        send_response_split(
-            tx,
-            Response::ToolResult {
-                tool_call_id: id.to_string(),
-                output: output.clone(),
-            },
-        )
-        .await?;
-        log_command(session_id, "background", "", cmd, "approved", &output);
-        return Ok(ToolCallOutcome::Result(output));
+        return run_ghost_local_pty_branch(id, cmd, cmd_id, session_id, tx).await;
     }
 
-    // The tmux window fallback is deleted (phase 05): a command that did not
-    // take a PTY branch above has no route left. Name the unresolved
-    // ssh_target when there is one so the model can fix the runbook.
     let reason = no_pty_route_refusal(is_ghost, ghost_policy);
     crate::daemon::stats::finish_command(cmd_id, 1);
     send_response_split(

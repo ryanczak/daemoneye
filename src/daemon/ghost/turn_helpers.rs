@@ -175,8 +175,14 @@ pub(super) fn load_and_compact_ghost_messages(
     Some((chat_messages, loaded_tools))
 }
 
-#[allow(clippy::result_large_err)]
-fn ghost_read_event_to_pending_call(ev: AiEvent) -> Result<PendingCall, AiEvent> {
+/// Convert a ghost stream [`AiEvent`] into a [`PendingCall`].
+///
+/// `AiEvent::ToolCall` (`run_terminal_command`) routes through
+/// [`ghost_pending_for_tool_call`] because ghost shells are background-only
+/// and refuse `interactive: true`. Every other tool event delegates to
+/// [`PendingCall::from_tool_event`], keeping ghost tool collection in lockstep
+/// with `run_conversation_loop`.
+pub(crate) fn ghost_event_to_pending_call(ev: AiEvent) -> Option<PendingCall> {
     match ev {
         AiEvent::ToolCall {
             id,
@@ -187,267 +193,14 @@ fn ghost_read_event_to_pending_call(ev: AiEvent) -> Result<PendingCall, AiEvent>
             shell: _shell,
             host,
             timeout_secs: _timeout_secs,
-        } => Ok(ghost_pending_for_tool_call(
+        } => Some(ghost_pending_for_tool_call(
             id,
             command,
             interactive,
             thought_signature,
             host,
         )),
-        AiEvent::ListRunbooks {
-            id,
-            thought_signature,
-        } => Ok(PendingCall::ListRunbooks {
-            id,
-            thought_signature,
-        }),
-        AiEvent::ReadRunbook {
-            id,
-            thought_signature,
-            name,
-        } => Ok(PendingCall::ReadRunbook {
-            id,
-            thought_signature,
-            name,
-        }),
-        AiEvent::SearchRepository {
-            id,
-            thought_signature,
-            query,
-            kind,
-        } => Ok(PendingCall::SearchRepository {
-            id,
-            thought_signature,
-            query,
-            kind,
-        }),
-        AiEvent::RecallContext {
-            id,
-            thought_signature,
-            query,
-            turn_start,
-            turn_end,
-            scope,
-        } => Ok(PendingCall::RecallContext {
-            id,
-            thought_signature,
-            query,
-            turn_start,
-            turn_end,
-            scope,
-        }),
-        AiEvent::ListMemories {
-            id,
-            thought_signature,
-            category,
-        } => Ok(PendingCall::ListMemories {
-            id,
-            thought_signature,
-            category,
-        }),
-        AiEvent::ReadMemory {
-            id,
-            thought_signature,
-            key,
-            category,
-        } => Ok(PendingCall::ReadMemory {
-            id,
-            thought_signature,
-            key,
-            category,
-        }),
-        AiEvent::GetShellContext {
-            id,
-            thought_signature,
-            scope,
-        } => Ok(PendingCall::GetShellContext {
-            id,
-            thought_signature,
-            scope,
-        }),
-        AiEvent::ListShells {
-            id,
-            thought_signature,
-            scope,
-        } => Ok(PendingCall::ListShells {
-            id,
-            thought_signature,
-            scope,
-        }),
-        other => Err(other),
-    }
-}
-
-#[allow(clippy::result_large_err)]
-fn ghost_artifact_event_to_pending_call(ev: AiEvent) -> Result<PendingCall, AiEvent> {
-    match ev {
-        AiEvent::UpdateMemory {
-            id,
-            key,
-            category,
-            body,
-            append,
-            tags,
-            summary,
-            relates_to,
-            expires,
-            thought_signature,
-        } => Ok(PendingCall::UpdateMemory {
-            id,
-            thought_signature,
-            key,
-            category,
-            body,
-            append,
-            tags,
-            summary,
-            relates_to,
-            expires,
-        }),
-        AiEvent::WriteRunbook {
-            id,
-            thought_signature,
-            name,
-            content,
-        } => Ok(PendingCall::WriteRunbook {
-            id,
-            thought_signature,
-            name,
-            content,
-        }),
-        AiEvent::DeleteRunbook {
-            id,
-            thought_signature,
-            name,
-        } => Ok(PendingCall::DeleteRunbook {
-            id,
-            thought_signature,
-            name,
-        }),
-        AiEvent::WriteScript {
-            id,
-            thought_signature,
-            script_name,
-            content,
-        } => Ok(PendingCall::WriteScript {
-            id,
-            thought_signature,
-            script_name,
-            content,
-        }),
-        AiEvent::DeleteScript {
-            id,
-            thought_signature,
-            script_name,
-        } => Ok(PendingCall::DeleteScript {
-            id,
-            thought_signature,
-            script_name,
-        }),
-        AiEvent::ScheduleCommand {
-            id,
-            thought_signature,
-            name,
-            command,
-            is_script,
-            run_at,
-            interval,
-            runbook,
-            ghost_runbook,
-            cron,
-        } => Ok(PendingCall::ScheduleCommand {
-            id,
-            thought_signature,
-            name,
-            command,
-            is_script,
-            run_at,
-            interval,
-            runbook,
-            ghost_runbook,
-            cron,
-        }),
-        other => Err(other),
-    }
-}
-
-fn ghost_exec_event_to_pending_call(ev: AiEvent) -> Option<PendingCall> {
-    match ev {
-        AiEvent::EditFile {
-            id,
-            thought_signature,
-            path,
-            operation,
-            old_string,
-            new_string,
-            content,
-            dest_path,
-            host,
-            sudo,
-        } => Some(PendingCall::EditFile {
-            id,
-            thought_signature,
-            path,
-            operation,
-            old_string,
-            new_string,
-            content,
-            dest_path,
-            host,
-            sudo,
-        }),
-        AiEvent::SpawnGhost {
-            id,
-            runbook,
-            message,
-            agent,
-            host,
-            thought_signature,
-        } => Some(PendingCall::SpawnGhost {
-            id,
-            thought_signature,
-            runbook,
-            message,
-            agent,
-            host,
-        }),
-        AiEvent::AwaitAgentResult {
-            id,
-            job_id,
-            agent_name,
-            timeout_secs,
-            thought_signature,
-        } => Some(PendingCall::AwaitAgentResult {
-            id,
-            thought_signature,
-            job_id,
-            agent_name,
-            timeout_secs,
-        }),
-        AiEvent::InvalidToolArgs {
-            id,
-            name,
-            arguments,
-            error,
-            thought_signature,
-        } => Some(PendingCall::InvalidArgs {
-            id,
-            name,
-            arguments,
-            error,
-            thought_signature,
-        }),
-        _ => None,
-    }
-}
-
-fn ghost_event_to_pending_call(ev: AiEvent) -> Option<PendingCall> {
-    match ghost_read_event_to_pending_call(ev) {
-        Ok(c) => Some(c),
-        Err(rem) => match ghost_artifact_event_to_pending_call(rem) {
-            Ok(c) => Some(c),
-            Err(rem2) => ghost_exec_event_to_pending_call(rem2),
-        },
+        other => PendingCall::from_tool_event(other),
     }
 }
 

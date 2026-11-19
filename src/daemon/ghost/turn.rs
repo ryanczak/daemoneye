@@ -6,6 +6,8 @@ use super::*;
 
 #[path = "turn_helpers.rs"]
 mod helpers;
+#[cfg(test)]
+pub(super) use helpers::ghost_event_to_pending_call;
 use helpers::*;
 
 #[allow(clippy::too_many_arguments)]
