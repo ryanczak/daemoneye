@@ -69,87 +69,8 @@ where
     match host {
         crate::host::HostId::Local => {}
         crate::host::HostId::Named(name) => {
-            // Show the approval prompt before executing — no local content available
-            // for remote files, so show path info only (new_content = None).
-            send_response_split(
-                tx,
-                Response::EditFilePrompt {
-                    id: id.to_string(),
-                    path: format!("{} (remote via host {})", src_path, name),
-                    operation: "copy".to_string(),
-                    existing_content: None,
-                    new_content: None,
-                    dest_path: Some(format!("{} (remote via host {})", dest, name)),
-                    sudo: false,
-                    always_asked: false,
-                },
-            )
-            .await?;
-
-            if let Err(outcome) = super::super::write::await_edit_file_response(id, rx).await? {
-                return Ok(outcome);
-            }
-
-            // The shell string is built only after the approval (M31 #36) —
-            // building it earlier is observable to nobody but a reader.
-            let safe_src = super::super::sq_escape(src_path);
-            let safe_dst = super::super::sq_escape(dest);
-            let cmd = format!(
-                "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
-                 elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
-                 else cp -n -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
-                 || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
-            );
-            let cmd_id = crate::daemon::stats::start_command(
-                &format!("copy_file {} {}", src_path, dest),
-                "foreground",
-            );
-
-            let snap = match super::super::run_in_host_shell(
-                crate::shell::registry(),
-                Owner::Chat(owner_key()),
-                host.clone(),
-                &cmd,
-                REMOTE_WRITE_TIMEOUT_SECS,
-                spawn,
-            )
-            .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
-                }
-            };
-            match super::super::remote_write_outcome(&snap) {
-                Some(Ok(_)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 0);
-                    crate::daemon::utils::log_event(
-                        "file_copy",
-                        serde_json::json!({ "session": session_id.unwrap_or("-"), "src": src_path, "dest": dest, "remote_host": name }),
-                    );
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Copied {} to {} on host {}.",
-                        src_path, dest, name
-                    )));
-                }
-                Some(Err(line)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    if line.starts_with("DE_ERROR: destination already exists: ") {
-                        return Ok(ToolCallOutcome::Result(dest_exists_message(dest)));
-                    }
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error copying {} to {}: {}",
-                        src_path, dest, line
-                    )));
-                }
-                None => {}
-            }
-            crate::daemon::stats::finish_command(cmd_id, 1);
-            return Ok(ToolCallOutcome::Result(format!(
-                "Copy command completed but result was unclear. Check {} manually.",
-                dest
-            )));
+            return run_remote_copy(id, src_path, dest, host, name, session_id, tx, rx, spawn)
+                .await;
         }
     }
 
@@ -208,6 +129,95 @@ where
         return Ok(outcome);
     }
 
+    Ok(commit_local_copy(
+        src_path,
+        dest,
+        dest_std,
+        &source_content,
+        session_id,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_remote_copy<W, R>(
+    id: &str,
+    src_path: &str,
+    dest: &str,
+    host: &crate::host::HostId,
+    name: &str,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+    spawn: WriteSpawn,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    send_response_split(
+        tx,
+        Response::EditFilePrompt {
+            id: id.to_string(),
+            path: format!("{} (remote via host {})", src_path, name),
+            operation: "copy".to_string(),
+            existing_content: None,
+            new_content: None,
+            dest_path: Some(format!("{} (remote via host {})", dest, name)),
+            sudo: false,
+            always_asked: false,
+        },
+    )
+    .await?;
+
+    if let Err(outcome) = super::super::write::await_edit_file_response(id, rx).await? {
+        return Ok(outcome);
+    }
+
+    let safe_src = super::super::sq_escape(src_path);
+    let safe_dst = super::super::sq_escape(dest);
+    let cmd = format!(
+        "if [ ! -e '{safe_src}' ]; then echo 'DE_ERROR: source not found: {safe_src}'; \
+         elif [ -e '{safe_dst}' ]; then echo 'DE_ERROR: destination already exists: {safe_dst}'; \
+         else cp -n -- '{safe_src}' '{safe_dst}' && echo 'DE_OK: Copied {safe_src} to {safe_dst}' \
+         || echo 'DE_ERROR: cp failed'; fi; echo '__DE_DONE__'"
+    );
+    Ok(execute_remote_host_write(
+        RemoteWriteSpec {
+            stat_label: format!("copy_file {} {}", src_path, dest),
+            host,
+            cmd,
+            event_name: "file_copy",
+            event_payload: serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "src": src_path,
+                "dest": dest,
+                "remote_host": name,
+            }),
+            ok_msg: format!("Copied {} to {} on host {}.", src_path, dest, name),
+            unclear_msg: format!(
+                "Copy command completed but result was unclear. Check {} manually.",
+                dest
+            ),
+        },
+        spawn,
+        |line| {
+            if line.starts_with("DE_ERROR: destination already exists: ") {
+                dest_exists_message(dest)
+            } else {
+                format!("Error copying {} to {}: {}", src_path, dest, line)
+            }
+        },
+    )
+    .await)
+}
+
+fn commit_local_copy(
+    src_path: &str,
+    dest: &str,
+    dest_std: &std::path::Path,
+    source_content: &str,
+    session_id: Option<&str>,
+) -> ToolCallOutcome {
     let cmd_id = crate::daemon::stats::start_command(
         &format!("copy_file {} {}", src_path, dest),
         "foreground",
@@ -218,27 +228,18 @@ where
         && let Err(e) = std::fs::create_dir_all(parent)
     {
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error creating destination directory: {}",
-            e
-        )));
+        return ToolCallOutcome::Result(format!("Error creating destination directory: {}", e));
     }
 
     let tmp_path = copy_tmp_path(dest_std);
-    if let Err(e) = std::fs::write(&tmp_path, &source_content) {
+    if let Err(e) = std::fs::write(&tmp_path, source_content) {
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error writing temp file: {}",
-            e
-        )));
+        return ToolCallOutcome::Result(format!("Error writing temp file: {}", e));
     }
     if let Err(e) = std::fs::rename(&tmp_path, dest_std) {
         let _ = std::fs::remove_file(&tmp_path);
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error committing copy: {}",
-            e
-        )));
+        return ToolCallOutcome::Result(format!("Error committing copy: {}", e));
     }
 
     crate::daemon::stats::finish_command(cmd_id, 0);
@@ -247,10 +248,10 @@ where
         serde_json::json!({ "session": session_id.unwrap_or("-"), "src": src_path, "dest": dest }),
     );
     let line_count = source_content.lines().count();
-    Ok(ToolCallOutcome::Result(format!(
+    ToolCallOutcome::Result(format!(
         "Copied {} to {}: {} line(s).",
         src_path, dest, line_count
-    )))
+    ))
 }
 
 /// The temp file a local copy writes before renaming into `dest`. It lives

@@ -39,6 +39,97 @@ pub(super) fn resolve_edit_host(host: Option<&str>) -> Result<crate::host::HostI
 // edit_file
 // ---------------------------------------------------------------------------
 
+fn validate_edit_file_request(
+    args: &EditArgs<'_>,
+    is_ghost: bool,
+) -> Result<crate::host::HostId, String> {
+    let &EditArgs {
+        path,
+        operation,
+        dest_path,
+        host,
+        sudo,
+        ..
+    } = args;
+
+    if path.contains("..") {
+        return Err("Error: path must not contain '..'.".to_string());
+    }
+    if super::contains_control(path) || dest_path.is_some_and(super::contains_control) {
+        return Err("Error: path must not contain control characters.".to_string());
+    }
+    if super::is_blocked_secret_path(path) || dest_path.is_some_and(super::is_blocked_secret_path) {
+        return Err(
+            "Error: edit_file cannot access well-known credential files \
+             (~/.ssh, .env, private keys)."
+                .to_string(),
+        );
+    }
+    if !std::path::Path::new(path).is_absolute() {
+        return Err("Error: path must be absolute.".to_string());
+    }
+    if super::in_daemoneye_dir(path) && !super::is_daemoneye_config(path) {
+        return Err(
+            "Error: edit_file cannot access the daemoneye configuration \
+             directory. Use the dedicated tools (write_script, write_runbook, \
+             add_memory, etc.) instead."
+                .to_string(),
+        );
+    }
+    if is_ghost {
+        return Err(
+            "Error: file operations require user approval and cannot run in a Ghost Shell."
+                .to_string(),
+        );
+    }
+
+    let host_id = resolve_edit_host(host).map_err(|msg| format!("Error: {msg}"))?;
+
+    if dest_path.is_some_and(super::in_daemoneye_dir) {
+        return Err(
+            "Error: edit_file cannot copy into the daemoneye configuration \
+             directory."
+                .to_string(),
+        );
+    }
+    if super::is_daemoneye_config(path) {
+        if operation != "edit" {
+            return Err(format!(
+                "Error: edit_file operation=\"{operation}\" cannot touch the \
+                 daemoneye config — only operation=\"edit\" opens etc/config.toml."
+            ));
+        }
+        if sudo {
+            return Err(
+                "Error: a config edit runs as the daemon user — sudo is not \
+                 supported for etc/config.toml."
+                    .to_string(),
+            );
+        }
+        if host_id != crate::host::HostId::Local {
+            return Err(
+                "Error: the daemoneye config is the daemon host's file — omit \
+                 host (or pass \"local\") to edit it."
+                    .to_string(),
+            );
+        }
+    }
+
+    if sudo {
+        if operation != "edit" {
+            return Err("Error: sudo is supported for operation=\"edit\" only.".to_string());
+        }
+        if host_id == crate::host::HostId::Local {
+            return Err(
+                "Error: a sudo edit runs on a configured host — name it with host. \
+                 A sudo edit on the daemon host is not supported."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(host_id)
+}
+
 pub async fn run_edit_file<W, R>(
     args: EditArgs<'_>,
     session_id: Option<&str>,
@@ -50,6 +141,10 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
+    let host_id = match validate_edit_file_request(&args, ghost_ctx.is_ghost) {
+        Ok(id) => id,
+        Err(msg) => return Ok(ToolCallOutcome::Result(msg)),
+    };
     let EditArgs {
         id,
         path,
@@ -58,112 +153,15 @@ where
         new_string,
         content,
         dest_path,
-        host,
         sudo,
+        ..
     } = args;
-    let GhostCtx { is_ghost, .. } = ghost_ctx;
-
-    // ── Common validation ─────────────────────────────────────────────────
-    if path.contains("..") {
-        return Ok(ToolCallOutcome::Result(
-            "Error: path must not contain '..'.".to_string(),
-        ));
-    }
-    if super::contains_control(path) || dest_path.is_some_and(super::contains_control) {
-        return Ok(ToolCallOutcome::Result(
-            "Error: path must not contain control characters.".to_string(),
-        ));
-    }
-    if super::is_blocked_secret_path(path) || dest_path.is_some_and(super::is_blocked_secret_path) {
-        return Ok(ToolCallOutcome::Result(
-            "Error: edit_file cannot access well-known credential files \
-             (~/.ssh, .env, private keys)."
-                .to_string(),
-        ));
-    }
-    if !std::path::Path::new(path).is_absolute() {
-        return Ok(ToolCallOutcome::Result(
-            "Error: path must be absolute.".to_string(),
-        ));
-    }
-    {
-        if super::in_daemoneye_dir(path) && !super::is_daemoneye_config(path) {
-            return Ok(ToolCallOutcome::Result(
-                "Error: edit_file cannot access the daemoneye configuration \
-                 directory. Use the dedicated tools (write_script, write_runbook, \
-                 add_memory, etc.) instead."
-                    .to_string(),
-            ));
-        }
-    }
-    if is_ghost {
-        return Ok(ToolCallOutcome::Result(
-            "Error: file operations require user approval and cannot run in a Ghost Shell."
-                .to_string(),
-        ));
-    }
-
-    // ── Host resolution ───────────────────────────────────────────────────
-    let host_id = match resolve_edit_host(host) {
-        Ok(id) => id,
-        Err(msg) => return Ok(ToolCallOutcome::Result(format!("Error: {msg}"))),
-    };
-
-    // ── Config scoping refusals, before any prompt: exactly the config
-    // opens, for operation="edit" on the daemon host, never as root, and
-    // never as a copy destination ──────────────────────────────────────────
-    if dest_path.is_some_and(super::in_daemoneye_dir) {
-        return Ok(ToolCallOutcome::Result(
-            "Error: edit_file cannot copy into the daemoneye configuration \
-             directory."
-                .to_string(),
-        ));
-    }
-    if super::is_daemoneye_config(path) {
-        if operation != "edit" {
-            return Ok(ToolCallOutcome::Result(format!(
-                "Error: edit_file operation=\"{operation}\" cannot touch the \
-                 daemoneye config — only operation=\"edit\" opens etc/config.toml."
-            )));
-        }
-        if sudo {
-            return Ok(ToolCallOutcome::Result(
-                "Error: a config edit runs as the daemon user — sudo is not \
-                 supported for etc/config.toml."
-                    .to_string(),
-            ));
-        }
-        if host_id != crate::host::HostId::Local {
-            return Ok(ToolCallOutcome::Result(
-                "Error: the daemoneye config is the daemon host's file — omit \
-                 host (or pass \"local\") to edit it."
-                    .to_string(),
-            ));
-        }
-    }
-
-    // ── sudo scoping refusals, before any prompt ──────────────────────────
-    if sudo {
-        if operation != "edit" {
-            return Ok(ToolCallOutcome::Result(
-                "Error: sudo is supported for operation=\"edit\" only.".to_string(),
-            ));
-        }
-        if host_id == crate::host::HostId::Local {
-            return Ok(ToolCallOutcome::Result(
-                "Error: a sudo edit runs on a configured host — name it with host. \
-                 A sudo edit on the daemon host is not supported."
-                    .to_string(),
-            ));
-        }
-    }
 
     match operation {
         "create" => super::ops::run_create(id, path, content, &host_id, session_id, tx, rx).await,
         "delete" => super::ops::run_delete(id, path, &host_id, session_id, tx, rx).await,
         "copy" => super::ops::run_copy(id, path, dest_path, &host_id, session_id, tx, rx).await,
         _ => {
-            // "edit" (default) and any unrecognised value fall through here.
             let old =
                 match old_string {
                     Some(s) if !s.is_empty() => s,

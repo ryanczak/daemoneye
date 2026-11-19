@@ -60,56 +60,32 @@ where
             if let Err(outcome) = super::super::write::await_edit_file_response(id, rx).await? {
                 return Ok(outcome);
             }
-            let cmd_id =
-                crate::daemon::stats::start_command(&format!("delete_file {}", path), "foreground");
-
             let safe_path = super::super::sq_escape(path);
             let cmd = format!(
                 "if [ -e '{safe_path}' ]; then rm -- '{safe_path}' && echo 'DE_OK: Deleted {safe_path}'; \
                  else echo 'DE_ERROR: file not found: {safe_path}'; fi; echo '__DE_DONE__'"
             );
-            let snap = match super::super::run_in_host_shell(
-                crate::shell::registry(),
-                Owner::Chat(owner_key()),
-                host.clone(),
-                &cmd,
-                REMOTE_WRITE_TIMEOUT_SECS,
+            return Ok(execute_remote_host_write(
+                RemoteWriteSpec {
+                    stat_label: format!("delete_file {}", path),
+                    host,
+                    cmd,
+                    event_name: "file_delete",
+                    event_payload: serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "path": path,
+                        "remote_host": name,
+                    }),
+                    ok_msg: format!("Deleted {} on host {}.", path, name),
+                    unclear_msg: format!(
+                        "Delete command completed but result was unclear. Check {} manually.",
+                        path
+                    ),
+                },
                 spawn,
+                |line| format!("Error deleting {}: {}", path, line),
             )
-            .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
-                }
-            };
-            match super::super::remote_write_outcome(&snap) {
-                Some(Ok(_)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 0);
-                    crate::daemon::utils::log_event(
-                        "file_delete",
-                        serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name }),
-                    );
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Deleted {} on host {}.",
-                        path, name
-                    )));
-                }
-                Some(Err(line)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error deleting {}: {}",
-                        path, line
-                    )));
-                }
-                None => {}
-            }
-            crate::daemon::stats::finish_command(cmd_id, 1);
-            return Ok(ToolCallOutcome::Result(format!(
-                "Delete command completed but result was unclear. Check {} manually.",
-                path
-            )));
+            .await);
         }
     }
 

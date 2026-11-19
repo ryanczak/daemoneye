@@ -36,6 +36,58 @@ fn owner_key() -> String {
     "edit_file".to_string()
 }
 
+pub(super) struct RemoteWriteSpec<'a> {
+    pub stat_label: String,
+    pub host: &'a crate::host::HostId,
+    pub cmd: String,
+    pub event_name: &'static str,
+    pub event_payload: serde_json::Value,
+    pub ok_msg: String,
+    pub unclear_msg: String,
+}
+
+pub(super) async fn execute_remote_host_write<F>(
+    spec: RemoteWriteSpec<'_>,
+    spawn: WriteSpawn,
+    err_formatter: F,
+) -> ToolCallOutcome
+where
+    F: FnOnce(&str) -> String,
+{
+    let cmd_id = crate::daemon::stats::start_command(&spec.stat_label, "foreground");
+    let snap = match super::run_in_host_shell(
+        crate::shell::registry(),
+        Owner::Chat(owner_key()),
+        spec.host.clone(),
+        &spec.cmd,
+        REMOTE_WRITE_TIMEOUT_SECS,
+        spawn,
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            return ToolCallOutcome::Result(format!("Error: {}", e));
+        }
+    };
+    match super::remote_write_outcome(&snap) {
+        Some(Ok(_)) => {
+            crate::daemon::stats::finish_command(cmd_id, 0);
+            crate::daemon::utils::log_event(spec.event_name, spec.event_payload);
+            ToolCallOutcome::Result(spec.ok_msg)
+        }
+        Some(Err(line)) => {
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            ToolCallOutcome::Result(err_formatter(&line))
+        }
+        None => {
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            ToolCallOutcome::Result(spec.unclear_msg)
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // operation = "edit"
 // ---------------------------------------------------------------------------
@@ -112,7 +164,27 @@ where
     W: tokio::io::AsyncWriteExt + Unpin,
     R: tokio::io::AsyncBufReadExt + Unpin,
 {
-    let RunEditArgs {
+    match args.host {
+        crate::host::HostId::Local => run_local_edit(args, session_id, tx, rx).await,
+        crate::host::HostId::Named(name) => {
+            run_remote_edit(&args, name, session_id, tx, rx, spawn).await
+        }
+    }
+}
+
+async fn run_remote_edit<W, R>(
+    args: &RunEditArgs<'_>,
+    name: &str,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+    spawn: WriteSpawn,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let &RunEditArgs {
         id,
         path,
         old_string,
@@ -120,139 +192,126 @@ where
         host,
         sudo,
     } = args;
-    // ── Host resolution: `Local` is the daemon host, `Named` a remote ──────
-    match host {
-        crate::host::HostId::Local => {}
-        crate::host::HostId::Named(name) => {
-            let prompt_path = if sudo {
-                format!("{} (remote via host {}, as root via sudo)", path, name)
-            } else {
-                format!("{} (remote via host {})", path, name)
-            };
-            send_response_split(
-                tx,
-                Response::EditFilePrompt {
-                    id: id.to_string(),
-                    path: prompt_path,
-                    operation: "edit".to_string(),
-                    // For remote files we can't read the full file locally, so show
-                    // the old_string → new_string substitution as the diff context.
-                    existing_content: Some(old_string.to_string()),
-                    new_content: Some(new_string.to_string()),
-                    dest_path: None,
-                    sudo,
-                    always_asked: false,
-                },
-            )
-            .await?;
+    let prompt_path = if sudo {
+        format!("{} (remote via host {}, as root via sudo)", path, name)
+    } else {
+        format!("{} (remote via host {})", path, name)
+    };
+    send_response_split(
+        tx,
+        Response::EditFilePrompt {
+            id: id.to_string(),
+            path: prompt_path,
+            operation: "edit".to_string(),
+            existing_content: Some(old_string.to_string()),
+            new_content: Some(new_string.to_string()),
+            dest_path: None,
+            sudo,
+            always_asked: false,
+        },
+    )
+    .await?;
 
-            if let Err(outcome) = super::write::await_edit_file_response(id, rx).await? {
-                return Ok(outcome);
-            }
-            let cmd_id =
-                crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
-
-            if sudo {
-                let cmd = super::write::build_remote_sudo_edit_cmd(path, old_string, new_string);
-                let max_per_owner = crate::config::current().shells.max_per_owner;
-                let run = super::super::shell_exec::run_in_shell_with_prompts(
-                    crate::shell::registry(),
-                    Owner::Chat(owner_key()),
-                    &cmd,
-                    max_per_owner,
-                    None,
-                    Some(REMOTE_WRITE_TIMEOUT_SECS),
-                    id,
-                    tx,
-                    rx,
-                    host.clone(),
-                    spawn,
-                )
-                .await;
-                let text = match run {
-                    Ok((_, result)) => result.text,
-                    Err(e) => {
-                        crate::daemon::stats::finish_command(cmd_id, 1);
-                        return Ok(ToolCallOutcome::Result(root_edit_error_text(
-                            path, name, &e,
-                        )));
-                    }
-                };
-                match super::remote_write_outcome(&text) {
-                    Some(Ok(_)) => {
-                        crate::daemon::stats::finish_command(cmd_id, 0);
-                        crate::daemon::utils::log_event(
-                            "file_edit",
-                            serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name, "sudo": true }),
-                        );
-                        return Ok(ToolCallOutcome::Result(format!(
-                            "Edited {path} on host {name}."
-                        )));
-                    }
-                    Some(Err(line)) => {
-                        crate::daemon::stats::finish_command(cmd_id, 1);
-                        return Ok(ToolCallOutcome::Result(format!(
-                            "Error editing {path}: {line}"
-                        )));
-                    }
-                    None => {}
-                }
-                // No sentinel line at all: the password was refused or the
-                // privilege tool never ran the payload. Loud, never "unclear".
-                crate::daemon::stats::finish_command(cmd_id, 1);
-                let tail = text.lines().rev().find(|l| !l.trim().is_empty());
-                return Ok(ToolCallOutcome::Result(format!(
-                    "Error: the sudo edit of {path} on host {name} did not run — the password \
-                     was not accepted or sudo refused it. Output: {}",
-                    tail.unwrap_or("(no output)")
-                )));
-            }
-
-            let cmd = super::write::build_remote_edit_cmd(path, old_string, new_string);
-            let snap = match super::run_in_host_shell(
-                crate::shell::registry(),
-                Owner::Chat(owner_key()),
-                host.clone(),
-                &cmd,
-                REMOTE_WRITE_TIMEOUT_SECS,
-                spawn,
-            )
-            .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
-                }
-            };
-            match super::remote_write_outcome(&snap) {
-                Some(Ok(_)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 0);
-                    crate::daemon::utils::log_event(
-                        "file_edit",
-                        serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name }),
-                    );
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Edited {path} on host {name}."
-                    )));
-                }
-                Some(Err(line)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error editing {path}: {line}"
-                    )));
-                }
-                None => {}
-            }
-            crate::daemon::stats::finish_command(cmd_id, 1);
-            return Ok(ToolCallOutcome::Result(format!(
-                "Edit command completed but result was unclear. Check {} manually.",
-                path
-            )));
-        }
+    if let Err(outcome) = super::write::await_edit_file_response(id, rx).await? {
+        return Ok(outcome);
     }
 
-    // ── Local path ────────────────────────────────────────────────────────
+    if sudo {
+        let cmd_id =
+            crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
+        let cmd = super::write::build_remote_sudo_edit_cmd(path, old_string, new_string);
+        let max_per_owner = crate::config::current().shells.max_per_owner;
+        let run = super::super::shell_exec::run_in_shell_with_prompts(
+            crate::shell::registry(),
+            Owner::Chat(owner_key()),
+            &cmd,
+            max_per_owner,
+            None,
+            Some(REMOTE_WRITE_TIMEOUT_SECS),
+            id,
+            tx,
+            rx,
+            host.clone(),
+            spawn,
+        )
+        .await;
+        let text = match run {
+            Ok((_, result)) => result.text,
+            Err(e) => {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(root_edit_error_text(
+                    path, name, &e,
+                )));
+            }
+        };
+        match super::remote_write_outcome(&text) {
+            Some(Ok(_)) => {
+                crate::daemon::stats::finish_command(cmd_id, 0);
+                crate::daemon::utils::log_event(
+                    "file_edit",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name, "sudo": true }),
+                );
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Edited {path} on host {name}."
+                )));
+            }
+            Some(Err(line)) => {
+                crate::daemon::stats::finish_command(cmd_id, 1);
+                return Ok(ToolCallOutcome::Result(format!(
+                    "Error editing {path}: {line}"
+                )));
+            }
+            None => {}
+        }
+        crate::daemon::stats::finish_command(cmd_id, 1);
+        let tail = text.lines().rev().find(|l| !l.trim().is_empty());
+        return Ok(ToolCallOutcome::Result(format!(
+            "Error: the sudo edit of {path} on host {name} did not run — the password \
+             was not accepted or sudo refused it. Output: {}",
+            tail.unwrap_or("(no output)")
+        )));
+    }
+
+    Ok(execute_remote_host_write(
+        RemoteWriteSpec {
+            stat_label: format!("edit_file {}", path),
+            host,
+            cmd: super::write::build_remote_edit_cmd(path, old_string, new_string),
+            event_name: "file_edit",
+            event_payload: serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "path": path,
+                "remote_host": name,
+            }),
+            ok_msg: format!("Edited {path} on host {name}."),
+            unclear_msg: format!(
+                "Edit command completed but result was unclear. Check {} manually.",
+                path
+            ),
+        },
+        spawn,
+        |line| format!("Error editing {path}: {line}"),
+    )
+    .await)
+}
+
+async fn run_local_edit<W, R>(
+    args: RunEditArgs<'_>,
+    session_id: Option<&str>,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    let RunEditArgs {
+        id,
+        path,
+        old_string,
+        new_string,
+        ..
+    } = args;
     let std_path = match std::fs::canonicalize(path) {
         Ok(p) => p,
         Err(e) => {
@@ -289,10 +348,6 @@ where
 
     let updated = original.replacen(old_string, new_string, 1);
 
-    // A config edit is validated before anything is shown or prompted: the
-    // replaced text must parse as the daemon's `Config`, so the daemon never
-    // fails to start on its own change. On refusal nothing is prompted and
-    // the file is untouched.
     let is_config = super::is_daemoneye_config(path);
     if is_config && let Err(e) = crate::config::parse_config_text(&std_path, &updated) {
         return Ok(ToolCallOutcome::Result(format!(
@@ -302,10 +357,6 @@ where
         )));
     }
 
-    // Only the config's prompt is masked — a secret must never cross the
-    // wire on a config edit. An ordinary file's diff reaches the client
-    // verbatim: the client reviews what will be written, and an `old_string`
-    // copied from a masked diff would not match the real contents.
     let mask = |s: &str| {
         if is_config {
             crate::ai::mask_sensitive(s)
@@ -333,49 +384,9 @@ where
     }
 
     let cmd_id = crate::daemon::stats::start_command(&format!("edit_file {}", path), "foreground");
-    use std::os::unix::fs::MetadataExt as _;
-    use std::os::unix::fs::PermissionsExt as _;
-    let original_mode = match std::fs::metadata(&std_path) {
-        Ok(md) => md.permissions().mode(),
-        Err(e) => {
-            crate::daemon::stats::finish_command(cmd_id, 1);
-            return Ok(ToolCallOutcome::Result(format!(
-                "Error reading {}: {}",
-                path, e
-            )));
-        }
-    };
-    let original_owner = std::fs::metadata(&std_path)
-        .map(|md| (md.uid(), md.gid()))
-        .unwrap_or((u32::MAX, u32::MAX));
-    let tmp_path = std_path.with_extension("de_tmp");
-    if let Err(e) = std::fs::write(&tmp_path, &updated) {
+    if let Err(err_msg) = commit_local_edit_atomic(&std_path, path, &updated) {
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error writing temp file: {}",
-            e
-        )));
-    }
-    if let Err(e) =
-        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(original_mode))
-    {
-        let _ = std::fs::remove_file(&tmp_path);
-        crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error preserving the file's permissions: {}",
-            e
-        )));
-    }
-    // A non-root daemon may not change a file's owner; mode is the guarantee,
-    // the owner is restored only where the writer is permitted to.
-    let _ = std::os::unix::fs::chown(&tmp_path, Some(original_owner.0), Some(original_owner.1));
-    if let Err(e) = std::fs::rename(&tmp_path, &std_path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error committing edit: {}",
-            e
-        )));
+        return Ok(ToolCallOutcome::Result(err_msg));
     }
 
     crate::daemon::stats::finish_command(cmd_id, 0);
@@ -390,15 +401,39 @@ where
         "Edited {}: replaced {} line(s) with {} line(s).",
         path, old_lines, new_lines
     );
-    // A config edit makes the daemon re-read and live-swap what it can; the
-    // report rides on the tool result. A failed reload (or no installed
-    // handle — the CLI-side unit tests) never undoes the write, but it is
-    // named so the model knows what the running config did and did not pick
-    // up.
     if is_config {
         result.push_str(&format_edit_reload_report());
     }
     Ok(ToolCallOutcome::Result(result))
+}
+
+fn commit_local_edit_atomic(
+    std_path: &std::path::Path,
+    display_path: &str,
+    updated: &str,
+) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+    use std::os::unix::fs::PermissionsExt as _;
+    let original_mode = std::fs::metadata(std_path)
+        .map(|md| md.permissions().mode())
+        .map_err(|e| format!("Error reading {}: {}", display_path, e))?;
+    let original_owner = std::fs::metadata(std_path)
+        .map(|md| (md.uid(), md.gid()))
+        .unwrap_or((u32::MAX, u32::MAX));
+    let tmp_path = std_path.with_extension("de_tmp");
+    std::fs::write(&tmp_path, updated).map_err(|e| format!("Error writing temp file: {}", e))?;
+    if let Err(e) =
+        std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(original_mode))
+    {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Error preserving the file's permissions: {}", e));
+    }
+    let _ = std::os::unix::fs::chown(&tmp_path, Some(original_owner.0), Some(original_owner.1));
+    if let Err(e) = std::fs::rename(&tmp_path, std_path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("Error committing edit: {}", e));
+    }
+    Ok(())
 }
 
 /// Run the phase-19 reload and render its outcome the way `daemoneye
@@ -528,50 +563,27 @@ where
             if let Err(outcome) = super::write::await_edit_file_response(id, rx).await? {
                 return Ok(outcome);
             }
-            let cmd_id =
-                crate::daemon::stats::start_command(&format!("create_file {}", path), "foreground");
-
-            let cmd = build_remote_create_cmd(path, content);
-            let snap = match super::run_in_host_shell(
-                crate::shell::registry(),
-                Owner::Chat(owner_key()),
-                host.clone(),
-                &cmd,
-                REMOTE_WRITE_TIMEOUT_SECS,
+            return Ok(execute_remote_host_write(
+                RemoteWriteSpec {
+                    stat_label: format!("create_file {}", path),
+                    host,
+                    cmd: build_remote_create_cmd(path, content),
+                    event_name: "file_create",
+                    event_payload: serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "path": path,
+                        "remote_host": name,
+                    }),
+                    ok_msg: format!("Created {path} on host {name}."),
+                    unclear_msg: format!(
+                        "Create command completed but result was unclear. Check {} manually.",
+                        path
+                    ),
+                },
                 spawn,
+                |line| format!("Error creating {path}: {line}"),
             )
-            .await
-            {
-                Ok(s) => s,
-                Err(e) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!("Error: {}", e)));
-                }
-            };
-            match super::remote_write_outcome(&snap) {
-                Some(Ok(_)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 0);
-                    crate::daemon::utils::log_event(
-                        "file_create",
-                        serde_json::json!({ "session": session_id.unwrap_or("-"), "path": path, "remote_host": name }),
-                    );
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Created {path} on host {name}."
-                    )));
-                }
-                Some(Err(line)) => {
-                    crate::daemon::stats::finish_command(cmd_id, 1);
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error creating {path}: {line}"
-                    )));
-                }
-                None => {}
-            }
-            crate::daemon::stats::finish_command(cmd_id, 1);
-            return Ok(ToolCallOutcome::Result(format!(
-                "Create command completed but result was unclear. Check {} manually.",
-                path
-            )));
+            .await);
         }
     }
 

@@ -152,6 +152,132 @@ fn build_remote_read_cmd(path: &str, start: usize, end: usize, pattern: Option<&
 // read_file
 // ---------------------------------------------------------------------------
 
+fn validate_read_file_request(path: &str, pattern: Option<&str>) -> Option<String> {
+    if path.contains("..") {
+        return Some("Error: path must not contain '..'.".to_string());
+    }
+    if super::contains_control(path) {
+        return Some("Error: path must not contain control characters.".to_string());
+    }
+    if pattern.is_some_and(super::contains_control) {
+        return Some("Error: grep pattern must not contain control characters.".to_string());
+    }
+    if !std::path::Path::new(path).is_absolute() {
+        return Some("Error: path must be absolute (e.g. /var/log/syslog).".to_string());
+    }
+    if super::is_blocked_secret_path(path) {
+        return Some(
+            "Error: read_file cannot access well-known credential files \
+             (~/.ssh, .env, private keys). This is not a security boundary — \
+             use run_terminal_command only if you truly need to inspect one."
+                .to_string(),
+        );
+    }
+    let candidate = super::resolve_path_for_guard(path);
+    let blocked = super::guard_roots()
+        .into_iter()
+        .flat_map(|root| [root.join("etc").join("prompts").join("sre.toml")]);
+    if blocked.into_iter().any(|b| b == candidate) {
+        return Some(
+            "Error: read_file cannot access daemoneye credential files \
+             (etc/prompts/sre.toml). These may contain sensitive API keys. \
+             Use read_script, read_runbook, read_memory, or search_repository \
+             for other daemoneye-managed data."
+                .to_string(),
+        );
+    }
+    None
+}
+
+async fn run_local_read_file(
+    path: &str,
+    offset_n: usize,
+    limit_n: usize,
+    pattern: Option<&str>,
+) -> ToolCallOutcome {
+    let read = match tokio::task::spawn_blocking({
+        let path = path.to_string();
+        move || read_local(&path, offset_n, limit_n)
+    })
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            return ToolCallOutcome::Result(format!("Error: read_file blocking task failed: {e}"));
+        }
+    };
+    let window = match read {
+        Ok(LocalRead::Window(w)) => w,
+        Ok(LocalRead::NotRegular) => {
+            return ToolCallOutcome::Result(format!(
+                "Error: {path} is not a regular file (read_file reads only regular files)."
+            ));
+        }
+        Err(e) => {
+            return ToolCallOutcome::Result(format!("Error: read_file blocking task failed: {e}"));
+        }
+    };
+
+    const CAP_NOTE: &str = "[read stopped at the 8 MiB cap]";
+    let kept_before_filter = window.lines.len();
+    let kept = window.lines;
+    let window_incomplete = window.capped && kept_before_filter < limit_n;
+    let total = window.counted;
+    let total_text = if window.capped {
+        format!("{total}+")
+    } else {
+        format!("{total}")
+    };
+
+    let filtered: Vec<String> = if let Some(pat) = pattern {
+        match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
+            Ok(re) => kept.into_iter().filter(|l| re.is_match(l)).collect(),
+            Err(e) => {
+                return ToolCallOutcome::Result(format!("Error: invalid pattern regex: {}", e));
+            }
+        }
+    } else {
+        kept
+    };
+
+    if window_incomplete && filtered.is_empty() {
+        return ToolCallOutcome::Result(format!("{}: {}", path, CAP_NOTE));
+    }
+
+    if filtered.is_empty() {
+        return ToolCallOutcome::Result(format!(
+            "{}: no lines matched (total {} lines in file)",
+            path, total_text
+        ));
+    }
+
+    let mut body = mask_sensitive(&filtered.join("\n"));
+    if window_incomplete {
+        body.push('\n');
+        body.push_str(CAP_NOTE);
+    }
+    if pattern.is_some() {
+        ToolCallOutcome::Result(format!(
+            "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
+            path,
+            filtered.len(),
+            offset_n + 1,
+            (offset_n + kept_before_filter).min(total),
+            total_text,
+            body
+        ))
+    } else {
+        ToolCallOutcome::Result(format!(
+            "{} (lines {}-{} of {}):\n{}",
+            path,
+            offset_n + 1,
+            (offset_n + filtered.len()).min(total),
+            total_text,
+            body
+        ))
+    }
+}
+
 pub async fn run_read_file(
     path: &str,
     offset: Option<u64>,
@@ -159,50 +285,8 @@ pub async fn run_read_file(
     pattern: Option<&str>,
     host: Option<&str>,
 ) -> anyhow::Result<ToolCallOutcome> {
-    if path.contains("..") {
-        return Ok(ToolCallOutcome::Result(
-            "Error: path must not contain '..'.".to_string(),
-        ));
-    }
-    if super::contains_control(path) {
-        return Ok(ToolCallOutcome::Result(
-            "Error: path must not contain control characters.".to_string(),
-        ));
-    }
-    if pattern.is_some_and(super::contains_control) {
-        return Ok(ToolCallOutcome::Result(
-            "Error: grep pattern must not contain control characters.".to_string(),
-        ));
-    }
-    if !std::path::Path::new(path).is_absolute() {
-        return Ok(ToolCallOutcome::Result(
-            "Error: path must be absolute (e.g. /var/log/syslog).".to_string(),
-        ));
-    }
-
-    if super::is_blocked_secret_path(path) {
-        return Ok(ToolCallOutcome::Result(
-            "Error: read_file cannot access well-known credential files \
-             (~/.ssh, .env, private keys). This is not a security boundary — \
-             use run_terminal_command only if you truly need to inspect one."
-                .to_string(),
-        ));
-    }
-
-    {
-        let candidate = super::resolve_path_for_guard(path);
-        let blocked = super::guard_roots()
-            .into_iter()
-            .flat_map(|root| [root.join("etc").join("prompts").join("sre.toml")]);
-        if blocked.into_iter().any(|b| b == candidate) {
-            return Ok(ToolCallOutcome::Result(
-                "Error: read_file cannot access daemoneye credential files \
-                 (etc/prompts/sre.toml). These may contain sensitive API keys. \
-                 Use read_script, read_runbook, read_memory, or search_repository \
-                 for other daemoneye-managed data."
-                    .to_string(),
-            ));
-        }
+    if let Some(err) = validate_read_file_request(path, pattern) {
+        return Ok(ToolCallOutcome::Result(err));
     }
 
     const MAX_LINES: usize = 500;
@@ -213,7 +297,6 @@ pub async fn run_read_file(
     };
     let offset_n = offset.map(|o| (o as usize).saturating_sub(1)).unwrap_or(0);
 
-    // ── Host resolution: `None` / "local" is the daemon host ───────────────
     let host_id = match host {
         None => crate::host::HostId::Local,
         Some(name) => match crate::host::HostId::parse(name) {
@@ -223,95 +306,7 @@ pub async fn run_read_file(
     };
     match &host_id {
         crate::host::HostId::Local => {
-            // ── Local path: streamed on the blocking pool (M36 S8) ─────────
-            let read = match tokio::task::spawn_blocking({
-                let path = path.to_string();
-                move || read_local(&path, offset_n, limit_n)
-            })
-            .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error: read_file blocking task failed: {e}"
-                    )));
-                }
-            };
-            let window = match read {
-                Ok(LocalRead::Window(w)) => w,
-                Ok(LocalRead::NotRegular) => {
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error: {path} is not a regular file (read_file reads only regular files)."
-                    )));
-                }
-                Err(e) => {
-                    return Ok(ToolCallOutcome::Result(format!(
-                        "Error: read_file blocking task failed: {e}"
-                    )));
-                }
-            };
-
-            const CAP_NOTE: &str = "[read stopped at the 8 MiB cap]";
-            let kept_before_filter = window.lines.len();
-            let kept = window.lines;
-            let window_incomplete = window.capped && kept_before_filter < limit_n;
-            let total = window.counted;
-            let total_text = if window.capped {
-                format!("{total}+")
-            } else {
-                format!("{total}")
-            };
-
-            let filtered: Vec<String> = if let Some(pat) = pattern {
-                match regex::RegexBuilder::new(pat).size_limit(1 << 20).build() {
-                    Ok(re) => kept.into_iter().filter(|l| re.is_match(l)).collect(),
-                    Err(e) => {
-                        return Ok(ToolCallOutcome::Result(format!(
-                            "Error: invalid pattern regex: {}",
-                            e
-                        )));
-                    }
-                }
-            } else {
-                kept
-            };
-
-            if window_incomplete && filtered.is_empty() {
-                return Ok(ToolCallOutcome::Result(format!("{}: {}", path, CAP_NOTE)));
-            }
-
-            if filtered.is_empty() {
-                return Ok(ToolCallOutcome::Result(format!(
-                    "{}: no lines matched (total {} lines in file)",
-                    path, total_text
-                )));
-            }
-
-            let mut body = mask_sensitive(&filtered.join("\n"));
-            if window_incomplete {
-                body.push('\n');
-                body.push_str(CAP_NOTE);
-            }
-            if pattern.is_some() {
-                Ok(ToolCallOutcome::Result(format!(
-                    "{} ({} matching lines, searched lines {}-{} of {}):\n{}",
-                    path,
-                    filtered.len(),
-                    offset_n + 1,
-                    (offset_n + kept_before_filter).min(total),
-                    total_text,
-                    body
-                )))
-            } else {
-                Ok(ToolCallOutcome::Result(format!(
-                    "{} (lines {}-{} of {}):\n{}",
-                    path,
-                    offset_n + 1,
-                    (offset_n + filtered.len()).min(total),
-                    total_text,
-                    body
-                )))
-            }
+            Ok(run_local_read_file(path, offset_n, limit_n, pattern).await)
         }
         crate::host::HostId::Named(name) => {
             let start = offset_n + 1;

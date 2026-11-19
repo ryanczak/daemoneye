@@ -14,8 +14,6 @@ fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/viewer.rs viewer_loop 234
 fn src/daemon/context/background.rs run_compaction 184
-fn src/daemon/executor/file_ops/ops.rs run_create_with_spawn 164
-fn src/daemon/executor/file_ops/read.rs run_read_file 198
 fn src/daemon/executor/schedule.rs run_schedule_command 184
 fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
 fn src/daemon/ghost.rs trigger_ghost_turn 183
@@ -28,8 +26,6 @@ fn src/shell/client.rs read_to_marker 236
 fn src/tmux/cache.rs SessionCache::get_labeled_context_scoped 321
 fn src/tmux/cache.rs SessionCache::refresh 171
 fn src/webhook/process.rs maybe_analyze_alert 227
-fn src/daemon/executor/file_ops/ops.rs run_edit_with_spawn 299
-fn src/daemon/executor/file_ops/ops_copy.rs run_copy_with_spawn 216
 # M37 phase-06 — `resolve_edit_host_consults_the_self_host_refusal` (the
 # edit_file self-host refusal, driven through run_edit_file) grew the inline
 # tests 2344 → 2397; test lines only.
@@ -45,4 +41,3 @@ test src/daemon/executor/file_ops/ops.rs 2397
 test tests/integration.rs 3016
 # M36 phase-21b — the OSC 7501 watch/listing tests (12 named in the plan) grew the file past the cap.
 test src/daemon/executor/knowledge/shell_observer_tests.rs 2233
-fn src/daemon/executor/file_ops/write.rs run_edit_file 151
