@@ -427,21 +427,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Commands::Logs { log_file } => {
-            let path = log_file.unwrap_or_else(config::default_log_path);
-            cli::run_logs(path)?;
+            cli::run_logs(log_file.unwrap_or_else(config::default_log_path))?;
         }
-        Commands::Chat { resume } => {
-            cli::run_chat(resume).await?;
-        }
-        Commands::Ask { query, raw } => {
-            cli::run_ask(query, raw).await?;
-        }
-        Commands::Reload => {
-            cli::run_reload().await?;
-        }
-        Commands::Ping => {
-            cli::run_ping().await?;
-        }
+        Commands::Chat { resume } => cli::run_chat(resume).await?,
+        Commands::Ask { query, raw } => cli::run_ask(query, raw).await?,
+        Commands::Reload => cli::run_reload().await?,
+        Commands::Ping => cli::run_ping().await?,
         Commands::ShellHost {
             id,
             shell,
@@ -454,20 +445,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 .unwrap_or_else(|| "bash".to_string());
             shell::run_host(&id, &shell, &args, rows, cols).await?;
         }
-        Commands::Status => {
-            cli::run_status().await?;
-        }
-        Commands::Doctor => {
-            cli::run_doctor().await?;
-        }
-        Commands::Stop { run } => match run {
-            Some(id) => {
-                cli::run_stop_run(&id)?;
-            }
-            None => {
-                cli::run_stop().await?;
-            }
-        },
+        Commands::Status => cli::run_status().await?,
+        Commands::Doctor => cli::run_doctor().await?,
+        Commands::Stop { run: Some(id) } => cli::run_stop_run(&id)?,
+        Commands::Stop { run: None } => cli::run_stop().await?,
         Commands::Setup {
             overwrite_bin,
             overwrite_memory,
@@ -479,71 +460,47 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 overwrite_all,
             )?;
         }
-        Commands::Prompts => {
-            cli::run_prompts()?;
-        }
-        Commands::Scripts => {
-            cli::run_scripts()?;
-        }
+        Commands::Prompts => cli::run_prompts()?,
+        Commands::Scripts => cli::run_scripts()?,
+        other => dispatch_subcommand_group(other).await?,
+    }
+
+    Ok(())
+}
+
+async fn dispatch_subcommand_group(command: Commands) -> anyhow::Result<()> {
+    match command {
         Commands::Schedule { cmd } => match cmd {
-            SchedCommands::List => {
-                cli::run_sched_list()?;
-            }
-            SchedCommands::Cancel { id } => {
-                cli::run_sched_cancel(id)?;
-            }
-            SchedCommands::Delete { id } => {
-                cli::run_sched_delete(id)?;
-            }
-            SchedCommands::Windows => {
-                cli::run_sched_windows()?;
-            }
+            SchedCommands::List => cli::run_sched_list()?,
+            SchedCommands::Cancel { id } => cli::run_sched_cancel(id)?,
+            SchedCommands::Delete { id } => cli::run_sched_delete(id)?,
+            SchedCommands::Windows => cli::run_sched_windows()?,
         },
         Commands::Sandbox { cmd } => match cmd {
-            SandboxCommands::Status => {
-                cli::run_sandbox_status().await?;
-            }
+            SandboxCommands::Status => cli::run_sandbox_status().await?,
         },
-        Commands::InstallSudoers { script_name } => {
-            scripts::install_sudoers(&script_name)?;
-        }
+        Commands::InstallSudoers { script_name } => scripts::install_sudoers(&script_name)?,
         Commands::Session { cmd } => match cmd {
             SessionCommands::Import {
                 id,
                 name,
                 desc,
                 force,
-            } => {
-                run_session_import(&id, &name, desc.as_deref(), force)?;
-            }
+            } => run_session_import(&id, &name, desc.as_deref(), force)?,
         },
         Commands::Agent { cmd } => match cmd {
-            AgentCommands::List => {
-                run_agent_list()?;
-            }
-            AgentCommands::Show { name } => {
-                run_agent_show(&name)?;
-            }
-            AgentCommands::Create { name } => {
-                run_agent_create(&name)?;
-            }
-            AgentCommands::Delete { name } => {
-                run_agent_delete(&name)?;
-            }
-            AgentCommands::Briefing { name, clear } => {
-                run_agent_briefing(&name, clear)?;
-            }
+            AgentCommands::List => run_agent_list()?,
+            AgentCommands::Show { name } => run_agent_show(&name)?,
+            AgentCommands::Create { name } => run_agent_create(&name)?,
+            AgentCommands::Delete { name } => run_agent_delete(&name)?,
+            AgentCommands::Briefing { name, clear } => run_agent_briefing(&name, clear)?,
         },
         Commands::Run { cmd } => match cmd {
-            RunCommands::List => {
-                print!(
-                    "{}",
-                    crate::daemon::run::render_runs_table(&crate::daemon::run::list_runs())
-                );
-            }
-            RunCommands::Resume { run, directive } => {
-                cli::run_resume(&run, &directive).await?;
-            }
+            RunCommands::List => print!(
+                "{}",
+                crate::daemon::run::render_runs_table(&crate::daemon::run::list_runs())
+            ),
+            RunCommands::Resume { run, directive } => cli::run_resume(&run, &directive).await?,
         },
         Commands::Costs {
             since,
@@ -551,36 +508,24 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             by,
             agent,
             json,
-        } => {
-            cli::run_costs(since, until, by, agent, json)?;
-        }
+        } => cli::run_costs(since, until, by, agent, json)?,
         Commands::Scorecard {
             since,
             until,
             by,
             min_runs,
             json,
-        } => {
-            cli::run_scorecard(since, until, by, min_runs, json)?;
-        }
+        } => cli::run_scorecard(since, until, by, min_runs, json)?,
         Commands::Profile {
             model,
             since,
             until,
             by,
             json,
-        } => {
-            cli::run_profile(&model, since, until, by, json)?;
-        }
-        Commands::AuditPrompts => {
-            cli::run_audit_prompts();
-        }
-        Commands::Top { once, filter, run } => {
-            cli::run_top(once, filter, run).await?;
-        }
-        Commands::Reindex => {
-            cli::run_reindex();
-        }
+        } => cli::run_profile(&model, since, until, by, json)?,
+        Commands::AuditPrompts => cli::run_audit_prompts(),
+        Commands::Top { once, filter, run } => cli::run_top(once, filter, run).await?,
+        Commands::Reindex => cli::run_reindex(),
         Commands::Notices {
             min_severity,
             source,
@@ -594,8 +539,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 cli::run_notices(min_severity.as_deref(), &source, &name, limit)?;
             }
         }
+        _ => {}
     }
-
     Ok(())
 }
 

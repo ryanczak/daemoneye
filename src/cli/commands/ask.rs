@@ -64,6 +64,55 @@ pub async fn run_ask(query: String, raw: bool) -> Result<()> {
     .await
 }
 
+/// Build an automatic denial `Request` for any interactive prompt `Response`
+/// arriving during `--raw` mode. Returns `None` for non-prompt responses.
+fn auto_deny_raw_prompt(msg: &Response) -> Option<Request> {
+    match msg {
+        Response::ToolCallPrompt { id, .. } => Some(Request::ToolCallResponse {
+            id: id.clone(),
+            approved: false,
+            user_message: None,
+        }),
+        Response::CredentialPrompt { id, .. } => Some(Request::CredentialResponse {
+            id: id.clone(),
+            credential: String::new(),
+        }),
+        Response::PaneSelectPrompt { id, panes } => {
+            let pane_id = panes.first().map(|p| p.id.clone()).unwrap_or_default();
+            Some(Request::PaneSelectResponse {
+                id: id.clone(),
+                pane_id,
+            })
+        }
+        Response::ScriptDeletePrompt { id, .. } => Some(Request::ScriptDeleteResponse {
+            id: id.clone(),
+            approved: false,
+        }),
+        Response::ScriptWritePrompt { id, .. } => Some(Request::ScriptWriteResponse {
+            id: id.clone(),
+            approved: false,
+        }),
+        Response::ScheduleWritePrompt { id, .. } => Some(Request::ScheduleWriteResponse {
+            id: id.clone(),
+            approved: false,
+        }),
+        Response::RunbookWritePrompt { id, .. } => Some(Request::RunbookWriteResponse {
+            id: id.clone(),
+            approved: false,
+        }),
+        Response::EditFilePrompt { id, .. } => Some(Request::EditFileResponse {
+            id: id.clone(),
+            approved: false,
+            user_message: None,
+        }),
+        Response::RunbookDeletePrompt { id, .. } => Some(Request::RunbookDeleteResponse {
+            id: id.clone(),
+            approved: false,
+        }),
+        _ => None,
+    }
+}
+
 /// Minimal ask: sends the query, prints only the agent's response tokens to stdout,
 /// and auto-denies any tool calls or interactive prompts. No spinner, no decorations.
 /// Intended for scripting and piping.
@@ -100,6 +149,11 @@ async fn run_ask_raw(query: String) -> Result<()> {
             .map_err(|_| anyhow::anyhow!("Daemon went silent for 120s (no data or keep-alive) — it appears hung. Try `daemoneye status`."))?
             .map_err(|e| anyhow::anyhow!("Connection error: {}", e))?;
 
+        if let Some(reply) = auto_deny_raw_prompt(&msg) {
+            send_request(&mut tx, reply).await?;
+            continue;
+        }
+
         match msg {
             Response::KeepAlive => continue,
             Response::Ok => {
@@ -114,123 +168,7 @@ async fn run_ask_raw(query: String) -> Result<()> {
                 print!("{}", t);
                 std::io::stdout().flush()?;
             }
-            // Auto-deny tool calls — daemon will inform the AI and it will respond in text.
-            Response::ToolCallPrompt { id, .. } => {
-                let denied = Request::ToolCallResponse {
-                    id,
-                    approved: false,
-                    user_message: None,
-                };
-                send_request(&mut tx, denied).await?;
-            }
-            // Auto-deny all other interactive prompts.
-            Response::CredentialPrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::CredentialResponse {
-                        id,
-                        credential: String::new(),
-                    },
-                )
-                .await?;
-            }
-            Response::PaneSelectPrompt { id, panes } => {
-                let pane_id = panes.into_iter().next().map(|p| p.id).unwrap_or_default();
-                send_request(&mut tx, Request::PaneSelectResponse { id, pane_id }).await?;
-            }
-            Response::ScriptDeletePrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::ScriptDeleteResponse {
-                        id,
-                        approved: false,
-                    },
-                )
-                .await?;
-            }
-            Response::ScriptWritePrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::ScriptWriteResponse {
-                        id,
-                        approved: false,
-                    },
-                )
-                .await?;
-            }
-            Response::ScheduleWritePrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::ScheduleWriteResponse {
-                        id,
-                        approved: false,
-                    },
-                )
-                .await?;
-            }
-            Response::RunbookWritePrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::RunbookWriteResponse {
-                        id,
-                        approved: false,
-                    },
-                )
-                .await?;
-            }
-            Response::EditFilePrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::EditFileResponse {
-                        id,
-                        approved: false,
-                        user_message: None,
-                    },
-                )
-                .await?;
-            }
-            Response::RunbookDeletePrompt { id, .. } => {
-                send_request(
-                    &mut tx,
-                    Request::RunbookDeleteResponse {
-                        id,
-                        approved: false,
-                    },
-                )
-                .await?;
-            }
-            // Informational responses — silently skip.
-            Response::SessionInfo { .. }
-            | Response::SessionCounters { .. }
-            | Response::UsageUpdate { .. }
-            | Response::SystemMsg(_)
-            | Response::ToolResult { .. }
-            | Response::AlertState { .. }
-            | Response::ScheduleList { .. }
-            | Response::ScriptList { .. }
-            | Response::RunbookList { .. }
-            | Response::ModelChanged { .. }
-            | Response::ModelList { .. }
-            | Response::PaneChanged { .. }
-            | Response::PaneList { .. }
-            | Response::ShellList { .. }
-            | Response::ShellLogList { .. }
-            | Response::ShellLog { .. }
-            | Response::ShellScreen { .. }
-            | Response::ShellChunk { .. }
-            | Response::ShellSignalled { .. }
-            | Response::ShellOpened { .. }
-            | Response::ShellExited
-            | Response::ContainerStatus { .. }
-            | Response::DaemonStatus { .. }
-            | Response::LimitsInfo { .. }
-            | Response::SessionSaved { .. }
-            | Response::SessionLoaded { .. }
-            | Response::SavedSessionList { .. }
-            | Response::Reloaded { .. }
-            | Response::ToolStarted { .. }
-            | Response::ToolFinished { .. }
-            | Response::Notice { .. } => {}
+            _ => {}
         }
     }
 

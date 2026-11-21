@@ -180,24 +180,11 @@ fn memory_manifest_item(m: &crate::memory::MemoryInfo) -> String {
 // Phase 4: Contextual auto-search
 // ---------------------------------------------------------------------------
 
-/// Scan user query + pane content for terms matching stored knowledge.
-/// Loads up to 3 matching items (runbook > tag > memory key/summary > script name),
-/// then follows `relates_to` links on matched memories to pull in related entries.
-/// Applies sensitive-data masking, caps at 4096 bytes.
-/// Returns empty string when no matches.
-pub fn auto_search_context(query: &str, pane_content: &str) -> String {
-    const MAX_ITEMS: usize = 3;
-    const CAP: usize = 4096;
-    const TRUNC_NOTE: &str =
-        "\n[truncated — use read_runbook/read_memory/read_script for full content]";
+type KnowledgeMatch = (u8, &'static str, String, Option<String>);
 
-    let corpus = format!("{} {}", query, pane_content).to_lowercase();
-
-    let e = load_all_entries();
-
-    // Collect (priority, kind, key, optional_category)
+fn collect_corpus_matches(corpus: &str, e: &AllEntries) -> Vec<KnowledgeMatch> {
     // Priority: 0=runbook name, 1=runbook tag, 2=memory key/summary/tag, 3=script name
-    let mut matches: Vec<(u8, &'static str, String, Option<String>)> = Vec::new();
+    let mut matches: Vec<KnowledgeMatch> = Vec::new();
 
     for rb in &e.runbooks {
         let name_lc = rb.name.to_lowercase();
@@ -205,7 +192,6 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
             matches.push((0, "runbook", rb.name.clone(), None));
             continue;
         }
-        // Also match on significant keywords from the hyphen/underscore-split name
         let name_keywords: Vec<&str> = name_lc.split(['-', '_']).filter(|w| w.len() >= 4).collect();
         if name_keywords.iter().any(|kw| corpus.contains(*kw)) {
             matches.push((0, "runbook", rb.name.clone(), None));
@@ -231,7 +217,6 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
             ));
             continue;
         }
-        // Also match on significant keywords from the key
         let key_keywords: Vec<&str> = key_lc.split(['-', '_']).filter(|w| w.len() >= 4).collect();
         if key_keywords.iter().any(|kw| corpus.contains(*kw)) {
             matches.push((
@@ -242,7 +227,6 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
             ));
             continue;
         }
-        // Match on summary text
         if let Some(ref s) = mem.summary {
             let summary_lc = s.to_lowercase();
             if !summary_lc.is_empty() && corpus.contains(&summary_lc) {
@@ -254,7 +238,6 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
                 ));
                 continue;
             }
-            // Also match on significant words from the summary
             let summary_words: Vec<&str> = summary_lc
                 .split_whitespace()
                 .filter(|w| w.len() >= 4)
@@ -298,49 +281,70 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
         }
     }
 
-    // Sort by priority, deduplicate by (kind, key)
     matches.sort_by_key(|(p, k, n, _)| (*p, k.to_string(), n.clone()));
     matches.dedup_by_key(|(_, kind, key, _)| format!("{}/{}", kind, key));
+    matches
+}
 
-    let mut top: Vec<_> = matches.into_iter().take(MAX_ITEMS).collect();
+fn append_related_knowledge_matches(
+    top: &mut Vec<KnowledgeMatch>,
+    e: &AllEntries,
+    max_items: usize,
+) {
+    if top.len() >= max_items {
+        return;
+    }
+    let loaded_keys: std::collections::HashSet<String> =
+        top.iter().map(|(_, _, k, _)| k.clone()).collect();
+    let knowledge_key_set: std::collections::HashSet<String> =
+        e.knowledge.iter().map(|m| m.key.clone()).collect();
+    let runbook_name_set: std::collections::HashSet<String> =
+        e.runbooks.iter().map(|r| r.name.clone()).collect();
 
-    // Follow relates_to links: for each matched knowledge memory, check its relates_to
-    // references and load them if we still have budget and they aren't already included.
-    if top.len() < MAX_ITEMS {
-        let loaded_keys: std::collections::HashSet<String> =
-            top.iter().map(|(_, _, k, _)| k.clone()).collect();
-        let knowledge_key_set: std::collections::HashSet<String> =
-            e.knowledge.iter().map(|m| m.key.clone()).collect();
-        let runbook_name_set: std::collections::HashSet<String> =
-            e.runbooks.iter().map(|r| r.name.clone()).collect();
-
-        let mut related: Vec<(u8, &'static str, String, Option<String>)> = Vec::new();
-        for (_, kind, key, _) in &top {
-            if *kind != "knowledge" {
-                continue;
-            }
-            if let Some(mem) = e.knowledge.iter().find(|m| &m.key == key) {
-                for ref_key in &mem.relates_to {
-                    if loaded_keys.contains(ref_key) {
-                        continue;
-                    }
-                    if knowledge_key_set.contains(ref_key) {
-                        related.push((
-                            4,
-                            "knowledge",
-                            ref_key.clone(),
-                            Some("knowledge".to_string()),
-                        ));
-                    } else if runbook_name_set.contains(ref_key) {
-                        related.push((4, "runbook", ref_key.clone(), None));
-                    }
+    let mut related: Vec<KnowledgeMatch> = Vec::new();
+    for (_, kind, key, _) in top.iter() {
+        if *kind != "knowledge" {
+            continue;
+        }
+        if let Some(mem) = e.knowledge.iter().find(|m| &m.key == key) {
+            for ref_key in &mem.relates_to {
+                if loaded_keys.contains(ref_key) {
+                    continue;
+                }
+                if knowledge_key_set.contains(ref_key) {
+                    related.push((
+                        4,
+                        "knowledge",
+                        ref_key.clone(),
+                        Some("knowledge".to_string()),
+                    ));
+                } else if runbook_name_set.contains(ref_key) {
+                    related.push((4, "runbook", ref_key.clone(), None));
                 }
             }
         }
-        related.dedup_by_key(|(_, kind, key, _)| format!("{}/{}", kind, key));
-        let budget = MAX_ITEMS - top.len();
-        top.extend(related.into_iter().take(budget));
     }
+    related.dedup_by_key(|(_, kind, key, _)| format!("{}/{}", kind, key));
+    let budget = max_items - top.len();
+    top.extend(related.into_iter().take(budget));
+}
+
+/// Scan user query + pane content for terms matching stored knowledge.
+/// Loads up to 3 matching items (runbook > tag > memory key/summary > script name),
+/// then follows `relates_to` links on matched memories to pull in related entries.
+/// Applies sensitive-data masking, caps at 4096 bytes.
+/// Returns empty string when no matches.
+pub fn auto_search_context(query: &str, pane_content: &str) -> String {
+    const MAX_ITEMS: usize = 3;
+    const CAP: usize = 4096;
+    const TRUNC_NOTE: &str =
+        "\n[truncated — use read_runbook/read_memory/read_script for full content]";
+
+    let corpus = format!("{} {}", query, pane_content).to_lowercase();
+    let e = load_all_entries();
+    let matches = collect_corpus_matches(&corpus, &e);
+    let mut top: Vec<_> = matches.into_iter().take(MAX_ITEMS).collect();
+    append_related_knowledge_matches(&mut top, &e, MAX_ITEMS);
     if top.is_empty() {
         return String::new();
     }

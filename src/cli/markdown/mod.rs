@@ -395,100 +395,8 @@ impl MarkdownRenderer {
             }
         }
 
-        // ── Bullet list ──
-        let bullet = if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
-            Some((2usize, "\x1b[33m•\x1b[0m"))
-        } else if line.starts_with("  - ") || line.starts_with("  * ") {
-            Some((4usize, "  \x1b[2m◦\x1b[0m"))
-        } else {
-            None
-        };
-        if let Some((skip, sym)) = bullet {
-            let leader_len = visual_len(sym) + 1; // sym + space
-            let content = render_inline(&line[skip..]);
-            let mut lines = Vec::new();
-            let mut col = leader_len;
-            let mut current = String::from(sym) + " ";
-            for word in content.split(' ') {
-                let word_len = visual_len(word);
-                if col + word_len <= width {
-                    if col > leader_len {
-                        current.push(' ');
-                    }
-                    current.push_str(word);
-                    col += word_len + if col > leader_len { 1 } else { 0 };
-                } else {
-                    lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-                    current = String::from(word);
-                    col = word_len;
-                }
-            }
-            if !current.is_empty() {
-                lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-            }
-            return lines;
-        }
-
-        // ── Numbered list ──
-        {
-            let bytes = line.as_bytes();
-            let mut j = 0;
-            while j < bytes.len() && bytes[j].is_ascii_digit() {
-                j += 1;
-            }
-            if j > 0 && j + 1 < bytes.len() && bytes[j] == b'.' && bytes[j + 1] == b' ' {
-                let num = &line[..j];
-                let leader = format!("\x1b[33m{}.\x1b[0m ", num);
-                let leader_len = num.len() + 2;
-                let content = render_inline(&line[j + 2..]);
-                let mut lines = Vec::new();
-                let mut col = leader_len;
-                let mut current = leader;
-                for word in content.split(' ') {
-                    let word_len = visual_len(word);
-                    if col + word_len <= width {
-                        if col > leader_len {
-                            current.push(' ');
-                        }
-                        current.push_str(word);
-                        col += word_len + if col > leader_len { 1 } else { 0 };
-                    } else {
-                        lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-                        current = String::from(word);
-                        col = word_len;
-                    }
-                }
-                if !current.is_empty() {
-                    lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-                }
-                return lines;
-            }
-        }
-
-        // ── Blockquote ──
-        if let Some(rest) = line.strip_prefix("> ").or_else(|| line.strip_prefix(">")) {
-            let leader = "\x1b[2m│\x1b[0m ";
-            let content = render_inline(rest);
-            let mut lines = Vec::new();
-            let mut col = 2;
-            let mut current = String::from(leader);
-            for word in content.split(' ') {
-                let word_len = visual_len(word);
-                if col + word_len <= width {
-                    if col > 2 {
-                        current.push(' ');
-                    }
-                    current.push_str(word);
-                    col += word_len + if col > 2 { 1 } else { 0 };
-                } else {
-                    lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-                    current = format!("{}{}", leader, word);
-                    col = 2 + word_len;
-                }
-            }
-            if !current.is_empty() {
-                lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-            }
+        // ── Bullet list / Numbered list / Blockquote ──
+        if let Some(lines) = render_list_or_quote_to_spans(line, width) {
             return lines;
         }
 
@@ -498,33 +406,7 @@ impl MarkdownRenderer {
         }
 
         // ── Regular prose — word-wrapped with tint ──
-        let styled = render_inline(line);
-        let mut lines = Vec::new();
-        let mut col = 0usize;
-        let mut current = String::new();
-        let tint_on = "\x1b[97m";
-        let tint_off = "\x1b[0m";
-
-        for word in styled.split(' ') {
-            let word_len = visual_len(word);
-            let tinted_word = format!("{}{}{}", tint_on, word, tint_off);
-            if col == 0 {
-                current = tinted_word;
-                col = word_len;
-            } else if col + 1 + word_len <= width {
-                current.push(' ');
-                current.push_str(&tinted_word);
-                col += 1 + word_len;
-            } else {
-                lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-                current = tinted_word;
-                col = word_len;
-            }
-        }
-        if !current.is_empty() {
-            lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
-        }
-        lines
+        render_wrapped_prose_to_spans(line, width)
     }
 
     /// Classify and render the accumulated line.
@@ -670,6 +552,142 @@ impl MarkdownRenderer {
         println!();
         self.wrap.reset();
     }
+}
+
+fn render_list_or_quote_to_spans(
+    line: &str,
+    width: usize,
+) -> Option<Vec<ratatui::text::Line<'static>>> {
+    use crate::cli::render_ratatui::parse_ansi_to_spans;
+
+    // ── Bullet list ──
+    let bullet = if line.starts_with("- ") || line.starts_with("* ") || line.starts_with("+ ") {
+        Some((2usize, "\x1b[33m•\x1b[0m"))
+    } else if line.starts_with("  - ") || line.starts_with("  * ") {
+        Some((4usize, "  \x1b[2m◦\x1b[0m"))
+    } else {
+        None
+    };
+    if let Some((skip, sym)) = bullet {
+        let leader_len = visual_len(sym) + 1; // sym + space
+        let content = render_inline(&line[skip..]);
+        let mut lines = Vec::new();
+        let mut col = leader_len;
+        let mut current = String::from(sym) + " ";
+        for word in content.split(' ') {
+            let word_len = visual_len(word);
+            if col + word_len <= width {
+                if col > leader_len {
+                    current.push(' ');
+                }
+                current.push_str(word);
+                col += word_len + if col > leader_len { 1 } else { 0 };
+            } else {
+                lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+                current = String::from(word);
+                col = word_len;
+            }
+        }
+        if !current.is_empty() {
+            lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+        }
+        return Some(lines);
+    }
+
+    // ── Numbered list ──
+    let bytes = line.as_bytes();
+    let mut j = 0;
+    while j < bytes.len() && bytes[j].is_ascii_digit() {
+        j += 1;
+    }
+    if j > 0 && j + 1 < bytes.len() && bytes[j] == b'.' && bytes[j + 1] == b' ' {
+        let num = &line[..j];
+        let leader = format!("\x1b[33m{}.\x1b[0m ", num);
+        let leader_len = num.len() + 2;
+        let content = render_inline(&line[j + 2..]);
+        let mut lines = Vec::new();
+        let mut col = leader_len;
+        let mut current = leader;
+        for word in content.split(' ') {
+            let word_len = visual_len(word);
+            if col + word_len <= width {
+                if col > leader_len {
+                    current.push(' ');
+                }
+                current.push_str(word);
+                col += word_len + if col > leader_len { 1 } else { 0 };
+            } else {
+                lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+                current = String::from(word);
+                col = word_len;
+            }
+        }
+        if !current.is_empty() {
+            lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+        }
+        return Some(lines);
+    }
+
+    // ── Blockquote ──
+    if let Some(rest) = line.strip_prefix("> ").or_else(|| line.strip_prefix(">")) {
+        let leader = "\x1b[2m│\x1b[0m ";
+        let content = render_inline(rest);
+        let mut lines = Vec::new();
+        let mut col = 2;
+        let mut current = String::from(leader);
+        for word in content.split(' ') {
+            let word_len = visual_len(word);
+            if col + word_len <= width {
+                if col > 2 {
+                    current.push(' ');
+                }
+                current.push_str(word);
+                col += word_len + if col > 2 { 1 } else { 0 };
+            } else {
+                lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+                current = format!("{}{}", leader, word);
+                col = 2 + word_len;
+            }
+        }
+        if !current.is_empty() {
+            lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+        }
+        return Some(lines);
+    }
+
+    None
+}
+
+fn render_wrapped_prose_to_spans(line: &str, width: usize) -> Vec<ratatui::text::Line<'static>> {
+    use crate::cli::render_ratatui::parse_ansi_to_spans;
+
+    let styled = render_inline(line);
+    let mut lines = Vec::new();
+    let mut col = 0usize;
+    let mut current = String::new();
+    let tint_on = "\x1b[97m";
+    let tint_off = "\x1b[0m";
+
+    for word in styled.split(' ') {
+        let word_len = visual_len(word);
+        let tinted_word = format!("{}{}{}", tint_on, word, tint_off);
+        if col == 0 {
+            current = tinted_word;
+            col = word_len;
+        } else if col + 1 + word_len <= width {
+            current.push(' ');
+            current.push_str(&tinted_word);
+            col += 1 + word_len;
+        } else {
+            lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+            current = tinted_word;
+            col = word_len;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(ratatui::text::Line::from(parse_ansi_to_spans(&current)));
+    }
+    lines
 }
 
 #[cfg(test)]

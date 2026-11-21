@@ -3,27 +3,9 @@
 //! tmux bind-key / shell-integration snippets.
 
 use anyhow::Result;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Run `daemoneye setup`.
-///
-/// - `overwrite_bin`    — copy the current executable to `~/.daemoneye/bin/daemoneye`
-///   even if a copy already exists there.
-/// - `overwrite_memory` — overwrite the built-in knowledge and session memory files with the
-///   versions bundled in this binary.
-/// - `overwrite_prompt` — overwrite `~/.daemoneye/etc/prompts/sre.toml` with the
-///   version bundled in this binary (implied by `--overwrite-all`).
-pub fn run_setup(
-    overwrite_bin: bool,
-    overwrite_memory: bool,
-    overwrite_prompt: bool,
-) -> Result<()> {
-    // Ensure the full ~/.daemoneye/ directory tree and default files are in place.
-    // (Also called at the top of main(), but being explicit here makes setup self-contained.)
-    crate::config::Config::ensure_dirs()
-        .map_err(|e| anyhow::anyhow!("Failed to initialise config directory: {}", e))?;
-
-    let dir = crate::config::config_dir();
+fn print_directory_layout(dir: &Path) {
     println!("Initialised ~/.daemoneye/ layout:");
     println!(
         "  {}/etc/config.toml       ← edit this to configure the daemon",
@@ -62,6 +44,9 @@ pub fn run_setup(
         dir.display()
     );
     println!();
+}
+
+fn report_seeded_memories_and_agents(dir: &Path, overwrite_memory: bool) {
     let memory_dir = dir.join("memory");
     let seeded_knowledge = [
         "webhook-setup",
@@ -152,48 +137,9 @@ pub fn run_setup(
         dir.display()
     );
     println!();
+}
 
-    // Copy the running binary into ~/.daemoneye/bin/daemoneye.
-    // On first run (no binary present) always copy; on upgrade require --overwrite-bin.
-    let bin_dest = crate::config::bin_dir().join("daemoneye");
-    let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("daemoneye"));
-    let bin_exists = bin_dest.exists();
-    if !bin_exists || overwrite_bin {
-        match std::fs::copy(&current_exe, &bin_dest) {
-            Ok(_) => {
-                if bin_exists {
-                    println!("Updated binary → {}", bin_dest.display());
-                } else {
-                    println!("Copied binary → {}", bin_dest.display());
-                }
-            }
-            Err(e) => eprintln!(
-                "Warning: could not copy binary to {}: {}",
-                bin_dest.display(),
-                e
-            ),
-        }
-    } else {
-        println!(
-            "Binary already installed at {} (use --overwrite-bin to update)",
-            bin_dest.display()
-        );
-    }
-    println!();
-
-    // Overwrite the built-in SRE prompt when --overwrite-all is in effect.
-    if overwrite_prompt {
-        match crate::config::overwrite_sre_prompt() {
-            Ok(()) => println!(
-                "Refreshed built-in SRE prompt → {}/etc/prompts/sre.toml",
-                dir.display()
-            ),
-            Err(e) => eprintln!("Warning: could not overwrite SRE prompt: {}", e),
-        }
-        println!();
-    }
-
-    // Write the systemd user service file using the bin/ path.
+fn write_systemd_service_and_print_hints(bin_dest: &Path) {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let systemd_dir = PathBuf::from(&home).join(".config/systemd/user");
     let service_path = systemd_dir.join("daemoneye.service");
@@ -239,9 +185,6 @@ WantedBy=default.target
     }
 
     let split_flag = "-v";
-
-    // Use the ~/.daemoneye/bin/ copy so the bind-key is stable across cargo reinstalls
-    // and works even when ~/.cargo/bin is not in the PATH inherited by tmux.
     let daemon_bin = bin_dest.to_string_lossy().into_owned();
 
     println!();
@@ -267,6 +210,65 @@ WantedBy=default.target
     println!("#");
     println!("# The daemon will create the session automatically and `daemoneye chat`");
     println!("# will attach to it when run from outside tmux.");
+}
 
+/// Run `daemoneye setup`.
+///
+/// - `overwrite_bin`    — copy the current executable to `~/.daemoneye/bin/daemoneye`
+///   even if a copy already exists there.
+/// - `overwrite_memory` — overwrite the built-in knowledge and session memory files with the
+///   versions bundled in this binary.
+/// - `overwrite_prompt` — overwrite `~/.daemoneye/etc/prompts/sre.toml` with the
+///   version bundled in this binary (implied by `--overwrite-all`).
+pub fn run_setup(
+    overwrite_bin: bool,
+    overwrite_memory: bool,
+    overwrite_prompt: bool,
+) -> Result<()> {
+    crate::config::Config::ensure_dirs()
+        .map_err(|e| anyhow::anyhow!("Failed to initialise config directory: {}", e))?;
+
+    let dir = crate::config::config_dir();
+    print_directory_layout(&dir);
+    report_seeded_memories_and_agents(&dir, overwrite_memory);
+
+    let bin_dest = crate::config::bin_dir().join("daemoneye");
+    let current_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("daemoneye"));
+    let bin_exists = bin_dest.exists();
+    if !bin_exists || overwrite_bin {
+        match std::fs::copy(&current_exe, &bin_dest) {
+            Ok(_) => {
+                if bin_exists {
+                    println!("Updated binary → {}", bin_dest.display());
+                } else {
+                    println!("Copied binary → {}", bin_dest.display());
+                }
+            }
+            Err(e) => eprintln!(
+                "Warning: could not copy binary to {}: {}",
+                bin_dest.display(),
+                e
+            ),
+        }
+    } else {
+        println!(
+            "Binary already installed at {} (use --overwrite-bin to update)",
+            bin_dest.display()
+        );
+    }
+    println!();
+
+    if overwrite_prompt {
+        match crate::config::overwrite_sre_prompt() {
+            Ok(()) => println!(
+                "Refreshed built-in SRE prompt → {}/etc/prompts/sre.toml",
+                dir.display()
+            ),
+            Err(e) => eprintln!("Warning: could not overwrite SRE prompt: {}", e),
+        }
+        println!();
+    }
+
+    write_systemd_service_and_print_hints(&bin_dest);
     Ok(())
 }

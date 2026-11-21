@@ -453,6 +453,156 @@ pub fn focus_prev(focus: usize, len: usize) -> usize {
     (focus + len - 1) % len
 }
 
+struct ViewerState {
+    focus: usize,
+    collapsed: std::collections::HashSet<usize>,
+    searching: bool,
+    query: String,
+    current: usize,
+    scroll: usize,
+    matches: Vec<usize>,
+    note: Option<String>,
+}
+
+/// Apply one `ViewerAction` to `state`, returning `true` when the viewer
+/// should exit (`ViewerAction::Quit`).
+fn apply_viewer_action(
+    action: ViewerAction,
+    state: &mut ViewerState,
+    transcript: &crate::cli::transcript::Transcript,
+    rows: &[ViewRow],
+    body_height: usize,
+    blocks_len: usize,
+    focus_changed: &mut bool,
+) -> bool {
+    if !matches!(action, ViewerAction::Ignore) {
+        state.note = None;
+    }
+    match action {
+        ViewerAction::ScrollUp => {
+            state.scroll = state.scroll.saturating_sub(1);
+        }
+        ViewerAction::ScrollDown => {
+            state.scroll = state.scroll.saturating_add(1);
+        }
+        ViewerAction::PageUp => {
+            state.scroll = state.scroll.saturating_sub(body_height.saturating_sub(1));
+        }
+        ViewerAction::PageDown => {
+            state.scroll = state.scroll.saturating_add(body_height.saturating_sub(1));
+        }
+        ViewerAction::Top => state.scroll = 0,
+        ViewerAction::Bottom => state.scroll = usize::MAX,
+        ViewerAction::FocusNext => {
+            state.focus = focus_next(state.focus, blocks_len);
+            *focus_changed = true;
+        }
+        ViewerAction::FocusPrev => {
+            state.focus = focus_prev(state.focus, blocks_len);
+            *focus_changed = true;
+        }
+        ViewerAction::ToggleCollapse => {
+            if state.collapsed.contains(&state.focus) {
+                state.collapsed.remove(&state.focus);
+            } else {
+                state.collapsed.insert(state.focus);
+            }
+            state.matches = find_matches(rows, &state.query);
+            state.current = state.current.min(state.matches.len().saturating_sub(1));
+        }
+        ViewerAction::CollapseOutputs => {
+            state.collapsed.clear();
+            for (i, block) in transcript.blocks().iter().enumerate() {
+                if matches!(block, crate::cli::transcript::Block::Output { .. }) {
+                    state.collapsed.insert(i);
+                }
+            }
+            state.matches = find_matches(rows, &state.query);
+            state.current = state.current.min(state.matches.len().saturating_sub(1));
+        }
+        ViewerAction::ExpandAll => {
+            state.collapsed.clear();
+            state.matches = find_matches(rows, &state.query);
+            state.current = state.current.min(state.matches.len().saturating_sub(1));
+        }
+        ViewerAction::Quit => return true,
+        ViewerAction::SearchOpen => {
+            state.searching = true;
+            state.query.clear();
+            state.matches.clear();
+            state.current = 0;
+        }
+        ViewerAction::SearchType(c) => {
+            state.query.push(c);
+            state.matches = find_matches(rows, &state.query);
+            state.current = 0;
+            if let Some(&m) = state.matches.first() {
+                state.scroll = scroll_to_row(m, state.scroll, body_height);
+            }
+        }
+        ViewerAction::SearchBackspace => {
+            state.query.pop();
+            state.matches = find_matches(rows, &state.query);
+            state.current = 0;
+            if let Some(&m) = state.matches.first() {
+                state.scroll = scroll_to_row(m, state.scroll, body_height);
+            }
+        }
+        ViewerAction::SearchCommit => {
+            state.searching = false;
+        }
+        ViewerAction::SearchCancel => {
+            state.searching = false;
+            state.query.clear();
+            state.matches.clear();
+            state.current = 0;
+        }
+        ViewerAction::MatchNext => {
+            if let Some(&m) = state.matches.get(state.current) {
+                state.current = next_match(state.current, state.matches.len());
+                state.scroll = scroll_to_row(m, state.scroll, body_height);
+            }
+        }
+        ViewerAction::MatchPrev => {
+            if let Some(&m) = state.matches.get(state.current) {
+                state.current = prev_match(state.current, state.matches.len());
+                state.scroll = scroll_to_row(m, state.scroll, body_height);
+            }
+        }
+        ViewerAction::Copy => {
+            if let Some(block) = transcript.blocks().get(state.focus) {
+                let text = copy_text(block);
+                match copy_to_tmux_buffer(&text) {
+                    Ok(()) => {
+                        state.note = Some(format!(
+                            "copied {} lines to tmux buffer",
+                            text.lines().count()
+                        ))
+                    }
+                    Err(e) => state.note = Some(format!("copy failed: {e}")),
+                }
+            }
+        }
+        ViewerAction::ClickAt { row, .. } => {
+            if let Some(row_idx) = row_at(row, 0, body_height as u16, state.scroll, rows.len()) {
+                let click_row = &rows[row_idx];
+                state.focus = click_row.block;
+                if click_row.kind == RowKind::Header {
+                    if state.collapsed.contains(&state.focus) {
+                        state.collapsed.remove(&state.focus);
+                    } else {
+                        state.collapsed.insert(state.focus);
+                    }
+                    state.matches = find_matches(rows, &state.query);
+                    state.current = state.current.min(state.matches.len().saturating_sub(1));
+                }
+            }
+        }
+        ViewerAction::Ignore => {}
+    }
+    false
+}
+
 /// The fallible body of the viewer. Lives separately from
 /// `run_transcript_viewer` so the fullscreen `Terminal` is dropped (buffer
 /// cleared) before the `AltScreenGuard` — which owns leaving the alternate
@@ -467,40 +617,36 @@ async fn viewer_loop(
 
     let mut terminal = Terminal::new(CrosstermBackend::new(std::io::stdout()))?;
     let blocks_len = transcript.blocks().len();
-    let mut focus = blocks_len.saturating_sub(1);
-    let mut collapsed: std::collections::HashSet<usize> = std::collections::HashSet::new();
-
-    let mut searching = false;
-    let mut query = String::new();
-    let mut current: usize = 0;
-
-    let mut scroll: usize;
-    let mut matches: Vec<usize>;
-    let mut note: Option<String> = None;
-    {
-        let size = terminal.size()?;
-        let width = size.width as usize;
-        let rows = layout_blocks(transcript.blocks(), width);
-        let body_height = size.height.saturating_sub(1) as usize;
-        scroll = clamp_scroll(usize::MAX, rows.len(), body_height);
-        matches = find_matches(&rows, &query);
-        terminal.draw(|f| {
-            render_transcript(
-                f,
-                &rows,
-                scroll,
-                focus,
-                &SearchState {
-                    active: searching,
-                    query: &query,
-                    matches: &matches,
-                    current,
-                },
-                transcript.evicted(),
-                note.as_deref(),
-            );
-        })?;
-    }
+    let size = terminal.size()?;
+    let width = size.width as usize;
+    let rows = layout_blocks(transcript.blocks(), width);
+    let body_height = size.height.saturating_sub(1) as usize;
+    let mut state = ViewerState {
+        focus: blocks_len.saturating_sub(1),
+        collapsed: std::collections::HashSet::new(),
+        searching: false,
+        query: String::new(),
+        current: 0,
+        scroll: clamp_scroll(usize::MAX, rows.len(), body_height),
+        matches: find_matches(&rows, ""),
+        note: None,
+    };
+    terminal.draw(|f| {
+        render_transcript(
+            f,
+            &rows,
+            state.scroll,
+            state.focus,
+            &SearchState {
+                active: state.searching,
+                query: &state.query,
+                matches: &state.matches,
+                current: state.current,
+            },
+            transcript.evicted(),
+            state.note.as_deref(),
+        );
+    })?;
 
     loop {
         let key = tokio::select! {
@@ -509,23 +655,23 @@ async fn viewer_loop(
                 let width = size.width as usize;
                 let rows = layout_blocks(transcript.blocks(), width);
                 let body_height = size.height.saturating_sub(1) as usize;
-                scroll = clamp_scroll(scroll, rows.len(), body_height);
-                matches = find_matches(&rows, &query);
-                current = current.min(matches.len().saturating_sub(1));
+                state.scroll = clamp_scroll(state.scroll, rows.len(), body_height);
+                state.matches = find_matches(&rows, &state.query);
+                state.current = state.current.min(state.matches.len().saturating_sub(1));
                 terminal.draw(|f| {
                     render_transcript(
                         f,
                         &rows,
-                        scroll,
-                        focus,
+                        state.scroll,
+                        state.focus,
                         &SearchState {
-                            active: searching,
-                            query: &query,
-                            matches: &matches,
-                            current,
+                            active: state.searching,
+                            query: &state.query,
+                            matches: &state.matches,
+                            current: state.current,
                         },
                         transcript.evicted(),
-                        note.as_deref(),
+                        state.note.as_deref(),
                     );
                 })?;
                 continue;
@@ -538,154 +684,40 @@ async fn viewer_loop(
         let rows = layout_blocks(transcript.blocks(), width);
         let body_height = size.height.saturating_sub(1) as usize;
         let mut focus_changed = false;
-        let action = key_action(&key, searching);
-        if !matches!(action, ViewerAction::Ignore) {
-            note = None;
-        }
-        match action {
-            ViewerAction::ScrollUp => {
-                scroll = scroll.saturating_sub(1);
-            }
-            ViewerAction::ScrollDown => {
-                scroll = scroll.saturating_add(1);
-            }
-            ViewerAction::PageUp => {
-                scroll = scroll.saturating_sub(body_height.saturating_sub(1));
-            }
-            ViewerAction::PageDown => {
-                scroll = scroll.saturating_add(body_height.saturating_sub(1));
-            }
-            ViewerAction::Top => scroll = 0,
-            ViewerAction::Bottom => scroll = usize::MAX,
-            ViewerAction::FocusNext => {
-                focus = focus_next(focus, blocks_len);
-                focus_changed = true;
-            }
-            ViewerAction::FocusPrev => {
-                focus = focus_prev(focus, blocks_len);
-                focus_changed = true;
-            }
-            ViewerAction::ToggleCollapse => {
-                if collapsed.contains(&focus) {
-                    collapsed.remove(&focus);
-                } else {
-                    collapsed.insert(focus);
-                }
-                matches = find_matches(&rows, &query);
-                current = current.min(matches.len().saturating_sub(1));
-            }
-            ViewerAction::CollapseOutputs => {
-                collapsed.clear();
-                for (i, block) in transcript.blocks().iter().enumerate() {
-                    if matches!(block, crate::cli::transcript::Block::Output { .. }) {
-                        collapsed.insert(i);
-                    }
-                }
-                matches = find_matches(&rows, &query);
-                current = current.min(matches.len().saturating_sub(1));
-            }
-            ViewerAction::ExpandAll => {
-                collapsed.clear();
-                matches = find_matches(&rows, &query);
-                current = current.min(matches.len().saturating_sub(1));
-            }
-            ViewerAction::Quit => break,
-            ViewerAction::SearchOpen => {
-                searching = true;
-                query.clear();
-                matches.clear();
-                current = 0;
-            }
-            ViewerAction::SearchType(c) => {
-                query.push(c);
-                matches = find_matches(&rows, &query);
-                current = 0;
-                if let Some(&m) = matches.first() {
-                    scroll = scroll_to_row(m, scroll, body_height);
-                }
-            }
-            ViewerAction::SearchBackspace => {
-                query.pop();
-                matches = find_matches(&rows, &query);
-                current = 0;
-                if let Some(&m) = matches.first() {
-                    scroll = scroll_to_row(m, scroll, body_height);
-                }
-            }
-            ViewerAction::SearchCommit => {
-                searching = false;
-            }
-            ViewerAction::SearchCancel => {
-                searching = false;
-                query.clear();
-                matches.clear();
-                current = 0;
-            }
-            ViewerAction::MatchNext => {
-                if let Some(&m) = matches.get(current) {
-                    current = next_match(current, matches.len());
-                    scroll = scroll_to_row(m, scroll, body_height);
-                }
-            }
-            ViewerAction::MatchPrev => {
-                if let Some(&m) = matches.get(current) {
-                    current = prev_match(current, matches.len());
-                    scroll = scroll_to_row(m, scroll, body_height);
-                }
-            }
-            ViewerAction::Copy => {
-                if let Some(block) = transcript.blocks().get(focus) {
-                    let text = copy_text(block);
-                    match copy_to_tmux_buffer(&text) {
-                        Ok(()) => {
-                            note = Some(format!(
-                                "copied {} lines to tmux buffer",
-                                text.lines().count()
-                            ))
-                        }
-                        Err(e) => note = Some(format!("copy failed: {e}")),
-                    }
-                }
-            }
-            ViewerAction::ClickAt { row, .. } => {
-                if let Some(row_idx) = row_at(row, 0, body_height as u16, scroll, rows.len()) {
-                    let click_row = &rows[row_idx];
-                    focus = click_row.block;
-                    if click_row.kind == RowKind::Header {
-                        if collapsed.contains(&focus) {
-                            collapsed.remove(&focus);
-                        } else {
-                            collapsed.insert(focus);
-                        }
-                        matches = find_matches(&rows, &query);
-                        current = current.min(matches.len().saturating_sub(1));
-                    }
-                }
-            }
-            ViewerAction::Ignore => {}
+        let action = key_action(&key, state.searching);
+        if apply_viewer_action(
+            action,
+            &mut state,
+            transcript,
+            &rows,
+            body_height,
+            blocks_len,
+            &mut focus_changed,
+        ) {
+            break;
         }
         if focus_changed
-            && let Some(row_idx) = rows
-                .iter()
-                .position(|r| r.block == focus && r.kind == crate::cli::viewer::RowKind::Header)
+            && let Some(row_idx) = rows.iter().position(|r| {
+                r.block == state.focus && r.kind == crate::cli::viewer::RowKind::Header
+            })
         {
-            scroll = scroll_to_row(row_idx, scroll, body_height);
+            state.scroll = scroll_to_row(row_idx, state.scroll, body_height);
         }
-        scroll = clamp_scroll(scroll, rows.len(), body_height);
+        state.scroll = clamp_scroll(state.scroll, rows.len(), body_height);
         terminal.draw(|f| {
             render_transcript(
                 f,
                 &rows,
-                scroll,
-                focus,
+                state.scroll,
+                state.focus,
                 &SearchState {
-                    active: searching,
-                    query: &query,
-                    matches: &matches,
-                    current,
+                    active: state.searching,
+                    query: &state.query,
+                    matches: &state.matches,
+                    current: state.current,
                 },
                 transcript.evicted(),
-                note.as_deref(),
+                state.note.as_deref(),
             );
         })?;
     }
