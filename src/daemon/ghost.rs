@@ -493,38 +493,7 @@ pub async fn trigger_ghost_turn(
         cancel_stage(run_log.run_id()),
         session_id,
     );
-    // 08b: record the sandbox's egress while the log is still this sandbox's
-    // own — the log survives `rm` and accumulates across sandboxes that reuse
-    // a name. A created set miss (the ghost never ran a sandboxed command)
-    // keeps the "no network requests" note out of runs that had no sandbox.
-    if config.sandbox.enabled {
-        let name = crate::daemon::executor::sbx::sandbox_name(
-            crate::daemon::executor::sbx::SandboxKind::Ghost,
-            session_id,
-        );
-        if crate::daemon::executor::ghost_sandbox::is_created(&name) {
-            let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
-            if let Some(audit) = crate::daemon::executor::sbx_lifecycle::read_egress(
-                &crate::shell::real_runner(program),
-                &name,
-            )
-            .await
-            {
-                let run_id = run_log.run_id().clone();
-                append_turn_event(&TurnLogRecord {
-                    timestamp: chrono::Utc::now().to_rfc3339(),
-                    run_id,
-                    event: TurnLogEvent::Note {
-                        text: crate::daemon::executor::sbx::egress_summary(&audit),
-                    },
-                });
-                crate::daemon::utils::log_event(
-                    "sandbox_egress",
-                    crate::daemon::executor::sbx::egress_event(&name, &audit),
-                );
-            }
-        }
-    }
+    record_ghost_sandbox_egress(config, session_id, run_log.run_id()).await;
     run_log.finish(state.clone());
     let summary = with_sessions(sessions, |store| {
         store
@@ -561,9 +530,49 @@ pub async fn trigger_ghost_turn(
         .ok(),
     )
     .await;
-    // 08c: the ghost's shells die with the ghost — every run's commands share
-    // one `Owner::Ghost(session)` shell per host, and a scheduled ghost would
-    // otherwise leave an idle ssh shell host behind per run.
+    teardown_ghost_resources(config, session_id).await;
+    result
+}
+
+/// 08b: record the sandbox's egress while the log is still this sandbox's
+/// own — the log survives `rm` and accumulates across sandboxes that reuse
+/// a name. A created set miss (the ghost never ran a sandboxed command)
+/// keeps the "no network requests" note out of runs that had no sandbox.
+async fn record_ghost_sandbox_egress(config: &Config, session_id: &str, run_id: &RunId) {
+    if !config.sandbox.enabled {
+        return;
+    }
+    let name = crate::daemon::executor::sbx::sandbox_name(
+        crate::daemon::executor::sbx::SandboxKind::Ghost,
+        session_id,
+    );
+    if !crate::daemon::executor::ghost_sandbox::is_created(&name) {
+        return;
+    }
+    let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
+    if let Some(audit) = crate::daemon::executor::sbx_lifecycle::read_egress(
+        &crate::shell::real_runner(program),
+        &name,
+    )
+    .await
+    {
+        append_turn_event(&TurnLogRecord {
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            run_id: run_id.clone(),
+            event: TurnLogEvent::Note {
+                text: crate::daemon::executor::sbx::egress_summary(&audit),
+            },
+        });
+        crate::daemon::utils::log_event(
+            "sandbox_egress",
+            crate::daemon::executor::sbx::egress_event(&name, &audit),
+        );
+    }
+}
+
+/// 08c + 06c: close the ghost's PTY shells and tear down its sbx sandbox when
+/// the run ends.
+async fn teardown_ghost_resources(config: &Config, session_id: &str) {
     let owner = crate::shell::Owner::Ghost(session_id.to_string());
     let closed = crate::daemon::executor::knowledge::close_owner_shells(
         crate::shell::registry(),
@@ -580,9 +589,6 @@ pub async fn trigger_ghost_turn(
             }),
         );
     }
-    // 06c: the ghost's sbx sandbox dies with the ghost, after its shells do.
-    // A ghost that never ran a sandboxed command gets `rm` of a missing
-    // sandbox, which reads as `Removed`, so this is harmless for it.
     if config.sandbox.enabled {
         let program = crate::shell::which_sbx().unwrap_or_else(|_| "sbx".to_string());
         let outcome = crate::daemon::executor::ghost_sandbox::teardown_ghost_sandbox(
@@ -598,7 +604,6 @@ pub async fn trigger_ghost_turn(
             }),
         );
     }
-    result
 }
 
 /// Register a ghost run for cancellation: by run id, which the stop sentinel

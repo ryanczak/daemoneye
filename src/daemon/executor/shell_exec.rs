@@ -309,48 +309,25 @@ fn pre_write(e: anyhow::Error) -> anyhow::Error {
     anyhow::Error::new(RefusedBeforeWrite).context(e)
 }
 
-/// The single body of the run path. `prompts: None` is the historical
-/// behaviour; a transport turns the sudo branch on.
-#[allow(clippy::too_many_arguments)]
-async fn run_in_shell_core<'p, W, R, F, Fut>(
+/// Resolve the shell `(ShellId, socket_path)` from the requested `target`
+/// before anything is written to a PTY.
+async fn resolve_target_shell<F, Fut>(
     reg: &ShellRegistry,
     owner: Owner,
-    cmd: &str,
     max_per_owner: u32,
-    shell: Option<&str>,
-    timeout_secs: Option<u64>,
-    interactive: bool,
-    prompts: Option<SudoPromptArgs<'p, W, R>>,
+    target: &ShellTarget,
     host: crate::host::HostId,
     spawn: F,
-) -> anyhow::Result<(ShellId, ShellRunResult)>
+) -> anyhow::Result<(ShellId, std::path::PathBuf)>
 where
-    W: tokio::io::AsyncWriteExt + Unpin + 'p,
-    R: tokio::io::AsyncBufReadExt + Unpin + 'p,
     F: FnOnce(ShellId) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<()>>,
 {
-    // A named host is resolved against `[hosts]` **before any spawn**, with
-    // the permissive lookup (`host_entry_or_bare`): an unconfigured host is
-    // allowed as its own ssh destination, behind the approval the user has
-    // already given. `HostId::parse`'s malformed-name branch is checked by the
-    // caller (`mod.rs`), so only the configuration question is answered here.
-    if let crate::host::HostId::Named(name) = &host {
-        crate::shell::host_entry_or_bare(name)?;
-    }
-    let target = resolve_shell_target(shell).map_err(anyhow::Error::msg)?;
-    let applied_timeout = applied_timeout_secs(timeout_secs);
-    // Resolve the shell socket from the requested target before anything is
-    // written to a PTY: `Existing` must refuse an id the caller does not own
-    // or that has exited, rather than falling back to the reuse shell —
-    // falling back would run the command somewhere the model did not ask for.
-    let (id, socket) = match target {
+    match target {
         ShellTarget::Reuse => {
-            let (id, socket) =
-                shell_for_owner(reg, owner, host, max_per_owner, SHELL_READY_TIMEOUT, spawn)
-                    .await
-                    .map_err(pre_write)?;
-            (id, socket)
+            shell_for_owner(reg, owner, host, max_per_owner, SHELL_READY_TIMEOUT, spawn)
+                .await
+                .map_err(pre_write)
         }
         ShellTarget::New => {
             let id = spawn_for_on_host(reg, owner, max_per_owner, host, false, spawn)
@@ -358,9 +335,9 @@ where
                 .map_err(pre_write)?;
             let socket = socket_path(id.as_str());
             await_ready(&socket, Instant::now() + SHELL_READY_TIMEOUT).await?;
-            (id, socket)
+            Ok((id, socket))
         }
-        ShellTarget::Existing(ref id) => {
+        ShellTarget::Existing(id) => {
             // Compared on `Owner::key()`, never the inner string: a chat
             // session and a ghost job can share an id string, and the kinds
             // are what the cap groups, so they are what this check must use.
@@ -442,48 +419,89 @@ where
                     );
                 }
             }
-            (id.clone(), socket_path(id.as_str()))
-        }
-    };
-    // A shell the caller named is probed live before anything is written to
-    // it (D5): a command written into a busy shell would be typed into
-    // whatever program holds it. A shell that was just interrupted can read
-    // `Running` for a moment, so a non-prompt answer is re-probed twice,
-    // 150 ms apart, before the refusal stands. Nothing has been written yet,
-    // so the refusal leaves the shell exactly as it was.
-    if let ShellTarget::Existing(ref id) = target {
-        const RECHECKS: usize = 2;
-        const RECHECK_GAP: Duration = Duration::from_millis(150);
-        let mut fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
-        for _ in 0..RECHECKS {
-            if matches!(fg, Foreground::Prompt) {
-                break;
-            }
-            tokio::time::sleep(RECHECK_GAP).await;
-            fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
-        }
-        if !matches!(fg, Foreground::Prompt) {
-            // D5's wording. For `Unknown` the middle clause names the
-            // unreadable state instead of a program, because nothing asserts
-            // what holds the terminal.
-            let reason = match fg {
-                Foreground::Unknown => "the shell's state could not be read".to_string(),
-                _ => "a command written there would be typed into it".to_string(),
-            };
-            // The refusal happened before anything was written, so it must
-            // not arrive wrapped in the generic run-error text's "may still
-            // be running / double-apply" caveat — that contradicts the
-            // refusal. `RefusedBeforeWrite` in the chain is what
-            // `shell_run_error_text` keys on (F3).
-            let msg = format!(
-                "Error: shell {} is {fg}; {reason}. Use send_input to type into \
-                 that program, read_shell_screen to see it, or shell: \"new\" for \
-                 a fresh shell.",
-                id.as_str()
-            );
-            return Err(anyhow::Error::new(RefusedBeforeWrite).context(msg));
+            Ok((id.clone(), socket_path(id.as_str())))
         }
     }
+}
+
+/// Probe a caller-named existing shell before anything is written to it (D5):
+/// a command written into a busy shell would be typed into whatever program
+/// holds it.
+async fn ensure_existing_shell_at_prompt(
+    reg: &ShellRegistry,
+    target: &ShellTarget,
+) -> anyhow::Result<()> {
+    let ShellTarget::Existing(ref id) = *target else {
+        return Ok(());
+    };
+    const RECHECKS: usize = 2;
+    const RECHECK_GAP: Duration = Duration::from_millis(150);
+    let mut fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
+    for _ in 0..RECHECKS {
+        if matches!(fg, Foreground::Prompt) {
+            break;
+        }
+        tokio::time::sleep(RECHECK_GAP).await;
+        fg = probe_foreground(reg, id, PROBE_TIMEOUT).await;
+    }
+    if !matches!(fg, Foreground::Prompt) {
+        // D5's wording. For `Unknown` the middle clause names the
+        // unreadable state instead of a program, because nothing asserts
+        // what holds the terminal.
+        let reason = match fg {
+            Foreground::Unknown => "the shell's state could not be read".to_string(),
+            _ => "a command written there would be typed into it".to_string(),
+        };
+        // The refusal happened before anything was written, so it must
+        // not arrive wrapped in the generic run-error text's "may still
+        // be running / double-apply" caveat — that contradicts the
+        // refusal. `RefusedBeforeWrite` in the chain is what
+        // `shell_run_error_text` keys on (F3).
+        let msg = format!(
+            "Error: shell {} is {fg}; {reason}. Use send_input to type into \
+             that program, read_shell_screen to see it, or shell: \"new\" for \
+             a fresh shell.",
+            id.as_str()
+        );
+        return Err(anyhow::Error::new(RefusedBeforeWrite).context(msg));
+    }
+    Ok(())
+}
+
+/// The single body of the run path. `prompts: None` is the historical
+/// behaviour; a transport turns the sudo branch on.
+#[allow(clippy::too_many_arguments)]
+async fn run_in_shell_core<'p, W, R, F, Fut>(
+    reg: &ShellRegistry,
+    owner: Owner,
+    cmd: &str,
+    max_per_owner: u32,
+    shell: Option<&str>,
+    timeout_secs: Option<u64>,
+    interactive: bool,
+    prompts: Option<SudoPromptArgs<'p, W, R>>,
+    host: crate::host::HostId,
+    spawn: F,
+) -> anyhow::Result<(ShellId, ShellRunResult)>
+where
+    W: tokio::io::AsyncWriteExt + Unpin + 'p,
+    R: tokio::io::AsyncBufReadExt + Unpin + 'p,
+    F: FnOnce(ShellId) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    // A named host is resolved against `[hosts]` **before any spawn**, with
+    // the permissive lookup (`host_entry_or_bare`): an unconfigured host is
+    // allowed as its own ssh destination, behind the approval the user has
+    // already given. `HostId::parse`'s malformed-name branch is checked by the
+    // caller (`mod.rs`), so only the configuration question is answered here.
+    if let crate::host::HostId::Named(name) = &host {
+        crate::shell::host_entry_or_bare(name)?;
+    }
+    let target = resolve_shell_target(shell).map_err(anyhow::Error::msg)?;
+    let applied_timeout = applied_timeout_secs(timeout_secs);
+    let (id, socket) =
+        resolve_target_shell(reg, owner, max_per_owner, &target, host, spawn).await?;
+    ensure_existing_shell_at_prompt(reg, &target).await?;
     if interactive || crate::daemon::utils::is_interactive_command(cmd) {
         // The command is launched, not run to completion: the bare command
         // plus `\r` starts the session and the settled screen is what comes

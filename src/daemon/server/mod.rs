@@ -124,7 +124,6 @@ pub async fn handle_client(
     check_peer_identity(&stream)?;
 
     let config = state.config.current();
-    let (cache, sessions, schedule_store) = (&state.tmux_cache, &state.sessions, &state.schedules);
 
     /// Maximum size of a single incoming IPC message (1 MiB).
     /// Prevents a malicious or buggy client from exhausting daemon memory by
@@ -166,76 +165,29 @@ pub async fn handle_client(
 
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);
+    dispatch_client_request(request, &state, &config, &mut rx, &mut tx).await
+}
 
+async fn dispatch_shell_or_bus_request<R, W>(
+    request: &Request,
+    state: &Arc<crate::daemon::DaemonState>,
+    config: &crate::config::Config,
+    rx: &mut R,
+    tx: &mut W,
+) -> Result<bool>
+where
+    R: tokio::io::AsyncBufReadExt + Unpin,
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
     match request {
-        Request::Ping => {
-            handle_ping(&mut tx).await?;
-        }
-        Request::AlertList => handle_alert_list(&mut tx).await?,
-        Request::ShellList => {
-            shells::handle_shell_list(&mut tx, &state.shells).await?;
-        }
-        Request::ShellInput { id, bytes } => {
-            shells::handle_shell_input(&mut tx, &state.shells, &id, &bytes).await?;
-        }
-        Request::ShellOpen { host } => {
-            shells::handle_shell_open(&mut tx, &state.shells, host.as_deref()).await?;
-        }
-        Request::ShellSignal { id, signal } => {
-            shells::handle_shell_signal(&mut tx, &state.shells, &id, &signal).await?;
-        }
-        Request::ShellResize { id, rows, cols } => {
-            shells::handle_shell_resize(&mut tx, &state.shells, &id, rows, cols).await?;
-        }
-        Request::ShellLogList {
-            since,
-            host,
-            owner,
-            limit,
-        } => {
-            shells::handle_shell_log_list(&mut tx, since, host.as_deref(), owner.as_deref(), limit)
-                .await?;
-        }
-        Request::ShellLogRead { id } => {
-            shells::handle_shell_log_read(&mut tx, &id).await?;
-        }
-        Request::ShellTail { id, follow } => {
-            shells::handle_shell_tail(&mut rx, &mut tx, &state.shells, &id, follow).await?;
-        }
-        Request::Subscribe { filter } => {
-            notices::handle_subscribe(&mut rx, &mut tx, &state.bus, filter).await?;
-        }
-        Request::Cancel { session_id } => {
-            let found = crate::daemon::run::cancel_session(
-                &session_id,
-                crate::daemon::run::CancelReason::UserStop,
-            );
-            log::info!("cancel request for session {session_id}: found={found}");
-            send_response_split(&mut tx, Response::Ok).await?;
-        }
-        Request::ResumeRun { run_id, directive } => {
-            handle_resume_run(
-                &mut tx,
-                cache,
-                sessions,
-                schedule_store,
-                &config,
-                &run_id,
-                &directive,
-            )
-            .await?;
-        }
-        Request::Shutdown => {
-            handle_shutdown(&mut tx).await?;
-            return Ok(());
-        }
-        Request::Refresh => {
-            handle_refresh(&mut tx).await?;
-        }
+        Request::Ping => handle_ping(tx).await?,
+        Request::AlertList => handle_alert_list(tx).await?,
+        Request::Shutdown => handle_shutdown(tx).await?,
+        Request::Refresh => handle_refresh(tx).await?,
         Request::Reload => match crate::config::daemon_reload() {
             Ok((applied, restart_required)) => {
                 send_response_split(
-                    &mut tx,
+                    tx,
                     Response::Reloaded {
                         applied,
                         restart_required,
@@ -244,38 +196,112 @@ pub async fn handle_client(
                 .await?;
             }
             Err(e) => {
-                send_response_split(&mut tx, Response::Error(format!("{e:#}"))).await?;
+                send_response_split(tx, Response::Error(format!("{e:#}"))).await?;
             }
         },
+        Request::Status => {
+            handle_status(tx, &state.sessions, &state.schedules, config).await?;
+        }
+        Request::ContainerStatus => handle_container_status(tx, config).await?,
+        Request::ListSavedSessions => handle_list_saved_sessions(tx).await?,
+        Request::ShellList => {
+            shells::handle_shell_list(tx, &state.shells).await?;
+        }
+        Request::ShellInput { id, bytes } => {
+            shells::handle_shell_input(tx, &state.shells, id, bytes).await?;
+        }
+        Request::ShellOpen { host } => {
+            shells::handle_shell_open(tx, &state.shells, host.as_deref()).await?;
+        }
+        Request::ShellSignal { id, signal } => {
+            shells::handle_shell_signal(tx, &state.shells, id, signal).await?;
+        }
+        Request::ShellResize { id, rows, cols } => {
+            shells::handle_shell_resize(tx, &state.shells, id, *rows, *cols).await?;
+        }
+        Request::ShellLogList {
+            since,
+            host,
+            owner,
+            limit,
+        } => {
+            shells::handle_shell_log_list(tx, *since, host.as_deref(), owner.as_deref(), *limit)
+                .await?;
+        }
+        Request::ShellLogRead { id } => {
+            shells::handle_shell_log_read(tx, id).await?;
+        }
+        Request::ShellTail { id, follow } => {
+            shells::handle_shell_tail(rx, tx, &state.shells, id, *follow).await?;
+        }
+        Request::Subscribe { filter } => {
+            notices::handle_subscribe(rx, tx, &state.bus, filter.clone()).await?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+async fn dispatch_client_request<R, W>(
+    request: Request,
+    state: &Arc<crate::daemon::DaemonState>,
+    config: &crate::config::Config,
+    rx: &mut R,
+    tx: &mut W,
+) -> Result<()>
+where
+    R: tokio::io::AsyncBufReadExt + Unpin,
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    if dispatch_shell_or_bus_request(&request, state, config, rx, tx).await? {
+        return Ok(());
+    }
+    let (cache, sessions, schedule_store) = (&state.tmux_cache, &state.sessions, &state.schedules);
+
+    match request {
+        Request::Cancel { session_id } => {
+            let found = crate::daemon::run::cancel_session(
+                &session_id,
+                crate::daemon::run::CancelReason::UserStop,
+            );
+            log::info!("cancel request for session {session_id}: found={found}");
+            send_response_split(tx, Response::Ok).await?;
+        }
+        Request::ResumeRun { run_id, directive } => {
+            handle_resume_run(
+                tx,
+                cache,
+                sessions,
+                schedule_store,
+                config,
+                &run_id,
+                &directive,
+            )
+            .await?;
+        }
         Request::SetModel {
             session_id,
             model: model_name,
         } => {
-            handle_set_model(&mut tx, sessions, &config, session_id, model_name).await?;
+            handle_set_model(tx, sessions, config, session_id, model_name).await?;
         }
         Request::ListModels { session_id } => {
-            handle_list_models(&mut tx, sessions, &config, session_id).await?;
+            handle_list_models(tx, sessions, config, session_id).await?;
         }
         Request::SetPane {
             session_id,
             pane_id,
         } => {
-            handle_set_pane(&mut tx, sessions, cache, session_id, pane_id).await?;
+            handle_set_pane(tx, sessions, cache, session_id, pane_id).await?;
         }
         Request::ListPanesForSession { session_id } => {
-            handle_list_panes(&mut tx, sessions, cache, session_id).await?;
-        }
-        Request::Status => {
-            handle_status(&mut tx, sessions, schedule_store, &config).await?;
-        }
-        Request::ContainerStatus => {
-            handle_container_status(&mut tx, &config).await?;
+            handle_list_panes(tx, sessions, cache, session_id).await?;
         }
         Request::QueryLimits { session_id: sid } => {
-            handle_query_limits(&mut tx, sessions, &config, sid).await?;
+            handle_query_limits(tx, sessions, config, sid).await?;
         }
         Request::ResetSessionToolCount { session_id: sid } => {
-            handle_reset_tool_count(&mut tx, sessions, sid).await?;
+            handle_reset_tool_count(tx, sessions, sid).await?;
         }
         Request::SaveSession {
             session_id: sid,
@@ -283,28 +309,23 @@ pub async fn handle_client(
             description,
             force,
         } => {
-            handle_save_session(&mut tx, sessions, sid, name, description, force).await?;
+            handle_save_session(tx, sessions, sid, name, description, force).await?;
         }
         Request::LoadSession {
             session_id: sid,
             name,
             force,
         } => {
-            handle_load_session(&mut tx, sessions, &config, sid, name, force).await?;
-        }
-        Request::ListSavedSessions => {
-            handle_list_saved_sessions(&mut tx).await?;
+            handle_load_session(tx, sessions, config, sid, name, force).await?;
         }
         Request::DeleteSavedSession { name } => {
-            handle_delete_saved_session(&mut tx, name).await?;
+            handle_delete_saved_session(tx, name).await?;
         }
         Request::RenameSavedSession { old_name, new_name } => {
-            handle_rename_saved_session(&mut tx, sessions, old_name, new_name).await?;
+            handle_rename_saved_session(tx, sessions, old_name, new_name).await?;
         }
-
         Request::ChatAttach { session_id } => {
-            handle_chat_attach(sessions.clone(), session_id, &mut rx, &mut tx).await?;
-            return Ok(());
+            handle_chat_attach(sessions.clone(), session_id, rx, tx).await?;
         }
         Request::Ask {
             query,
@@ -331,10 +352,9 @@ pub async fn handle_client(
                 cache: Arc::clone(cache),
                 sessions,
                 schedule_store: Arc::clone(schedule_store),
-                config: &config,
+                config,
             };
-            handle_ask(req, ctx, &mut tx, &mut rx).await?;
-            return Ok(());
+            handle_ask(req, ctx, tx, rx).await?;
         }
         _ => {}
     }

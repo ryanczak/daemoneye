@@ -13,14 +13,8 @@ fn src/cli/commands/setup.rs run_setup 257
 fn src/cli/markdown/mod.rs MarkdownRenderer::render_line_to_spans 219
 fn src/cli/markdown/syntax.rs lang_keywords 216
 fn src/cli/viewer.rs viewer_loop 234
-fn src/daemon/context/background.rs run_compaction 184
-fn src/daemon/executor/shell_exec.rs run_in_shell_core 250
-fn src/daemon/ghost.rs trigger_ghost_turn 183
-fn src/daemon/server/handlers.rs handle_status 200
-fn src/daemon/server/mod.rs handle_client 229
 fn src/main.rs async_main 189
 fn src/manifest.rs auto_search_context 211
-fn src/shell/client.rs read_to_marker 236
 # M37 phase-01 — the gate-order tests (history + registry + fail-closed
 # inversions) grew the file past the cap. M37 phase-02b adds the attach
 # counters tests (bug-02b-1's second-connection case included); the file is a

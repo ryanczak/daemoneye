@@ -114,11 +114,7 @@ async fn run_compaction(
 
     let Some(tail_start) = tail_start else {
         // No viable cut — discard.
-        with_sessions(sessions, |store| {
-            if let Some(entry) = store.get_mut(&snapshot.session_id) {
-                entry.history.compaction_in_flight = false;
-            }
-        });
+        clear_compaction_in_flight(sessions, &snapshot.session_id);
         return Ok(());
     };
 
@@ -131,11 +127,7 @@ async fn run_compaction(
         && dropped_last_turn > 0
         && last_prior.turn_end >= dropped_last_turn
     {
-        with_sessions(sessions, |store| {
-            if let Some(entry) = store.get_mut(&snapshot.session_id) {
-                entry.history.compaction_in_flight = false;
-            }
-        });
+        clear_compaction_in_flight(sessions, &snapshot.session_id);
         return Ok(());
     }
 
@@ -220,6 +212,24 @@ async fn run_compaction(
         crate::daemon::digest::repair_tail_head(tail);
     }
 
+    swap_and_persist_compacted(snapshot, sessions, compacted, record.seq);
+    Ok(())
+}
+
+fn clear_compaction_in_flight(sessions: &SessionStore, session_id: &str) {
+    with_sessions(sessions, |store| {
+        if let Some(entry) = store.get_mut(session_id) {
+            entry.history.compaction_in_flight = false;
+        }
+    });
+}
+
+fn swap_and_persist_compacted(
+    snapshot: &CompactionSnapshot,
+    sessions: &SessionStore,
+    compacted: Vec<Message>,
+    epoch_seq: u32,
+) {
     // Step 2: Swap (lock once, synchronous). `with_sessions` takes a synchronous
     // closure, so no `.await` can occur while the guard is alive.
     let Some((before_len, after_len)) = with_sessions(sessions, |store| {
@@ -241,7 +251,7 @@ async fn run_compaction(
         h.compaction_in_flight = false;
         h.pending_compaction_notice = Some(format!(
             "↩ Session history compacted in the background ({} → {} messages) — epoch {} recorded",
-            before_len, after_len, record.seq,
+            before_len, after_len, epoch_seq,
         ));
         entry.persistence.dirty = true;
         Some((before_len, after_len))
@@ -250,7 +260,7 @@ async fn run_compaction(
         // clean discards: the epoch record already appended describes real
         // history, and the next load simply has one epoch whose messages are
         // still in the working file.
-        return Ok(());
+        return;
     };
 
     // Step 3: Persist (no lock held).
@@ -268,7 +278,6 @@ async fn run_compaction(
         }),
     );
     crate::daemon::stats::record_compaction(before_len, after_len);
-    Ok(())
 }
 
 #[cfg(test)]

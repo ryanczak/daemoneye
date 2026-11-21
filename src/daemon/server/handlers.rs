@@ -291,6 +291,87 @@ where
     Ok(())
 }
 
+fn build_limits_summary(config: &Config) -> crate::ipc::LimitsSummary {
+    let mut overrides: Vec<(String, u32)> = config
+        .limits
+        .per_tool
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    overrides.sort_by(|a, b| a.0.cmp(&b.0));
+    crate::ipc::LimitsSummary {
+        per_tool_batch: config.limits.per_tool_batch,
+        total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
+        tool_result_chars: config.limits.tool_result_chars,
+        max_turns: config.limits.max_turns,
+        max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
+        per_tool_overrides: overrides,
+    }
+}
+
+struct SessionStatusSummary {
+    active_sessions: usize,
+    active_prompt_tokens: u32,
+    total_turns: usize,
+    active_model: Option<String>,
+    session_costs: Vec<(String, f64)>,
+    active_agents: Vec<(String, String)>,
+}
+
+fn collect_session_status_summary(sessions: &SessionStore) -> SessionStatusSummary {
+    with_sessions(sessions, |store| {
+        let active_sessions = store.len();
+        let active_prompt_tokens = store
+            .values()
+            .map(|s| s.ledger.last_prompt_tokens)
+            .sum::<u32>();
+        let total_turns = store.values().map(|s| s.history.turn_count).sum::<usize>();
+        let active_model = store
+            .values()
+            .filter(|s| !s.is_ghost())
+            .max_by_key(|s| s.persistence.last_accessed)
+            .and_then(|s| s.active_model.clone());
+        let session_costs = store
+            .iter()
+            .map(|(id, entry)| (id.clone(), entry.ledger.cost_usd))
+            .collect();
+        let mut active_agents: Vec<(String, String)> = store
+            .values()
+            .filter_map(|entry| {
+                let g = entry.as_ghost()?;
+                let agent_name = g.config.agent.as_ref()?;
+                let job_id = g
+                    .task_message
+                    .as_deref()
+                    .unwrap_or("unknown")
+                    .chars()
+                    .take(40)
+                    .collect();
+                Some((agent_name.clone(), job_id))
+            })
+            .collect();
+        active_agents.sort_by(|a, b| a.0.cmp(&b.0));
+        SessionStatusSummary {
+            active_sessions,
+            active_prompt_tokens,
+            total_turns,
+            active_model,
+            session_costs,
+            active_agents,
+        }
+    })
+}
+
+fn collect_global_memory_breakdown() -> std::collections::HashMap<String, usize> {
+    let mut memory_breakdown = std::collections::HashMap::new();
+    if let Ok(memories) = crate::memory::list_memories(None, &["global"]) {
+        for (_, cat, _) in memories {
+            *memory_breakdown.entry(cat).or_insert(0) += 1;
+        }
+    }
+    memory_breakdown
+}
+
 pub(super) async fn handle_status<W>(
     tx: &mut W,
     sessions: &SessionStore,
@@ -302,92 +383,26 @@ where
 {
     let uptime_secs = crate::daemon::daemon_uptime_secs();
     let pid = std::process::id();
-    let (active_sessions, active_prompt_tokens, total_turns, status_active_model) =
-        with_sessions(sessions, |store| {
-            (
-                store.len(),
-                store
-                    .values()
-                    .map(|s| s.ledger.last_prompt_tokens)
-                    .sum::<u32>(),
-                store.values().map(|s| s.history.turn_count).sum::<usize>(),
-                store
-                    .values()
-                    .filter(|s| !s.is_ghost())
-                    .max_by_key(|s| s.persistence.last_accessed)
-                    .and_then(|s| s.active_model.clone()),
-            )
-        });
+    let sess = collect_session_status_summary(sessions);
     let schedule_count = schedule_store.list().len();
-
-    let commands_fg_succeeded = crate::daemon::stats::get_commands_fg_succeeded();
-    let commands_fg_failed = crate::daemon::stats::get_commands_fg_failed();
-    let commands_fg_approved = crate::daemon::stats::get_commands_fg_approved();
-    let commands_fg_denied = crate::daemon::stats::get_commands_fg_denied();
-    let commands_bg_succeeded = crate::daemon::stats::get_commands_bg_succeeded();
-    let commands_bg_failed = crate::daemon::stats::get_commands_bg_failed();
-    let commands_bg_approved = crate::daemon::stats::get_commands_bg_approved();
-    let commands_bg_denied = crate::daemon::stats::get_commands_bg_denied();
-    let commands_sched_succeeded = crate::daemon::stats::get_commands_sched_succeeded();
-    let commands_sched_failed = crate::daemon::stats::get_commands_sched_failed();
-    let ghosts_launched = crate::daemon::stats::get_ghosts_launched();
-    let ghosts_active = crate::daemon::stats::get_ghosts_active();
-    let ghosts_completed = crate::daemon::stats::get_ghosts_completed();
-    let ghosts_failed = crate::daemon::stats::get_ghosts_failed();
-    let webhooks_received = crate::daemon::stats::get_webhooks_received();
-    let webhooks_rejected = crate::daemon::stats::get_webhooks_rejected();
     let webhook_url = format!(
         "http://{}:{}/webhook",
         config.webhook.bind_addr, config.webhook.port
     );
-    let recent_commands = crate::daemon::stats::get_recent_commands();
-
     let runbook_count = crate::runbook::list_runbooks()
         .map(|v| v.len())
         .unwrap_or(0);
-    let runbooks_created = crate::daemon::stats::get_runbooks_created();
-    let runbooks_executed = crate::daemon::stats::get_runbooks_executed();
-    let runbooks_deleted = crate::daemon::stats::get_runbooks_deleted();
     let script_count = crate::scripts::list_scripts().map(|v| v.len()).unwrap_or(0);
-    let scripts_created = crate::daemon::stats::get_scripts_created();
-    let scripts_executed = crate::daemon::stats::get_scripts_executed();
-    let scripts_deleted = crate::daemon::stats::get_scripts_deleted();
-    let memories_created = crate::daemon::stats::get_memories_created();
-    let memories_recalled = crate::daemon::stats::get_memories_recalled();
-    let memories_deleted = crate::daemon::stats::get_memories_deleted();
-    let schedules_created = crate::daemon::stats::get_schedules_created();
-    let schedules_executed = crate::daemon::stats::get_schedules_executed();
-    let schedules_deleted = crate::daemon::stats::get_schedules_deleted();
-    let mut memory_breakdown = std::collections::HashMap::new();
-    if let Ok(memories) = crate::memory::list_memories(None, &["global"]) {
-        for (_, cat, _) in memories {
-            *memory_breakdown.entry(cat).or_insert(0) += 1;
-        }
-    }
-
-    let active_entry = config.resolve_model(status_active_model.as_deref());
-    let context_window_tokens = active_entry.context_window();
-    let compactions = crate::daemon::stats::get_compactions();
-    let compaction_ratio = crate::daemon::stats::get_compaction_ratio();
-
-    // Compute today's cost aggregation (cached for 5s).
+    let active_entry = config.resolve_model(sess.active_model.as_deref());
     let cost_today = crate::daemon::stats::compute_cost_today();
-
-    // Collect per-session cost totals from active sessions.
-    let session_costs: Vec<(String, f64)> = with_sessions(sessions, |store| {
-        store
-            .iter()
-            .map(|(id, entry)| (id.clone(), entry.ledger.cost_usd))
-            .collect()
-    });
 
     send_response_split(
         tx,
         Response::DaemonStatus {
             uptime_secs,
             pid,
-            active_sessions,
-            total_turns,
+            active_sessions: sess.active_sessions,
+            total_turns: sess.total_turns,
             provider: active_entry.provider.clone(),
             model: active_entry.model.clone(),
             available_models: config
@@ -397,89 +412,53 @@ where
                 .collect(),
             socket_path: default_socket_path().display().to_string(),
             schedule_count,
-            commands_fg_succeeded,
-            commands_fg_failed,
-            commands_fg_approved,
-            commands_fg_denied,
-            commands_bg_succeeded,
-            commands_bg_failed,
-            commands_bg_approved,
-            commands_bg_denied,
-            commands_sched_succeeded,
-            commands_sched_failed,
-            ghosts_launched,
-            ghosts_active,
-            ghosts_completed,
-            ghosts_failed,
-            webhooks_received,
-            webhooks_rejected,
+            commands_fg_succeeded: crate::daemon::stats::get_commands_fg_succeeded(),
+            commands_fg_failed: crate::daemon::stats::get_commands_fg_failed(),
+            commands_fg_approved: crate::daemon::stats::get_commands_fg_approved(),
+            commands_fg_denied: crate::daemon::stats::get_commands_fg_denied(),
+            commands_bg_succeeded: crate::daemon::stats::get_commands_bg_succeeded(),
+            commands_bg_failed: crate::daemon::stats::get_commands_bg_failed(),
+            commands_bg_approved: crate::daemon::stats::get_commands_bg_approved(),
+            commands_bg_denied: crate::daemon::stats::get_commands_bg_denied(),
+            commands_sched_succeeded: crate::daemon::stats::get_commands_sched_succeeded(),
+            commands_sched_failed: crate::daemon::stats::get_commands_sched_failed(),
+            ghosts_launched: crate::daemon::stats::get_ghosts_launched(),
+            ghosts_active: crate::daemon::stats::get_ghosts_active(),
+            ghosts_completed: crate::daemon::stats::get_ghosts_completed(),
+            ghosts_failed: crate::daemon::stats::get_ghosts_failed(),
+            webhooks_received: crate::daemon::stats::get_webhooks_received(),
+            webhooks_rejected: crate::daemon::stats::get_webhooks_rejected(),
             webhook_url,
             runbook_count,
-            runbooks_created,
-            runbooks_executed,
-            runbooks_deleted,
+            runbooks_created: crate::daemon::stats::get_runbooks_created(),
+            runbooks_executed: crate::daemon::stats::get_runbooks_executed(),
+            runbooks_deleted: crate::daemon::stats::get_runbooks_deleted(),
             script_count,
-            scripts_created,
-            scripts_executed,
-            scripts_deleted,
-            memories_created,
-            memories_recalled,
-            memories_deleted,
-            schedules_created,
-            schedules_executed,
-            schedules_deleted,
-            active_prompt_tokens,
-            context_window_tokens,
-            recent_commands,
-            memory_breakdown,
+            scripts_created: crate::daemon::stats::get_scripts_created(),
+            scripts_executed: crate::daemon::stats::get_scripts_executed(),
+            scripts_deleted: crate::daemon::stats::get_scripts_deleted(),
+            memories_created: crate::daemon::stats::get_memories_created(),
+            memories_recalled: crate::daemon::stats::get_memories_recalled(),
+            memories_deleted: crate::daemon::stats::get_memories_deleted(),
+            schedules_created: crate::daemon::stats::get_schedules_created(),
+            schedules_executed: crate::daemon::stats::get_schedules_executed(),
+            schedules_deleted: crate::daemon::stats::get_schedules_deleted(),
+            active_prompt_tokens: sess.active_prompt_tokens,
+            context_window_tokens: active_entry.context_window(),
+            recent_commands: crate::daemon::stats::get_recent_commands(),
+            memory_breakdown: collect_global_memory_breakdown(),
             redaction_counts: crate::ai::filter::get_redaction_counts(),
-            compactions,
-            compaction_ratio,
+            compactions: crate::daemon::stats::get_compactions(),
+            compaction_ratio: crate::daemon::stats::get_compaction_ratio(),
             scripts_approved: crate::daemon::stats::get_scripts_approved(),
             scripts_denied: crate::daemon::stats::get_scripts_denied(),
             runbooks_approved: crate::daemon::stats::get_runbooks_approved(),
             runbooks_denied: crate::daemon::stats::get_runbooks_denied(),
             file_edits_approved: crate::daemon::stats::get_file_edits_approved(),
             file_edits_denied: crate::daemon::stats::get_file_edits_denied(),
-            limits: {
-                let mut overrides: Vec<(String, u32)> = config
-                    .limits
-                    .per_tool
-                    .iter()
-                    .map(|(k, v)| (k.clone(), *v))
-                    .collect();
-                overrides.sort_by(|a, b| a.0.cmp(&b.0));
-                crate::ipc::LimitsSummary {
-                    per_tool_batch: config.limits.per_tool_batch,
-                    total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
-                    tool_result_chars: config.limits.tool_result_chars,
-                    max_turns: config.limits.max_turns,
-                    max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
-                    per_tool_overrides: overrides,
-                }
-            },
-            active_agents: {
-                let mut agents: Vec<(String, String)> = with_sessions(sessions, |store| {
-                    store
-                        .values()
-                        .filter_map(|entry| {
-                            let g = entry.as_ghost()?;
-                            let agent_name = g.config.agent.as_ref()?;
-                            let job_id = g
-                                .task_message
-                                .as_deref()
-                                .unwrap_or("unknown")
-                                .chars()
-                                .take(40)
-                                .collect();
-                            Some((agent_name.clone(), job_id))
-                        })
-                        .collect()
-                });
-                agents.sort_by(|a, b| a.0.cmp(&b.0));
-                agents
-            },
-            daemon_session_costs: session_costs,
+            limits: build_limits_summary(config),
+            active_agents: sess.active_agents,
+            daemon_session_costs: sess.session_costs,
             daemon_total_cost_today_usd: cost_today.total_cost_usd,
             daemon_cost_by_provider: cost_today.cost_by_provider,
             daemon_cost_by_agent: cost_today.cost_by_agent,
@@ -511,24 +490,10 @@ where
             (0, 0, 0)
         }
     });
-    let mut overrides: Vec<(String, u32)> = config
-        .limits
-        .per_tool
-        .iter()
-        .map(|(k, v)| (k.clone(), *v))
-        .collect();
-    overrides.sort_by(|a, b| a.0.cmp(&b.0));
     send_response_split(
         tx,
         Response::LimitsInfo {
-            limits: crate::ipc::LimitsSummary {
-                per_tool_batch: config.limits.per_tool_batch,
-                total_tool_calls_per_turn: config.limits.total_tool_calls_per_turn,
-                tool_result_chars: config.limits.tool_result_chars,
-                max_turns: config.limits.max_turns,
-                max_tool_calls_per_session: config.limits.max_tool_calls_per_session,
-                per_tool_overrides: overrides,
-            },
+            limits: build_limits_summary(config),
             turn_count,
             tool_calls_this_session,
             history_len,
