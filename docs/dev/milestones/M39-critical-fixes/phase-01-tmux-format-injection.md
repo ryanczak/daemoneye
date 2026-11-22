@@ -1,7 +1,7 @@
 # Phase 01 — tmux-format-injection
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-21
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -202,3 +202,130 @@ The `format_literal_round_trips_through_tmux` test ran against a real private
 tmux server (`-S <tempdir>/s.sock`, `new-session -d`) and asserts the escaped
 `#(touch …)` payload prints back unchanged and leaves no `pwned` file.
 
+### Update — 2026-11-22 01:32 (complete, server-authored)
+
+**Summary:** **Summary:** Phase 01 (tmux-format-injection) is implemented: `src/tmux/pane.rs` gains the pure `format_literal` (`#`→`##`, `%`→`%%`, `\n`/`\r`/`\t`→space, other control chars dropped), the pure `overlay_argv` (`display-message -d 8000 -t <pane> -- <escaped>`), and `show_overlay` running it through `crate::process::bounded_output`; `notify_chat_panes` now calls `crate::tmux::show_overlay` and no longer contains any `display-message` (grep count `0`), while the presence push still receives the unescaped message and `deliver_chat_notice` needed no edit. All five new tests live in `src/tmux/pane.rs`'s test module and pass, including a round-trip test against a real private tmux server (`-S <tempdir>/s.sock`, tmux 3.6) asserting the escaped `#(touch …)` payload prints back unchanged and leaves no `pwned` file; `notify_chat_panes_pushes_over_presence` passes unchanged. End-to-end verification block was run mechanically and its output pasted into a dedicated Update Log entry (`/tmp/m39p1-e2e/out.txt`); full `cargo test` is 3049 lib + 107 integration tests, 0 failed, and `cargo fmt --all`, `cargo build`, and `cargo clippy --all-targets --all-features -- -D warnings` are all clean.
+
+**Notes for review:** (1) While fixing an earlier edit the doc-comment on `query_pane_width` was briefly duplicated by a patch race; I caught and removed it in the same session — the committed file has it once. (2) The committed diff includes three pre-existing uncommitted doc changes (`docs/dev/NEXT.md` active-phase pointer and the M39 README's phase-table row/drafting note) that were on disk from the architect's dispatch; I staged everything as permitted, and the README row now reads `in-progress` with the phase doc left there for the server to flip. (3) Findings on the presence push (out of scope): `presence_broadcast(msg)` still receives the raw unescaped line, so control characters in an alert reach chat clients as-is — worth a look when the notice-rendering concern lands. (4) The round-trip test uses `std::thread::sleep(300ms)` per the spec's explicit instruction, and skips only when spawning `tmux` fails; both are test-only deviations the spec pins.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ig_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.43s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-c067c2b4b53c4301)
+kill: (1600242): No such process
+kill: (-1600956): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d9a9e35dfb95286a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e2bade347dfc2bf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-fec57f080473704c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-b7049ce40c11944f)
+     Running tests/integration.rs (target/debug/deps/integration-521aa0dc073b7f75)
+     Running tests/isolation.rs (target/debug/deps/isolation-4e1a6c89c680c6e7)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-25580a42c302b017)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a1f9f82f934e25c3)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M39-critical-fixes/phase-01-tmux-format-injection.md` — +36 -1
+- `src/tmux/pane.rs` — +123 -0
+- `src/webhook/process.rs` — +1 -3
+
+**Commit:** 7e85594a5af7c5ce5c4fbc0cad5aa35402f390bb
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
