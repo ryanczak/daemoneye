@@ -1,7 +1,7 @@
 # Phase 02 — open-shell-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-22: [bug-02-1](bugs/bug-02-1.md))
 **Drafted:** 2026-11-22
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -209,6 +209,12 @@ its fix lands.
       are unchanged. Chat and ask calls keep their owners, and
       `chat_owner_gives_a_session_less_call_the_ask_owner` passes unchanged
       (preservation).
+- [ ] **(bug-02-1)** `cargo test --lib
+      ghost_open_shell_is_refused_while_the_sandbox_is_on` runs exactly 1
+      test, through `execute_tool_call` with the sandbox on, asserting the
+      result contains `wait: false` and the given registry is empty. With the
+      arm's gate `break` replaced by `let _ = r;`, it fails. The lib suite
+      reports 3057 passed.
 - [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
       --all-features -- -D warnings` and `cargo test` all pass, with
       `tests/hygiene.rs` and `tests/doc_truth.rs` included.
@@ -243,6 +249,32 @@ its fix lands.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Notes for executor — 2026-11-22 (bounce: bug-02-1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+that the phase is done.** Everything else in phase-02 is approved as it
+stands. Do not redo or restructure it:
+
+- `call_owner`
+- `ghost_shell_open_refusal`
+- the eight owner-rule sites and the `route.rs` threading
+- `gate_tests`, `owner_tests` and the `harness` module
+
+There is **exactly one thing left**: put back the end-to-end test
+`ghost_open_shell_is_refused_while_the_sandbox_is_on`, the one whose red run
+you pasted at 15:06. Put it in `dispatch_open_shell.rs` beside `owner_tests`,
+with the setup in **First red test** above, and drive it through
+`harness::run_call`. Use a fixture `ShellRegistry::default()`, not the global
+registry. Assert that the result contains `wait: false` and that
+`with_shells(&reg, |s| s.is_empty())` is true.
+
+**Finish condition:**
+- The lib suite reports **3057** passed, not 3056.
+- The mutation in bug-02-1 makes this test fail. Paste that failing run and
+  then the restored green run.
+
+Your first edit is this test, within 10 turns.
+
 ### Notes for executor — 2026-11-22 (second re-dispatch)
 
 Two earlier runs made **no source edits**, one ending in a hard-fail at
@@ -617,3 +649,19 @@ kill: (-1854342): No such process
 **Commit:** 74b924a49654697fde099440176e242e26244741
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-22 (bounced)
+
+Bounced on bug-02-1 (major): no test pins the arm's sandbox gate. The
+reviewer neutralised the arm's `break` after `ghost_shell_open_refusal`, and
+`cargo test --lib daemon::executor` still passed 485/485. The rest of the
+phase holds:
+
+- All four gates are green: 3056 lib tests, plus the `hygiene` and
+  `doc_truth` suites.
+- No bash processes leaked.
+- The owner tests fail if any arm reverts to `chat_owner`.
+- The three out-of-scope `chat_owner` sites are unchanged.
+
+The run took 247 turns, with its first source edit early and no stall.
+
