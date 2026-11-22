@@ -1,7 +1,7 @@
 # Phase 01 — tmux-format-injection
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced 2026-11-22: [bug-01-1](bugs/bug-01-1.md))
 **Drafted:** 2026-11-21
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -112,6 +112,13 @@ Read **only** these files: `src/tmux/pane.rs`, `src/webhook/process.rs`
       `notify_chat_panes_pushes_over_presence` passes unchanged.
       `cargo clippy --all-targets --all-features -- -D warnings` exits 0,
       and `tests/tmux_read_only.rs` and `tests/hygiene.rs` pass.
+- [ ] **(bug-01-1)** One run of
+      `cargo test --lib format_literal_round_trips_through_tmux` leaves the
+      count from `pgrep -fc 'tmux -S /tmp/.*/s.sock new-session -d -s t'`
+      unchanged, on a passing run **and** on a deliberately failing one.
+      The Update Log shows both counts and the red run.
+- [ ] **(bug-01-1)** The test's skip probe is `tmux -V`, and every other
+      tmux call in `src/tmux/pane.rs`'s test module passes `-S`.
 
 ## Test plan
 
@@ -329,3 +336,20 @@ kill: (-1600956): No such process
 **Commit:** 7e85594a5af7c5ce5c4fbc0cad5aa35402f390bb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-22 (bounced)
+
+The production change is correct and stays: `format_literal`,
+`overlay_argv`, `show_overlay`, and the `notify_chat_panes` swap. All four
+gates are green on re-run (3049 lib tests). The round-trip test leaks its
+private tmux server on every run, and its skip probe calls the ambient
+server. See [bug-01-1](bugs/bug-01-1.md).
+
+**Notes for executor (re-dispatch):** Touch only the
+`format_literal_round_trips_through_tmux` test in `src/tmux/pane.rs`.
+Give the private server a teardown that runs on drop, as `PrivateTmux` in
+`src/cli/program_status_emit_tests.rs` does, so it also runs when an
+assertion panics. Make the skip probe `tmux -V`. Then work through the
+bug's Definition of done, starting with the red run that shows the count
+unchanged. Your first `patch` lands within 8 turns. No other file
+changes.
