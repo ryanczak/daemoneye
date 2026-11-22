@@ -1,7 +1,7 @@
 # Phase 02 — open-shell-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-22
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -921,3 +921,40 @@ kill: (-1896586): No such process
 **Commit:** 92f319b0fb567978cc2b9f249ff145f47f90af11
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-22
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-02-1: no test pinned the arm's sandbox gate; fixed by
+  `92f319b0`, 191 turns)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. `route.rs` passes `is_ghost` to two arms, which
+  is within `src/daemon/executor/**`. `arm_gate_tests` is its own module
+  rather than sitting beside `owner_tests`, which is cosmetic.
+- **Calibration:**
+  1. **Statement-of-work style, with the middle ground.** Runs 1 and 2 (the
+     statement of work plus scoping hints) made 0 edits in 1039 and 1200
+     turns. Run 1 circled an unruled-out scope question. Run 2 hunted for
+     private test helpers, then looped on a 17-call cycle. Run 2 also faced
+     a spec bug: two acceptance items needed a ghost's foreground command to
+     use a shell, which the code never allows. Run 3 got a named first red
+     test (file, setup, helpers, and which registry each arm reads) and the
+     corrected scope, and completed in 247 turns. The bounce took 191.
+  2. **A red test can vanish after its red run.** Run 3 deleted the named
+     end-to-end test once the pure gate existed, which left the arm's wiring
+     unpinned. The review caught it by mutating the call site. Future docs
+     say the first red test stays in the tree.
+  3. **The governor was effectively off.** `read_only_stall_threshold` was at
+     10000, which let run 2 and phase-01's bounce each burn 1200 turns. It
+     was set back to 200 on 2026-11-22. Runs 3 and 4 never came near it.
+
+Reviewer re-ran the gates independently:
+
+- `cargo fmt --all -- --check`, `cargo build` and clippy with
+  `-D warnings` are clean.
+- `cargo test`: the lib suite has 3057 passed, and all 10 suites are ok.
+- `cargo test --lib ghost_open_shell_is_refused_while_the_sandbox_is_on`
+  runs 1 test, which passes.
+
+The executor's pasted mutation run was accepted without reproducing it.
+
