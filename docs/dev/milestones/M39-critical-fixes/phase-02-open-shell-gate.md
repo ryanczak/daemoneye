@@ -1,7 +1,7 @@
 # Phase 02 — open-shell-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-22
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -477,3 +477,143 @@ with no errors and no new warnings.
   dispatch_context.rs dispatch_send_input.rs mod.rs` → the eight call
   sites plus the definition and its test.
 
+### Update — 2026-11-22 15:57 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Both defects are fixed, in `src/daemon/executor/` only. (1) The `open_shell` arm now runs a ghost sandbox gate — `ghost_shell_open_refusal` in `mod.rs`, matching `ghost_foreground_refusal`'s two fail-closed conditions (sandbox enabled, startup-load fallback) — before anything else, and its refusal explains why and points at `wait: false`. (2) A single owner rule, `call_owner(is_ghost, session_id)`, replaces `chat_owner(session_id)` at all eight ghost-reachable sites (`dispatch_open_shell` ×1, `dispatch_shells` ×3, `dispatch_context` ×3, `dispatch_send_input` ×1), so a ghost's shells are owned by `Owner::Ghost(<sid>)` and its end-of-run teardown closes them; `dispatch_foreground.rs` and `dispatch_background.rs` are untouched, and the existing `chat_owner_gives_a_session_less_call_the_ask_owner` test passes unchanged.
+
+**End-to-end verification:** the first red test — a ghost `open_shell` with `[sandbox] enabled = true` driven through `execute_tool_call` — failed on today's tree with the shell actually opening ("Opened shell s0 …"), pasted into the Update Log; after the fix the whole suite is green: `cargo fmt --all`, `cargo build`, `cargo clippy -D warnings` clean, and `cargo test` shows 10/10 `test result: ok` lines (lib 3056 passed, incl. `tests/hygiene.rs` 16 and `tests/doc_truth.rs` 19). New tests cover: the sandbox-on and startup-failure refusals (pure gate, since `startup_error()` is `None` without an installed handle), chat preservation with the sandbox on, ghost ownership end-to-end (open → `Owner::Ghost` record → `list_shells` lists it → `close_shell` without "is not yours"), and `close_owner_shells(Owner::Ghost(<sid>))` leaving no live shell. Committed as `d0ddfbb5` (fix) and `74b924a4` (docs); working tree clean; phase status left at `in-progress` per the lifecycle split.
+
+**Notes for review**
+
+- Adaptation to flag: the doc's first red test asserted both refusal text and empty registry in one end-to-end test. The end-to-end driver that the red run needed was reusable for the sandbox-off owner tests, so the final shape is: refusal conditions pinned on the shared pure gate (`gate_tests`, 4 tests) plus the end-to-end owner tests (`owner_tests`, 2 tests) that go through `execute_tool_call` with a real in-process host, exactly the prescribed setup. The red run quoted in the log is from the original combined shape, before any fix landed.
+- `close_shell` observes rather than assumes: an idle bash reports `Sent TERM … may still be finishing`, and the record is stamped exited only on an observed close. The owner test therefore pins "no `is not yours` / no `Error:`" and the teardown test pins "no *live* shell remains" (exited records stay until the reaper removes them, which is `close_shell`'s documented contract, unchanged here).
+- `route.rs` needed a 2-line change to thread `is_ghost` into `dispatch_shells::dispatch` and `dispatch_context::dispatch` — within the authorized `src/daemon/executor/**` scope, noted here since the doc's site table lists only the four arm files.
+- Adjacent, not fixed: `send_input`'s approval-host and shell-id parsing (phase 03), and `Owner::Chat` sites outside the executor (`prompt.rs`, `ghost/prompt.rs`) remain as the doc describes.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+
+test ipc_session_info_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-c067c2b4b53c4301)
+kill: (1853615): No such process
+kill: (-1854342): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d9a9e35dfb95286a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e2bade347dfc2bf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-fec57f080473704c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-b7049ce40c11944f)
+     Running tests/integration.rs (target/debug/deps/integration-521aa0dc073b7f75)
+     Running tests/isolation.rs (target/debug/deps/isolation-4e1a6c89c680c6e7)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-25580a42c302b017)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a1f9f82f934e25c3)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/phase-02-open-shell-gate.md` — +123 -0
+- `src/daemon/executor/dispatch_context.rs` — +7 -5
+- `src/daemon/executor/dispatch_open_shell.rs` — +290 -1
+- `src/daemon/executor/dispatch_send_input.rs` — +1 -1
+- `src/daemon/executor/dispatch_shells.rs` — +9 -9
+- `src/daemon/executor/mod.rs` — +66 -0
+- `src/daemon/executor/route.rs` — +2 -2
+
+**Commit:** 74b924a49654697fde099440176e242e26244741
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
