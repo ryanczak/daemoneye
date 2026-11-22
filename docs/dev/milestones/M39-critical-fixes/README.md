@@ -48,8 +48,8 @@ this order, then the MCP surface (M44) and Knowledge (M45):
    will not canonicalize). Model-facing refusal text names what was
    refused and why.
 5. **Open design questions are settled at drafting, with the PE.** They
-   are named in the phase rows below (S1's tmux version floor, S3a's
-   digest or root-owned copy, S2b's prompt for remote input).
+   are named in the phase rows below (S3a's digest or root-owned copy,
+   S2b's prompt for remote input; S1's was settled at drafting).
 
 **Exit criteria:**
 
@@ -83,7 +83,7 @@ at drafting.
 
 | #  | Phase | Ledger | Status |
 |----|-------|--------|--------|
-| 01 | tmux-format-injection — `notify_chat_panes` sends the message literally: no FORMAT expansion, no `#(…)`, control characters stripped. Every other `display-message` call with untrusted text gets the same treatment. *Decide at drafting:* `-l` needs tmux ≥ 3.4; below that, escape `#` → `##` | S1 | todo |
+| 01 | tmux-format-injection ([phase-01-tmux-format-injection.md](phase-01-tmux-format-injection.md)) — the chat-pane overlay moves to `tmux::show_overlay`, which escapes `#`→`##` and `%`→`%%`, strips control characters and passes `--`. Decided at drafting: escaping, not `-l`, since `-l` needs tmux ≥ 3.4 and Ubuntu 22.04 / Debian 12 ship older. The other `display-message` sites pass fixed `-p` formats and are unchanged | S1 | in-progress |
 | 02 | open-shell-gate — `open_shell` from a ghost takes the same sandbox / `startup_error()` gate as the foreground arm and registers `Owner::Ghost`, so ghost caps and teardown apply | S2a | todo |
 | 03 | send-input-gate — `send_input` refuses a shell id that does not parse. The approval request carries the shell's `HostId` from `ShellRegistry`, so remote input is never classed as a local command. Input that spells `sudo` through `keys` or quoting reaches the sudo check. *Decide at drafting:* whether remote `send_input` may be session-approved at all | S2b S2c | todo |
 | 04 | sudoers-pin — a NOPASSWD rule cannot be reused by rewriting the script. `GhostPolicy::is_safe` accepts only a canonical path inside `scripts_dir()`, not a basename. *Decide at drafting:* a `sha256:` digest in the rule (re-run `install-sudoers` after each edit) or a root-owned copy | S3a S3b | todo |

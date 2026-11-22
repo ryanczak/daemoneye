@@ -249,9 +249,7 @@ pub(crate) fn notify_chat_panes(sessions: &SessionStore, msg: &str) {
 
     // Unlocked phase: everything blocking happens out here.
     for pane in &panes {
-        let _ = std::process::Command::new("tmux")
-            .args(["display-message", "-d", "8000", "-t", pane, msg])
-            .output();
+        crate::tmux::show_overlay(pane, msg);
     }
     presence_broadcast(msg);
 }

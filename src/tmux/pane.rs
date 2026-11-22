@@ -234,3 +234,126 @@ pub fn query_pane_width(pane_id: &str) -> Result<usize> {
         .parse::<usize>()
         .map_err(|e| anyhow::anyhow!("Could not parse pane width: {}", e))
 }
+
+/// Escape `msg` so tmux's FORMAT and strftime expansion of a
+/// `display-message` argument reproduce it byte for byte (except control
+/// characters, which cannot survive a terminal overlay). Without this, an
+/// untrusted alert line's `#(cmd)` runs `cmd` through `/bin/sh` and `#{…}`
+/// expands as a format variable.
+///
+/// Rules: `#` → `##`, `%` → `%%`, `\n` / `\r` / `\t` → one space, every other
+/// `char::is_control()` character dropped, everything else (non-ASCII
+/// included) unchanged.
+pub fn format_literal(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len() + 8);
+    for ch in msg.chars() {
+        match ch {
+            '#' => out.push_str("##"),
+            '%' => out.push_str("%%"),
+            '\n' | '\r' | '\t' => out.push(' '),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The argv for an inert overlay on `pane`: `--` terminates tmux's flag
+/// parsing so a message starting with `-` is not read as a flag, and the
+/// escaped message is format-inert. Without the `tmux` binary itself.
+pub fn overlay_argv(pane: &str, msg: &str) -> Vec<String> {
+    vec![
+        "display-message".to_string(),
+        "-d".to_string(),
+        "8000".to_string(),
+        "-t".to_string(),
+        pane.to_string(),
+        "--".to_string(),
+        format_literal(msg),
+    ]
+}
+
+/// Show a transient overlay on `pane`. Best-effort: a failing tmux call (no
+/// server, dead pane) is not an alert-delivery failure.
+pub fn show_overlay(pane: &str, msg: &str) {
+    let _ = crate::process::bounded_output(Command::new("tmux").args(overlay_argv(pane, msg)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_literal, overlay_argv};
+
+    #[test]
+    fn format_literal_escapes_hash_and_percent() {
+        assert_eq!(
+            format_literal("#(touch /tmp/x) %H #{pane_id} ##"),
+            "##(touch /tmp/x) %%H ##{pane_id} ####"
+        );
+    }
+
+    #[test]
+    fn format_literal_strips_control_characters() {
+        assert_eq!(format_literal("a\nb\rc\td"), "a b c d");
+        assert_eq!(
+            format_literal("x\u{1b}[31my\u{0}z\u{7f}"),
+            "x[31myz",
+            "ESC, NUL and DEL are dropped"
+        );
+    }
+
+    #[test]
+    fn format_literal_leaves_plain_text_alone() {
+        assert_eq!(
+            format_literal("WEBHOOK ALERT: disk full on db-1 — ünïcødé"),
+            "WEBHOOK ALERT: disk full on db-1 — ünïcødé"
+        );
+    }
+
+    #[test]
+    fn format_literal_round_trips_through_tmux() {
+        let mut cmd = std::process::Command::new("tmux");
+        if cmd.output().is_err() {
+            println!("skip: no tmux binary on PATH");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("temp dir under /tmp");
+        let sock = dir.path().join("s.sock");
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("tmux")
+                .arg("-S")
+                .arg(&sock)
+                .args(args)
+                .output()
+                .expect("run tmux on the private socket");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        run(&["new-session", "-d", "-s", "t", "-x", "80", "-y", "24"]);
+        let input = format!(
+            "#(touch {}) %H #{{pane_id}} ## 100%",
+            dir.path().join("pwned").display()
+        );
+        let printed = run(&["display-message", "-p", "--", &format_literal(&input)]);
+        assert_eq!(printed, input);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(
+            !dir.path().join("pwned").exists(),
+            "#(…) must not run — the escaped form is inert"
+        );
+    }
+
+    #[test]
+    fn overlay_argv_ends_with_double_dash_then_the_escaped_message() {
+        assert_eq!(
+            overlay_argv("%3", "-x #(id)"),
+            vec![
+                "display-message",
+                "-d",
+                "8000",
+                "-t",
+                "%3",
+                "--",
+                "-x ##(id)"
+            ]
+        );
+    }
+}
