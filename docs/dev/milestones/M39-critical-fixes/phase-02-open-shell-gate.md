@@ -665,3 +665,126 @@ phase holds:
 
 The run took 247 turns, with its first source edit early and no stall.
 
+### Update — 2026-11-22 16:34 (progress)
+
+Executor started the phase (this re-dispatch run; status already
+`in-progress`). Read bug-02-1 first, then only what the test needed: the
+existing `harness` module and `owner_tests` in `dispatch_open_shell.rs` (the
+`run_call` seam the bounce note names), `gate_tests` (to confirm the pure
+gate is already covered), `mod.rs`'s `ghost_shell_open_refusal` +
+`ghost_foreground_gate_tests`, `dispatch_foreground.rs`'s refusal and its
+gate tests, `route.rs` (`ghost_may_run_foreground`, `load_snapshot`),
+`shell/registry.rs` (`Owner`, `ShellRecord`, `with_shells`, `spawn_for`),
+`shell/launch.rs` + `config/load.rs` (the socket/dir paths the in-process
+host binds under), `config/handle.rs` (`current()` reads the file per call
+when no handle is installed; `startup_error()` returns `None` in tests) and
+`lib.rs` (`test_home` vs `test_home_guard`, the deadlock the doc warns
+about). Nothing outside `src/daemon/executor/**` was read for editing.
+
+**Task list** (each line names the DoD item it closes):
+
+1. Write the bug-02-1 end-to-end test
+   `ghost_open_shell_is_refused_while_the_sandbox_is_on` in
+   `dispatch_open_shell.rs`, driven through `execute_tool_call` via
+   `harness::run_call` with a fixture registry and the sandbox on — DoD
+   items 1, 2 and the bug-02-1 criterion.
+2. Run it red on the current tree — DoD item "Show each red run".
+3. Mutation check: replace the arm's
+   `break 'arm Ok(ToolCallOutcome::Result(r))` with `let _ = r;`, see the
+   test fail, restore the line — the bug-02-1 mutation criterion.
+4. Confirm the exact filter `cargo test --lib
+   ghost_open_shell_is_refused_while_the_sandbox_is_on` runs exactly 1 test
+   — the bug-02-1 filter criterion.
+5. Run the four gates and confirm the lib suite reports 3057 — DoD item
+   "all four gates pass, 3057".
+6. Confirm the three out-of-scope `chat_owner(session_id)` sites are
+   unchanged and no ghost-reachable arm uses `chat_owner` — DoD item
+   "Every site in the table above uses the owner rule…" (preservation).
+7. Capture the end-to-end evidence (this entry plus the evidence entry)
+   — the Spec's task 4.
+
+### Update — 2026-11-22 16:34 (end-to-end verification)
+
+**Red run (step 2)** — the new test on the pre-fix tree, with the arm's
+gate `break` neutralised exactly as bug-02-1's mutation prescribes
+(`let _ = r;` after `ghost_shell_open_refusal`, the gate computed and
+ignored):
+
+```
+---- daemon::executor::dispatch_open_shell::arm_gate_tests::ghost_open_shell_is_refused_while_the_sandbox_is_on stdout ----
+
+thread 'daemon::executor::dispatch_open_shell::arm_gate_tests::ghost_open_shell_is_refused_while_the_sandbox_is_on' (1878746) panicked at src/daemon/executor/dispatch_open_shell.rs:253:9:
+the refusal must suggest wait: false, got: Opened shell s0. It is now registered and readable — list_shells lists it, read_shell and find_in_shells read its recorded output, close_shell ends it. Its terminal is 40 rows × 120 columns. Note: a command still runs in this session's lowest-numbered open shell by default, so this shell sees work only when it is that one — pass shell: "s0" to run_terminal_command to target it directly, or shell: "new" for one command's exclusive shell.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3066 filtered out; finished in 0.01s
+```
+
+The shell opened — the arm-level gap bug-02-1 describes. Restoring the
+`break` line turned the same test green (pasted below).
+
+**Mutation check (step 3)** — the failing run above *is* the mutation run:
+the only difference between the red and green runs is the arm's
+`break 'arm Ok(ToolCallOutcome::Result(r));` replaced by `let _ = r;` and
+then restored. The gate's four pure-function tests (`gate_tests`) and both
+`owner_tests` passed unchanged under the mutation — which is exactly the
+hole the reviewer found; only this arm-level test catches it.
+
+**Exact-filter criterion (step 4)**:
+
+```
+$ cargo test --lib ghost_open_shell_is_refused_while_the_sandbox_is_on
+running 1 test
+test daemon::executor::dispatch_open_shell::arm_gate_tests::ghost_open_shell_is_refused_while_the_sandbox_is_on ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3066 filtered out; finished in 0.00s
+```
+
+(Grepped by name: the test goes through `execute_tool_call` — the harness
+seam `owner_tests` use — with the sandbox on, asserting `wait: false` in
+the result and `with_shells(&reg, |s| s.is_empty())` on the registry the
+arm was given. The refusal also asserts `!text.contains("Opened shell")`.)
+
+**Preservation greps (step 6)**:
+
+```
+$ grep -n "chat_owner(session_id)" dispatch_foreground.rs dispatch_background.rs
+src/daemon/executor/dispatch_foreground.rs:72:            let owner = chat_owner(session_id);
+src/daemon/executor/dispatch_foreground.rs:282:    let owner = chat_owner(session_id);
+src/daemon/executor/dispatch_background.rs:96:    let owner = chat_owner(session_id);
+```
+
+Exactly the pre-phase three sites, unchanged. `grep -rn "chat_owner("
+dispatch_open_shell.rs dispatch_shells.rs dispatch_context.rs
+dispatch_send_input.rs` (production lines) → no matches; the eight sites
+still read `call_owner(is_ghost, session_id)` (9 grep hits across those
+files plus `mod.rs`'s definition and its unit test).
+
+**Gate outputs (after the fix)**, one `test result:` line per suite:
+
+```
+test result: ok. 3057 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 144.39s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.20s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.21s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The first line is the lib suite: **3057 passed** (3056 + this test),
+including `tests/hygiene.rs`'s 16 (line 5) and `tests/doc_truth.rs`'s 19
+(line 4) as separate suites. The `daemon::executor` filter alone reports
+`486 passed; 0 failed; 9 ignored` (2572 filtered out) — one more than the
+reviewer's 485, the test added. `cargo fmt --all`, `cargo build` and
+`cargo clippy --all-targets --all-features -- -D warnings` all finished
+with no errors and no new warnings.
+
+**Grep proof the spec asks for:** the phase's pinned literals are the
+refusal text's `wait: false` and the `Owner::Ghost` rule; the new test
+asserts both at runtime (quoted above), and
+`grep -n "wait: false" src/daemon/executor/dispatch_open_shell.rs` finds
+the gate's refusal string and this test's assertion.
+

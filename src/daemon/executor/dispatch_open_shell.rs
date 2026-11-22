@@ -205,6 +205,67 @@ pub(super) mod harness {
     }
 }
 
+/// The arm's sandbox gate, driven end to end (bug-02-1): a ghost's
+/// `open_shell` with `[sandbox] enabled = true` is refused through
+/// `execute_tool_call` — the result names `wait: false`, and the registry
+/// the arm was given stays empty. Only a test through the arm proves the arm
+/// asks the gate and asks it before spawning; the pure-function tests in
+/// `gate_tests` prove only what the gate decides.
+#[cfg(test)]
+mod arm_gate_tests {
+    use super::super::{PendingCall, SessionStore, with_sessions};
+    use super::harness::{ghost_session, run_call};
+
+    /// Writes `etc/config.toml` under the test HOME, the way
+    /// `src/config/handle.rs`'s `write_config` does: no handle is installed
+    /// in tests, so `crate::config::current()` re-reads this file on every
+    /// call and the gate sees what was written.
+    fn write_config(text: &str) {
+        crate::config::Config::ensure_dirs().ok();
+        std::fs::write(crate::config::etc_dir().join("config.toml"), text)
+            .expect("write config.toml");
+    }
+
+    #[tokio::test]
+    async fn ghost_open_shell_is_refused_while_the_sandbox_is_on() {
+        let (_guard, _home) = crate::test_home();
+        write_config("[sandbox]\nenabled = true\n");
+        let reg = crate::shell::ShellRegistry::default();
+        let store = SessionStore::new();
+        with_sessions(&store, |s| {
+            s.insert("gsid-sandbox-on".to_string(), ghost_session());
+        });
+
+        let text = run_call(
+            &PendingCall::OpenShell {
+                id: "os-1".to_string(),
+                thought_signature: None,
+                host: None,
+                rows: None,
+                cols: None,
+            },
+            "gsid-sandbox-on",
+            &store,
+            &reg,
+        )
+        .await;
+
+        assert!(
+            text.contains("wait: false"),
+            "the refusal must suggest wait: false, got: {text}"
+        );
+        assert!(
+            !text.contains("Opened shell"),
+            "the shell must not open, got: {text}"
+        );
+        let empty = crate::shell::with_shells(&reg, |store| store.is_empty());
+        assert!(
+            empty,
+            "the arm was given this registry and must spawn into nothing: {text}"
+        );
+    }
+}
+
 /// The end-to-end owner rule (sandbox off): a ghost's `open_shell` lands a
 /// shell owned by `Owner::Ghost(<session id>)`, the ghost lists it and closes
 /// it through the executor without an "is not yours" refusal, and the
