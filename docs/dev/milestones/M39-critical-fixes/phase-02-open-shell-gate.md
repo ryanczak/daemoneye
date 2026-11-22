@@ -354,3 +354,126 @@ which the code never allows. The doc keeps the statement-of-work shape. It
 now names the first red test's file, setup and helpers, and corrects the
 owner-rule scope to the eight sites a ghost reaches.
 
+### Update — 2026-11-22 15:06 (progress)
+
+Executor started the phase (this run). Read the doc's statement of work,
+evidence, DoD and scoping hints only: `dispatch_open_shell.rs`,
+`dispatch_foreground.rs` (the gate + `ghost_foreground_gate_tests`),
+`route.rs` (`ghost_may_run_foreground`), `mod.rs` (`chat_owner`, the
+module layout), the grep of `chat_owner(` across `src/daemon/executor`
+(8 ghost-reachable sites + 3 out-of-scope ones), `teardown_ghost_resources`
+in `src/daemon/ghost.rs` (closes only `Owner::Ghost(session_id)` — no
+change needed, confirmed), `knowledge/shell.rs` + `shell_life.rs` +
+`shell_watch.rs` (the seams and the `is not yours` / unknown-shell
+wordings), `shell/registry.rs` (`Owner`, `ShellRecord`, `with_shells`,
+`now_unix`), `shell_lifecycle_tests.rs`'s close_shell tests (how a close's
+`Sent TERM` vs `Closed shell` branches are honestly asserted), and
+`lib.rs`/`config/handle.rs` (`test_home`, `startup_error` returning `None`
+when no handle is installed — hence the pure-gate startup test).
+
+**Red run for the first test** (the sandbox-on refusal, driven end to end
+through `execute_tool_call` exactly as the doc prescribed — ghost session
+`gsid`, sandbox config written under the temp HOME, `PendingCall::OpenShell`,
+duplex pair, fixture registry):
+
+```
+thread '…::ghost_open_shell_is_refused_while_the_sandbox_is_on' panicked:
+the refusal must suggest wait: false, got: Opened shell s0. It is now
+registered and readable — list_shells lists it, read_shell and
+find_in_shells read its recorded output, close_shell ends it. …
+```
+
+The shell opened: the registry held one record and the reply was the
+"opened shell …" sentence — the defect as described. Fix landed after this
+run; the test now lives in `gate_tests` on the shared pure gate
+(`ghost_shell_open_refusal`) with the end-to-end refusal covered by the
+`owner_tests::ghost_open_shell…` variants' sandbox-on counterpart via the
+arm.
+
+**Task list** (each line names the DoD item it closes):
+
+1. Write the first red test (`ghost_open_shell_is_refused_while_the_sandbox_is_on`)
+   and show the red run — DoD item 1.
+2. Implement `ghost_shell_open_refusal` in `mod.rs` (shared with the
+   foreground gate's two conditions and wording shape) and call it first in
+   the `open_shell` arm; pure-gate tests cover the sandbox-on, sandbox-off,
+   chat-preservation and startup-failure cases — DoD items 1, 2.
+3. Implement `call_owner(is_ghost, session_id)` in `mod.rs` and use it at
+   the eight ghost-reachable sites (`dispatch_open_shell.rs` ×1,
+   `dispatch_shells.rs` ×3, `dispatch_context.rs` ×3,
+   `dispatch_send_input.rs` ×1); thread `is_ghost` through
+   `dispatch_shells::dispatch` and `dispatch_context::dispatch`;
+   `dispatch_foreground.rs` and `dispatch_background.rs` untouched
+   (grep confirms their 3 `chat_owner(session_id)` sites unchanged) — DoD
+   items 3, 4, 6.
+4. End-to-end owner tests: ghost opens with the sandbox off → registry
+   record is `Owner::Ghost(<sid>)` → `list_shells` (default scope) lists it
+   → `close_shell` answers without "is not yours" → teardown's
+   `close_owner_shells(Owner::Ghost(<sid>))` closes every shell the ghost
+   opened — DoD items 3, 4, 5.
+5. `call_owner_gives_a_ghost_call_the_ghost_owner` unit test beside
+   `chat_owner_gives_a_session_less_call_the_ask_owner` (unchanged, passing)
+   — DoD item 6.
+6. Run all four gates plus `tests/hygiene.rs` and `tests/doc_truth.rs` —
+   DoD item 7.
+7. Capture the gate outputs and the red run in the evidence entry — the
+   Spec's task 4.
+
+### Update — 2026-11-22 (end-to-end verification)
+
+All four gates ran clean on the finished tree, plus the two named
+integration suites.
+
+**Red run (before the fix)** — `ghost_open_shell_is_refused_while_the_sandbox_is_on`,
+driven through `execute_tool_call` with a ghost session, the sandbox
+enabled in the temp HOME's config, and a fixture registry:
+
+```
+thread 'daemon::executor::dispatch_open_shell::tests::ghost_open_shell_is_refused_while_the_sandbox_is_on' (1793475) panicked at src/daemon/executor/dispatch_open_shell.rs:119:9:
+the refusal must suggest wait: false, got: Opened shell s0. It is now registered and readable — list_shells lists it, read_shell and find_in_shells read its recorded output, close_shell ends it. Its terminal is 40 rows × 120 columns. Note: a command still runs in this session's lowest-numbered open shell by default, so this shell sees work only when it is that one — pass shell: "s0" to run_terminal_command to target it directly, or shell: "new" for one command's exclusive shell.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+The shell opened — the defect as described. (This exact test shape was
+later split: the end-to-end driver became the sandbox-off owner tests in
+`owner_tests`, and the refusal is pinned on the shared pure gate in
+`gate_tests`, which covers sandbox-on refusal, sandbox-off allowance, chat
+preservation with the sandbox on, and the startup-failure refusal naming
+the load error and the file.)
+
+**Gate outputs (after the fix)**, one `test result:` line per suite:
+
+```
+test result: ok. 3056 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 143.18s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The first line is the lib suite (includes `tests/hygiene.rs`'s 16 and
+`tests/doc_truth.rs`'s 19 as separate lines 4 and 5 — the second and third
+lines are main.rs and bug_tracker). `cargo fmt --all`, `cargo build` and
+`cargo clippy --all-targets --all-features -- -D warnings` all finished
+with no errors and no new warnings.
+
+**Grep proofs the spec asks for:**
+
+- No ghost-reachable site still uses `chat_owner`:
+  `grep -rn "chat_owner(" src/daemon/executor/dispatch_open_shell.rs
+  src/daemon/executor/dispatch_shells.rs src/daemon/executor/dispatch_context.rs
+  src/daemon/executor/dispatch_send_input.rs` → no matches.
+- The out-of-scope sites are unchanged:
+  `grep -n "chat_owner(session_id)" dispatch_foreground.rs
+  dispatch_background.rs` → exactly the pre-phase three (lines 72, 282 in
+  the foreground arm; 96 in background).
+- `Owner::Ghost` is what the executor hands a ghost's open:
+  `grep -n "call_owner" dispatch_open_shell.rs dispatch_shells.rs
+  dispatch_context.rs dispatch_send_input.rs mod.rs` → the eight call
+  sites plus the definition and its test.
+
