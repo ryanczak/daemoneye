@@ -309,34 +309,62 @@ mod tests {
         );
     }
 
-    #[test]
-    fn format_literal_round_trips_through_tmux() {
-        let mut cmd = std::process::Command::new("tmux");
-        if cmd.output().is_err() {
-            println!("skip: no tmux binary on PATH");
-            return;
+    /// A private tmux server on `<tempdir>/s.sock`, killed on drop — on a
+    /// passing run and when an assertion panics alike. The guard owns the
+    /// tempdir, so `kill-server` runs while the socket still exists.
+    struct PrivateServer {
+        dir: tempfile::TempDir,
+    }
+
+    impl PrivateServer {
+        fn start() -> Self {
+            let server = Self {
+                dir: tempfile::tempdir().expect("temp dir under /tmp"),
+            };
+            server.run(&["new-session", "-d", "-s", "t", "-x", "80", "-y", "24"]);
+            server
         }
-        let dir = tempfile::tempdir().expect("temp dir under /tmp");
-        let sock = dir.path().join("s.sock");
-        let run = |args: &[&str]| {
+
+        fn run(&self, args: &[&str]) -> String {
             let out = std::process::Command::new("tmux")
                 .arg("-S")
-                .arg(&sock)
+                .arg(self.dir.path().join("s.sock"))
                 .args(args)
                 .output()
                 .expect("run tmux on the private socket");
             String::from_utf8_lossy(&out.stdout).trim().to_string()
-        };
-        run(&["new-session", "-d", "-s", "t", "-x", "80", "-y", "24"]);
-        let input = format!(
-            "#(touch {}) %H #{{pane_id}} ## 100%",
-            dir.path().join("pwned").display()
-        );
-        let printed = run(&["display-message", "-p", "--", &format_literal(&input)]);
+        }
+    }
+
+    impl Drop for PrivateServer {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .arg("-S")
+                .arg(self.dir.path().join("s.sock"))
+                .arg("kill-server")
+                .output();
+        }
+    }
+
+    #[test]
+    fn format_literal_round_trips_through_tmux() {
+        // `tmux -V` needs no server, so the probe never touches the ambient one.
+        if std::process::Command::new("tmux")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            println!("skip: no tmux binary on PATH");
+            return;
+        }
+        let server = PrivateServer::start();
+        let pwned = server.dir.path().join("pwned");
+        let input = format!("#(touch {}) %H #{{pane_id}} ## 100%", pwned.display());
+        let printed = server.run(&["display-message", "-p", "--", &format_literal(&input)]);
         assert_eq!(printed, input);
         std::thread::sleep(std::time::Duration::from_millis(300));
         assert!(
-            !dir.path().join("pwned").exists(),
+            !pwned.exists(),
             "#(…) must not run — the escaped form is inert"
         );
     }
