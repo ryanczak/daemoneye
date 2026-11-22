@@ -1,17 +1,19 @@
 # Phase 02 — open-shell-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-22
 **Depends on:** none
 **Estimated diff:** ~250 lines
 **Tags:** language=rust, kind=bugfix, size=m
 
-## Statement of work
+## Goal
 
 A ghost run must not get an unsandboxed shell through `open_shell`, and
 every shell a ghost run creates or uses through the executor must belong
 to that ghost, so the run's teardown closes it.
+
+## Statement of work
 
 There are two defects today, both in `src/daemon/executor/`:
 
@@ -54,11 +56,19 @@ beyond them and why.
 - `src/daemon/executor/ghost_exec_helpers.rs`: the analogue for how ghost
   paths already build `Owner::Ghost`.
 - Not needed: `src/shell/registry.rs` internals, the sbx modules, the AI
-  backends.
+  backends, **`src/daemon/prompt.rs`, and `src/daemon/ghost/prompt.rs`**.
+  The `Owner::Chat(ctx.session_id …)` sites in `src/daemon/prompt.rs` build
+  the **chat** prompt only. A ghost's prompt comes from `build_ghost_prompt`
+  in `src/daemon/ghost/prompt.rs`, which builds no shell context. Neither
+  file changes in this phase, and there is nothing to check in them.
+- The owner rule's scope is exactly the `chat_owner(` sites the grep
+  above prints. A `grep` for `Owner::Chat` across `src/` finds more sites;
+  they are outside this phase.
 
 **Budget.** You have **1200 turns** to finish, so use them efficiently.
 Make an edit as soon as you know what it is, and run a gate rather than
-re-reading a file you have already read.
+re-reading a file you have already read. **Your first source edit lands
+within 40 turns of starting.** A red test counts.
 
 ## Evidence
 
@@ -87,7 +97,7 @@ Checked against the tree at drafting (`70369c29`):
 once. A test that needs `[sandbox] enabled = true` in its config writes
 that config inside its own temp HOME.
 
-## Definition of done
+## Acceptance criteria
 
 Each behaviour is covered by a test that fails on the current tree. Show
 that test's red run in the Update Log before the fix lands.
@@ -115,7 +125,7 @@ that test's red run in the Update Log before the fix lands.
 ## Spec
 
 1. **Break down** — read the statement of work, the evidence and the
-   definition of done. Then write a numbered task list into a progress
+   acceptance criteria. Then write a numbered task list into a progress
    entry in the Update Log, one line per task, each naming the DoD item it
    closes. Ends when that entry is written.
 2. **Implement** — work through your task list, writing each DoD test red
@@ -142,3 +152,93 @@ that test's red run in the Update Log before the fix lands.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Notes for executor — 2026-11-22 (re-dispatch)
+
+The first run (hard-fail at turn 1039, `IdenticalToolCallRepetition` on
+`bash`, **no source edits**) wrote a good task list. It is the progress
+entry below, and it stands: **start at its task 1 now**, without
+re-reading the files that entry already lists. The run stalled on
+whether the `Owner::Chat` sites in `src/daemon/prompt.rs` and
+`src/daemon/ghost/prompt.rs` are in scope. They are not; see the
+amended scoping hints. The doc now has `## Goal` and `## Acceptance
+criteria` headings, which the briefing parser needs. Your first source
+edit lands within 40 turns.
+
+### Update — 2026-11-22 04:01 (progress)
+
+Executor started the phase (status flipped to `in-progress`, README row
+updated). I read the statement of work, the evidence list and the DoD, and
+then read only the scoping-hint files: `dispatch_open_shell.rs` (the arm
+missing the gate), `dispatch_foreground.rs` (the gate to match and its
+tests), `mod.rs` (`chat_owner`, its tests, the module layout),
+`route.rs` (where `is_ghost` is known for every arm), the grep of
+`chat_owner(` across `src/daemon/executor` (all 12 sites), and
+`teardown_ghost_resources` in `src/daemon/ghost.rs` — which closes only
+`Owner::Ghost(session_id)`, as the evidence said; no change needed there.
+Beyond the hints I read `ghost_exec_helpers.rs` (the `Owner::Ghost`
+analogue for the ghost background branches), `shell_exec.rs`
+(`resolve_target_shell`'s ownership refusal, `resolve_shell_target`,
+`run_in_shell_with_prompts`), `knowledge/shell_life.rs` and
+`knowledge/shell_input.rs` (the ownership refusals and the
+`open_shell`/`close_shell` seams the tests will drive), `knowledge/shell.rs`
+and `knowledge/shell_watch.rs` (`list_shells`, `find_in_shells`,
+`shell_context_block`, `shells_only_context`), `dispatch_shells.rs`,
+`dispatch_context.rs`, `dispatch_send_input.rs`, `dispatch_background.rs`
+(the remaining `chat_owner` sites), `shell/session.rs` +
+`shell/session_tests.rs` (`reusable_shell_for_owner`, the test host
+fixture), and `src/lib.rs` + `src/config/handle.rs` (`test_home_guard`,
+`startup_error`, `current`) — the last group because the sandbox-on /
+startup-failure tests need to know exactly how the config handle behaves
+in tests (uninstalled handle ⇒ `current()` reads the file per call, so a
+test writes its own temp HOME config; `startup_error()` returns `None`
+when no handle is installed).
+
+**Task list** (each line names the DoD item it closes):
+
+1. Write the red tests for the sandbox gate on a ghost's `open_shell`
+   (sandbox-on and startup-failure cases; no shell spawned; refusal text
+   names the reason and suggests `wait: false`) — DoD item 1.
+2. Write the red test that a chat `open_shell` still opens with the
+   sandbox on — DoD item 2.
+3. Write the red tests that a ghost's `open_shell` shell and the shell a
+   ghost's foreground command creates (sandbox off) are owned by
+   `Owner::Ghost(<session id>)` — DoD item 3.
+4. Write the red tests that the ghost can then use that shell: a
+   foreground command with `shell: <id>`, `list_shells`, and
+   `close_shell` all succeed with no "is not yours" refusal — DoD item 4.
+5. Write the red test that `close_owner_shells(Owner::Ghost(<id>))`
+   leaves no shell from cases 3–4 in the registry — DoD item 5.
+6. Implement the owner rule: a single `owner_for(is_ghost, session_id)`
+   helper in `src/daemon/executor/mod.rs` returning `Owner::Ghost(sid)`
+   for a ghost call and `chat_owner(session_id)` otherwise, and use it at
+   every `chat_owner(session_id)` site in the executor arms
+   (`dispatch_open_shell.rs`, `dispatch_foreground.rs` reuse pick and
+   `run_approved`, `dispatch_shells.rs` ×3, `dispatch_context.rs` ×3,
+   `dispatch_send_input.rs`) — DoD items 3, 4, 6.
+7. Implement the sandbox gate on `open_shell`: reuse
+   `ghost_foreground_refusal` (moved to a shared home) in
+   `dispatch_open_shell.rs` before anything else, so a ghost is refused
+   under the same two conditions and with the same wording as the
+   foreground arm — DoD items 1, 2.
+8. Confirm `dispatch_background.rs`'s `chat_owner` site needs nothing
+   (ghosts are routed away before it) and record the confirmation — DoD
+   item 6.
+9. Run the gates (`cargo fmt --all`, `cargo build`,
+   `cargo clippy --all-targets --all-features -- -D warnings`,
+   `cargo test` including `tests/hygiene.rs` and `tests/doc_truth.rs`)
+   and confirm green — DoD item 7.
+10. Capture the end-to-end evidence: red runs (before each fix) and the
+    four gates' `test result:` lines pasted into a new Update Log entry —
+    DoD items 1–7 (the evidence entry).
+
+### Update — 2026-11-22 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the stall was a spec gap. The hints did not rule out
+`src/daemon/prompt.rs`, whose `Owner::Chat` sites the executor's own grep
+surfaced, and it circled that question (38 identical `grep … ghost/prompt.rs
+| wc` calls) instead of editing. The missing `## Goal` / `## Acceptance
+criteria` headings also left the briefing without a goal. Both are fixed
+in the doc. The task list the run wrote is sound, so the re-dispatch
+starts from it.
+
