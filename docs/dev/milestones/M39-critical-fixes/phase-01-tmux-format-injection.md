@@ -1,7 +1,7 @@
 # Phase 01 — tmux-format-injection
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress (bounced 2026-11-22: [bug-01-1](bugs/bug-01-1.md))
+**Status:** done
 **Drafted:** 2026-11-21
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -114,7 +114,10 @@ Read **only** these files: `src/tmux/pane.rs`, `src/webhook/process.rs`
       and `tests/tmux_read_only.rs` and `tests/hygiene.rs` pass.
 - [ ] **(bug-01-1)** One run of
       `cargo test --lib format_literal_round_trips_through_tmux` leaves the
-      count from `pgrep -fc 'tmux -S /tmp/.*/s.sock new-session -d -s t'`
+      count from `pgrep -c -f '^tmux -S /tmp/\.tmp[^/]*/s\.sock new-session'`
+      (anchored at the start of the command line: the unanchored form at
+      first dispatch also matched the `bash -c` running it, so it never read
+      0, and the bounce run spent its turns on that)
       unchanged, on a passing run **and** on a deliberately failing one.
       The Update Log shows both counts and the red run.
 - [ ] **(bug-01-1)** The test's skip probe is `tmux -V`, and every other
@@ -353,3 +356,76 @@ assertion panics. Make the skip probe `tmux -V`. Then work through the
 bug's Definition of done, starting with the red run that shows the count
 unchanged. Your first `patch` lands within 8 turns. No other file
 changes.
+
+### Update — 2026-11-22 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the bounce run hit `budget_exceeded` at 1200 turns with zero
+edits. It marked the three finished production tasks done, then re-ran
+the bug's `pgrep -fc` count about 1150 times. That criterion was an
+architect spec bug: the unanchored pattern also matches the `bash -c`
+wrapper that runs it, so the count never reads 0 and "unchanged" was
+undecidable from inside the tool. The remaining work was one test. This
+was the second failed dispatch on that test, and standing PE guidance is
+to take small bounces over directly. A refined re-dispatch would have
+spent another run on a ~40-line test change.
+
+### Update — 2026-11-22 (architect takeover, complete)
+
+`format_literal_round_trips_through_tmux` now runs against a
+`PrivateServer` guard. The guard owns the tempdir and runs `kill-server`
+on its socket in `Drop`. That fires on a passing run and when an
+assertion panics, and it fires before the tempdir and its socket are
+removed. The skip probe is `tmux -V`, which needs no server. Every other
+tmux call in the test module passes `-S`. No production change: the
+escape, `overlay_argv`, `show_overlay` and the `notify_chat_panes` swap
+from the first dispatch stand.
+
+Leaked-server count, with the anchored pattern
+`pgrep -c -f '^tmux -S /tmp/\.tmp[^/]*/s\.sock new-session'`:
+
+```
+pass run: before=0
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3058 filtered out; finished in 0.32s
+pass run: after=0
+red run: before=0      (assert_eq!(printed, input) changed to compare "deliberately wrong")
+thread 'tmux::pane::tests::format_literal_round_trips_through_tmux' (1638472) panicked at src/tmux/pane.rs:360:9:
+  left: "#(touch /tmp/.tmpjsr9w0/pwned) %H #{pane_id} ## 100%"
+ right: "deliberately wrong"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3058 filtered out; finished in 0.02s
+red run: after=0
+old test (positive control, the 7e85594a version): before=0
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3058 filtered out; finished in 0.32s
+old test: after=1
+```
+
+The positive control shows the anchored count sees the leak the fix
+removes, so the criterion is not vacuous. Gates: `cargo fmt --all`,
+`cargo build` and `cargo clippy --all-targets --all-features -- -D
+warnings` are clean. `cargo test` gives 3049 lib tests passing (10
+ignored) and every integration binary `ok`, `tmux_read_only` and
+`hygiene` included. The leaked-server count was 0 before and after the
+full suite. `grep -c 'display-message' src/webhook/process.rs` prints
+`0`. The three `pub fn` greps print `3`.
+
+Cleanup of the bounce run's litter: about 1150 `/tmp/count-*.txt` files
+it wrote were removed. It had also killed one leaked server from the
+review's criterion check.
+
+### Review verdict — 2026-11-22
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-01-1)
+- **Executor:** GLM-5.3-Flash (first dispatch: production fix and four of
+  five tests, approved); Claude (direct) for the bug-01-1 test teardown
+- **Scope deviations:** none. The first dispatch also committed the
+  architect's uncommitted doc edits (NEXT.md, README) with its fix.
+- **Calibration:** (1) A criterion that counts processes with `pgrep -f`
+  must anchor its pattern (`^tmux …`), or it matches the shell running
+  it. Run it from the same kind of `bash -c` the executor uses before
+  dispatch. This one was only checked as a difference. (2) With
+  `read_only_stall_threshold = 10000`, a 1150-iteration read-only poll
+  loop ran to the turn cap with no governor stop. The bounce had four
+  green gates and an undecidable finish condition, which is the
+  green-bounce shape. Hold for recurrence before proposing a fold.
+

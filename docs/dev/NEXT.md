@@ -11,10 +11,11 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** M39 phase-01 — tmux-format-injection
-([`phase-01-tmux-format-injection.md`](milestones/M39-critical-fixes/phase-01-tmux-format-injection.md)),
-drafted 2026-11-21, `todo`. Dispatch with `/rexymcp:dispatch`. The
-scoping decisions in the M39 README still need PE sign-off.
+**Active phase:** none drafted. M39 phase-01 (tmux-format-injection) is
+`done` (2026-11-22, escalated: the bug-01-1 test teardown was taken over).
+Next: phase-02 (open-shell-gate), drafted with `/rexymcp:architect next`
+in the statement-of-work style the PE set on 2026-11-22. The scoping
+decisions in the M39 README still need PE sign-off.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
 that reports `blocked` within its first 2 s probe never produces a notice

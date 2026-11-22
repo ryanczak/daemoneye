@@ -20,7 +20,7 @@ check confirmed all ten rows marked `yes`.
 
 | ID | Finding | Where (symbol) | Target | Verified | Triage |
 |----|---------|----------------|--------|----------|--------|
-| S1 | tmux `display-message` evaluates FORMATS, so a webhook `alert_name`/`summary` containing `#(cmd)` runs a shell command | `webhook/process.rs` · `notify_chat_panes`; `notice_sinks.rs` caller | M39 01 | yes | |
+| S1 | tmux `display-message` evaluates FORMATS, so a webhook `alert_name`/`summary` containing `#(cmd)` runs a shell command | `webhook/process.rs` · `notify_chat_panes`; `notice_sinks.rs` caller | M39 01 | yes | act: M39 phase-01 (`format_literal_round_trips_through_tmux`) |
 | S2a | `open_shell` never checks the sandbox gate for a ghost and registers the shell as `Owner::Chat` | `executor/dispatch_open_shell.rs` | M39 02 | | |
 | S2b | `send_input` builds `ApprovalRequest { host: None }`, so input into a remote shell is classified as a local command and auto-approved; `sudo` spelled through `keys`/quotes evades `command_has_sudo` | `executor/dispatch_send_input.rs` | M39 03 | yes (host: None) | |
 | S2c | `send_input` continues after `ShellId::parse` fails and joins the raw string into `socket_path` | `executor/dispatch_send_input.rs` | M39 03 | | |
