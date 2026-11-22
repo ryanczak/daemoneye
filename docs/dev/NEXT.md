@@ -1,11 +1,19 @@
 # NEXT
 
-**Active milestone:** none. M38 (The notice bus) closed 2026-11-18 as
-`2.10.0` ([`README.md`](milestones/M38-notice-bus/README.md)). Next is the
-MCP surface (M39), then Knowledge (M40); M39 is not yet scoped. M37 closed
-as `2.9.0` (2026-11-16).
+**Active milestone:** M39 — Critical fixes
+([`README.md`](milestones/M39-critical-fixes/README.md)), scoped
+2026-11-21 from the 2.10.0 audit
+([`daemoneye_audit.md`](../design/daemoneye_audit.md), triaged in
+[`daemoneye_audit_ledger.md`](../design/daemoneye_audit_ledger.md)). The
+audit is five milestones: M39 Critical fixes, M40 Security hardening, M41
+Correctness & reliability, M42 Performance & concurrency, M43
+Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
+(PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
+`2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none.
+**Active phase:** none drafted. Next: M39 phase-01
+(tmux-format-injection), drafted with `/rexymcp:architect next`. The
+scoping decisions in the M39 README still need PE sign-off.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
 that reports `blocked` within its first 2 s probe never produces a notice
@@ -22,8 +30,10 @@ open until that phase's live check.
 **Held, triaged 2026-11-15:** GitHub issue #4 (cron is UTC-only, no DST
 awareness). Scope: option 1 only — optional `tz` (IANA) on the cron schedule
 and on `schedule_command`, validated at creation, `list_schedules` showing UTC
-and the job's zone; new dependency `chrono-tz` or `jiff`. Not in M37; schedule
-into a later milestone before March 2027.
+and the job's zone; new dependency `chrono-tz` or `jiff`. Scheduled
+2026-11-21 as M41 phase 10b
+([`README.md`](milestones/M41-correctness/README.md)). It must ship before
+the 2027-03-14 DST change; if M41 is late, ship 10b early as a patch.
 
 M35 closed 2026-11-01 (`v2.7.0`, pushed). M34 (Function caps) was withdrawn
 2026-10-31 after phase 01. M33 closed 2026-10-31 (`v2.6.0`, pushed). M32
