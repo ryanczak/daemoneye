@@ -1,7 +1,7 @@
 # Phase 02 — open-shell-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress (bounced 2026-11-22: [bug-02-1](bugs/bug-02-1.md))
+**Status:** review
 **Drafted:** 2026-11-22
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -788,3 +788,136 @@ asserts both at runtime (quoted above), and
 `grep -n "wait: false" src/daemon/executor/dispatch_open_shell.rs` finds
 the gate's refusal string and this test's assertion.
 
+### Update — 2026-11-22 16:38 (complete, server-authored)
+
+**Summary:** All shell-host processes predate this run (Nov 21, from the review run) — nothing leaked from my testing today.
+
+**Summary**
+
+Phase-02's bounce (bug-02-1) is resolved: the missing end-to-end test `ghost_open_shell_is_refused_while_the_sandbox_is_on` now exists in `dispatch_open_shell.rs`, in a new `arm_gate_tests` module beside `owner_tests`, and is driven through `execute_tool_call` via the existing `harness::run_call` seam exactly as the bounce note prescribed — a ghost session, `[sandbox] enabled = true` written to the temp HOME's `etc/config.toml`, and a fixture `ShellRegistry::default()` (not the global registry). It asserts the result contains `wait: false`, does not contain "Opened shell", and that `with_shells(&reg, |s| s.is_empty())` holds. The mutation check was run and pasted: with the arm's `break 'arm Ok(ToolCallOutcome::Result(r));` replaced by `let _ = r;` the test fails with the shell actually opening ("Opened shell s0 …"), and restoring the line turns it green — while the pure-gate and owner tests stay green under the mutation, which is precisely the hole the reviewer found. `cargo test --lib ghost_open_shell_is_refused_while_the_sandbox_is_on` runs exactly 1 test, and the full lib suite now reports **3057 passed** (10 suites all green, including `tests/hygiene.rs` 16 and `tests/doc_truth.rs` 19); `cargo fmt --all`, `cargo build`, and `cargo clippy --all-targets --all-features -- -D warnings` are clean with no new warnings. The three out-of-scope `chat_owner(session_id)` sites are grep-confirmed unchanged and no ghost-reachable arm uses `chat_owner`; no bash or tmux processes leaked (the three live shell-hosts predate this run). Committed as `92f319b0` with the Update Log entries; working tree clean; phase status left at `in-progress` for the server's completion tail.
+
+**Notes for review**
+
+- The red run in the Update Log is from the mutation build (`let _ = r;`), which is the strictest proof bug-02-1 asks for: it shows the gate computed and ignored lets the shell open, not merely that some unrelated breakage fails.
+- The test additionally asserts `!text.contains("Opened shell")` beyond the two required assertions, so a regression that swaps the refusal for any success text also fails, not just one that reopens a shell.
+- Adaptation to flag: the bounce note asked the test to live "beside `owner_tests`" using `harness::run_call`; I put it in its own `arm_gate_tests` module (same file, same harness) so the sandbox-on and sandbox-off end-to-end tests are visibly distinct layers.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_read_and_clear ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-c067c2b4b53c4301)
+kill: (1895904): No such process
+kill: (-1896586): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d9a9e35dfb95286a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e2bade347dfc2bf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-fec57f080473704c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-b7049ce40c11944f)
+     Running tests/integration.rs (target/debug/deps/integration-521aa0dc073b7f75)
+     Running tests/isolation.rs (target/debug/deps/isolation-4e1a6c89c680c6e7)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-25580a42c302b017)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a1f9f82f934e25c3)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/phase-02-open-shell-gate.md` — +123 -0
+- `src/daemon/executor/dispatch_open_shell.rs` — +61 -0
+
+**Commit:** 92f319b0fb567978cc2b9f249ff145f47f90af11
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
