@@ -132,7 +132,7 @@ where
 
             // 6. Execute.
             Ok(ToolCallOutcome::Result(
-                knowledge::send_input(shell, &input, &chat_owner(session_id)).await,
+                knowledge::send_input(shell, &input, &call_owner(is_ghost, session_id)).await,
             ))
         }
 

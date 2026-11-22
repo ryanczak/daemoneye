@@ -354,6 +354,50 @@ pub(crate) fn chat_owner(session_id: Option<&str>) -> Owner {
     Owner::Chat(session_id.unwrap_or(ASK_OWNER).to_string())
 }
 
+/// The one owner rule for executor tool calls: a ghost call's shells are
+/// owned by `Owner::Ghost(<session id>)`, a chat or ask call's by what
+/// [`chat_owner`] gives. The ghost's end-of-run teardown closes only
+/// `Owner::Ghost(<id>)` shells, so a shell the ghost opened must be recorded
+/// under that owner or it outlives the run. A session-less ghost call is
+/// impossible — a ghost always carries its session id — so it keeps the ask
+/// owner rather than inventing a fifth case.
+pub(crate) fn call_owner(is_ghost: bool, session_id: Option<&str>) -> Owner {
+    if is_ghost && let Some(sid) = session_id {
+        Owner::Ghost(sid.to_string())
+    } else {
+        chat_owner(session_id)
+    }
+}
+
+/// The sandbox gate a ghost's shell-opening calls share: `None` when the call
+/// may go on, otherwise the refusal text. The same two conditions the
+/// foreground gate fails closed on — the sandbox is enabled (an open shell is
+/// a plain host PTY), or the daemon runs on fallback defaults because its
+/// startup `Config::load()` failed (bug-19-1). `tool` names the tool in the
+/// startup-failure refusal, since the sentence is shared.
+pub(crate) fn ghost_shell_open_refusal(
+    is_ghost: bool,
+    config: &crate::config::Config,
+    startup_failed: Option<&anyhow::Error>,
+) -> Option<String> {
+    if is_ghost && let Some(e) = startup_failed {
+        return Some(format!(
+            "Error: {tool} is refused because the running configuration is \
+             fallback defaults — the configuration could not be read at startup: \
+             {e:#}. Fix or remove that file, then restart the daemon; no shell \
+             was opened.",
+            tool = "open_shell"
+        ));
+    }
+    (!ghost_may_run_foreground(is_ghost, config.sandbox.enabled)).then(|| {
+        "Error: open_shell is refused because the shell would not be sandboxed \
+         and the container sandbox is enabled. Run the work through the sandbox \
+         instead: re-issue the command with `wait: false` so it runs in a \
+         container. No shell was opened."
+            .to_string()
+    })
+}
+
 pub async fn execute_tool_call<W, R>(
     call: &PendingCall,
     tx: &mut W,
@@ -921,6 +965,28 @@ mod tests {
         assert!(
             matches!(chat_owner(Some("0123456789abcdef")), Owner::Chat(o) if o == "0123456789abcdef"),
             "a session's call owns its shells as the session id"
+        );
+    }
+
+    /// The one owner rule: a ghost call's shells are owned by
+    /// `Owner::Ghost(<session id>)`, so the end-of-run teardown closes them;
+    /// a chat or ask call's owner stays what `chat_owner` gives.
+    #[test]
+    fn call_owner_gives_a_ghost_call_the_ghost_owner() {
+        assert_eq!(
+            call_owner(true, Some("gsid-1")),
+            Owner::Ghost("gsid-1".to_string()),
+            "a ghost call owns its shells as Owner::Ghost(<session id>)"
+        );
+        assert_eq!(
+            call_owner(false, Some("sess-a")),
+            chat_owner(Some("sess-a")),
+            "a chat call's owner is unchanged"
+        );
+        assert_eq!(
+            call_owner(false, None),
+            chat_owner(None),
+            "an ask call's owner is unchanged"
         );
     }
 

@@ -8,19 +8,19 @@ pub(super) async fn dispatch<W>(
     tx: &mut W,
     session_id: Option<&str>,
     shells: &crate::shell::ShellRegistry,
+    is_ghost: bool,
 ) -> anyhow::Result<ToolCallOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
+    // The one owner rule: a ghost call's shells are owned by
+    // `Owner::Ghost(<session id>)`, so list/find/close see the ghost's own
+    // records and the end-of-run teardown closes what it opened.
+    let owner = call_owner(is_ghost, session_id);
     match call {
         PendingCall::ListShells { scope, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::list_shells(
-                shells,
-                scope.as_deref(),
-                &chat_owner(session_id),
-                crate::shell::now_unix(),
-            )
-            .await,
+            knowledge::list_shells(shells, scope.as_deref(), &owner, crate::shell::now_unix())
+                .await,
         )),
 
         PendingCall::ReadShell {
@@ -65,11 +65,11 @@ where
         )),
 
         PendingCall::FindInShells { pattern, scope, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::find_in_shells(shells, pattern, scope.as_deref(), &chat_owner(session_id)),
+            knowledge::find_in_shells(shells, pattern, scope.as_deref(), &owner),
         )),
 
         PendingCall::CloseShell { shell, .. } => Ok(ToolCallOutcome::Result(
-            knowledge::close_shell(shell, &chat_owner(session_id)).await,
+            knowledge::close_shell(shell, &owner).await,
         )),
 
         PendingCall::WatchShell {

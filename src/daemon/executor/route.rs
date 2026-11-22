@@ -151,7 +151,7 @@ where
             dispatch_memory::dispatch(call, tx, session_id, &artifact_ctx, &memory_namespaces).await
         }
         PendingCall::GetShellContext { .. } => {
-            dispatch_context::dispatch(call, session_id, chat_pane, cache, ctx.shells)
+            dispatch_context::dispatch(call, session_id, chat_pane, cache, ctx.shells, is_ghost)
         }
         PendingCall::ListShells { .. }
         | PendingCall::ReadShell { .. }
@@ -161,7 +161,7 @@ where
         | PendingCall::WatchShell { .. }
         | PendingCall::ListShellLogs { .. }
         | PendingCall::ReadShellLog { .. } => {
-            dispatch_shells::dispatch(call, tx, session_id, ctx.shells).await
+            dispatch_shells::dispatch(call, tx, session_id, ctx.shells, is_ghost).await
         }
         PendingCall::OpenShell { .. } => {
             dispatch_open_shell::dispatch(call, tx, rx, ctx, &snap.ghost_policy, is_ghost).await
