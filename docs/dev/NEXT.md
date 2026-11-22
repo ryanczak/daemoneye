@@ -11,12 +11,11 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** M39 phase-02 — open-shell-gate
-([`phase-02-open-shell-gate.md`](milestones/M39-critical-fixes/phase-02-open-shell-gate.md)),
-drafted 2026-11-22, `todo`. It is the first phase written as a statement
-of work. Dispatch with `/rexymcp:dispatch phase-02`. Phase-01 is `done`
-(escalated). The scoping decisions in the M39 README still need PE
-sign-off.
+**Active phase:** M39 phase-03 — send-input-gate
+([`phase-03-send-input-gate.md`](milestones/M39-critical-fixes/phase-03-send-input-gate.md)),
+drafted 2026-11-22, `todo`. Dispatch with `/rexymcp:dispatch phase-03`.
+Phases 01 and 02 are `done`. The scoping decisions in the M39 README still
+need PE sign-off.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
 that reports `blocked` within its first 2 s probe never produces a notice
