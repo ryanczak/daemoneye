@@ -1,7 +1,7 @@
 # Phase 05 — sudo-detection
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -320,3 +320,134 @@ Acceptance evidence, item by item:
 - **Fail closed:** `sudo_detect_unresolvable_command_word_fails_closed` — red run (22:26), green after the unresolvable branch.
 - **Preservation:** `sudo_detect_globs_and_expansions_in_arguments_stay_clear` green; the three existing negative tests pass **unchanged** (their bodies are not in the diff).
 - **Mutation check:** pasted above (22:42) — failing red under quote-keeping mutation, restored, green again.
+
+### Update — 2026-11-23 23:16 (complete, server-authored)
+
+**Summary:** **Summary:** Rewrote `command_has_sudo` in `src/daemon/utils/sudo.rs` so it detects elevation fail-closed: shell words are now read and dequoted by a new `read_shell_word` helper (quotes and backslashes removed, quoted text still scanned as a command), leading redirections (`<`, `>`, `>>`, `<<<`, `&>`, `&>>`, and fd-prefixed `2>`/`1<`) never change command position, `su`/`doas`/`pkexec`/`run0`/`sudoedit` join `sudo` as elevators by basename, ten more wrappers (`strace`, `ltrace`, `flock`, `chroot`, `unshare`, `nsenter`, `setpriv`, `chrt`, `taskset`, `systemd-run` — plus `eval`, the spec's sanctioned one-liner) joined `WRAPPER_COMMANDS`, and a command-position word that still carries an unquoted parameter expansion or glob character counts as elevation. All six acceptance tests were written red first and each red run is pasted in the Update Log, along with the mutation check (quote-keeping mutation → spelling test fails → restored, green).
+
+**Notes for review:**
+- `eval` was added to `WRAPPER_COMMANDS` under the spec's "one-line addition" allowance; `sudo_command_word` was replaced by `is_elevator`/`ELEVATORS` since its name no longer described a sudo-only check — the public function's name and signature are unchanged.
+- Two implementation subtleties: a leading `NAME=...` assignment is excluded from the fail-closed branch so `FOO=$HOME ls` stays false, and an fd digit directly before a redirection operator is folded into the redirection rather than treated as a command word.
+- No test in another module changed its expectation; all existing suites pass unchanged.
+- Gates: `cargo fmt --all` clean, `cargo build` zero warnings, clippy `-D warnings` clean, `cargo test` fully green — lib suite reports **3092 passed** (3086 + 6 new tests, exactly the required floor). Committed as `9fa1078e` (`fix:`), working tree clean. Status left at `in-progress` per the lifecycle split; no `(complete)` entry written.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test attach_sends_session_counters_after_ok ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+test daemon_boots_in_throwaway_root ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-0635aac7b8e1e57e)
+kill: (2614124): No such process
+kill: (-2614842): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-f945a8c3f7582fdb)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e19192a3a1354c4)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7fcecbb518583aee)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-653cf39ac0e64fe2)
+     Running tests/integration.rs (target/debug/deps/integration-849708bb7ff158dd)
+     Running tests/isolation.rs (target/debug/deps/isolation-fbc36518ed3cd563)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-ae0cb5d281522d21)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-55beac99186d4a12)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M39-critical-fixes/phase-05-sudo-detection.md` — +146 -1
+- `src/daemon/utils/sudo.rs` — +351 -51
+
+**Commit:** 9fa1078e07bc35a553f8014d83615f7d0233c9e1
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
