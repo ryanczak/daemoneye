@@ -1,7 +1,7 @@
 # Phase 04 — sudoers-pin
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-04-3)
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -215,6 +215,11 @@ its fix lands. Every such test stays in the tree.
       `/usr/local/libexec/daemoneye` and `/usr/local/libexec/daemoneye/<euid>`,
       ahead of the copy, and a plan test asserts both. **The current plan
       names only the `<euid>` directory.**
+- [ ] **bug-04-3, sudo loads the rule:** the rule file name under
+      `/etc/sudoers.d/` comes from one tested pure function. For `fix.sh` its
+      final component contains no `.` and does not end in `~`, and `fix.sh`
+      and `fix_sh` map to different files. **Today the name keeps the dot,
+      `daemoneye-fix.sh`, which sudo's `@includedir` skips.**
 - [ ] **No docs (preservation):** `git diff --stat` for this phase lists no
       `README.md`, `CLAUDE.md`, `src/main.rs` or `docs/` file other than
       this phase doc.
@@ -928,3 +933,28 @@ kill: (-2370123): No such process
 **Commit:** caa029eb3873236c8938683719b4a7870504c41d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-23 (bounced: bug-04-3)
+
+bug-04-2 is fixed and verified live. All three directories and the copy
+are `root:root 755`, and the user can stat the copy. All four gates pass
+with 3078 lib tests passing. The grant still fails, because of a bug from
+**before** this phase, [bug-04-3](bugs/bug-04-3.md): the rule's file name
+keeps the script's `.` (`/etc/sudoers.d/daemoneye-de-sudo-probe.sh`), and
+sudo's `@includedir` skips any file whose name contains a `.`. `visudo -cf`
+still prints `parsed OK`, because it reads the file directly.
+
+**Green gates and a clean tree are expected here, and they are NOT evidence
+the phase is done.** Already approved, so do not redo it: everything from
+bug-04-1 and bug-04-2, `is_safe`, `resolve_command`, the install plan and
+every existing test. There is exactly one change left, in `src/scripts.rs`.
+Move the rule-file naming out of `install_sudoers` into a pure function,
+have it map `.` (and anything else sudo's `@includedir` would skip) so that
+two distinct script names never collide, have `install_sudoers` call it,
+and test it. Leave the rule's **content** alone: it still names the exact
+copy path, dot included. Start by editing. The naming code is the
+`safe_name` block in `install_sudoers`. Finish condition: the new test
+passes, the mutation check from the bug is pasted here, and the lib suite
+reports at least 3078 passed. The architect runs the live probe again at
+review.
+
