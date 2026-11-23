@@ -1,7 +1,7 @@
 # Phase 03 — send-input-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress (bounced: bug-03-1)
+**Status:** done
 **Drafted:** 2026-11-22
 **Depends on:** phase-02 (`call_owner`, already in the tree)
 **Estimated diff:** ~250 lines
@@ -640,3 +640,68 @@ decision-text mapping, the new tests, and the rename/cleanup in item 2.
 Keep every existing phase-03 test. Finish condition: the lib suite reports
 more than 3065 passed, and the mutation check named in the bug is pasted
 here.
+
+### Update — 2026-11-23 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the bug-03-1 re-dispatch hard-failed with `NoProgressStall`
+after 200 read-only turns and no edits. That is glm-5.3-flash's
+read-paralysis pattern, seen eight times before, on a bounce whose
+remaining work was one function and a rename. The PE's standing guidance
+for a small bounce in that state is to take it over rather than
+re-dispatch.
+
+The architect fixed it directly in `68ce1c3a`:
+
+- `sudo_decision_text` now encodes each key through `encode_keys`, the
+  parser `send_input` sends with. A key that encodes to `\r` or `\n` is a
+  newline, a space or tab is a space, and a printable byte is itself.
+  Anything else contributes nothing. So `space`, `enter`, `C-m` and `C-j`
+  count exactly like `Space` and `Enter`. `text` is still read as written,
+  so a bracketed paste's start marker cannot hide `sudo`.
+- `SessionApproval::auto_approves` holds the decision again, and
+  `auto_approves_for_tests` is gone. The thrown-away `_owner_key` is gone
+  too.
+- New tests: `send_input_sees_sudo_through_every_spelling_of_space_and_enter`,
+  which drives the lowercase, `C-m` and `C-j` lists through
+  `execute_tool_call`, and `send_input_bracketed_paste_of_sudo_is_still_sudo`.
+
+Mutation check: `sudo_decision_text` reverted to the two-name mapping,
+then `cargo test --lib send_input_`:
+
+```
+test daemon::executor::dispatch_send_input::tests::send_input_sees_sudo_through_every_spelling_of_space_and_enter ... FAILED
+thread 'daemon::executor::dispatch_send_input::tests::send_input_sees_sudo_through_every_spelling_of_space_and_enter' (2107002) panicked at src/daemon/executor/dispatch_send_input.rs:580:13:
+test result: FAILED. 24 passed; 1 failed; 0 ignored; 0 measured; 3052 filtered out; finished in 0.08s
+```
+
+Restored, the same run reports `25 passed`.
+
+Gates on the final tree: `cargo fmt --all -- --check` passes, and build and
+clippy (`-D warnings`) are clean. `cargo test`:
+
+```
+test result: ok. 3067 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out
+```
+
+`hygiene` reports 16 passed and `doc_truth` 19 passed. Both bug-03-1 greps
+print nothing.
+
+### Review verdict — 2026-11-23
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-03-1, major: other spellings of Space and Enter hid `sudo`)
+- **Executor:** GLM-5.3-Flash (run 1 hard-failed at 417 turns on E0382, the
+  resume completed in 42 turns, and the bounce run stalled at 200 turns with
+  no edits); Claude (direct) for bug-03-1
+- **Scope deviations:** `unknown_shell_error` widened `pub(super)` →
+  `pub(crate)` to reuse the standard refusal wording. Accepted: it widens
+  visibility only and was logged by the executor.
+- **Calibration:** the bounce was a spec bug. The statement of work
+  dictated the exact key names `Space` and `Enter` rather than "whatever
+  the key parser encodes as a space or a line end". When a spec names
+  spellings for a security check, derive them from the parser, or state
+  the rule as "agrees with the bytes sent". On run 1, the 800-line
+  production cap on `executor/mod.rs` pushed the executor into compacting a
+  signature, which produced the E0382. A resume with the exact two-line fix
+  was the right lever (42 turns).
