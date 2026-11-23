@@ -108,9 +108,15 @@ enum Commands {
     },
     /// Install a NOPASSWD sudoers rule for a script in ~/.daemoneye/scripts/.
     ///
-    /// Grants the current user sudo access to the named script without a password,
-    /// enabling ghost shells and scheduled jobs to run it with elevated privileges.
-    /// Writes to /etc/sudoers.d/daemoneye-<name> (requires sudo).
+    /// Copies the script to a root-owned path,
+    /// /usr/local/libexec/daemoneye/<uid>/<name> (root:root, 0755), and grants
+    /// the current user passwordless sudo for that copy only, so ghost shells
+    /// and scheduled jobs can run it with elevated privileges. Writes the rule
+    /// to /etc/sudoers.d/daemoneye-<name> (requires sudo).
+    ///
+    /// The rule never names your own writable script. Editing
+    /// ~/.daemoneye/scripts/<name> changes nothing that runs as root until you
+    /// run install-sudoers again.
     ///
     /// Example: daemoneye install-sudoers check-disk.sh
     InstallSudoers {

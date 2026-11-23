@@ -118,7 +118,7 @@ Three properties are load-bearing:
 When a webhook alert the `analyze` route matches (by default, `warning` or above) has a runbook with `enabled: true`, and the runbook analysis calls for it, DaemonEye spawns a Ghost Shell — an unattended AI agent that works the problem on the daemon host without a human present, in a PTY shell it owns. Watch it with `/tail`, or join it with `/agents` to pause, interrupt or type into it. When you next attach, a catch-up brief tells you what happened.
 
 - **Unattended Remediation** — Runs pre-approved remediation scripts, monitors output, and escalates when something unexpected happens.
-- **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`. Two keys are required for every privilege escalation. The gate reads the command as a whole: a sudo invocation must be exactly one approved script call with a plain tail — no chains, substitutions or redirections after the script word — so a whitelisted script cannot be used as a vehicle for a second command. Ghost runs release their concurrency slot on every exit path, so a crashed ghost never wedges the cap.
+- **Policy Gating** — Non-sudo commands run freely within your OS permissions; `sudo` is gated to scripts explicitly listed in `auto_approve_scripts` that also have a NOPASSWD sudoers rule installed via `daemoneye install-sudoers`, which grants a root-owned copy of the script under `/usr/local/libexec/daemoneye/<uid>/`, never your writable original. Two keys are required for every privilege escalation. The gate reads the command as a whole: a sudo invocation must be exactly one approved script call with a plain tail — no chains, substitutions or redirections after the script word — so a whitelisted script cannot be used as a vehicle for a second command. Ghost runs release their concurrency slot on every exit path, so a crashed ghost never wedges the cap.
 - **Turn Budget** — A configurable hard ceiling on AI turns (default 20) ensures the agent cannot loop indefinitely. Individual runbooks may set a lower limit, but never a higher one.
 - **Catch-up Brief** — On re-attach, a `[Catch-up]` message before the first AI token lists every notice the routes sent to that chat's history or chat notice while you were away: alerts, ghost and background completions, scheduler results and watchdog analyses, read from the event log. AI spend during the detach window is included: `Cost during detach: $0.34 (architect $0.20 · ghost-anonymous $0.14)`.
 
@@ -466,7 +466,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye top --once --filter ai_cost` | Keep only the Activity rows whose event name contains the filter |
 | `daemoneye top --once --run <id>` | One run's detail — the `run` record's fields (status, failure class, model, turns, tool calls and rate, tokens, cost, wall clock) or the running state, how it ended (briefing or cancel), and the turn log's tail; `run <id> not found` and exit 1 when the id has no turn log |
 | `daemoneye top --run <id>` | The live view opened on that run's detail: `Enter` on a run in Runs opens the same view, `Esc` returns to the panels |
-| `daemoneye install-sudoers <script>` | Write a NOPASSWD sudoers drop-in for `~/.daemoneye/scripts/<script>` |
+| `daemoneye install-sudoers <script>` | Copy `~/.daemoneye/scripts/<script>` to a root-owned `/usr/local/libexec/daemoneye/<uid>/<script>` and write a NOPASSWD sudoers drop-in for that copy. Re-run it after every edit to the script |
 | `daemoneye reindex` | Rebuild the memory search index from the memory files on disk; reports rows before and after |
 | `daemoneye reload` | Ask the running daemon to re-read `config.toml`; prints the keys that changed and the keys that wait for a restart, and exits non-zero when the file is refused |
 | `daemoneye audit-prompts` | Audit installed prompt and knowledge memory files for stale path references; exits non-zero on findings, never writes |
@@ -1280,19 +1280,18 @@ chmod 700 ~/.daemoneye/scripts/restart-nginx.sh
 If the script needs elevated privileges (e.g., `systemctl restart nginx`), create a sudoers drop-in so it can run without a password prompt. Ghost sessions run unattended — interactive `sudo` password prompts will cause the command to fail.
 
 ```bash
-# Use daemoneye install-sudoers (recommended — pins the exact path automatically):
 daemoneye install-sudoers restart-nginx.sh
-
-# Or manually with visudo:
-sudo visudo -f /etc/sudoers.d/daemoneye-ghost
 ```
+
+This copies the script to `/usr/local/libexec/daemoneye/<uid>/restart-nginx.sh`, owned `root:root` with mode `0755`, and writes `/etc/sudoers.d/daemoneye-restart-nginx.sh`:
 
 ```sudoers
-# Allow the daemoneye user to restart nginx without a password
-your-username ALL=(ALL) NOPASSWD: /home/your-username/.daemoneye/scripts/restart-nginx.sh
+your-username ALL=(ALL) NOPASSWD: /usr/local/libexec/daemoneye/1000/restart-nginx.sh
 ```
 
-> **Important:** Use the **full absolute path** in the sudoers entry — the same path that DaemonEye will resolve to (`~/.daemoneye/scripts/<name>`). Wildcards in sudoers paths are dangerous; pin the exact filename.
+A ghost's `sudo restart-nginx.sh` resolves to that root-owned copy, and the policy approves sudo only at that exact path.
+
+> **Important:** The rule never names `~/.daemoneye/scripts/<name>`. You own that file, so a ghost able to write it could otherwise run anything as root. Editing the script changes nothing that runs as root until you **re-run `daemoneye install-sudoers <name>`**. Do not hand-write a rule for the `~/.daemoneye/scripts/` path: the ghost policy refuses sudo there.
 
 Verify the entry works before testing ghost shells:
 
@@ -1463,9 +1462,9 @@ List the ghost shells currently open with `/shells` in `daemoneye chat`
 ### Security considerations
 
 - **Non-sudo commands run as you.** The ghost runs as the same OS user as the daemon. Any command that doesn't require `sudo` runs within your existing file permissions — no additional policy needed.
-- **Sudo requires two explicit approvals.** To allow a sudo command: (1) list the script in `auto_approve_scripts`, and (2) run `daemoneye install-sudoers <script>` to create the NOPASSWD sudoers rule. Both must be present. Any other sudo command is automatically denied.
+- **Sudo requires two explicit approvals.** To allow a sudo command: (1) list the script in `auto_approve_scripts`, and (2) run `daemoneye install-sudoers <script>` to install its root-owned copy and the NOPASSWD rule for that copy. Both must be present, and the install must be re-run after each edit to the script. Any other sudo command is automatically denied.
 - **Named agent tool policy is a second gate.** If a runbook specifies an agent, both `GhostPolicy` (sudo gating) and `ToolPolicy` (tool allowlist/denylist) must pass independently. An agent cannot expand the tool set beyond `GhostPolicy` allows.
-- **Scope sudoers entries tightly.** `daemoneye install-sudoers` pins the exact absolute path in `/etc/sudoers.d/`. Never manually add `ALL` as the command or allow path wildcards.
+- **Scope sudoers entries tightly.** `daemoneye install-sudoers` pins the exact absolute path of a root-owned copy (`/usr/local/libexec/daemoneye/<uid>/<name>`) in `/etc/sudoers.d/`. Never manually add `ALL` as the command, allow path wildcards, or grant a path you can write.
 - **Only list scripts you control.** `auto_approve_scripts` matches filenames in `~/.daemoneye/scripts/`. Scripts outside that directory are never auto-approved regardless of path.
 - **`enabled: true` is opt-in per runbook.** Alerts without a matching runbook, or runbooks without `enabled: true`, never trigger a ghost shell.
 - **Turn budget limits blast radius.** The daemon enforces a hard ceiling via `ghost.max_ghost_turns` in `config.toml` (default 20). Individual runbooks may set a *lower* limit with `max_ghost_turns` in their frontmatter, but can never exceed the daemon ceiling.
@@ -1520,7 +1519,7 @@ The password is never written to disk, stored in a log file, or transmitted to t
 
 ### `sudoers.d` integration
 
-`daemoneye install-sudoers <script>` writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins the exact absolute path of the approved script — no wildcards, no `ALL`. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
+`daemoneye install-sudoers <script>` copies the approved script to a root-owned `/usr/local/libexec/daemoneye/<uid>/<name>` (`root:root`, `0755`) and writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins that copy's exact path — no wildcards, no `ALL`, and never the user-writable original. The ghost policy approves sudo only at that exact path. Re-run the command after editing the script; until then root keeps running the copy taken at install time. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
 
 ### Agent config protection
 
