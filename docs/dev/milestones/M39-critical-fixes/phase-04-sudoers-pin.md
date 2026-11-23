@@ -48,8 +48,9 @@ copy:
   installed. The copy is installed **before** the rule, so a rule never
   names a file that is missing or not yet root-owned.
 - Editing the script changes nothing that runs as root until
-  `install-sudoers` is run again. That is the point of the fix. Say so in
-  the command's help text and its README rows.
+  `install-sudoers` is run again. That is the point of the fix. The
+  architect updates the user-facing docs (README, CLAUDE.md, the CLI help
+  text) at review. **This phase touches no documentation.**
 
 **What "fixed" means:**
 
@@ -100,18 +101,18 @@ and why.
 - `src/scripts.rs`: `install_sudoers`, `sudoers_rule`,
   `sudoers_escape_path`, `validate_script_name`, `scripts_dir`, and the
   `sudoers_rule_*` tests in its test module.
-- `src/main.rs`: the `InstallSudoers` doc comment (the CLI help text).
-- `README.md`: the `daemoneye install-sudoers <script>` row in the command
-  table, the `install-sudoers restart-nginx.sh` example block, and the two
-  "Sudo requires two explicit approvals" / "Scope sudoers entries tightly"
-  bullets. Each must name the copy's location (`/usr/local/libexec/daemoneye/<uid>/`)
-  and say to re-run `install-sudoers` after editing the script.
-- `CLAUDE.md`: the **Sudoers installation** bullet under "Ghost Shell
-  conventions", the same two facts.
+- **Do not read** `tests/doc_truth.rs`, `tests/hygiene.rs`,
+  `docs/dev/WORKFLOW.md`, `README.md`, `CLAUDE.md` or `src/main.rs`. The two
+  test files are gates: you **run** them (`cargo test`), you never read
+  them. Nothing in this phase can trip `doc_truth`, which checks only the
+  AI tool tables and the config reference. If `hygiene` fails, its message
+  names the file and the cap, and that is all you need.
 - Not needed: the sbx modules (a sandboxed ghost never runs sudo scripts,
   and `sbx::script_invocation` returns `None` for any sudo command), the
   executor arms, `command_has_sudo` (phase 05), and `wrap_remote`
-  (phase 06). A wide grep for `scripts_dir` or `sudo` hits all of them.
+  (phase 06), `ghost_exec.rs` and its helpers (they call `resolve_command`
+  and `is_safe` and need no change), and `src/lib.rs` (no test here needs
+  `test_home`). A wide grep for `scripts_dir` or `sudo` hits all of them.
   Leave them alone.
 
 **Budget.** You have **1200 turns** to finish, so use them efficiently. Make
@@ -122,8 +123,11 @@ test you write red stays in the tree after its fix.
 
 ## First red test
 
-Write this before reading anything beyond `policy.rs` and the top of
-`policy_tests.rs`.
+**Write this test before you open any other file.** Your first tool call
+reads `src/daemon/policy_tests.rs` lines 1–85 (the two helpers and the
+first `is_safe` tests). Your second tool call is the edit that adds this
+test after `is_safe_sudo_not_on_whitelist`. Your third runs it. Read
+`policy.rs` only after that.
 
 - **File:** `src/daemon/policy_tests.rs`, in the `is_safe` section.
 - **Name:** `is_safe_refuses_an_approved_basename_in_another_directory`, a
@@ -198,13 +202,13 @@ its fix lands. Every such test stays in the tree.
       `root_script_path(name)` as `root:root` mode `0755`, and (3) the rule
       installed into `/etc/sudoers.d/` mode `0440`. The copy comes before
       the rule.
-- [ ] **Docs:** `grep -n 'libexec/daemoneye' README.md CLAUDE.md src/main.rs`
-      prints at least one line from each file, and each of those passages
-      says to re-run `install-sudoers` after editing the script. **Prints
-      nothing on the current tree.**
+- [ ] **No docs (preservation):** `git diff --stat` for this phase lists no
+      `README.md`, `CLAUDE.md`, `src/main.rs` or `docs/` file other than
+      this phase doc.
 - [ ] `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
       --all-features -- -D warnings` and `cargo test` all pass, with
-      `tests/hygiene.rs` and `tests/doc_truth.rs` included.
+      `tests/hygiene.rs` and `tests/doc_truth.rs` included. Run them, do
+      not read them.
 
 ## Spec
 
@@ -224,9 +228,7 @@ its fix lands. Every such test stays in the tree.
 ## Authorizations
 
 - May touch `src/daemon/policy.rs`, `src/daemon/policy_tests.rs`,
-  `src/scripts.rs` (and its test module), the `InstallSudoers` doc comment
-  in `src/main.rs`, and the README and CLAUDE.md passages named in the
-  scoping hints.
+  and `src/scripts.rs` (and its test module). Nothing else.
 - May change the expectations of the existing `is_safe` and
   `resolve_command` tests that encode the old behaviour. Name each one in
   the Update Log.
@@ -250,3 +252,28 @@ its fix lands. Every such test stays in the tree.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-23
+
+The first run (session `6b03a2bc`) stopped at 200 read-only calls with no
+edits. It never wrote the first red test. It read `policy_tests.rs` in seven
+slices instead, and then spent about 170 turns reading
+`tests/doc_truth.rs`, checking whether the documentation edits this doc
+used to ask for would break it. Those edits are gone: the architect does
+the documentation at review. `doc_truth.rs`, `hygiene.rs`, `WORKFLOW.md`,
+`README.md`, `CLAUDE.md` and `main.rs` are now on the do-not-read list.
+The **First red test** section now names your first three tool calls. Make
+them in that order.
+
+### Update — 2026-11-23 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** the stall came from the spec. The doc asked for README and
+CLAUDE.md edits and named `doc_truth` in the gate criterion without saying
+that `doc_truth` cannot see those passages, so the executor went to read
+it. Taking the documentation out and naming the first three calls removes
+both the detour and the slow start. The run started before the PE turned on
+`enable_thinking = true` / `reasoning_effort = "medium"` and
+`output_filter = false`, so it tested neither setting. The re-dispatch is
+the first run with both.
+
