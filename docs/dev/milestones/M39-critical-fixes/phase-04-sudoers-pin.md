@@ -1,7 +1,7 @@
 # Phase 04 — sudoers-pin
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-04-1)
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -202,6 +202,14 @@ its fix lands. Every such test stays in the tree.
       `root_script_path(name)` as `root:root` mode `0755`, and (3) the rule
       installed into `/etc/sudoers.d/` mode `0440`. The copy comes before
       the rule.
+- [ ] **bug-04-1, no unsafe/expect:** `sed -n '1,/^#\[cfg(test)\]/p' src/scripts.rs | grep -cE 'unsafe \{|\.expect\(|\.unwrap\('`
+      prints **0**, the euid coming from `nix::unistd::geteuid().as_raw()`
+      with `"user"` added to nix's features in `Cargo.toml`. **Prints 3 on
+      the current tree.**
+- [ ] **bug-04-1, the plan includes the rule:** `install_plan_copies_before_the_rule`
+      asserts **three** steps in the order directory → copy → rule
+      (`install -m 0440 <rule temp> /etc/sudoers.d/daemoneye-<name>`), and
+      `install_sudoers` runs that same plan. **The current test asserts two.**
 - [ ] **No docs (preservation):** `git diff --stat` for this phase lists no
       `README.md`, `CLAUDE.md`, `src/main.rs` or `docs/` file other than
       this phase doc.
@@ -228,7 +236,8 @@ its fix lands. Every such test stays in the tree.
 ## Authorizations
 
 - May touch `src/daemon/policy.rs`, `src/daemon/policy_tests.rs`,
-  and `src/scripts.rs` (and its test module). Nothing else.
+  and `src/scripts.rs` (and its test module), plus `Cargo.toml` (only to
+  add `"user"` to nix's feature list, bug-04-1). Nothing else.
 - May change the expectations of the existing `is_safe` and
   `resolve_command` tests that encode the old behaviour. Name each one in
   the Update Log.
@@ -541,3 +550,33 @@ kill: (-2177285): No such process
 **Commit:** b0e62d35c96c7e571b0b4b84954d2e93b6a57253
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-23 (bounced: bug-04-1)
+
+The sudoers fix is correct and its tests are real. The reviewer re-ran all
+four gates, which pass with 3077 lib tests passing. Reverting `is_safe` to
+the basename match would fail the first red test and the scripts-dir test,
+and reverting `resolve_command` would fail the five rewritten resolve
+tests. The bounce is for [bug-04-1](bugs/bug-04-1.md), three items in
+`src/scripts.rs`:
+
+1. **(major)** Two new `unsafe { libc::geteuid() }` blocks. STANDARDS §1
+   forbids `unsafe` without PE review, and the PE **declined** these:
+   use the safe `nix::unistd::geteuid().as_raw()` after adding `"user"` to
+   nix's features in `Cargo.toml`. Leave the three older libc sites in
+   `server/mod.rs` and `shell_label.rs` alone.
+2. **(minor)** `.expect("root_script_path always has a parent directory")`
+   in `install_sudoers`.
+3. **(minor)** The install plan leaves out the rule step, so nothing tests
+   that the copy comes before the rule.
+
+**Green gates and a clean tree are expected here, and they are NOT evidence
+the phase is done.** Already approved, so do not redo it: `is_safe`,
+`resolve_command`, `root_script_path_for_uid`, `sudoers_rule` and every
+`policy_tests.rs` test. There are exactly three edits left, all in
+`src/scripts.rs` plus one word in `Cargo.toml`. Start by editing, not
+reading. You already know these files from the previous run, and the bug
+doc gives the line numbers. Finish condition: the `sed … | grep -c` above
+prints 0, the plan test asserts three steps, the mutation check from the
+bug is pasted here, and the lib suite reports at least 3077 passed.
+
