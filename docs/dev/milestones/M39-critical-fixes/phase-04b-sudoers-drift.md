@@ -1,7 +1,7 @@
 # Phase 04b — sudoers-drift
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress (bounced: bug-04b-1)
+**Status:** review
 **Drafted:** 2026-11-23
 **Depends on:** phase-04 (done)
 **Estimated diff:** ~250 lines
@@ -435,3 +435,134 @@ lib suite reports at least 3086 passed.
 but the commit does not touch that file. The test imports
 `stale_sudo_notice` directly. Do not add the re-export.)
 
+### Update — 2026-11-23 21:38 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Bug-04b-1 is fixed and committed (`3cf4cb35`, one `fix:` commit confined to `src/cli/doctor.rs`; working tree clean). `sudo_scripts_check`'s warning filter is now "everything not `Current`", so an `Unknown` copy lands in the `Warn` detail as `dark.sh (cannot compare (unreadable))` instead of being dropped and counted as matching; exit code stays 0. The no-copies `Ok` detail now reads `no sudo copies installed` rather than `0 installed sudo copy(ies) match their source`.
+
+**Notes for review**
+
+- New test `sudo_scripts_check_reports_unreadable_copies` passes (did not exist on the prior tree — it fails against the old filter, verified in the mutation check below). `sudo_scripts_check_ok_when_none_or_current` additionally asserts the no-copies detail contains no `0 installed`.
+- Mutation check, pasted: with `Unknown` dropped from the warning filter again, `sudo_scripts_check_reports_unreadable_copies` fails with `assertion left == right failed: an unreadable copy cannot be called matching: Check { name: "sudo scripts", level: Ok, detail: "1 installed sudo copy(ies) match their source", fix: None }` (`test result: FAILED. 2 passed; 1 failed`); restoring the filter turns it green (`test result: ok. 3 passed`).
+- Gates: fmt check clean, build clean, clippy `-D warnings` clean, `cargo test --lib` → **3086 passed** (meets the ≥3086 floor), all integration suites green (6, 19, 16, 45, 13, 2, 4, 2, 0 passed; 0 failed). `scripts.rs`, `ghost_exec.rs`, `artifacts.rs` untouched; no re-export added to `src/daemon/executor/mod.rs`.
+- Phase status left at `in-progress` for the server's completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-0635aac7b8e1e57e)
+kill: (2546794): No such process
+kill: (-2547527): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-f945a8c3f7582fdb)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e19192a3a1354c4)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7fcecbb518583aee)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-653cf39ac0e64fe2)
+     Running tests/integration.rs (target/debug/deps/integration-849708bb7ff158dd)
+     Running tests/isolation.rs (target/debug/deps/isolation-fbc36518ed3cd563)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-ae0cb5d281522d21)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-55beac99186d4a12)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/cli/doctor.rs` — +50 -11
+
+**Commit:** 3cf4cb3585507f3702491540c651261dc464c672
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
