@@ -1,7 +1,7 @@
 # Phase 04 — sudoers-pin
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -277,3 +277,137 @@ both the detour and the slow start. The run started before the PE turned on
 `output_filter = false`, so it tested neither setting. The re-dispatch is
 the first run with both.
 
+
+### Update — 2026-11-23 (started, run 3)
+
+Executor: this run. First red test `is_safe_refuses_an_approved_basename_in_another_directory`
+written into `src/daemon/policy_tests.rs` and run red:
+
+```
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3077 filtered out
+```
+
+Task list (each names the acceptance item it closes):
+
+1. `is_safe` local: approve only the exact `root_script_path(name)` string;
+   tests for other-directory, user-writable path, bare name, non-canonical
+   spellings, approved path (+args), wrong name, `; id` tail. (S3b — items
+   1–4.)
+2. Change the expectations of `is_safe_sudo_on_whitelist` and
+   `is_safe_run_with_sudo_does_not_allow_arbitrary_sudo` and
+   `sudo_whole_plain_script_passes`' absolute-path line to the new rule. (S3b.)
+3. `resolve_command` local sudo branch resolves to
+   `sudo <root_script_path(name)>`; non-sudo keeps
+   `<scripts_dir()>/<name>`. Update the affected `policy_tests.rs` tests.
+   (S3b — item 5.)
+4. Remote preservation: `resolve_command`/`is_safe` on `ssh_target` keep
+   `sudo ~/.daemoneye/scripts/<name>` working; `is_safe` refuses other
+   directories remotely too. (item 6.)
+5. `src/scripts.rs`: add `root_script_path(name)` (and a uid-parameterised
+   variant for tests), rewrite `install_sudoers` over a pure install-plan
+   function, rule names `root_script_path(name)`. Tests: rule names the
+   root copy; the plan shows mkdir 0755 root:root, copy 0755 root:root,
+   then rule install 0440. (S3a — items 7–8.)
+6. Gates: fmt, build, clippy, test (all four); commit.
+
+### Update — 2026-11-23 (progress)
+
+Red runs captured before their fixes landed:
+
+- `is_safe_refuses_an_approved_basename_in_another_directory` (first red
+  test, above).
+- `is_safe_sudo_on_whitelist` red:
+  `assertion failed: p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh")`
+  — then rewritten to pin the root-owned copy's path and refuse the
+  user-writable path.
+- `is_safe_run_with_sudo_does_not_allow_arbitrary_sudo` red:
+  `assertion failed: p.is_safe("sudo ghost-test-remediation.sh")` — bare
+  name now refused; last line pins the root path.
+- `resolve_command_sudo_bare_name` / `_relative_path` / `_preserves_args` /
+  `_prefix_local` red: `got: sudo /usr/local/libexec/daemoneye/1000/fix.sh`
+  vs the old scripts-dir expectation — rewritten to expect
+  `sudo <root_script_path>`.
+- `sudo_whole_plain_script_passes` red — its absolute-path line relied on
+  the basename match; rewritten to pin the root path.
+
+Existing tests whose expectations changed (all listed): the five above.
+No test deleted.
+
+New tests added: `is_safe_refuses_an_approved_basename_in_the_user_scripts_dir`,
+`is_safe_refuses_bare_and_non_canonical_paths`,
+`is_safe_accepts_only_the_exact_root_path`,
+`resolve_command_sudo_resolves_to_root_path_and_passes_is_safe`,
+`resolve_command_without_sudo_still_uses_scripts_dir` (preservation),
+`remote_policy_is_safe_and_resolve_still_agree_on_tilde_path` (preservation),
+`is_safe_refuses_an_approved_basename_in_another_directory` (first red test).
+
+`src/scripts.rs`: added `root_script_path(name)` and
+`root_script_path_for_uid(name, euid)`; `install_sudoers` rewrite
+(install-plan function + rule naming the root copy) is next.
+
+### Update — 2026-11-23 (end-to-end verification)
+
+All four gate commands ran clean against the real tree, after `cargo fmt --all`:
+
+```
+cargo build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.56s
+
+cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.73s
+
+cargo test
+test result: ok. 3077 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 143.11s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+`tests/hygiene.rs` and `tests/doc_truth.rs` are among those integration
+suites (both green; run, not read). Red runs for each acceptance item were
+pasted in the earlier progress entries before their fixes landed.
+
+Acceptance-item evidence:
+
+- **S3b other directory** — `is_safe_refuses_an_approved_basename_in_another_directory`
+  (red run: `test result: FAILED. 0 passed; 1 failed; … 3077 filtered out`).
+- **S3b user-writable path** — `is_safe_refuses_an_approved_basename_in_the_user_scripts_dir`.
+- **S3b bare / non-canonical** — `is_safe_refuses_bare_and_non_canonical_paths`.
+- **S3b approved path** — `is_safe_accepts_only_the_exact_root_path`,
+  plus the rewritten `is_safe_sudo_on_whitelist`.
+- **S3b resolve** — `resolve_command_sudo_resolves_to_root_path_and_passes_is_safe`,
+  `resolve_command_without_sudo_still_uses_scripts_dir` (preservation),
+  plus the four rewritten `resolve_command_sudo_*` tests.
+- **Remote preservation** — `remote_policy_is_safe_and_resolve_still_agree_on_tilde_path`.
+- **S3a rule** — `sudoers_rule_names_the_root_owned_copy` and the rewritten
+  `sudoers_rule_passthrough_when_safe`; `install_sudoers` builds the rule
+  from `root_script_path_for_uid(script_name, euid)`.
+- **S3a install plan** — `install_plan_copies_before_the_rule` asserts the
+  ordered `install -d … 0755` and `install … 0755` steps; the rule install
+  (`sudo install -m 0440` into `/etc/sudoers.d/`) follows the plan in
+  `install_sudoers`.
+- **No docs** — `git diff --stat` for this phase lists only
+  `phase-04-sudoers-pin.md`, the milestone `README.md` phase-table row,
+  `src/daemon/policy.rs`, `src/daemon/policy_tests.rs`, `src/scripts.rs`.
+  No `README.md` (user-facing), `CLAUDE.md`, `src/main.rs` or `docs/` file
+  outside the milestone directory was touched.
+
+Grep for the spec-pinned literal `/usr/local/libexec/daemoneye`:
+
+```
+$ grep -rn "usr/local/libexec/daemoneye" src/ | head
+src/daemon/policy.rs:                let granted =
+                    |name: &str| crate::scripts::root_script_path(name).to_string_lossy().into_owned();
+src/scripts.rs:/// copy under `/usr/local/libexec/daemoneye/<euid>/` (see [`root_script_path`])
+src/scripts.rs:    std::path::Path::new("/usr/local/libexec/daemoneye")
+src/scripts.rs:            "/usr/local/libexec/daemoneye/1000/fix.sh"
+src/scripts.rs:            "/usr/local/libexec/daemoneye/42/fix.sh"
+src/scripts.rs:            "/usr/local/libexec/daemoneye/1000",
+src/scripts.rs:            "/usr/local/libexec/daemoneye/1000/fix.sh",
+```

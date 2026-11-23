@@ -15,6 +15,23 @@ pub fn scripts_dir() -> PathBuf {
     crate::config::config_dir().join("scripts")
 }
 
+/// Root-owned copy of `name` that the sudoers rule grants: under
+/// `/usr/local/libexec/daemoneye/`, keyed by the invoking user's numeric
+/// effective uid so copies from different users cannot collide and no
+/// passwd lookup is needed. The user cannot write here, so a ghost cannot
+/// swap the content a NOPASSWD rule executes.
+pub fn root_script_path(name: &str) -> PathBuf {
+    root_script_path_for_uid(name, unsafe { libc::geteuid() })
+}
+
+/// `root_script_path` for an explicit uid (tests pass one; callers use
+/// [`root_script_path`]).
+pub fn root_script_path_for_uid(name: &str, euid: u32) -> PathBuf {
+    std::path::Path::new("/usr/local/libexec/daemoneye")
+        .join(euid.to_string())
+        .join(name)
+}
+
 /// Ensure the scripts directory exists.
 pub fn ensure_scripts_dir() -> Result<()> {
     let dir = scripts_dir();
@@ -176,14 +193,20 @@ fn sudoers_escape_path(path: &str) -> String {
 
 /// Install a NOPASSWD sudoers rule for a named script in `~/.daemoneye/scripts/`.
 ///
+/// The rule does **not** name the script the user owns — a ghost could
+/// overwrite that file and reuse the grant. It names a root-owned copy under
+/// `/usr/local/libexec/daemoneye/<euid>/` (see [`root_script_path`]). The
+/// steps below install that copy **before** the rule, so a rule never names
+/// a missing or user-owned file.
+///
 /// Steps:
 /// 1. Validates the script name and checks the script exists.
-/// 2. Resolves the absolute script path.
-/// 3. Determines the current username via `$USER` or `id -un`.
-/// 4. Writes the rule to a temp file, then installs it to
-///    `/etc/sudoers.d/daemoneye-<sanitised-name>` using
-///    `sudo install -m 0440`.
-/// 5. Validates the installed file with `sudo visudo -c -f <file>`;
+/// 2. Builds the install plan ([`sudoers_install_steps`]).
+/// 3. Runs it: `sudo install -d -o root -g root -m 0755` the per-uid
+///    directory, `sudo install -o root -g root -m 0755` the script copy,
+///    then writes and installs the rule into
+///    `/etc/sudoers.d/daemoneye-<sanitised-name>` mode `0440`.
+/// 4. Validates the installed file with `sudo visudo -c -f <file>`;
 ///    removes it on validation failure.
 pub fn install_sudoers(script_name: &str) -> Result<()> {
     validate_script_name(script_name)?;
@@ -195,10 +218,6 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
             script_name
         );
     }
-    let abs_path = script_path
-        .canonicalize()
-        .with_context(|| format!("resolving absolute path for '{}'", script_name))?;
-    let abs_path_str = abs_path.to_string_lossy().to_string();
 
     // Determine the current user.
     let user = std::env::var("USER")
@@ -214,6 +233,16 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
         bail!("Could not determine current username");
     }
 
+    let euid = unsafe { libc::geteuid() };
+    let root_copy = root_script_path_for_uid(script_name, euid);
+    let copy_dir = root_copy
+        .parent()
+        .expect("root_script_path always has a parent directory")
+        .to_string_lossy()
+        .into_owned();
+    let copy_path = root_copy.to_string_lossy().into_owned();
+    let source_path = script_path.to_string_lossy().into_owned();
+
     // Sanitise the script name for use as a filename component.
     let safe_name: String = script_name
         .chars()
@@ -227,7 +256,9 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
         .collect();
     let sudoers_file = format!("/etc/sudoers.d/daemoneye-{}", safe_name);
 
-    let rule = sudoers_rule(&user, &abs_path_str);
+    let rule = sudoers_rule(&user, &copy_path);
+    let plan = sudoers_install_steps(&copy_dir, &source_path, &copy_path);
+    run_sudoers_install_plan(&plan)?;
 
     // Write the rule to a private temp file (M1): placed inside ~/.daemoneye
     // (already 0700) with O_EXCL + mode 0600, so another local user cannot
@@ -279,6 +310,61 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
         sudoers_file,
         rule.trim()
     );
+    Ok(())
+}
+
+/// One `sudo` invocation of the install plan, with its arguments.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SudoStep {
+    pub args: Vec<String>,
+}
+
+/// The ordered `sudo` steps `install_sudoers` runs before writing the rule:
+/// (1) create the per-uid directory root:root mode 0755, (2) copy the script
+/// to the root-owned path root:root mode 0755. The rule install itself
+/// (`sudo install -m 0440 <tmp> <sudoers_file>`) follows the plan.
+fn sudoers_install_steps(copy_dir: &str, source_path: &str, copy_path: &str) -> Vec<SudoStep> {
+    vec![
+        SudoStep {
+            args: vec![
+                "install".into(),
+                "-d".into(),
+                "-o".into(),
+                "root".into(),
+                "-g".into(),
+                "root".into(),
+                "-m".into(),
+                "0755".into(),
+                copy_dir.into(),
+            ],
+        },
+        SudoStep {
+            args: vec![
+                "install".into(),
+                "-o".into(),
+                "root".into(),
+                "-g".into(),
+                "root".into(),
+                "-m".into(),
+                "0755".into(),
+                source_path.into(),
+                copy_path.into(),
+            ],
+        },
+    ]
+}
+
+/// Run the plan's `sudo` steps in order, stopping at the first failure.
+fn run_sudoers_install_plan(plan: &[SudoStep]) -> Result<()> {
+    for step in plan {
+        let status = std::process::Command::new("sudo")
+            .args(&step.args)
+            .status()
+            .context("running 'sudo'")?;
+        if !status.success() {
+            bail!("sudo {:?} failed with status {}", step.args, status);
+        }
+    }
     Ok(())
 }
 
@@ -501,6 +587,30 @@ mod tests {
     }
 
     #[test]
+    fn sudoers_rule_names_the_root_owned_copy() {
+        let rule = sudoers_rule(
+            "alice",
+            &root_script_path_for_uid("check-disk.sh", 1000).to_string_lossy(),
+        );
+        assert_eq!(
+            rule,
+            "alice ALL=(ALL) NOPASSWD: /usr/local/libexec/daemoneye/1000/check-disk.sh\n"
+        );
+    }
+
+    #[test]
+    fn root_script_path_keys_on_the_euid() {
+        assert_eq!(
+            root_script_path_for_uid("fix.sh", 1000),
+            std::path::Path::new("/usr/local/libexec/daemoneye/1000/fix.sh")
+        );
+        assert_eq!(
+            root_script_path_for_uid("fix.sh", 42),
+            std::path::Path::new("/usr/local/libexec/daemoneye/42/fix.sh")
+        );
+    }
+
+    #[test]
     fn sudoers_rule_special_chars_in_path() {
         // Paths with hyphens and underscores should pass through unchanged.
         let rule = sudoers_rule("bob", "/opt/scripts/rotate_certs.sh");
@@ -548,11 +658,13 @@ mod tests {
 
     #[test]
     fn sudoers_rule_passthrough_when_safe() {
-        let path = "/home/alice/.daemoneye/scripts/check-disk.sh";
-        let rule = sudoers_rule("alice", path);
+        let path = root_script_path_for_uid("check-disk.sh", 1000)
+            .to_string_lossy()
+            .into_owned();
+        let rule = sudoers_rule("alice", &path);
         assert_eq!(
             rule,
-            "alice ALL=(ALL) NOPASSWD: /home/alice/.daemoneye/scripts/check-disk.sh\n"
+            "alice ALL=(ALL) NOPASSWD: /usr/local/libexec/daemoneye/1000/check-disk.sh\n"
         );
     }
 
@@ -735,5 +847,51 @@ mod tests {
     fn parse_script_invocation_rejects_metachar_name() {
         let result = parse_script_invocation("foo;rm -rf /");
         assert_eq!(result, None);
+    }
+}
+
+#[cfg(test)]
+mod install_plan_tests {
+    use super::*;
+
+    #[test]
+    fn install_plan_copies_before_the_rule() {
+        let plan = sudoers_install_steps(
+            "/usr/local/libexec/daemoneye/1000",
+            "/home/alice/.daemoneye/scripts/fix.sh",
+            "/usr/local/libexec/daemoneye/1000/fix.sh",
+        );
+        assert_eq!(plan.len(), 2, "mkdir and copy, in that order");
+
+        assert_eq!(
+            plan[0].args,
+            vec![
+                "install",
+                "-d",
+                "-o",
+                "root",
+                "-g",
+                "root",
+                "-m",
+                "0755",
+                "/usr/local/libexec/daemoneye/1000",
+            ],
+            "step 1 creates the per-uid directory root:root mode 0755"
+        );
+        assert_eq!(
+            plan[1].args,
+            vec![
+                "install",
+                "-o",
+                "root",
+                "-g",
+                "root",
+                "-m",
+                "0755",
+                "/home/alice/.daemoneye/scripts/fix.sh",
+                "/usr/local/libexec/daemoneye/1000/fix.sh",
+            ],
+            "step 2 copies the script to the root-owned path root:root mode 0755"
+        );
     }
 }

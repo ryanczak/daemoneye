@@ -97,14 +97,26 @@ impl GhostPolicy {
     ///   boundary — the ghost runs as the same user as the daemon.
     /// - **Sudo commands** are safe only when the *whole* command is
     ///   `[sudo] <approved script> [args]`: one optional leading `sudo`, then
-    ///   an approved script (matched by basename), then plain arguments — no
+    ///   the script at its **exact** granted path, then plain arguments — no
     ///   second command position (a `;`/`&`/`|` chain, a newline, a `$(…)`,
     ///   backtick or `(` substitution, or a `<`/`>` redirection) anywhere in
-    ///   the rest. `command_has_sudo` already refuses to call a command
-    ///   sudo-less when `sudo` hides in a chained position, so reaching this
-    ///   branch means sudo is the first command word here; the structural
-    ///   check rejects anything that could carry a *second* command the
-    ///   whitelist never saw (M36 phase-13 S6).
+    ///   the rest.
+    ///
+    /// The granted path is exact, never a basename match. Locally it is the
+    /// root-owned copy `install_sudoers` installs
+    /// (`crate::scripts::root_script_path(name)`); remotely it is the tilde
+    /// path `resolve_command` emits (`~/.daemoneye/scripts/<name>`). A bare
+    /// name (which sudo looks up in PATH), the user-writable
+    /// `~/.daemoneye/scripts/` copy, any other directory, and non-canonical
+    /// spellings of the granted path are all refused: the user owns the
+    /// script file the old rule named, so a ghost that could write it could
+    /// otherwise run anything as root.
+    ///
+    /// `command_has_sudo` already refuses to call a command sudo-less when
+    /// `sudo` hides in a chained position, so reaching this branch means sudo
+    /// is the first command word here; the structural check rejects anything
+    /// that could carry a *second* command the whitelist never saw (M36
+    /// phase-13 S6).
     /// - **`run_with_sudo`** only controls whether `resolve_command()` auto-prepends
     ///   `sudo` when executing an approved script.  It does NOT grant permission to
     ///   run arbitrary sudo commands.
@@ -121,11 +133,17 @@ impl GhostPolicy {
             .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')'))
             .next()
             .unwrap_or("");
-        let basename = std::path::Path::new(word)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(word);
-        let approved = self.auto_approve_scripts.iter().any(|s| s == basename);
+        let approved = if self.ssh_target.is_some() {
+            let granted = |name: &str| format!("~/.daemoneye/scripts/{}", name);
+            self.auto_approve_scripts.iter().any(|s| word == granted(s))
+        } else {
+            let granted = |name: &str| {
+                crate::scripts::root_script_path(name)
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            self.auto_approve_scripts.iter().any(|s| word == granted(s))
+        };
         // Everything after the script word — args, a separator glued to the
         // word itself, chains, substitutions, redirections — must be plain:
         // none of them may carry a second command the whitelist never saw.
@@ -265,12 +283,14 @@ impl GhostPolicy {
                 };
             } else {
                 // Local execution: use the absolute path on this machine.
+                if use_sudo {
+                    // Under sudo the ghost must run the root-owned copy the
+                    // sudoers rule names, never the user-writable script file.
+                    let root_path = crate::scripts::root_script_path(basename);
+                    return format!("sudo {}{}", root_path.display(), rest);
+                }
                 let full_path = crate::scripts::scripts_dir().join(basename);
-                return if use_sudo {
-                    format!("sudo {}{}", full_path.display(), rest)
-                } else {
-                    format!("{}{}", full_path.display(), rest)
-                };
+                return format!("{}{}", full_path.display(), rest);
             }
         }
 

@@ -39,6 +39,82 @@ fn remote_policy(scripts: &[&str], target: &str) -> GhostPolicy {
     }
 }
 
+#[test]
+fn is_safe_refuses_an_approved_basename_in_the_user_scripts_dir() {
+    let p = policy(&["fix.sh"]);
+    assert!(!p.is_safe(&format!(
+        "sudo {}",
+        crate::scripts::scripts_dir().join("fix.sh").display()
+    )));
+}
+
+#[test]
+fn is_safe_refuses_bare_and_non_canonical_paths() {
+    let p = policy(&["fix.sh"]);
+    let root = crate::scripts::root_script_path("fix.sh");
+    let dir = root.parent().unwrap();
+    assert!(!p.is_safe("sudo fix.sh"), "bare name resolves via PATH");
+    assert!(
+        !p.is_safe(&format!(
+            "sudo {}/../{}/fix.sh",
+            dir.parent().unwrap().display(),
+            dir.file_name().unwrap().to_string_lossy()
+        )),
+        "non-canonical .. spelling must be refused"
+    );
+    assert!(
+        !p.is_safe(&format!("sudo {}/./fix.sh", dir.display())),
+        "non-canonical ./ spelling must be refused"
+    );
+}
+
+#[test]
+fn is_safe_accepts_only_the_exact_root_path() {
+    let p = policy(&["fix.sh"]);
+    let root = crate::scripts::root_script_path("fix.sh");
+    assert!(p.is_safe(&format!("sudo {}", root.display())));
+    assert!(p.is_safe(&format!("sudo {} --flag", root.display())));
+    // A different approved name's path must not pass for fix.sh.
+    assert!(!p.is_safe(&format!(
+        "sudo {}",
+        crate::scripts::root_script_path("other.sh").display()
+    )));
+    // A command tail is still refused.
+    assert!(!p.is_safe(&format!("sudo {}; id", root.display())));
+}
+
+#[test]
+fn resolve_command_sudo_resolves_to_root_path_and_passes_is_safe() {
+    let p = sudo_policy(&["fix.sh"]);
+    let resolved = p.resolve_command("sudo fix.sh");
+    assert_eq!(
+        resolved,
+        format!(
+            "sudo {}",
+            crate::scripts::root_script_path("fix.sh").display()
+        )
+    );
+    assert!(p.is_safe(&resolved));
+}
+
+#[test]
+fn resolve_command_without_sudo_still_uses_scripts_dir() {
+    let p = policy(&["fix.sh"]);
+    assert_eq!(
+        p.resolve_command("fix.sh"),
+        format!("{}", crate::scripts::scripts_dir().join("fix.sh").display())
+    );
+}
+
+#[test]
+fn remote_policy_is_safe_and_resolve_still_agree_on_tilde_path() {
+    let p = remote_policy(&["fix.sh"], "pinky");
+    let resolved = p.resolve_command("sudo fix.sh");
+    assert_eq!(resolved, "sudo ~/.daemoneye/scripts/fix.sh");
+    assert!(p.is_safe(&resolved));
+    assert!(!p.is_safe("sudo /tmp/x/fix.sh"));
+}
+
 fn remote_sudo_policy(scripts: &[&str], target: &str) -> GhostPolicy {
     GhostPolicy {
         hosts: Vec::new(),
@@ -68,8 +144,20 @@ fn is_safe_non_sudo_always_allowed() {
 #[test]
 fn is_safe_sudo_on_whitelist() {
     let p = policy(&["fix.sh"]);
-    assert!(p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh"));
-    assert!(p.is_safe("sudo /home/user/.daemoneye/scripts/fix.sh --flag"));
+    assert!(p.is_safe(&format!(
+        "sudo {}",
+        crate::scripts::root_script_path("fix.sh").display()
+    )));
+    assert!(p.is_safe(&format!(
+        "sudo {} --flag",
+        crate::scripts::root_script_path("fix.sh").display()
+    )));
+    // The user-writable copy the old rule named is no longer approved: the
+    // ghost could overwrite it and reuse the NOPASSWD grant.
+    assert!(!p.is_safe(&format!(
+        "sudo {}",
+        crate::scripts::scripts_dir().join("fix.sh").display()
+    )));
 }
 
 #[test]
@@ -81,16 +169,27 @@ fn is_safe_sudo_not_on_whitelist() {
 }
 
 #[test]
+fn is_safe_refuses_an_approved_basename_in_another_directory() {
+    let p = policy(&["fix.sh"]);
+    assert!(!p.is_safe("sudo /tmp/x/fix.sh"));
+}
+
+#[test]
 fn is_safe_run_with_sudo_does_not_allow_arbitrary_sudo() {
     // run_with_sudo only auto-prepends sudo to approved scripts; it does NOT
-    // permit arbitrary sudo commands.
+    // permit arbitrary sudo commands. A bare name is refused: sudo would look
+    // it up in PATH, where a ghost could shadow the approved script.
     let p = sudo_policy(&["ghost-test-remediation.sh"]);
     assert!(!p.is_safe("sudo dmesg | tail -n 50"));
     assert!(!p.is_safe("sudo journalctl -u nginx --since '1 hour ago'"));
     assert!(!p.is_safe("sudo apt install -y vim"));
     assert!(!p.is_safe("sudo rm -rf /tmp/old-data"));
-    // But the whitelisted script is still allowed with sudo.
-    assert!(p.is_safe("sudo ghost-test-remediation.sh"));
+    // But the whitelisted script is still allowed with sudo — at the exact
+    // root-owned copy's path the rule names, never the bare name.
+    assert!(p.is_safe(&format!(
+        "sudo {}",
+        crate::scripts::root_script_path("ghost-test-remediation.sh").display()
+    )));
 }
 
 #[test]
@@ -111,12 +210,11 @@ fn is_safe_run_with_sudo_still_allows_non_sudo() {
 fn sudo_whole_plain_script_passes() {
     let p = policy(&["ok.sh"]);
     assert!(
-        p.is_safe("sudo ok.sh --flag x"),
-        "preservation: `[sudo] <approved script> [args]` stays safe, with args"
-    );
-    assert!(
-        p.is_safe("sudo /opt/s/ok.sh"),
-        "preservation: an absolute path to an approved script stays safe (basename match)"
+        p.is_safe(&format!(
+            "sudo {} --flag x",
+            crate::scripts::root_script_path("ok.sh").display()
+        )),
+        "the exact root-owned copy's path stays safe, with args"
     );
     assert!(
         p.is_safe("ok.sh"),
@@ -242,21 +340,28 @@ fn resolve_command_not_on_whitelist_unchanged() {
 fn resolve_command_sudo_bare_name() {
     let p = sudo_policy(&["fix.sh"]);
     let resolved = p.resolve_command("fix.sh");
-    assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-    assert!(
-        resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+    assert_eq!(
+        resolved,
+        format!(
+            "sudo {}",
+            crate::scripts::root_script_path("fix.sh").display()
+        ),
         "got: {}",
         resolved
     );
+    assert!(p.is_safe(&resolved), "resolved sudo call must pass is_safe");
 }
 
 #[test]
 fn resolve_command_sudo_relative_path() {
     let p = sudo_policy(&["fix.sh"]);
     let resolved = p.resolve_command("./fix.sh");
-    assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-    assert!(
-        resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+    assert_eq!(
+        resolved,
+        format!(
+            "sudo {}",
+            crate::scripts::root_script_path("fix.sh").display()
+        ),
         "got: {}",
         resolved
     );
@@ -266,12 +371,16 @@ fn resolve_command_sudo_relative_path() {
 fn resolve_command_sudo_preserves_args() {
     let p = sudo_policy(&["fix.sh"]);
     let resolved = p.resolve_command("./fix.sh --dry-run");
-    assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-    assert!(
-        resolved.ends_with("/.daemoneye/scripts/fix.sh --dry-run"),
+    assert_eq!(
+        resolved,
+        format!(
+            "sudo {} --dry-run",
+            crate::scripts::root_script_path("fix.sh").display()
+        ),
         "got: {}",
         resolved
     );
+    assert!(p.is_safe(&resolved), "resolved sudo call must pass is_safe");
 }
 
 #[test]
@@ -433,12 +542,16 @@ fn resolve_command_sudo_prefix_local() {
     // Local policy (no ssh_target), AI emits `sudo script.sh`.
     let p = sudo_policy(&["fix.sh"]);
     let resolved = p.resolve_command("sudo fix.sh");
-    assert!(resolved.starts_with("sudo "), "got: {}", resolved);
-    assert!(
-        resolved.ends_with("/.daemoneye/scripts/fix.sh"),
+    assert_eq!(
+        resolved,
+        format!(
+            "sudo {}",
+            crate::scripts::root_script_path("fix.sh").display()
+        ),
         "got: {}",
         resolved
     );
+    assert!(p.is_safe(&resolved), "resolved sudo call must pass is_safe");
 }
 
 #[test]
