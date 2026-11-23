@@ -428,6 +428,15 @@ pub enum Response {
         /// from an older daemon, or for a background prompt.
         #[serde(default)]
         shell_label: Option<String>,
+        /// The call types `sudo` at a command position in what the shell
+        /// will receive. The daemon decides this from the call's own fields
+        /// (`text` with its real newlines plus what the keys type), not from
+        /// the panel string, which shows the text Debug-quoted and the keys
+        /// as a list — two spellings the panel-based check misses. Defaulted
+        /// so an older daemon's frame still deserialises with `false`, and
+        /// a `run_terminal_command` prompt keeps the panel-text decision.
+        #[serde(default)]
+        sudo: bool,
     },
     /// The approved background command requires a credential (sudo password, etc.).
     /// The client MUST prompt the user with echo disabled and return a `CredentialResponse`.

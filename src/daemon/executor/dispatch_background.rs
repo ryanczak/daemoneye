@@ -39,6 +39,7 @@ where
                         user_shell: None,
                         interactive: false,
                         shell_label: None,
+                        sudo: None,
                         session_id,
                     },
                     ghost_policy.as_ref(),

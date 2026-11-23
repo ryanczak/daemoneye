@@ -20,6 +20,8 @@ mod scorecard;
 mod setup;
 mod slash;
 mod stream;
+#[cfg(test)]
+pub(crate) use stream::approval_for_tests;
 mod top;
 mod top_tui;
 

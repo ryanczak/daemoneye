@@ -206,7 +206,11 @@ pub(super) const WATCH_TAIL_LINES: usize = 50;
 /// for an id not in `reg` — one 03b sentence when the registry is empty, one
 /// naming the live ids otherwise. Written once so the wording cannot drift
 /// between callers.
-pub(super) fn unknown_shell_error(reg: &ShellRegistry, id: &str) -> String {
+///
+/// `pub(crate)` because the `send_input` executor arm (`dispatch_send_input.rs`)
+/// shows the same refusal for an id the registry does not hold, and a
+/// `pub(super)` item cannot be widened on re-export.
+pub(crate) fn unknown_shell_error(reg: &ShellRegistry, id: &str) -> String {
     let live = live_shell_ids(reg);
     if live.is_empty() {
         format!(

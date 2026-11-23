@@ -188,6 +188,29 @@ pub(super) use ask::ask_with_session_ratatui;
 // `ask` reaches `super::approval::…` through this import.
 use super::approval;
 
+/// Builds a `SessionApproval` from the shipped defaults, for tests outside
+/// this module tree that pin the client's approval decision against the
+/// production constructor, with the one method the decision needs exposed.
+/// Never called from production code.
+#[cfg(test)]
+pub fn approval_for_tests() -> TestApprovalForTests {
+    TestApprovalForTests(approval::SessionApproval::from_config(
+        &crate::config::ApprovalsConfig::default(),
+    ))
+}
+
+/// The test-facing view of a `SessionApproval`: only `auto_approves`, which
+/// is the client's whole per-call decision.
+#[cfg(test)]
+pub struct TestApprovalForTests(approval::SessionApproval);
+
+#[cfg(test)]
+impl TestApprovalForTests {
+    pub fn auto_approves(&self, class: &crate::ipc::Classification, is_sudo: bool) -> bool {
+        self.0.auto_approves_for_tests(class, is_sudo)
+    }
+}
+
 /// Read one newline-delimited `Response`, accumulating bytes into the
 /// **caller-owned** `buf`.
 ///

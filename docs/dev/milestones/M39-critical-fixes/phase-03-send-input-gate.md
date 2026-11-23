@@ -1,7 +1,7 @@
 # Phase 03 — send-input-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-22
 **Depends on:** phase-02 (`call_owner`, already in the tree)
 **Estimated diff:** ~250 lines
@@ -249,3 +249,226 @@ its fix lands. Every such test stays in the tree.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-11-22 23:40 (progress)
+
+Executor started the phase (status flipped to `in-progress`, README row
+updated). Read the statement of work, evidence, acceptance criteria and
+scoping hints only, then: `dispatch_send_input.rs` (the whole arm),
+`executor/mod.rs` (`ApprovalRequest`, `tool_call_prompt_frame`,
+`prompt_classification`, `prompt_and_await_approval`), `ipc.rs`
+(`ToolCallPrompt`, `Classification`, `classify`),
+`cli/commands/stream_prompts.rs` (the client's sudo decision) and
+`daemon/utils/sudo.rs` (`command_has_sudo`, read only). Beyond the hints,
+for the helpers the first red test needs: `dispatch_foreground.rs`'s
+`approved_path_tests::drive` (the spec names it as the pattern),
+`ai/types/pending.rs` (the `SendInput` variant's fields),
+`shell/registry.rs` (`ShellRecord`'s fields, `with_shells`),
+`shell/launch.rs` (`validate_shell_id` via `ShellId::parse`),
+`cli/commands/approval.rs` (`SessionApproval::auto_approves`) and
+`cli/commands/stream.rs` (`the_local_approval_flow_is_unchanged`).
+
+Task list (each closes the acceptance item in brackets):
+
+1. Write the first red test
+   `send_input_refuses_an_unparseable_shell_id_before_the_prompt` in
+   `dispatch_send_input.rs`, run it red, paste the failure [S2c, first
+   bullet].
+2. Refuse an id `ShellId::parse` rejects before the probe, the screen read
+   and the prompt; refusal names the id and says nothing was sent [S2c
+   bullet 1].
+3. Refuse an id that parses but is not in the registry the same way, before
+   any prompt [S2c bullet 2].
+4. Carry the shell record's `HostId` into `ApprovalRequest.host`:
+   `Named(n)` → `Some(n)`, `Local` → `None` [S2b host].
+5. Test: a registered shell with `HostId::Named("pinky")` and
+   `[hosts.pinky]` sends a `ToolCallPrompt` classified
+   `RemoteShell { host: "pinky" }` [S2b host].
+6. Test (preservation): a local shell is still classified `Command` [S2b
+   host preservation].
+7. Derive the sudo-decision text (text with real newlines, then keys typed
+   as characters: single printable char keys, `Space` → space, `Enter` →
+   newline), add a defaulted `sudo` signal field on
+   `Response::ToolCallPrompt`, and have the client read it in
+   `prompt_tool_call_ratatui` instead of `command_has_sudo(command)`
+   [S2b sudo].
+8. Tests red first: `text: "echo hi\nsudo reboot"`, keys
+   `["s","u","d","o","Space","r","e","b","o","o","t","Enter"]` and
+   `text: "sudo reboot"` each treat the prompt as sudo (not auto-approved
+   under `ApprovalsConfig::default()`); negatives `text: "echo pseudo"`,
+   `text: "cat /etc/sudoers"` and `keys: ["C-c"]` are not [S2b sudo +
+   negative].
+9. Preservation: `run_terminal_command` prompts unchanged — the existing
+   `stream.rs` approval tests and `prompt_classification_marks_the_users_shell`
+   pass unchanged [preservation].
+10. All four gates plus `tests/hygiene.rs` and `tests/doc_truth.rs` [gate
+    bullet].
+11. Capture the end-to-end evidence entry [Spec task 4].
+
+**First red run** (`cargo test --lib --
+send_input_refuses_an_unparseable_shell_id_before_the_prompt`, verbatim):
+
+```
+running 1 test
+test daemon::executor::dispatch_send_input::tests::send_input_refuses_an_unparseable_shell_id_before_the_prompt ... FAILED
+
+failures:
+
+---- daemon::executor::dispatch_send_input::tests::send_input_refuses_an_unparseable_shell_id_before_the_prompt stdout ----
+
+thread 'daemon::executor::dispatch_send_input::tests::send_input_refuses_an_unparseable_shell_id_before_the_prompt' (1977423) panicked at src/daemon/executor/dispatch_send_input.rs:193:34:
+the run must not error: EOF
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::dispatch_send_input::tests::send_input_refuses_an_unparseable_shell_id_before_the_prompt
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3067 filtered out; finished in 0.01s
+```
+
+Exactly the predicted red: the arm reaches the prompt (the empty reply
+makes `approval_reply` hit EOF and the outcome an `Err`), because today
+the unparseable id is treated as `Foreground::Unknown` and carried on.
+
+### Update — 2026-11-23 01:05 (progress)
+
+Tasks 1–6 of the list are done: the first red test landed red (above) and
+then green; the id gate refuses both an unparseable id and an id the
+registry does not hold before the probe, the screen read and the prompt;
+`ApprovalRequest.host` now carries the record's `HostId` (`Named(n)` →
+`Some(n)`, `Local` → `None`), and the two classification tests (remote →
+`RemoteShell { host: "pinky" }` with `[hosts.pinky]` written to the test
+HOME's `config.toml`; local → `Command` preservation) pass through
+`execute_tool_call`. `unknown_shell_error` was widened `pub(super)` →
+`pub(crate)` in `knowledge/shell_watch.rs` and re-exported from
+`knowledge/mod.rs` so the arm shows the same refusal wording every shell
+tool shows — recorded here per the authorizations' "outside these" note;
+it is a visibility widening only, no behaviour change. Next: task 7, the
+sudo-decision text and its wire signal, with the sudo tests red first.
+
+
+### Update — 2026-11-23 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the run hard-failed at turn 417 on `VerifierFailurePersistent`,
+one E0382 in `executor/mod.rs`, after finishing tasks 1–8. The first source
+edit came at turn 66. The architect checked the partial tree with the
+two-line borrow fix applied, then reverted it. With the fix, build, clippy,
+`hygiene` and the full test suite pass (lib 3065 passed). Only `cargo fmt`
+fails. What caused the error: adding the `sudo` field took `executor/mod.rs`
+toward its 800-line production cap. The run compacted
+`tool_call_prompt_frame` to take `ApprovalRequest` by value, then used `req`
+after the move. That is one wall at the end of a correct phase, and the spec
+was not the problem, so resume rather than re-dispatch.
+
+### Update — 2026-11-23 01:20 (progress, resumed run)
+
+Applied the architect's two-line borrow fix exactly as given: `req:
+ApprovalRequest<'_>` → `req: &ApprovalRequest<'_>` in
+`fn tool_call_prompt_frame(`, and `tool_call_prompt_frame(req, …)` →
+`tool_call_prompt_frame(&req, …)` in `prompt_and_await_approval`. Nothing else
+in that function changed. `cargo build` then passed clean.
+
+Red evidence for the sudo tests (task 8), as the mutation the architect asked
+for — in `tool_call_prompt_frame`, `sudo: req.sudo.unwrap_or(false)` →
+`sudo: false`, then `cargo test --lib send_input_`:
+
+```
+running 20 tests
+test daemon::executor::dispatch_send_input::tests::send_input_types_sudo_on_a_newline_and_the_client_is_asked ... FAILED
+test daemon::executor::dispatch_send_input::tests::send_input_types_sudo_through_single_character_keys_and_the_client_is_asked ... FAILED
+test daemon::executor::dispatch_send_input::tests::send_input_with_a_plain_sudo_text_is_asked ... FAILED
+
+---- send_input_types_sudo_on_a_newline_and_the_client_is_asked stdout ----
+thread '…' panicked at src/daemon/executor/dispatch_send_input.rs:494:9:
+the daemon says the input types sudo
+---- send_input_types_sudo_through_single_character_keys_and_the_client_is_asked stdout ----
+thread '…' panicked at src/daemon/executor/dispatch_send_input.rs:523:9:
+the daemon says the keys type sudo
+---- send_input_with_a_plain_sudo_text_is_asked stdout ----
+thread '…' panicked at src/daemon/executor/dispatch_send_input.rs:544:9:
+the daemon says the input types sudo
+
+test result: FAILED. 20 passed; 3 failed; 0 ignored; 0 measured; 3052 filtered out; finished in 0.08s
+```
+
+Failing sudo tests: `send_input_types_sudo_on_a_newline_and_the_client_is_asked`,
+`send_input_types_sudo_through_single_character_keys_and_the_client_is_asked`,
+`send_input_with_a_plain_sudo_text_is_asked`. Mutation restored
+(`sudo: req.sudo.unwrap_or(false)`) and the same run is green (23 passed).
+
+All four gates and the acceptance criteria are confirmed; evidence entry
+follows.
+
+### Update — 2026-11-23 01:25 (end-to-end verification)
+
+Ran on the resumed tree after the borrow fix, with the sudo mutation reverted.
+Each gate command's captured `test result:` lines, verbatim:
+
+```
+$ cargo fmt --all && cargo fmt --all -- --check && echo FMT_OK
+FMT_OK
+
+$ cargo build 2>&1 | tail -3
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized+debuginfo] target(s) in 8.38s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -3
+    Checking daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized+debuginfo] target(s) in 12.79s
+
+$ cargo test 2>&1 | grep -E "^test result"
+test result: ok. 3065 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 143.16s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.21s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The 16-passed suite is `tests/hygiene.rs`, the 19-passed suite is
+`tests/doc_truth.rs`; both pass with the phase's changes included.
+
+Acceptance criteria, each with the test that covers it:
+
+- **S2c, unparseable id** —
+  `send_input_refuses_an_unparseable_shell_id_before_the_prompt`
+  (`dispatch_send_input.rs`): the run returns
+  `Ok(ToolCallOutcome::Result)` naming `../../x` and "nothing was sent", no
+  `ToolCallPrompt` frame is written. Red first (escalation entry above).
+- **S2c, unregistered id** —
+  `send_input_refuses_an_id_the_registry_does_not_hold_before_the_prompt`:
+  `s990` refused with `Error: …`, no prompt frame.
+- **S2b host, remote** — `send_input_into_a_remote_shell_is_classified_remote_shell`:
+  the prompt's `classification` is `RemoteShell { host: "pinky" }`, driven
+  through `execute_tool_call` with `[hosts.pinky]` in the test HOME's
+  `config.toml`.
+- **S2b host, local preservation** —
+  `send_input_into_a_local_shell_is_still_classified_command`:
+  `classification` stays `Command`.
+- **S2b sudo, three positive spellings** —
+  `send_input_types_sudo_on_a_newline_and_the_client_is_asked`,
+  `send_input_types_sudo_through_single_character_keys_and_the_client_is_asked`,
+  `send_input_with_a_plain_sudo_text_is_asked`: the prompt carries `sudo:
+  true` and `SessionApproval::from_config(&ApprovalsConfig::default())
+  .auto_approves(&Command, true)` is false — the client asks. Red first (the
+  `sudo: false` mutation above).
+- **S2b sudo negatives** —
+  `send_input_sudo_decision_text_rejects_sudo_substrings_and_control_keys`:
+  `echo pseudo`, `cat /etc/sudoers` and keys `["C-c"]` are not sudo.
+- **Preservation, run_terminal_command prompts** — the existing
+  `stream.rs` approval tests and
+  `prompt_classification_marks_the_users_shell` pass unchanged (both green in
+  the full run; the arm's `ApprovalRequest.sudo` is `None`, so
+  `command_has_sudo(command)` still decides, and `tool_call_prompt_frame`
+  fills `sudo: false`).
+
+Grep for the spec-pinned literals: `sudo: bool` lands on `Response::ToolCallPrompt`
+(`src/ipc.rs:439`), the client reads it in `prompt_tool_call_ratatui`
+(`src/cli/commands/stream_prompts.rs:395`,
+`let is_sudo = prompt_says_sudo || command_has_sudo(command);`), and
+`sudo_decision_text` produces the `sudo` word from real newlines and
+single-character keys (`src/daemon/executor/knowledge/shell_input.rs:71`).

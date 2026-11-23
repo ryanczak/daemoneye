@@ -300,6 +300,7 @@ fn response_tool_call_prompt_roundtrip() {
         classification: Classification::default(),
         interactive: false,
         shell_label: Some("matt@pinky:s3".to_string()),
+        sudo: false,
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {
@@ -310,6 +311,7 @@ fn response_tool_call_prompt_roundtrip() {
             classification,
             interactive,
             shell_label,
+            ..
         } => {
             assert_eq!(id, "tc_3");
             assert_eq!(command, "ls -la");
@@ -354,6 +356,7 @@ fn tool_call_prompt_round_trips_its_classification() {
         },
         interactive: false,
         shell_label: None,
+        sudo: false,
     };
     match roundtrip_resp(&resp) {
         Response::ToolCallPrompt {

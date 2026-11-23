@@ -403,6 +403,7 @@ fn program_status_emit_frame_mapping() {
                 classification: crate::ipc::Classification::Command,
                 interactive: false,
                 shell_label: None,
+                sudo: false,
             },
             Kind::Permission,
         ),

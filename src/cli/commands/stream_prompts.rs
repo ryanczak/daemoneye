@@ -375,6 +375,7 @@ pub(super) async fn prompt_tool_call_ratatui(
     classification: &crate::ipc::Classification,
     interactive: bool,
     shell_label: Option<&str>,
+    prompt_says_sudo: bool,
 ) -> anyhow::Result<(bool, Option<String>)> {
     use crate::daemon::utils::command_has_sudo;
 
@@ -388,7 +389,10 @@ pub(super) async fn prompt_tool_call_ratatui(
     );
     let _ = renderer.commit_panel(&where_label, &body, false);
 
-    let is_sudo = command_has_sudo(command);
+    // The sudo fact: a send_input prompt carries it from the daemon (decided
+    // on the text the shell will receive, not this panel); every other
+    // prompt keeps the panel-text decision.
+    let is_sudo = prompt_says_sudo || command_has_sudo(command);
     let auto_approved = approval.auto_approves(classification, is_sudo);
 
     if auto_approved {

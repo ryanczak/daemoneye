@@ -49,6 +49,17 @@ pub use shell::{
 /// this re-export. Not cfg(test)-gated: the chat path is production code.
 pub(crate) use shell::close_shell_with;
 
+/// The one "no shell with id" refusal every shell tool shows. The
+/// `send_input` executor arm (`dispatch_send_input.rs`) shows it too, for an
+/// id the registry does not hold.
+pub(crate) use shell::unknown_shell_error;
+
+/// The send_input sudo decision: the text the shell will receive, then
+/// whether it types `sudo` at a command position. `command_has_sudo` is
+/// used as it is (its quote/backslash refinements are phase 05); the
+/// decision text's real newlines are what make it see sudo there.
+pub(crate) use shell::sudo_decision_text;
+
 /// The 08c ghost teardown: close a ghost's shells when its turn ends. Only
 /// the owner's records are touched (test 6 pins that); wired `pub(crate)`
 /// because `daemon/ghost.rs` sits outside this module tree.

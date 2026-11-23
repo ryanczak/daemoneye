@@ -977,6 +977,7 @@ mod tests {
             classification: crate::ipc::Classification::default(),
             interactive: false,
             shell_label: None,
+            sudo: false,
         };
         let line = error_line(&resp);
         assert!(line.contains("ToolCallPrompt"), "should name variant");

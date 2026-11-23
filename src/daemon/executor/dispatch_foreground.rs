@@ -211,6 +211,7 @@ where
                             .filter(|s| crate::shell::is_user_shell(crate::shell::registry(), s)),
                         interactive: is_launch(*interactive, cmd),
                         shell_label: Some(shell_label),
+                        sudo: None,
                         session_id,
                     },
                     ghost_policy.as_ref(),

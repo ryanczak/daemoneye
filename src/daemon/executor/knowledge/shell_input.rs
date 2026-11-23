@@ -59,6 +59,34 @@ pub fn screen_tail(text: &str, rows: usize) -> String {
         .join("\n")
 }
 
+/// The text the sudo decision for `send_input` is made on: `text` with its
+/// real newlines, followed by what the keys type — each single printable
+/// character key as itself, `Space` as a space, `Enter` as a newline. A
+/// key with a prefix (`C-c`), a name the table holds (`F1`, `BTab`), or a
+/// multi-character name types nothing readable, so it contributes nothing;
+/// `sudo` can only arrive through characters the shell will echo as such.
+///
+/// Pure, so the client-side sudo rule can be tested without a shell; the
+/// daemon derives it from the same call fields the panel shows.
+pub fn sudo_decision_text(text: &str, keys: &[String]) -> String {
+    let mut out = text.to_string();
+    for key in keys {
+        if key == "Space" {
+            out.push(' ');
+        } else if key == "Enter" {
+            out.push('\n');
+        } else {
+            let mut chars = key.chars();
+            if let (Some(c), None) = (chars.next(), chars.next())
+                && !c.is_control()
+            {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
 /// The full `send_input` approval panel: what goes out, then the
 /// `foreground:` line naming what holds the shell, then — only for a TUI —
 /// the masked last rows of its screen. `screen` is the `ScreenText.text` the

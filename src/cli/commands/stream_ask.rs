@@ -69,6 +69,7 @@ async fn handle_tool_or_cred_prompt(
             classification,
             interactive,
             shell_label,
+            sudo,
         } => {
             let (approved, user_message) = prompt_tool_call_ratatui(
                 renderer,
@@ -81,6 +82,7 @@ async fn handle_tool_or_cred_prompt(
                 &classification,
                 interactive,
                 shell_label.as_deref(),
+                sudo,
             )
             .await?;
             send_request(

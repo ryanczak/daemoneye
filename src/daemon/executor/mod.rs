@@ -80,27 +80,27 @@ struct ApprovalRequest<'a> {
     shell_label: Option<String>,
     /// The chat session the approval is for, as the log lines name it.
     session_id: Option<&'a str>,
+    /// The prompt's own sudo fact, from the call's fields, not the panel
+    /// string: `send_input` sets it from the text the shell receives; other
+    /// arms leave it `None` and the client decides from the command text.
+    sudo: Option<bool>,
 }
-
 /// The `ToolCallPrompt` frame, built once so the prompt send reads as one
-/// call. `id`/`cmd` are owned here; the rest carry through verbatim.
+/// call: `id`/`cmd` owned here, the rest carried verbatim.
 fn tool_call_prompt_frame(
-    id: &str,
-    cmd: &str,
-    background: bool,
-    target_pane_hint: Option<&str>,
-    classification: crate::ipc::Classification,
-    interactive: bool,
-    shell_label: Option<String>,
+    req: &ApprovalRequest<'_>,
+    known_hosts: &[String],
+    is_ghost: bool,
 ) -> Response {
     Response::ToolCallPrompt {
-        id: id.to_string(),
-        command: cmd.to_string(),
-        background,
-        target_pane: target_pane_hint.map(|s| s.to_string()),
-        classification,
-        interactive,
-        shell_label,
+        id: req.id.to_string(),
+        command: req.cmd.to_string(),
+        background: req.background,
+        target_pane: req.target_pane_hint.map(|s| s.to_string()),
+        classification: prompt_classification(req.host, is_ghost, known_hosts, req.user_shell),
+        interactive: req.interactive,
+        shell_label: req.shell_label.clone(),
+        sudo: req.sudo.unwrap_or(false),
     }
 }
 
@@ -556,24 +556,8 @@ where
         return Ok(outcome);
     }
 
-    send_response_split(
-        tx,
-        tool_call_prompt_frame(
-            req.id,
-            req.cmd,
-            req.background,
-            req.target_pane_hint,
-            prompt_classification(
-                req.host,
-                ghost_policy.is_some(),
-                &known_hosts,
-                req.user_shell,
-            ),
-            req.interactive,
-            req.shell_label.clone(),
-        ),
-    )
-    .await?;
+    let frame = tool_call_prompt_frame(&req, &known_hosts, ghost_policy.is_some());
+    send_response_split(tx, frame).await?;
 
     match approval_reply(&req, tx, rx).await? {
         ApprovalReply::Approved(cmd_id) => Ok(Ok(cmd_id)),
