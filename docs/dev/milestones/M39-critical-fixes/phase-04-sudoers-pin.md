@@ -1,7 +1,7 @@
 # Phase 04 — sudoers-pin
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -1157,3 +1157,45 @@ kill: (-2409853): No such process
 **Commit:** c71449e8cbf9bdfcb1add260a00c82007ac184af
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-23
+
+- **Verdict:** approved_after_3
+- **Bounces:** 3, each with its own bug:
+  - [bug-04-1](bugs/bug-04-1.md): two `unsafe { libc::geteuid() }` blocks,
+    a production `.expect`, and an install plan that left out the rule.
+    Classes `prod_unwrap` and `missing_spec_test`.
+  - [bug-04-2](bugs/bug-04-2.md): the parent of the copy was created
+    unsearchable under sudo's umask. Class `spec_bug`; found live.
+  - [bug-04-3](bugs/bug-04-3.md): the drop-in's name kept the `.`, so
+    `@includedir` skipped it. Class `spec_bug`; found live, and broken since
+    `e070c6fd`.
+
+  The bug-04-2 run ended `budget_exceeded` on an inverted guard
+  (`gate_retries = 0`). It was resumed, not re-dispatched.
+- **Executor:** GLM-5.3-Flash, with thinking on (`reasoning_effort =
+  "medium"`) and `output_filter = false` from run 3 on. Run turns: 1200
+  (stall, 0 edits), then 106, 56, 28 + 29 (resume), and 48.
+- **Scope deviations:** none. The architect wrote the user-facing docs
+  (README, CLAUDE.md, the `install-sudoers` help text) in `9b33b28e` and in
+  the escaped-name follow-up, as the phase assigned.
+- **Live verification (pinky, sudo-rs 0.2.13), via the throwaway
+  `de-sudo-probe.sh`:**
+  - the rule goes to `/etc/sudoers.d/daemoneye-de-sudo-probe_dsh` and names
+    `/usr/local/libexec/daemoneye/1000/de-sudo-probe.sh`;
+  - `daemoneye`, `1000` and the copy are all `root:root 755`;
+  - `sudo -k; sudo -n <copy>` prints `ran as uid 0: ORIGINAL`, and still
+    prints `ORIGINAL` after the user's script was changed to `TAMPERED`;
+  - `sudo -n ~/.daemoneye/scripts/de-sudo-probe.sh` asks for a password,
+    so it is refused;
+  - cleanup removed all three files.
+- **Calibration:** two of the three bounces were defects only a real
+  install could show: the umask on implicitly created parents, and the
+  dotted-name skip in `@includedir`. `visudo -cf` reported `parsed OK` for
+  a file sudo never reads. For any phase that writes system state, the
+  spec's live probe should run **before** the first approval attempt, and
+  should check the effect (here `sudo -n` as the user), not the parser.
+- **Release note (M39):** every `daemoneye-*.sh` rule from before this
+  release was inert, and it names the user-writable path. Users re-run
+  `install-sudoers <name>` and may delete the old dotted file.
+
