@@ -1,7 +1,7 @@
 # Phase 04b — sudoers-drift
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-23
 **Depends on:** phase-04 (done)
 **Estimated diff:** ~250 lines
@@ -264,3 +264,140 @@ daemon::executor::ghost_exec::refusal_gate_tests::stale_sudo_notice_is_a_warning
 ```
 
 No refusal check: the `ghost_exec.rs` diff at the `resolve_command` site adds only the drift lookup and `crate::bus::publish(notice)` — no early return; `cmd`, the approval request and the outcome are byte-identical to before.
+
+### Update — 2026-11-23 21:04 (complete, server-authored)
+
+**Summary:** **Summary**
+
+Phase 04b (sudoers-drift) is implemented and committed (`1ae0322c`, one `feat:` commit; working tree clean). `src/scripts.rs` gained the pure `CopyDrift` enum, `copy_drift` (reads both files; a read error is `Unknown`, never a caller failure) and `installed_copies_drift` (named entries; a missing copy directory yields an empty list). `daemoneye doctor` gained a `sudo scripts` row — `Ok` with the copy count when none/current, `Warn` naming each stale/orphaned copy with the `daemoneye install-sudoers <name>` fix and exit code still 0. A ghost sudo call that resolves to a stale copy still runs the copy and publishes one `Warning`/`Source::Ghost` notice with a `script` label — the diff adds only the lookup and `publish`, no early return, with `cmd`/approval/outcome untouched. `write_script`'s success result gains the re-install sentence only when the just-written script has a stale copy.
+
+**Notes for review**
+
+- Two logged adaptations: (1) `sudo_copy_note` takes `(name, Option<CopyDrift>)` rather than reading the copy itself — reading `root_script_path` in-test hit the real `/usr/local/libexec/daemoneye` with `PermissionDenied`, so the drift lookup stayed in `write_script`'s production arm and the sentence builder is filesystem-free; (2) **`src/daemon/executor/mod.rs`** was widened by one line (`pub(crate) use ghost_exec::stale_sudo_notice;`) because `ghost_exec` is a private module and the test module's `use super::*` through the `#[path]` helpers child could not otherwise see the function — reason recorded in the Update Log before the edit.
+- The mutation check was run and captured: forcing every readable pair to `Current` fails exactly the two drift tests (the doctor/note/notice tests consume a drift *value*, so their red evidence is their pre-code red runs, also captured).
+- Gates: fmt check clean, build clean, clippy `-D warnings` clean, `cargo test --lib` → **3085 passed** (3079 + 6 new), all integration suites green. Evidence pasted in the end-to-end Update Log entry; phase status left at `in-progress` for the server's completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.57s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-0635aac7b8e1e57e)
+kill: (2502910): No such process
+kill: (-2503631): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-f945a8c3f7582fdb)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e19192a3a1354c4)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7fcecbb518583aee)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-653cf39ac0e64fe2)
+     Running tests/integration.rs (target/debug/deps/integration-849708bb7ff158dd)
+     Running tests/isolation.rs (target/debug/deps/isolation-fbc36518ed3cd563)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-ae0cb5d281522d21)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-55beac99186d4a12)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M39-critical-fixes/phase-04b-sudoers-drift.md` — +87 -1
+- `src/cli/doctor.rs` — +127 -1
+- `src/daemon/executor/ghost_exec.rs` — +116 -0
+- `src/daemon/executor/knowledge/artifacts.rs` — +57 -2
+- `src/scripts.rs` — +140 -0
+
+**Commit:** 241407289d802249024ef7053192151f42e1d748
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
