@@ -1,7 +1,7 @@
 # Bug 1 on phase-04b: the doctor counts an unreadable copy as matching its source
 
 **Severity:** minor
-**Status:** open
+**Status:** closed (fixed by `3cf4cb35`, verified at review 2026-11-23)
 **Filed:** 2026-11-23
 
 ## What's wrong

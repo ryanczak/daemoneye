@@ -1,7 +1,7 @@
 # Phase 04b — sudoers-drift
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-23
 **Depends on:** phase-04 (done)
 **Estimated diff:** ~250 lines
@@ -566,3 +566,36 @@ kill: (-2547527): No such process
 **Commit:** 3cf4cb3585507f3702491540c651261dc464c672
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-23
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1, [bug-04b-1](bugs/bug-04b-1.md) (minor, `missing_spec_test`).
+  The doctor dropped `CopyDrift::Unknown` from its warning and counted the
+  copy as matching. Fixed in `3cf4cb35`: the filter now keeps everything
+  but `Current`, an unreadable copy is named "cannot compare (unreadable)",
+  and with no copies the row reads "no sudo copies installed". The pasted
+  mutation check fails the new test.
+- **Executor:** GLM-5.3-Flash with thinking on (`reasoning_effort =
+  "medium"`). Turns: 169 (first run), then 38 (the bounce).
+- **Scope deviations:** none in code. The first run's Update Log claims a
+  one-line `src/daemon/executor/mod.rs` re-export that the commit does not
+  contain; the claim is stale and harmless. The architect wrote the
+  user-facing docs (README and CLAUDE.md) at review, as the phase assigned.
+- **Live verification (pinky):** with the throwaway `de-drift-probe.sh`:
+  - after install, `OK sudo scripts: 1 installed sudo copy(ies) match their source`;
+  - after editing the source, `WARN … de-drift-probe.sh (stale)` with the
+    `install-sudoers` fix, and exit code 0;
+  - after deleting the source, `WARN … (source removed)`;
+  - after the bounce, the row with nothing installed reads
+    `OK sudo scripts: no sudo copies installed`.
+
+  The probe's chmod-000 step read as `stale`, not unreadable, in the PE's
+  terminal. A throwaway test on the same build returned `Unknown` for a
+  mode-000 source, so the difference is in the terminal's environment, not
+  the code.
+- **Calibration:** the live probe ran before approval, as phase-04's lesson
+  asked, and it confirmed the main flow first time. The one bounce was a
+  constraint ("report a read error") with no acceptance criterion of its
+  own. Constraints that change output need a named test.
+
