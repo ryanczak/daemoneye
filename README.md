@@ -22,7 +22,7 @@ DaemonEye 1.x drove your tmux panes. 2.0 runs its own shells, reaches remote hos
 - **Shell tools for the AI.** New tools: `list_shells`, `read_shell`, `find_in_shells`, `open_shell`, `close_shell`, `watch_shell` and `send_input`. There is also a deferred `history` group, `list_shell_logs` and `read_shell_log`, for reading past shell recordings.
 - **Alerts reach every chat, live.** Webhook alerts route by default at `warning` and above, and ghost lifecycle events and background completions are pushed to every connected chat and written to each session's history. The daemon also tracks which alerts are currently firing and tells an attaching chat about them. A chat reconnects by itself after a daemon restart. `chat --resume` opens with a `[Catch-up]` brief of everything that happened while you were away.
 - **Tool calls that correct themselves.** When the model sends a mistyped argument to a real tool, the error names the bad parameter and the model retries. Before, the call was silently dropped.
-- **`daemoneye doctor`.** Prints one line per readiness check: config, API key, shell, daemon, sandbox, hosts and tmux.
+- **`daemoneye doctor`.** Prints one line per readiness check: config, API key, shell, daemon, sandbox, hosts, tmux, and the sudo scripts `install-sudoers` installed, which it warns about when a copy no longer matches its source.
 
 **Upgrading from 1.x.**
 - `[execution] backend = "tmux"` still loads, with a startup warning, and commands run in PTY shells.
@@ -470,7 +470,7 @@ Built-in rates cover Anthropic (Sonnet, Opus, Haiku), OpenAI (GPT-4o, o1, o3-min
 | `daemoneye reindex` | Rebuild the memory search index from the memory files on disk; reports rows before and after |
 | `daemoneye reload` | Ask the running daemon to re-read `config.toml`; prints the keys that changed and the keys that wait for a restart, and exits non-zero when the file is refused |
 | `daemoneye audit-prompts` | Audit installed prompt and knowledge memory files for stale path references; exits non-zero on findings, never writes |
-| `daemoneye doctor` | One line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux); exit 1 only on a FAIL; tmux is optional and never fails it |
+| `daemoneye doctor` | One line per readiness check (config, api key, shell, daemon, sandbox, hosts, tmux, sudo scripts); exit 1 only on a FAIL; tmux is optional and never fails it; the sudo-scripts row WARNs on an installed copy that is stale, orphaned or unreadable |
 
 Both `reindex` and `audit-prompts` run without a daemon. `reindex` is safe to run while one is up: the rebuild is a single transaction, so a concurrent search sees the old index or the new one, never a half-empty one.
 
@@ -1291,7 +1291,7 @@ your-username ALL=(ALL) NOPASSWD: /usr/local/libexec/daemoneye/1000/restart-ngin
 
 A ghost's `sudo restart-nginx.sh` resolves to that root-owned copy, and the policy approves sudo only at that exact path.
 
-> **Important:** The rule never names `~/.daemoneye/scripts/<name>`. You own that file, so a ghost able to write it could otherwise run anything as root. Editing the script changes nothing that runs as root until you **re-run `daemoneye install-sudoers <name>`**. Do not hand-write a rule for the `~/.daemoneye/scripts/` path: the ghost policy refuses sudo there.
+> **Important:** The rule never names `~/.daemoneye/scripts/<name>`. You own that file, so a ghost able to write it could otherwise run anything as root. Editing the script changes nothing that runs as root until you **re-run `daemoneye install-sudoers <name>`**. Do not hand-write a rule for the `~/.daemoneye/scripts/` path: the ghost policy refuses sudo there. Drift is reported, never repaired: `daemoneye doctor` warns about a copy that no longer matches its script, `write_script` says so when it edits one, and a ghost's sudo call that runs a stale copy publishes a `Warning` notice. The stale copy still runs.
 
 Verify the entry works before testing ghost shells:
 
