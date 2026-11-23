@@ -63,9 +63,13 @@ where
         match scripts::write_script(script_name, &stamped) {
             Ok(()) => {
                 track_artifact(artifact_ctx, "script", script_name);
+                let copy = scripts::root_script_path(script_name);
+                let drift = scripts::copy_drift(&copy, &scripts::scripts_dir().join(script_name));
+                let note = sudo_copy_note(script_name, drift).unwrap_or_default();
                 Ok(ToolCallOutcome::Result(format!(
-                    "Script '{}' written successfully",
-                    script_name
+                    "Script '{}' written successfully{sep}{note}",
+                    script_name,
+                    sep = if note.is_empty() { "" } else { "\n" }
                 )))
             }
             Err(e) => Ok(ToolCallOutcome::Result(format!(
@@ -78,6 +82,25 @@ where
         Ok(ToolCallOutcome::Result(
             "Script write denied by user".to_string(),
         ))
+    }
+}
+
+/// The sentence `write_script` appends when the script just written has an
+/// installed root-owned sudo copy that now differs from it. `None` unless
+/// the copy is stale: with no copy, or a current copy, the result text is
+/// exactly what it was before.
+pub fn sudo_copy_note(
+    script_name: &str,
+    drift: Option<crate::scripts::CopyDrift>,
+) -> Option<String> {
+    match drift? {
+        crate::scripts::CopyDrift::Stale => Some(format!(
+            "Note: `sudo {name}` still runs the copy installed by install-sudoers, \
+             which differs from ~/.daemoneye/scripts/{name}. Re-run \
+             `daemoneye install-sudoers {name}` to update the installed copy.",
+            name = script_name
+        )),
+        _ => None,
     }
 }
 
@@ -383,6 +406,38 @@ mod tests {
             let out = read_script("test-script");
             assert!(out.contains("echo hello"), "got: {out}");
         });
+    }
+
+    #[test]
+    fn sudo_copy_note_only_when_stale() {
+        // Pure function over the drift value: no filesystem access, so no
+        // real /usr/local/libexec is ever read.
+        assert_eq!(
+            sudo_copy_note("note.sh", None),
+            None,
+            "no installed copy means no note"
+        );
+        assert_eq!(
+            sudo_copy_note("note.sh", Some(crate::scripts::CopyDrift::Current)),
+            None,
+            "a byte-identical copy means no note"
+        );
+        assert_eq!(
+            sudo_copy_note("note.sh", Some(crate::scripts::CopyDrift::Orphaned)),
+            None,
+            "an orphaned copy is not stale, so no note"
+        );
+
+        let note = sudo_copy_note("note.sh", Some(crate::scripts::CopyDrift::Stale))
+            .expect("a stale copy must produce a note");
+        assert!(
+            note.contains("note.sh"),
+            "the note names the script: {note}"
+        );
+        assert!(
+            note.contains("daemoneye install-sudoers note.sh"),
+            "the note names the fix: {note}"
+        );
     }
 
     #[test]

@@ -159,6 +159,77 @@ fn validate_script_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// How one installed copy compares to its source script in
+/// `~/.daemoneye/scripts/`. The copy stays authoritative whatever the answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyDrift {
+    /// Byte-identical to the source.
+    Current,
+    /// The source exists but differs from the copy.
+    Stale,
+    /// The source no longer exists.
+    Orphaned,
+    /// A read error on either side: drift cannot be determined.
+    Unknown,
+}
+
+/// Compare one installed copy with its source script by reading both files.
+/// The copy is root:root 0755 and readable by the user, so no `sudo` is
+/// needed. A read error on either side is [`CopyDrift::Unknown`] — reported,
+/// never a failure of the caller.
+pub fn copy_drift(copy_path: &std::path::Path, source_path: &std::path::Path) -> Option<CopyDrift> {
+    if !copy_path.exists() {
+        return None;
+    }
+    if !source_path.exists() {
+        return Some(CopyDrift::Orphaned);
+    }
+    match (std::fs::read(copy_path), std::fs::read(source_path)) {
+        (Ok(copy), Ok(source)) => {
+            if copy == source {
+                Some(CopyDrift::Current)
+            } else {
+                Some(CopyDrift::Stale)
+            }
+        }
+        _ => Some(CopyDrift::Unknown),
+    }
+}
+
+/// One installed copy and its drift state, as [`installed_copies_drift`]
+/// reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyDriftEntry {
+    pub name: String,
+    pub drift: CopyDrift,
+}
+
+/// Walk `copies_dir` (the per-uid directory the sudoers copies live in) and
+/// return one entry per installed copy, named, with its drift against
+/// `sources_dir`. A missing copy directory gives an empty list, not an error.
+pub fn installed_copies_drift(
+    copies_dir: &std::path::Path,
+    sources_dir: &std::path::Path,
+) -> Vec<CopyDriftEntry> {
+    let Ok(entries) = std::fs::read_dir(copies_dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<CopyDriftEntry> = entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let path = e.path();
+            if !path.is_file() {
+                return None;
+            }
+            let name = path.file_name()?.to_string_lossy().to_string();
+            let drift = copy_drift(&path, &sources_dir.join(&name))?;
+            Some(CopyDriftEntry { name, drift })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// Generate the content for a sudoers drop-in file that grants the current user
 /// NOPASSWD access to the given script.
 ///
@@ -913,6 +984,75 @@ mod tests {
     fn parse_script_invocation_rejects_metachar_name() {
         let result = parse_script_invocation("foo;rm -rf /");
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn installed_copies_drift_lists_each_copy() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let copies = tmp.path().join("copies");
+        let sources = tmp.path().join("sources");
+        std::fs::create_dir_all(&copies).unwrap();
+        std::fs::create_dir_all(&sources).unwrap();
+
+        std::fs::write(copies.join("alpha.sh"), "echo a").unwrap();
+        std::fs::write(sources.join("alpha.sh"), "echo a").unwrap();
+        std::fs::write(copies.join("beta.sh"), "echo old").unwrap();
+        std::fs::write(sources.join("beta.sh"), "echo new").unwrap();
+
+        let entries = installed_copies_drift(&copies, &sources);
+        assert_eq!(
+            entries,
+            vec![
+                CopyDriftEntry {
+                    name: "alpha.sh".to_string(),
+                    drift: CopyDrift::Current,
+                },
+                CopyDriftEntry {
+                    name: "beta.sh".to_string(),
+                    drift: CopyDrift::Stale,
+                },
+            ],
+            "two installed copies give two named entries with their states"
+        );
+
+        let missing = tmp.path().join("no-such-dir");
+        assert!(
+            installed_copies_drift(&missing, &sources).is_empty(),
+            "a missing copy directory gives an empty list, not an error"
+        );
+    }
+
+    #[test]
+    fn copy_drift_reports_current_stale_and_orphaned() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let copies = tmp.path().join("copies");
+        let sources = tmp.path().join("sources");
+        std::fs::create_dir_all(&copies).unwrap();
+        std::fs::create_dir_all(&sources).unwrap();
+
+        std::fs::write(copies.join("current.sh"), "echo one").unwrap();
+        std::fs::write(sources.join("current.sh"), "echo one").unwrap();
+
+        std::fs::write(copies.join("stale.sh"), "echo old").unwrap();
+        std::fs::write(sources.join("stale.sh"), "echo new").unwrap();
+
+        std::fs::write(copies.join("orphaned.sh"), "echo gone").unwrap();
+
+        assert_eq!(
+            copy_drift(&copies.join("current.sh"), &sources.join("current.sh")),
+            Some(CopyDrift::Current),
+            "byte-identical copy and source are current"
+        );
+        assert_eq!(
+            copy_drift(&copies.join("stale.sh"), &sources.join("stale.sh")),
+            Some(CopyDrift::Stale),
+            "differing copy and source are stale"
+        );
+        assert_eq!(
+            copy_drift(&copies.join("orphaned.sh"), &sources.join("orphaned.sh")),
+            Some(CopyDrift::Orphaned),
+            "a copy whose source is gone is orphaned"
+        );
     }
 }
 

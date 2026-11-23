@@ -99,6 +99,13 @@ where
         cmd
     };
 
+    if is_ghost
+        && let Some(script_name) = resolved_sudo_script_name(ghost_policy, cmd)
+        && let Some(notice) = local_copy_drift_notice(&script_name)
+    {
+        crate::bus::publish(notice);
+    }
+
     let cmd_id = match prompt_and_await_approval(
         ApprovalRequest {
             id,
@@ -169,6 +176,75 @@ where
     .await?;
     log_command(session_id, "background", "", cmd, "refused", &reason);
     Ok(ToolCallOutcome::Result(reason))
+}
+
+/// The drift notice for a ghost sudo call that resolved to an installed
+/// root-owned copy: `Some(Notice)` only when the copy is stale. The copy
+/// still runs — this only makes the drift visible. `None` for a current
+/// copy, an orphaned one, or no copy at all.
+pub fn stale_sudo_notice(
+    script_name: &str,
+    drift: crate::scripts::CopyDrift,
+) -> Option<crate::bus::Notice> {
+    if drift != crate::scripts::CopyDrift::Stale {
+        return None;
+    }
+    Some(
+        crate::bus::Notice::new(
+            crate::bus::Severity::Warning,
+            crate::bus::Source::Ghost,
+            "SudoCopyStale",
+            format!(
+                "sudo {name}: the installed copy differs from ~/.daemoneye/scripts/{name}",
+                name = script_name
+            ),
+        )
+        .body(format!(
+            "The root-owned copy the sudoers rule runs is not the current \
+             ~/.daemoneye/scripts/{name}. The copy still ran. Re-run \
+             `daemoneye install-sudoers {name}` to update it.",
+            name = script_name
+        ))
+        .label("script", script_name),
+    )
+}
+
+/// The basename of the whitelisted script a ghost's command resolves to,
+/// when that call is a local sudo call — i.e. exactly the case where
+/// `resolve_command` rewrote the command to `sudo /usr/local/libexec/…`.
+/// Remote calls run `~/.daemoneye/scripts/<name>` under the remote host's
+/// own sudoers and are out of scope for this notice.
+fn resolved_sudo_script_name(
+    policy: Option<&crate::daemon::policy::GhostPolicy>,
+    cmd: &str,
+) -> Option<String> {
+    let policy = policy?;
+    if policy.ssh_target.is_some() {
+        return None;
+    }
+    let resolved = policy.resolve_command(cmd);
+    let rest = resolved.strip_prefix("sudo ")?.trim_start();
+    let path = rest.split_whitespace().next()?;
+    let copy = std::path::Path::new(path);
+    if copy.parent() != Some(std::path::Path::new("/usr/local/libexec/daemoneye"))
+        && copy
+            .parent()
+            .map(|p| p.starts_with("/usr/local/libexec/daemoneye"))
+            != Some(true)
+    {
+        return None;
+    }
+    copy.file_name().and_then(|n| n.to_str()).map(String::from)
+}
+
+/// Drift between the installed copy and its source for one script, looked
+/// up on the real filesystem (production path only; tests drive
+/// `stale_sudo_notice` directly).
+fn local_copy_drift_notice(script_name: &str) -> Option<crate::bus::Notice> {
+    let copy = crate::scripts::root_script_path(script_name);
+    let drift =
+        crate::scripts::copy_drift(&copy, &crate::scripts::scripts_dir().join(script_name))?;
+    stale_sudo_notice(script_name, drift)
 }
 
 /// The refusal for a background command no PTY branch claimed. Names the
@@ -328,6 +404,7 @@ mod tests {
 #[cfg(test)]
 mod refusal_gate_tests {
     use super::run_background;
+    use super::stale_sudo_notice;
     use crate::daemon::executor::{GhostCtx, SessionCtx, ToolCallOutcome};
     use crate::daemon::session::SessionStore;
 
@@ -595,5 +672,44 @@ mod refusal_gate_tests {
             "the refusal must name the unknown host: {text}"
         );
         drop(guard);
+    }
+
+    #[test]
+    fn stale_sudo_notice_is_a_warning_naming_the_script() {
+        let notice = stale_sudo_notice("fix.sh", crate::scripts::CopyDrift::Stale)
+            .expect("a stale copy must produce a notice");
+        assert_eq!(notice.severity, crate::bus::Severity::Warning);
+        assert_eq!(notice.source, crate::bus::Source::Ghost);
+        assert!(
+            notice.title.contains("fix.sh"),
+            "the title names the script: {}",
+            notice.title
+        );
+        assert!(
+            notice.title.contains("~/.daemoneye/scripts/fix.sh"),
+            "the title names the source path: {}",
+            notice.title
+        );
+        assert_eq!(
+            notice.labels.get("script").map(String::as_str),
+            Some("fix.sh"),
+            "the label is script=<name>"
+        );
+
+        assert_eq!(
+            stale_sudo_notice("fix.sh", crate::scripts::CopyDrift::Current),
+            None,
+            "a current copy publishes nothing"
+        );
+        assert_eq!(
+            stale_sudo_notice("fix.sh", crate::scripts::CopyDrift::Orphaned),
+            None,
+            "an orphaned copy publishes nothing"
+        );
+        assert_eq!(
+            stale_sudo_notice("fix.sh", crate::scripts::CopyDrift::Unknown),
+            None,
+            "an unreadable pair publishes nothing"
+        );
     }
 }

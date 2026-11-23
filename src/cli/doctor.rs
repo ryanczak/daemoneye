@@ -99,6 +99,9 @@ pub struct DoctorInputs {
     /// The status-bar glyph dialect the session actually speaks (M37 02a):
     /// the configured one, ASCII when the locale is not UTF-8.
     pub glyphs: String,
+    /// One entry per installed root-owned sudo copy, with its drift against
+    /// `~/.daemoneye/scripts/`.
+    pub sudo_script_copies: Vec<crate::scripts::CopyDriftEntry>,
 }
 
 impl Default for DoctorInputs {
@@ -120,6 +123,7 @@ impl Default for DoctorInputs {
             tmux_present: false,
             inside_tmux: false,
             glyphs: String::new(),
+            sudo_script_copies: Vec::new(),
         }
     }
 }
@@ -144,6 +148,7 @@ pub fn evaluate(inputs: &DoctorInputs) -> Vec<Check> {
         hosts_check(inputs),
         tmux_check(inputs),
         glyphs_check(inputs),
+        sudo_scripts_check(inputs),
     ]
 }
 
@@ -152,6 +157,50 @@ pub fn evaluate(inputs: &DoctorInputs) -> Vec<Check> {
 /// it. Always an `Ok` row: a dialect choice is a preference, not a problem.
 fn glyphs_check(inputs: &DoctorInputs) -> Check {
     Check::ok("status bar glyphs", inputs.glyphs.clone())
+}
+
+/// One doctor row over the installed root-owned sudo copies. The copy stays
+/// authoritative; this only makes drift from the source script visible.
+/// `Warn` never changes the exit code.
+pub fn sudo_scripts_check(inputs: &DoctorInputs) -> Check {
+    let drifted: Vec<&crate::scripts::CopyDriftEntry> = inputs
+        .sudo_script_copies
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.drift,
+                crate::scripts::CopyDrift::Stale | crate::scripts::CopyDrift::Orphaned
+            )
+        })
+        .collect();
+    if drifted.is_empty() {
+        return Check::ok(
+            "sudo scripts",
+            format!(
+                "{} installed sudo copy(ies) match their source",
+                inputs.sudo_script_copies.len()
+            ),
+        );
+    }
+    let named: Vec<String> = drifted
+        .iter()
+        .map(|e| {
+            format!(
+                "{} ({})",
+                e.name,
+                match e.drift {
+                    crate::scripts::CopyDrift::Stale => "stale",
+                    crate::scripts::CopyDrift::Orphaned => "source removed",
+                    _ => "unknown",
+                }
+            )
+        })
+        .collect();
+    Check::warn(
+        "sudo scripts",
+        format!("sudo copies differ from their source: {}", named.join(", ")),
+        "re-run `daemoneye install-sudoers <name>` for each stale copy",
+    )
 }
 
 /// The dialect name and its glyph sample, `name · sample`, with the locale
@@ -339,6 +388,12 @@ pub async fn gather() -> DoctorInputs {
         tmux_present: binary_present("tmux"),
         inside_tmux: std::env::var("TMUX").is_ok_and(|v| !v.is_empty()),
         glyphs: glyph_report_line(),
+        sudo_script_copies: crate::scripts::installed_copies_drift(
+            crate::scripts::root_script_path("x")
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("/usr/local/libexec/daemoneye")),
+            &crate::scripts::scripts_dir(),
+        ),
     };
 
     if inputs.sandbox_enabled {
@@ -490,6 +545,7 @@ mod tests {
             tmux_present: false,
             inside_tmux: false,
             glyphs: "emoji".to_string(),
+            sudo_script_copies: Vec::new(),
         }
     }
 
@@ -716,9 +772,79 @@ mod tests {
                 "sandbox",
                 "hosts",
                 "tmux",
-                "status bar glyphs"
+                "status bar glyphs",
+                "sudo scripts"
             ],
             "the Spec's fixed order"
         );
+    }
+
+    #[test]
+    fn sudo_scripts_check_ok_when_none_or_current() {
+        let none = DoctorInputs {
+            sudo_script_copies: Vec::new(),
+            ..inputs_base()
+        };
+        let checks = evaluate(&none);
+        let row = find(&checks, "sudo scripts");
+        assert_eq!(row.level, Level::Ok, "no copies installed is Ok: {row:?}");
+        assert_eq!(exit_code(&checks), 0);
+
+        let current = DoctorInputs {
+            sudo_script_copies: vec![
+                crate::scripts::CopyDriftEntry {
+                    name: "alpha.sh".to_string(),
+                    drift: crate::scripts::CopyDrift::Current,
+                },
+                crate::scripts::CopyDriftEntry {
+                    name: "beta.sh".to_string(),
+                    drift: crate::scripts::CopyDrift::Current,
+                },
+            ],
+            ..inputs_base()
+        };
+        let checks = evaluate(&current);
+        let row = find(&checks, "sudo scripts");
+        assert_eq!(row.level, Level::Ok);
+        assert!(
+            row.detail.contains('2'),
+            "the Ok detail shows the copy count: {}",
+            row.detail
+        );
+        assert_eq!(exit_code(&checks), 0);
+    }
+
+    #[test]
+    fn sudo_scripts_check_warns_naming_stale_and_orphaned() {
+        let inputs = DoctorInputs {
+            sudo_script_copies: vec![
+                crate::scripts::CopyDriftEntry {
+                    name: "stale.sh".to_string(),
+                    drift: crate::scripts::CopyDrift::Stale,
+                },
+                crate::scripts::CopyDriftEntry {
+                    name: "orphaned.sh".to_string(),
+                    drift: crate::scripts::CopyDrift::Orphaned,
+                },
+            ],
+            ..inputs_base()
+        };
+        let checks = evaluate(&inputs);
+        let row = find(&checks, "sudo scripts");
+        assert_eq!(row.level, Level::Warn);
+        assert!(
+            row.detail.contains("stale.sh") && row.detail.contains("orphaned.sh"),
+            "the detail names each drifted copy: {}",
+            row.detail
+        );
+        let fix = row
+            .fix
+            .as_deref()
+            .unwrap_or_else(|| panic!("the warn must carry a fix"));
+        assert!(
+            fix.contains("daemoneye install-sudoers"),
+            "the fix names the install command: {fix}"
+        );
+        assert_eq!(exit_code(&checks), 0, "Warn never changes the exit code");
     }
 }
