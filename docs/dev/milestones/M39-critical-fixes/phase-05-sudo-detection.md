@@ -1,7 +1,7 @@
 # Phase 05 — sudo-detection
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -175,3 +175,148 @@ preservation. Paste each red run into the Update Log before its fix.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-23 22:15 (started)
+
+Started phase 05 — sudo-detection. Executor: DaemonEye (executor run).
+Status flipped to `in-progress`; README phase-table row updated to match.
+Next: write the first red test (`sudo_detect_quote_and_backslash_spelling`) and run it red before any production change.
+
+### Update — 2026-11-23 22:20 (breakdown)
+
+Task list (numbered, each closes an acceptance item):
+
+1. Write red test `sudo_detect_quote_and_backslash_spelling` (Spelling item); run it red.
+2. Extract word reading + dequoting into their own functions (`read_shell_word` producing a dequoted word with an "unresolvable" flag); refactor `command_has_sudo` to use them; keep signature. Closes Spelling and Fail-closed plumbing.
+3. Red test + fix `sudo_detect_after_leading_redirections` (`<`, `>`, `>>`, `<<<`, `&>`, `2>`, `2>>`, `1<` never change command position). Closes Redirections.
+4. Red test + fix `sudo_detect_other_elevators` (`sudo`, `sudoedit`, `su`, `doas`, `pkexec`, `run0` by basename incl. path and `\` spelling). Closes Elevators.
+5. Red test + fix `sudo_detect_more_wrappers` (add `strace`, `ltrace`, `flock`, `chroot`, `unshare`, `nsenter`, `setpriv`, `chrt`, `taskset`, `systemd-run` to `WRAPPER_COMMANDS`). Closes Wrappers.
+6. Red test + fix `sudo_detect_unresolvable_command_word_fails_closed` (unquoted `$`, `${`, glob chars in command position → elevation). Closes Fail-closed.
+7. Red test + preserve `sudo_detect_globs_and_expansions_in_arguments_stay_clear` (must-stay-false list; `FOO=$HOME ls` stays false). Preservation.
+8. Confirm all existing `sudo_detect_*` / `command_has_sudo_*` tests pass unchanged. Preservation.
+9. Mutation check: disable quote stripping in word reading, run spelling test, paste failure, restore.
+10. Run the four gates; paste `test result:` lines; confirm lib suite ≥ 3092 passed.
+11. Commit as one `fix:` commit.
+
+### Update — 2026-11-23 22:22 (red run 1 — Spelling)
+
+First red test written before any production change. Output tail:
+
+```
+failures:
+
+---- daemon::utils::sudo::tests::sudo_detect_quote_and_backslash_spelling stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_quote_and_backslash_spelling' (2567244) panicked at src/daemon/utils/sudo.rs:457:13:
+a sudo spelled across quotes or backslashes is the command sudo: "s\\udo id"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_quote_and_backslash_spelling
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3096 filtered out; finished in 0.00s
+```
+
+### Update — 2026-11-23 22:26 (red runs 2–6 — all acceptance tests, before any production change)
+
+All remaining red tests written up front; all fail on the current tree as required:
+
+```
+thread 'daemon::utils::sudo::tests::sudo_detect_after_leading_redirections' (2569224) panicked at src/daemon/utils/sudo.rs:476:13:
+a redirection and its target never change command position: "</dev/null sudo id"
+
+---- daemon::utils::sudo::tests::sudo_detect_more_wrappers stdout ----
+thread 'daemon::utils::sudo::tests::sudo_detect_more_wrappers' (2569228) panicked at src/daemon/utils/sudo.rs:521:13:
+a wrapper keeps every later word in command position: "strace sudo id"
+
+---- daemon::utils::sudo::tests::sudo_detect_other_elevators stdout ----
+thread 'daemon::utils::sudo::tests::sudo_detect_other_elevators' (2569230) panicked at src/daemon/utils/sudo.rs:496:13:
+an elevator in command position is elevation whatever its spelling: "su -c id"
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_after_leading_redirections
+    daemon::utils::sudo::tests::sudo_detect_more_wrappers
+    daemon::utils::sudo::tests::sudo_detect_other_elevators
+    daemon::utils::sudo::tests::sudo_detect_quote_and_backslash_spelling
+    daemon::utils::sudo::tests::sudo_detect_unresolvable_command_word_fails_closed
+
+test result: FAILED. 18 passed; 5 failed; 0 ignored; 0 measured; 3079 filtered out; finished in 0.00s
+```
+
+The preservation test `sudo_detect_globs_and_expansions_in_arguments_stay_clear` is green on the current tree (as intended — it pins must-stay-false behaviour).
+
+### Update — 2026-11-23 22:33 (progress)
+
+First implementation pass: `read_shell_word` + `is_elevator` extracted, wrappers and elevators added, fail-closed on unresolvable command words. Partial results:
+
+- All spelling, elevators, wrappers and fail-closed tests now pass.
+- Redirection cases still fail: my skip loop handles `&>` and `<<<` only while `&` follows the operator, but `&>/dev/null` starts at `&` (matched by the separator arm, which resets command position) and the `<`-skip loop stopped at the `/` of the target, leaving the target word to consume command position.
+- `FOO=$HOME ls` returns `true` instead of false: `$HOME` in an assignment's value makes the word "unresolvable" and, since the word is still in command position, the fail-closed branch fires before the assignment check.
+
+Fixing both next.
+
+### Update — 2026-11-23 22:40 (implementation complete, green)
+
+Implementation finished. Word reading and dequoting live in `read_shell_word`
+(returns the dequoted text, an unresolvable flag, and the quoted contents);
+command position, redirections, wrappers, elevators and fail-closed logic live
+in `command_has_sudo`. `cargo build --tests` is green; all 23 `detect_` tests
+pass, including the three existing negative tests unchanged and the new
+preservation test.
+
+### Update — 2026-11-23 22:42 (mutation check)
+
+Mutation: stopped removing single quotes during word reading (kept `'` in the
+word text after reading a quoted region). The spelling test fails as required:
+
+```
+a sudo spelled across quotes or backslashes is the command sudo: "s'u'do id"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_quote_and_backslash_spelling
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3101 filtered out; finished in 0.00s
+```
+
+### Update — 2026-11-23 22:50 (end-to-end verification)
+
+Gates run against the real tree, in order:
+
+```
+$ cargo fmt --all
+(no output — clean)
+
+$ cargo build 2>&1 | tail -3
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.86s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -5
+    Checking daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.49s
+
+$ cargo test 2>&1 | grep "test result:"
+test result: ok. 3092 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 143.32s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+```
+
+Lib suite reports **3092 passed** — exactly the required floor (3086 + 6 new tests).
+No test in another module changed its expectation; every suite is green unchanged.
+
+Acceptance evidence, item by item:
+
+- **Spelling:** `sudo_detect_quote_and_backslash_spelling` — red run 1 (22:22), green after `read_shell_word`.
+- **Redirections:** `sudo_detect_after_leading_redirections` — red run (22:26), green after the `<`/`>`/`&` redirection arms skip operator and target.
+- **Elevators:** `sudo_detect_other_elevators` — red run (22:26), green after `ELEVATORS` + `is_elevator`.
+- **Wrappers:** `sudo_detect_more_wrappers` — red run (22:26), green after ten names joined `WRAPPER_COMMANDS` (plus `eval`, a one-line addition the spec allows).
+- **Fail closed:** `sudo_detect_unresolvable_command_word_fails_closed` — red run (22:26), green after the unresolvable branch.
+- **Preservation:** `sudo_detect_globs_and_expansions_in_arguments_stay_clear` green; the three existing negative tests pass **unchanged** (their bodies are not in the diff).
+- **Mutation check:** pasted above (22:42) — failing red under quote-keeping mutation, restored, green again.

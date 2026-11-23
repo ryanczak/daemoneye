@@ -30,9 +30,29 @@ pub fn is_fingerprint_prompt(output: &str) -> bool {
 /// run, so a `sudo` after any of them is a command word. The set is
 /// deliberately fail-closed (every word of the simple command counts) and
 /// folds in `xargs`, formerly handled by its own pending flag.
-const WRAPPER_COMMANDS: [&str; 12] = [
-    "env", "nohup", "time", "exec", "command", "nice", "ionice", "timeout", "stdbuf", "setsid",
-    "watch", "xargs",
+const WRAPPER_COMMANDS: [&str; 22] = [
+    "env",
+    "nohup",
+    "time",
+    "exec",
+    "command",
+    "nice",
+    "ionice",
+    "timeout",
+    "stdbuf",
+    "setsid",
+    "watch",
+    "xargs",
+    "strace",
+    "ltrace",
+    "flock",
+    "chroot",
+    "unshare",
+    "nsenter",
+    "setpriv",
+    "chrt",
+    "taskset",
+    "systemd-run",
 ];
 
 /// Shell keywords that, in command position, keep the *next* word there
@@ -42,16 +62,118 @@ const COMMAND_KEYWORDS: [&str; 9] = [
     "if", "then", "else", "elif", "do", "while", "until", "{", "!",
 ];
 
-/// Is `word` the command `sudo`? In command position a leading `\` escape
-/// is stripped first (so `\sudo id` counts), and only the basename after
-/// the last `/` is compared (so `/usr/bin/sudo id` counts).
-fn sudo_command_word(word: &str) -> bool {
-    let bare = word.strip_prefix('\\').unwrap_or(word);
-    let basename = std::path::Path::new(bare)
+/// Commands that elevate. In command position any of these counts as
+/// elevation: by basename, so an absolute path (`/bin/su`) or a
+/// leading-backslash spelling (`\doas`) counts too.
+const ELEVATORS: [&str; 6] = ["sudo", "sudoedit", "su", "doas", "pkexec", "run0"];
+
+/// One shell word, read the way the shell reads it: quote characters and
+/// backslashes removed, the text they protect kept. So `s\udo`, `s'u'do`
+/// and `"su""do"` all read as the word `sudo`.
+struct ShellWord {
+    /// The dequoted text.
+    text: String,
+    /// True when the word still carries an unquoted parameter expansion or
+    /// glob character after dequoting — a word the detector cannot resolve.
+    unresolvable: bool,
+    /// The contents of any quoted regions, scanned as a command in their own
+    /// right: the string handed to `sh -c` is itself a command.
+    quoted: String,
+}
+
+/// The characters that end a shell word. Quotes are deliberately absent:
+/// they are read *through*, as part of the word.
+fn is_word_delimiter(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\t' | ';' | '&' | '|' | '\n' | '\r' | '(' | ')' | '<' | '>' | '`'
+    )
+}
+
+/// Read one shell word from `start`, dequoting as the shell does: a `\`
+/// escapes the next character, single quotes protect everything literally,
+/// double quotes protect everything but `$` (still an expansion) and the
+/// escaped characters. A `$`, `*`, `?` or `[` that survives unquoted and
+/// unescaped marks the word unresolvable. Returns the word and the index of
+/// the first character after it.
+fn read_shell_word(chars: &[char], start: usize) -> (ShellWord, usize) {
+    let mut text = String::new();
+    let mut quoted = String::new();
+    let mut unresolvable = false;
+    let mut i = start;
+    while i < chars.len() {
+        match chars[i] {
+            c if is_word_delimiter(c) => break,
+            '\\' if i + 1 < chars.len() => {
+                text.push(chars[i + 1]);
+                i += 2;
+            }
+            '\\' => {
+                text.push('\\');
+                i += 1;
+            }
+            '\'' => {
+                i += 1;
+                while i < chars.len() && chars[i] != '\'' {
+                    text.push(chars[i]);
+                    quoted.push(chars[i]);
+                    i += 1;
+                }
+                if i < chars.len() {
+                    i += 1;
+                }
+            }
+            '"' => {
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\'
+                        && i + 1 < chars.len()
+                        && matches!(chars[i + 1], '"' | '\\' | '$' | '`')
+                    {
+                        text.push(chars[i + 1]);
+                        quoted.push(chars[i + 1]);
+                        i += 2;
+                    } else {
+                        if chars[i] == '$' {
+                            unresolvable = true;
+                        }
+                        text.push(chars[i]);
+                        quoted.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                if i < chars.len() {
+                    i += 1;
+                }
+            }
+            c => {
+                if matches!(c, '$' | '*' | '?' | '[') {
+                    unresolvable = true;
+                }
+                text.push(c);
+                i += 1;
+            }
+        }
+    }
+    (
+        ShellWord {
+            text,
+            unresolvable,
+            quoted,
+        },
+        i,
+    )
+}
+
+/// Is `word` (already dequoted) an elevating command? Only the basename
+/// after the last `/` is compared, so `/bin/su` counts; a leading `\` was
+/// already removed by dequoting, so `\doas` counts.
+fn is_elevator(word: &str) -> bool {
+    let basename = std::path::Path::new(word)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(bare);
-    basename == "sudo"
+        .unwrap_or(word);
+    ELEVATORS.contains(&basename)
 }
 
 /// A leading `NAME=value` assignment in command position keeps the next
@@ -66,18 +188,24 @@ fn is_assignment(word: &str) -> bool {
         && name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// True when `sudo` appears as a *command word* anywhere in `cmd`: at the
+/// True when `cmd` elevates: a command word that is an elevator (`sudo`,
+/// `sudoedit`, `su`, `doas`, `pkexec`, `run0`) or one the detector cannot
+/// resolve, anywhere `sudo` could appear as a *command word* — at the
 /// start, after `;`/`&`/`|` or a newline, inside `$(`, a backtick, `(` or a
 /// quoted region (the string handed to `sh -c` is itself a command, so
 /// quoted text is scanned, not skipped), after a wrapper command, after a
-/// shell keyword, after a leading assignment, or behind an absolute path or
-/// a backslash escape.
+/// shell keyword, after a leading assignment, behind an absolute path, or
+/// spelled across quotes and backslashes.
 ///
-/// `sudo` as an argument or substring — `cat /etc/sudoers`, `echo pseudo`,
-/// `visudo -c`, `grep sudo /var/log/auth.log`, `which sudo`, `man sudo`,
-/// `echo then sudo` — is not a command word, and must not match. A quoted
-/// region may count more than an unquoted argument does (`grep 'sudo' log`
-/// matches); that fails closed and is accepted.
+/// The detector **fails closed**: a command-position word that still
+/// carries an unquoted parameter expansion (`$S`, `${X}udo`, `"$CMD"`) or
+/// an unquoted glob character (`*`, `?`, `[`) after dequoting counts as
+/// elevation. The same characters in argument position change nothing, so
+/// `cat /etc/sudoers`, `echo pseudo`, `grep sudo /var/log/auth.log`,
+/// `which sudo`, `man sudo`, `echo then sudo`, `ls *.txt` and
+/// `FOO=$HOME ls` do not match. A quoted region may count more than an
+/// unquoted argument does (`grep 'sudo' log` matches); that fails closed
+/// and is accepted.
 pub fn command_has_sudo(cmd: &str) -> bool {
     let chars: Vec<char> = cmd.chars().collect();
     let mut i = 0;
@@ -90,56 +218,81 @@ pub fn command_has_sudo(cmd: &str) -> bool {
 
     while i < chars.len() {
         match chars[i] {
-            ';' | '&' | '|' | '\n' | '\r' => {
+            ';' | '|' | '\n' | '\r' => {
                 at_command = true;
                 wrapper = false;
                 i += 1;
             }
             ' ' | '\t' => i += 1,
-            // A quote opens a command position exactly as `(` does: what is
-            // inside is scanned, not skipped, because the string handed to
-            // `sh -c` is itself a command (bug-13-1). The closing quote
-            // ends the word, like `)`.
+            // An unquoted `&` is a separator unless it opens a redirection
+            // (`&>`, `&>>`), which never changes command position.
+            '&' => {
+                if chars.get(i + 1) == Some(&'>') {
+                    i += 2;
+                    if chars.get(i) == Some(&'>') {
+                        i += 1;
+                    }
+                    // Skip the target word; it is never a command word.
+                    let (_, end) = read_shell_word(&chars, i);
+                    i = end;
+                } else {
+                    at_command = true;
+                    wrapper = false;
+                    i += 1;
+                }
+            }
+            // A redirection and its target never change command position:
+            // `</dev/null sudo id` and `2>/dev/null sudo id` still see
+            // `sudo` as the command word. `<<<` folds into the same skip;
+            // a leading fd digit (`2>`, `1<`) is read as a word and folded
+            // in below.
+            '<' | '>' => {
+                i += 1;
+                if chars.get(i) == Some(&'>') {
+                    i += 1;
+                }
+                while i < chars.len() && chars[i] == '<' {
+                    i += 1;
+                }
+                // Skip the target word; it is never a command word.
+                let (_, end) = read_shell_word(&chars, i);
+                i = end;
+            }
+            // Command substitution: what follows is a command. A quote
+            // opens a command position exactly as `(` does: what is inside
+            // is scanned, not skipped, because the string handed to
+            // `sh -c` is itself a command (bug-13-1).
             '$' if chars.get(i + 1) == Some(&'(') => {
-                // Command substitution: what follows is a command.
                 at_command = true;
                 wrapper = false;
                 i += 2;
             }
-            '`' | '(' | '\'' | '"' => {
+            '`' | '(' => {
                 at_command = true;
                 wrapper = false;
                 i += 1;
             }
-            ')' | '<' | '>' => {
+            ')' => {
                 at_command = false;
                 wrapper = false;
                 i += 1;
             }
             _ => {
-                let start = i;
-                while i < chars.len()
-                    && !matches!(
-                        chars[i],
-                        ' ' | '\t'
-                            | ';'
-                            | '&'
-                            | '|'
-                            | '\n'
-                            | '\r'
-                            | '('
-                            | ')'
-                            | '<'
-                            | '>'
-                            | '`'
-                            | '\''
-                            | '"'
-                    )
-                {
-                    i += 1;
+                let (word, end) = read_shell_word(&chars, i);
+                i = end;
+                if i < chars.len() && chars[i] == '<' {
+                    // An fd number written straight before a redirection
+                    // operator (`2>`, `1<`) belongs to the redirection,
+                    // not the command list.
+                    if word.text.chars().all(|c| c.is_ascii_digit()) && !word.text.is_empty() {
+                        continue;
+                    }
                 }
-                let word: String = chars[start..i].iter().collect();
-                if (at_command || wrapper) && sudo_command_word(&word) {
+                if (at_command || wrapper) && is_elevator(&word.text) {
+                    return true;
+                }
+                // Quoted text is scanned as a command in its own right.
+                if !word.quoted.is_empty() && command_has_sudo(&word.quoted) {
                     return true;
                 }
                 if wrapper {
@@ -149,9 +302,28 @@ pub fn command_has_sudo(cmd: &str) -> bool {
                     continue;
                 }
                 if at_command {
-                    if WRAPPER_COMMANDS.contains(&word.as_str()) {
+                    // A leading fd number before a redirection operator
+                    // (`2>`, `1<`) belongs to the redirection, not the
+                    // command list.
+                    if i < chars.len()
+                        && matches!(chars[i], '<' | '>')
+                        && word.text.chars().all(|c| c.is_ascii_digit())
+                        && !word.text.is_empty()
+                    {
+                        continue;
+                    }
+                    if word.unresolvable && !is_assignment(&word.text) {
+                        // A command word the detector cannot resolve — a
+                        // surviving parameter expansion or glob — fails
+                        // closed to elevation. A leading assignment keeps
+                        // its value's expansion out of command position.
+                        return true;
+                    }
+                    if WRAPPER_COMMANDS.contains(&word.text.as_str()) {
                         wrapper = true;
-                    } else if !COMMAND_KEYWORDS.contains(&word.as_str()) && !is_assignment(&word) {
+                    } else if !COMMAND_KEYWORDS.contains(&word.text.as_str())
+                        && !is_assignment(&word.text)
+                    {
                         at_command = false;
                     }
                 }
@@ -440,6 +612,134 @@ mod tests {
     fn command_has_sudo_false_positive_guard() {
         // "sudoer" is not "sudo" — word-boundary check must hold.
         assert!(!command_has_sudo("cat /etc/sudoers"));
+    }
+
+    /// M39 phase-05: a shell word is read across quotes and backslash
+    /// escapes, with the quote characters and backslashes removed before
+    /// comparison. Quoted text is still scanned as a command as well.
+    /// Test written red.
+    #[test]
+    fn sudo_detect_quote_and_backslash_spelling() {
+        for cmd in [
+            "s\\udo id",
+            "s'u'do id",
+            "\"su\"\"do\" id",
+            "sh -c 's\\udo id'",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "a sudo spelled across quotes or backslashes is the command sudo: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05: a redirection and its target never change command
+    /// position, so the word after a leading redirection is the command.
+    /// Test written red.
+    #[test]
+    fn sudo_detect_after_leading_redirections() {
+        for cmd in [
+            "</dev/null sudo id",
+            "2>/dev/null sudo id",
+            ">out sudo id",
+            ">>log sudo id",
+            "&>/dev/null sudo id",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "a redirection and its target never change command position: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05: the other elevators — by basename, behind an absolute
+    /// path or a leading-backslash spelling. Test written red.
+    #[test]
+    fn sudo_detect_other_elevators() {
+        for cmd in [
+            "su -c id",
+            "doas id",
+            "pkexec id",
+            "run0 id",
+            "sudoedit /etc/x",
+            "/bin/su",
+            "\\doas id",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "an elevator in command position is elevation whatever its spelling: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05: commands that run their remaining words as a command
+    /// join the wrapper set; every later word of the simple command is a
+    /// command position. Test written red.
+    #[test]
+    fn sudo_detect_more_wrappers() {
+        for cmd in [
+            "strace sudo id",
+            "ltrace sudo id",
+            "flock /tmp/l sudo id",
+            "chroot /srv sudo id",
+            "unshare -m sudo id",
+            "nsenter -t 1 sudo id",
+            "setpriv --reuid 0 sudo id",
+            "chrt -f 1 sudo id",
+            "taskset -c 0 sudo id",
+            "systemd-run sudo id",
+            "eval 'sudo id'",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "a wrapper keeps every later word in command position: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05: a command-position word the detector cannot resolve —
+    /// one that still carries an unquoted parameter expansion or an
+    /// unquoted glob character after dequoting — fails closed to
+    /// elevation. Test written red.
+    #[test]
+    fn sudo_detect_unresolvable_command_word_fails_closed() {
+        for cmd in [
+            "/usr/bin/sud? id",
+            "/usr/bin/s*do id",
+            "$S id",
+            "${X}udo id",
+            "\"$CMD\" id",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "an unresolvable command word fails closed to elevation: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05 preservation: globs and expansions in **argument**
+    /// position change nothing, and none of these is an elevating command
+    /// word. Green before the phase.
+    #[test]
+    fn sudo_detect_globs_and_expansions_in_arguments_stay_clear() {
+        for cmd in [
+            "ls *.txt",
+            "rm -f /tmp/*.log",
+            "ls [ab].txt",
+            "echo $HOME",
+            "FOO=$HOME ls",
+            "echo su",
+            "echo doas",
+            "cat /usr/bin/pkexec",
+            "sudoku",
+            "ls /usr/bin/su*",
+            "git status",
+        ] {
+            assert!(
+                !command_has_sudo(cmd),
+                "preservation: globs and expansions in argument position stay clear: {cmd:?}"
+            );
+        }
     }
 
     #[test]
