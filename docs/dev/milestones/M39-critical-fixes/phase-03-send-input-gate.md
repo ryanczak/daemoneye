@@ -1,7 +1,7 @@
 # Phase 03 — send-input-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-03-1)
 **Drafted:** 2026-11-22
 **Depends on:** phase-02 (`call_owner`, already in the tree)
 **Estimated diff:** ~250 lines
@@ -204,6 +204,20 @@ its fix lands. Every such test stays in the tree.
       - `text: "sudo reboot"`
 - [ ] **S2b, sudo (negative):** `text: "echo pseudo"`, `text: "cat /etc/sudoers"`
       and `keys: ["C-c"]` are **not** treated as sudo.
+- [ ] **bug-03-1, key spellings:** `keys: ["s","u","d","o","space","r","e","b","o","o","t","enter"]`,
+      `keys: ["e","c","h","o","C-m","s","u","d","o","Space","x","C-m"]` and
+      the same list with `C-j` in place of `C-m` are each treated as sudo
+      (the prompt carries `sudo: true`, and `ApprovalsConfig::default()`
+      does not auto-approve it). The key parser lowercases names, and
+      `C-m`/`C-j` end the line, so a different spelling of the same key must
+      not change the decision. **Fails on the current tree.**
+- [ ] **bug-03-1, preservation:** a bracketed paste of `text: "sudo reboot"`
+      (`paste: Some(true)`) is still sudo, and the negatives above still
+      hold.
+- [ ] **bug-03-1, names:** `grep -n '_for_tests' src/cli/commands/approval.rs`
+      and `grep -n '_owner_key' src/daemon/executor/dispatch_send_input.rs`
+      both print nothing. **Both print a line on the current tree.**
+- [ ] **bug-03-1, count:** the lib suite reports more than 3065 passed.
 - [ ] **Preservation:** `run_terminal_command`'s prompts are unchanged. A
       foreground command's sudo decision still comes from its command
       text, and the existing `stream.rs` approval tests and
@@ -599,3 +613,30 @@ kill: (-2073717): No such process
 **Commit:** 608fd422c0272d0dea896db3d139c859d8dd3c4f
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-23 (bounced: bug-03-1)
+
+The id gate, the host classification and the three pinned sudo spellings
+are correct and tested, and all four gates pass on the reviewer's re-run
+(lib 3065 passed). The bounce is for
+[bug-03-1](bugs/bug-03-1.md).
+
+1. **(major)** `sudo_decision_text` recognises only the exact strings
+   `Space` and `Enter`. The key parser also accepts `space` and `enter` in
+   any case, plus `C-m` and `C-j` as line ends. The reviewer probed it:
+   keys `s,u,d,o,space,x,enter` give the decision text `sudox`, while the
+   shell receives `sudo x⏎`, so the call auto-approves. This gap came from
+   this doc, whose statement of work named only `Space` and `Enter`.
+2. **(minor)** The production approval decision lives in
+   `auto_approves_for_tests`, and `_owner_key` is computed and then
+   discarded.
+
+The new acceptance criteria above express the remaining work. **The tree is
+clean and the gates are green, which is expected. That is NOT evidence the
+phase is done.** Already approved, so do not redo it: the id gate (both
+S2c tests), the host classification (both S2b host tests), the
+`ToolCallPrompt.sudo` field and the client OR. What remains is the
+decision-text mapping, the new tests, and the rename/cleanup in item 2.
+Keep every existing phase-03 test. Finish condition: the lib suite reports
+more than 3065 passed, and the mutation check named in the bug is pasted
+here.
