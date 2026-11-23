@@ -171,6 +171,28 @@ pub fn sudoers_rule(user: &str, script_path: &str) -> String {
     )
 }
 
+/// The rule file's path under `/etc/sudoers.d/` for a script name.
+///
+/// sudo's `@includedir` skips files whose names contain `.` or end in `~`,
+/// so the name is encoded into an alphabet with neither. The accepted script
+/// alphabet is `[alnum._-]` (see [`validate_script_name`]); `_` escapes:
+/// `_` → `__` and `.` → `_d`. The encoding is injective on that alphabet —
+/// a scan of the output decodes uniquely, because `_d` can only come from an
+/// original `.` and `__` only from an original `_` — so two distinct accepted
+/// script names never share a rule file. Pure function; see [`install_sudoers`].
+pub fn sudoers_rule_file(script_name: &str) -> String {
+    let mut safe_name = String::with_capacity(script_name.len());
+    for c in script_name.chars() {
+        match c {
+            '_' => safe_name.push_str("__"),
+            '.' => safe_name.push_str("_d"),
+            c if c.is_alphanumeric() || c == '-' => safe_name.push(c),
+            _ => safe_name.push('_'),
+        }
+    }
+    format!("/etc/sudoers.d/daemoneye-{}", safe_name)
+}
+
 /// Escape sudoers-special characters in a pathname.
 ///
 /// Per sudoers(5), these characters terminate words or inject directives and must
@@ -243,18 +265,7 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
     let copy_path = root_copy.to_string_lossy().into_owned();
     let source_path = script_path.to_string_lossy().into_owned();
 
-    // Sanitise the script name for use as a filename component.
-    let safe_name: String = script_name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let sudoers_file = format!("/etc/sudoers.d/daemoneye-{}", safe_name);
+    let sudoers_file = sudoers_rule_file(script_name);
 
     let rule = sudoers_rule(&user, &copy_path);
 
@@ -689,6 +700,37 @@ mod tests {
         assert_eq!(
             rule,
             "alice ALL=(ALL) NOPASSWD: /usr/local/libexec/daemoneye/1000/check-disk.sh\n"
+        );
+    }
+
+    #[test]
+    fn sudoers_rule_file_name_is_sudo_includable() {
+        for name in ["fix.sh", "check-disk.sh", "a.b.c", "de-sudo-probe.sh"] {
+            let file = sudoers_rule_file(name);
+            assert!(
+                file.starts_with("/etc/sudoers.d/daemoneye-"),
+                "rule file lives under /etc/sudoers.d/ with the daemoneye prefix, got: {}",
+                file
+            );
+            let final_comp = std::path::Path::new(&file)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            assert!(
+                !final_comp.contains('.'),
+                "sudo's @includedir skips names containing '.', got: {}",
+                final_comp
+            );
+            assert!(
+                !final_comp.ends_with('~'),
+                "sudo's @includedir skips names ending in '~', got: {}",
+                final_comp
+            );
+        }
+        assert_ne!(
+            sudoers_rule_file("fix.sh"),
+            sudoers_rule_file("fix_sh"),
+            "two distinct accepted script names must never share a rule file"
         );
     }
 

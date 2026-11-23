@@ -958,3 +958,72 @@ passes, the mutation check from the bug is pasted here, and the lib suite
 reports at least 3078 passed. The architect runs the live probe again at
 review.
 
+
+### Update — 2026-11-23 17:02 (started, run: bug-04-3 fix)
+
+Executor: this run. Resume of the bug-04-3 bounce. Task list (each names
+what it closes):
+
+1. Write the red test `sudoers_rule_file_name_is_sudo_includable` (pure
+   naming function: no `.`, no trailing `~`, `fix.sh` ≠ `fix_sh`) and run
+   it red. (bug-04-3 DoD item 1.)
+2. Move the rule-file naming out of `install_sudoers` into a pure function
+   `sudoers_rule_file(name)`; install_sudoers calls it. `.` maps so two
+   distinct accepted script names never collide. (bug-04-3.)
+3. Mutation check: let `.` through the sanitiser again, see the new test
+   fail, restore, paste both results here. (bug-04-3 DoD item 2.)
+4. Gates: fmt, build, clippy, test — lib suite ≥ 3078 passed. (bug-04-3
+   DoD item 3.)
+
+### Update — 2026-11-23 17:20 (bug-04-3 fix)
+
+The `safe_name` sanitiser in `install_sudoers` was replaced by a pure
+function, `sudoers_rule_file(script_name)` (`src/scripts.rs`), which
+`install_sudoers` now calls. It encodes the accepted script alphabet
+`[alnum._-]` (see `validate_script_name`) into an alphabet with no `.`:
+`_` → `__`, `.` → `_d`, other accepted characters pass through, anything
+else folds to `_`. The encoding is injective, so `fix.sh` and `fix_sh`
+never share a rule file, and no file name contains `.` or ends in `~`,
+so sudo's `@includedir` reads it. The rule's **content** is unchanged —
+it still names the exact copy path, dot included.
+
+Red run (new test written first, against the tree before the function
+existed the test could not compile; the first encoding `.` → `._` was
+itself caught red by the new test):
+
+```
+thread 'scripts::tests::sudoers_rule_file_name_is_sudo_includable' panicked at src/scripts.rs:730:13:
+sudo's @includedir skips names containing '.', got: daemoneye-fix._sh
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3088 filtered out
+```
+
+Mutation check (`.` passed through the sanitiser again, test run, restored):
+
+```
+thread 'scripts::tests::sudoers_rule_file_name_is_sudo_includable' panicked at src/scripts.rs:719:13:
+sudo's @includedir skips names containing '.', got: daemoneye-fix.sh
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3088 filtered out
+
+restored:
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3088 filtered out
+```
+
+bug-04-1 DoD still holds after the edit:
+
+```
+$ sed -n '1,/^#\[cfg(test)\]/p' src/scripts.rs | grep -cE 'unsafe \{|\.expect\(|\.unwrap\('
+0
+```
+
+All four gates ran clean after `cargo fmt --all`:
+
+```
+cargo build:      Finished `dev` profile target(s)
+cargo clippy --all-targets --all-features -- -D warnings: Finished `dev` profile target(s)
+cargo test:
+test result: ok. 3079 passed; 0 failed; 10 ignored (lib — ≥3078 required)
+ plus all integration suites ok (2, 6, 19, 16, 45, 13, 2, 4, 0 passed; 0 failed)
+```
+
+Only `src/scripts.rs` (and this phase doc) were touched in this run.
+`install-sudoers` itself remains the architect's live check.
