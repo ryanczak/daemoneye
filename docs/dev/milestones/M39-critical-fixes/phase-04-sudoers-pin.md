@@ -1,7 +1,7 @@
 # Phase 04 — sudoers-pin
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-04-2)
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -210,6 +210,11 @@ its fix lands. Every such test stays in the tree.
       asserts **three** steps in the order directory → copy → rule
       (`install -m 0440 <rule temp> /etc/sudoers.d/daemoneye-<name>`), and
       `install_sudoers` runs that same plan. **The current test asserts two.**
+- [ ] **bug-04-2, every directory is searchable:** the plan from
+      `sudoers_install_steps` sets `root:root 0755` explicitly on **both**
+      `/usr/local/libexec/daemoneye` and `/usr/local/libexec/daemoneye/<euid>`,
+      ahead of the copy, and a plan test asserts both. **The current plan
+      names only the `<euid>` directory.**
 - [ ] **No docs (preservation):** `git diff --stat` for this phase lists no
       `README.md`, `CLAUDE.md`, `src/main.rs` or `docs/` file other than
       this phase doc.
@@ -710,3 +715,27 @@ kill: (-2208382): No such process
 **Commit:** 46b490d3107000a73477d5e91431b05e240e09ce
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-23 (bounced: bug-04-2)
+
+The bug-04-1 fixes are correct, and all four gates pass with 3077 lib tests.
+The **live** `install-sudoers` run on pinky then found a blocker,
+[bug-04-2](bugs/bug-04-2.md). The rule installs and names the root-owned
+copy. But `/usr/local/libexec/daemoneye`, the intermediate directory that
+`install -d` creates on its own, comes out unsearchable by the user.
+`sudo -n <copy>` therefore asks for a password, which breaks every NOPASSWD
+script.
+
+**Green gates and a clean tree are expected here, and they are NOT evidence
+the phase is done.** Already approved, so do not redo it: everything from
+bug-04-1, `is_safe`, `resolve_command` and every policy test. There is
+exactly one change left: the plan must set `root:root 0755` explicitly on
+`/usr/local/libexec/daemoneye` as well as on `<euid>`'s directory, and it
+must also fix that mode on a directory that already exists. The plan test
+must assert it. Start by editing `sudoers_install_steps` in `src/scripts.rs`
+and its test in `install_plan_tests`. You know both from the last run.
+Finish condition: the plan test asserts both directories ahead of the copy,
+the mutation check from the bug is pasted here, and the lib suite reports
+at least 3077 passed. `install-sudoers` itself is still the architect's to
+run live.
+
