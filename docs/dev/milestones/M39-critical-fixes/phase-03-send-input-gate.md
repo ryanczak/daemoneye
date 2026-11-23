@@ -1,7 +1,7 @@
 # Phase 03 — send-input-gate
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-22
 **Depends on:** phase-02 (`call_owner`, already in the tree)
 **Estimated diff:** ~250 lines
@@ -472,3 +472,130 @@ Grep for the spec-pinned literals: `sudo: bool` lands on `Response::ToolCallProm
 `let is_sudo = prompt_says_sudo || command_has_sudo(command);`), and
 `sudo_decision_text` produces the `sudo` word from real newlines and
 single-character keys (`src/daemon/executor/knowledge/shell_input.rs:71`).
+
+### Update — 2026-11-23 01:19 (complete, server-authored)
+
+**Summary:** **Summary:** Resumed phase 03 and finished it. I applied the architect's two-line borrow fix exactly as given (`tool_call_prompt_frame` now takes `&ApprovalRequest<'_>`, and the call site passes `&req`) — nothing else in that function changed — then captured the requested red evidence by mutating `sudo: req.sudo.unwrap_or(false)` to `sudo: false`: exactly the three sudo tests failed (`send_input_types_sudo_on_a_newline_and_the_client_is_asked`, `send_input_types_sudo_through_single_character_keys_and_the_client_is_asked`, `send_input_with_a_plain_sudo_text_is_asked`), and the run went green (23 passed) after restoring the line. The phase's three defects are closed by the code already on disk: an unparseable or unregistered shell id is refused before the probe, screen read and prompt; the approval request carries the shell record's `HostId` so remote input classifies `RemoteShell { host: "pinky" }` while local stays `Command`; and the prompt carries a sudo fact derived from the text the shell will receive, which the client ORs into its decision.
+
+**Notes for review:** All four gates ran clean on the final tree — `cargo fmt --all -- --check` OK, build and clippy (`-D warnings`) clean, full `cargo test` green with the lib suite at **3065 passed**, `tests/hygiene.rs` (16 passed) and `tests/doc_truth.rs` (19 passed) included; preservation tests `prompt_classification_marks_the_users_shell` and `the_local_approval_flow_is_unchanged` pass unchanged. Both the mutation red run and the full gate evidence are pasted verbatim in new Update Log entries, with each acceptance criterion mapped to its covering test. One earlier adaptation to note: `unknown_shell_error` was widened `pub(super)` → `pub(crate)` so the arm's registry-miss refusal shows the standard wording (recorded in the 01:05 progress entry per the authorizations' "outside these" note). Phase doc status and README row remain `in-progress` for the server's completion tail; everything is committed as `fix: gate send_input on shell id validity, host and sudo` and `git status --short` is clean.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test default_server_unchanged ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-c067c2b4b53c4301)
+kill: (2073053): No such process
+kill: (-2073717): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d9a9e35dfb95286a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e2bade347dfc2bf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-fec57f080473704c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-b7049ce40c11944f)
+     Running tests/integration.rs (target/debug/deps/integration-521aa0dc073b7f75)
+     Running tests/isolation.rs (target/debug/deps/isolation-4e1a6c89c680c6e7)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-25580a42c302b017)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a1f9f82f934e25c3)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/phase-03-send-input-gate.md` — +224 -1
+- `src/daemon/executor/dispatch_send_input.rs` — +468 -40
+- `src/daemon/executor/mod.rs` — +3 -8
+
+**Commit:** 608fd422c0272d0dea896db3d139c859d8dd3c4f
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
