@@ -750,3 +750,55 @@ is an inverted guard in `sudoers_install_steps`,
 `base_dir != "/usr/local/libexec/daemoneye"`, which skips the `daemoneye`
 directory in exactly the real case. Both plan tests fail on it (`left: 3,
 right: 4`). Resume keeps the work and points the executor at that line.
+
+### Update — 2026-11-23 15:52 (resumed run, bug-04-2 fix)
+
+Picked up the uncommitted bug-04-2 work. Fixed the one defect: the
+inverted guard `base_dir != "/usr/local/libexec/daemoneye"` in
+`sudoers_install_steps` is gone — the parent directory's
+`install -d -o root -g root -m 0755` step is now always pushed ahead of
+the per-uid directory step, with no comparison against a hard-coded path.
+
+Fix green:
+
+```
+cargo test --lib install_plan
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3086 filtered out; finished in 0.00s
+```
+
+Mutation check (parent push removed, then restored):
+
+```
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3086 filtered out; finished in 0.00s
+```
+
+bug-04-2 DoD (both directories named with explicit root:root 0755 ahead of
+the copy, plan test asserts both): covered by
+`install_plan_copies_before_the_rule` (now 4 steps) and
+`install_plan_sets_mode_on_an_existing_daemoneye_directory`.
+
+bug-04-1 DoD still holds after this edit:
+
+```
+$ sed -n '1,/^#\[cfg(test)\]/p' src/scripts.rs | grep -cE 'unsafe \{|\.expect\(|\.unwrap\('
+0
+$ grep -n 'features' Cargo.toml | grep nix
+nix = { version = "0.31.3", features = ["fs", "user"] }
+```
+
+Grep for the spec-pinned literal `/usr/local/libexec/daemoneye` in
+`src/scripts.rs`: 7 matches (doc comments, `root_script_path`'s base,
+test expectations for the rule, the copy path, and the plan's mkdir
+steps).
+
+All four gates ran clean after `cargo fmt --all`:
+
+```
+cargo build:      Finished `dev` profile target(s)
+cargo clippy -D warnings: Finished `dev` profile target(s)
+cargo test: test result: ok. 3078 passed; 0 failed; 10 ignored (lib)
+ plus all integration suites ok (2, 6, 19, 16, 45, 13, 2, 4, 0 passed; 0 failed)
+```
+
+No file outside the authorized set was touched in this run:
+`src/scripts.rs` only.

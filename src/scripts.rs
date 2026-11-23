@@ -323,43 +323,59 @@ fn sudoers_install_steps(
     rule_tmp_path: &str,
     sudoers_file: &str,
 ) -> Vec<SudoStep> {
-    vec![
-        SudoStep {
-            args: vec![
-                "install".into(),
-                "-d".into(),
-                "-o".into(),
-                "root".into(),
-                "-g".into(),
-                "root".into(),
-                "-m".into(),
-                "0755".into(),
-                copy_dir.into(),
-            ],
-        },
-        SudoStep {
-            args: vec![
-                "install".into(),
-                "-o".into(),
-                "root".into(),
-                "-g".into(),
-                "root".into(),
-                "-m".into(),
-                "0755".into(),
-                source_path.into(),
-                copy_path.into(),
-            ],
-        },
-        SudoStep {
-            args: vec![
-                "install".into(),
-                "-m".into(),
-                "0440".into(),
-                rule_tmp_path.into(),
-                sudoers_file.into(),
-            ],
-        },
-    ]
+    // `install -d -m 0755 copy_dir` creates the missing intermediate
+    // `daemoneye` directory under the command's umask, which sudo-rs sets
+    // restrictively (bug-04-2): the user cannot then search it, so sudo-rs
+    // cannot resolve the granted path and asks for a password. Name both
+    // directories so `-m`/`-o`/`-g` apply to each, and repair an existing
+    // broken-mode parent on re-install.
+    let base_dir = std::path::Path::new(copy_dir)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned());
+    let mut plan = Vec::with_capacity(4);
+    if let Some(base_dir) = base_dir {
+        plan.push(mkdir_root_step(base_dir));
+    }
+    plan.push(mkdir_root_step(copy_dir.to_string()));
+    plan.push(SudoStep {
+        args: vec![
+            "install".into(),
+            "-o".into(),
+            "root".into(),
+            "-g".into(),
+            "root".into(),
+            "-m".into(),
+            "0755".into(),
+            source_path.into(),
+            copy_path.into(),
+        ],
+    });
+    plan.push(SudoStep {
+        args: vec![
+            "install".into(),
+            "-m".into(),
+            "0440".into(),
+            rule_tmp_path.into(),
+            sudoers_file.into(),
+        ],
+    });
+    plan
+}
+
+fn mkdir_root_step(dir: String) -> SudoStep {
+    SudoStep {
+        args: vec![
+            "install".into(),
+            "-d".into(),
+            "-o".into(),
+            "root".into(),
+            "-g".into(),
+            "root".into(),
+            "-m".into(),
+            "0755".into(),
+            dir,
+        ],
+    }
 }
 
 /// Run the plan's `sudo` steps in order, stopping at the first failure.
@@ -871,25 +887,34 @@ mod install_plan_tests {
             "/run/daemoneye/sudoers-1234.tmp",
             "/etc/sudoers.d/daemoneye-fix.sh",
         );
-        assert_eq!(plan.len(), 3, "mkdir, copy, then rule install, in order");
+        assert_eq!(plan.len(), 4, "mkdir daemoneye, mkdir per-uid, copy, rule");
 
+        let expected_mkdir = |dir: &str| -> Vec<String> {
+            vec![
+                "install".into(),
+                "-d".into(),
+                "-o".into(),
+                "root".into(),
+                "-g".into(),
+                "root".into(),
+                "-m".into(),
+                "0755".into(),
+                dir.to_string(),
+            ]
+        };
         assert_eq!(
             plan[0].args,
-            vec![
-                "install",
-                "-d",
-                "-o",
-                "root",
-                "-g",
-                "root",
-                "-m",
-                "0755",
-                "/usr/local/libexec/daemoneye/1000",
-            ],
-            "step 1 creates the per-uid directory root:root mode 0755"
+            expected_mkdir("/usr/local/libexec/daemoneye"),
+            "step 1 creates the daemoneye parent directory root:root 0755, \
+             ahead of the copy"
         );
         assert_eq!(
             plan[1].args,
+            expected_mkdir("/usr/local/libexec/daemoneye/1000"),
+            "step 2 creates the per-uid directory root:root mode 0755"
+        );
+        assert_eq!(
+            plan[2].args,
             vec![
                 "install",
                 "-o",
@@ -901,10 +926,10 @@ mod install_plan_tests {
                 "/home/alice/.daemoneye/scripts/fix.sh",
                 "/usr/local/libexec/daemoneye/1000/fix.sh",
             ],
-            "step 2 copies the script to the root-owned path root:root mode 0755"
+            "step 3 copies the script to the root-owned path root:root mode 0755"
         );
         assert_eq!(
-            plan[2].args,
+            plan[3].args,
             vec![
                 "install",
                 "-m",
@@ -912,7 +937,45 @@ mod install_plan_tests {
                 "/run/daemoneye/sudoers-1234.tmp",
                 "/etc/sudoers.d/daemoneye-fix.sh",
             ],
-            "step 3 installs the rule into /etc/sudoers.d/ mode 0440, after the copy"
+            "step 4 installs the rule into /etc/sudoers.d/ mode 0440, after the copy"
+        );
+    }
+
+    #[test]
+    fn install_plan_sets_mode_on_an_existing_daemoneye_directory() {
+        // bug-04-2: `install -d -m` also applies to directories that already
+        // exist, so a re-install repairs a parent left at a restrictive mode
+        // by an earlier broken install. The plan must therefore name the
+        // parent even when the per-uid directory already exists.
+        let plan = sudoers_install_steps(
+            "/usr/local/libexec/daemoneye/1000",
+            "/home/alice/.daemoneye/scripts/fix.sh",
+            "/usr/local/libexec/daemoneye/1000/fix.sh",
+            "/run/daemoneye/sudoers-1234.tmp",
+            "/etc/sudoers.d/daemoneye-fix.sh",
+        );
+        let mkdir_dirs: Vec<String> = plan
+            .iter()
+            .filter(|step| step.args.iter().any(|a| a == "-d"))
+            .filter_map(|step| step.args.last().cloned())
+            .collect();
+        assert_eq!(
+            mkdir_dirs,
+            vec![
+                "/usr/local/libexec/daemoneye",
+                "/usr/local/libexec/daemoneye/1000"
+            ],
+            "both directories are named with explicit root:root 0755, ahead of the copy"
+        );
+        assert!(
+            plan.iter()
+                .position(|step| step.args.iter().any(|a| a == "-d"))
+                .unwrap()
+                < plan
+                    .iter()
+                    .position(|step| !step.args.iter().any(|a| a == "-d"))
+                    .unwrap(),
+            "both mkdir steps come before the copy and the rule"
         );
     }
 }
