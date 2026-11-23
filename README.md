@@ -1283,7 +1283,7 @@ If the script needs elevated privileges (e.g., `systemctl restart nginx`), creat
 daemoneye install-sudoers restart-nginx.sh
 ```
 
-This copies the script to `/usr/local/libexec/daemoneye/<uid>/restart-nginx.sh`, owned `root:root` with mode `0755`, and writes `/etc/sudoers.d/daemoneye-restart-nginx.sh`:
+This copies the script to `/usr/local/libexec/daemoneye/<uid>/restart-nginx.sh`, owned `root:root` with mode `0755`, and writes `/etc/sudoers.d/daemoneye-restart-nginx_dsh`. The drop-in's name spells `.` as `_d` and `_` as `__`, because sudo's `@includedir` skips any file whose name contains a dot:
 
 ```sudoers
 your-username ALL=(ALL) NOPASSWD: /usr/local/libexec/daemoneye/1000/restart-nginx.sh
@@ -1519,7 +1519,7 @@ The password is never written to disk, stored in a log file, or transmitted to t
 
 ### `sudoers.d` integration
 
-`daemoneye install-sudoers <script>` copies the approved script to a root-owned `/usr/local/libexec/daemoneye/<uid>/<name>` (`root:root`, `0755`) and writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` that pins that copy's exact path — no wildcards, no `ALL`, and never the user-writable original. The ghost policy approves sudo only at that exact path. Re-run the command after editing the script; until then root keeps running the copy taken at install time. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
+`daemoneye install-sudoers <script>` copies the approved script to a root-owned `/usr/local/libexec/daemoneye/<uid>/<name>` (`root:root`, `0755`) and writes a NOPASSWD drop-in to `/etc/sudoers.d/daemoneye-<name>` (`.` spelled `_d`, `_` spelled `__`, since `@includedir` skips dotted names) that pins that copy's exact path — no wildcards, no `ALL`, and never the user-writable original. The ghost policy approves sudo only at that exact path. Re-run the command after editing the script; until then root keeps running the copy taken at install time. Privilege escalation requires both an `auto_approve_scripts` entry in the runbook and a matching sudoers rule; either alone is insufficient.
 
 ### Agent config protection
 

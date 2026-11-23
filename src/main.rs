@@ -112,7 +112,9 @@ enum Commands {
     /// /usr/local/libexec/daemoneye/<uid>/<name> (root:root, 0755), and grants
     /// the current user passwordless sudo for that copy only, so ghost shells
     /// and scheduled jobs can run it with elevated privileges. Writes the rule
-    /// to /etc/sudoers.d/daemoneye-<name> (requires sudo).
+    /// to /etc/sudoers.d/daemoneye-<name>, with `.` written as `_d` and `_` as
+    /// `__`, because sudo skips drop-in files whose names contain a dot
+    /// (requires sudo).
     ///
     /// The rule never names your own writable script. Editing
     /// ~/.daemoneye/scripts/<name> changes nothing that runs as root until you
