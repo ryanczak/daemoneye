@@ -11,9 +11,9 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** M39 phase-03 — send-input-gate
-([`phase-03-send-input-gate.md`](milestones/M39-critical-fixes/phase-03-send-input-gate.md)),
-drafted 2026-11-22, `todo`. Dispatch with `/rexymcp:dispatch phase-03`.
+**Active phase:** M39 phase-04 — sudoers-pin
+([`phase-04-sudoers-pin.md`](milestones/M39-critical-fixes/phase-04-sudoers-pin.md)),
+drafted 2026-11-23, `todo`. Dispatch with `/rexymcp:dispatch phase-04`.
 Phases 01 and 02 are `done`. The scoping decisions in the M39 README still
 need PE sign-off.
 
