@@ -166,20 +166,19 @@ pub fn sudo_scripts_check(inputs: &DoctorInputs) -> Check {
     let drifted: Vec<&crate::scripts::CopyDriftEntry> = inputs
         .sudo_script_copies
         .iter()
-        .filter(|e| {
-            matches!(
-                e.drift,
-                crate::scripts::CopyDrift::Stale | crate::scripts::CopyDrift::Orphaned
-            )
-        })
+        .filter(|e| !matches!(e.drift, crate::scripts::CopyDrift::Current))
         .collect();
     if drifted.is_empty() {
         return Check::ok(
             "sudo scripts",
-            format!(
-                "{} installed sudo copy(ies) match their source",
-                inputs.sudo_script_copies.len()
-            ),
+            if inputs.sudo_script_copies.is_empty() {
+                "no sudo copies installed".to_string()
+            } else {
+                format!(
+                    "{} installed sudo copy(ies) match their source",
+                    inputs.sudo_script_copies.len()
+                )
+            },
         );
     }
     let named: Vec<String> = drifted
@@ -191,7 +190,8 @@ pub fn sudo_scripts_check(inputs: &DoctorInputs) -> Check {
                 match e.drift {
                     crate::scripts::CopyDrift::Stale => "stale",
                     crate::scripts::CopyDrift::Orphaned => "source removed",
-                    _ => "unknown",
+                    crate::scripts::CopyDrift::Unknown => "cannot compare (unreadable)",
+                    crate::scripts::CopyDrift::Current => "current",
                 }
             )
         })
@@ -788,6 +788,11 @@ mod tests {
         let checks = evaluate(&none);
         let row = find(&checks, "sudo scripts");
         assert_eq!(row.level, Level::Ok, "no copies installed is Ok: {row:?}");
+        assert!(
+            !row.detail.contains("0 installed"),
+            "the no-copies detail does not claim a match count: {}",
+            row.detail
+        );
         assert_eq!(exit_code(&checks), 0);
 
         let current = DoctorInputs {
@@ -844,6 +849,40 @@ mod tests {
         assert!(
             fix.contains("daemoneye install-sudoers"),
             "the fix names the install command: {fix}"
+        );
+        assert_eq!(exit_code(&checks), 0, "Warn never changes the exit code");
+    }
+
+    #[test]
+    fn sudo_scripts_check_reports_unreadable_copies() {
+        let inputs = DoctorInputs {
+            sudo_script_copies: vec![crate::scripts::CopyDriftEntry {
+                name: "dark.sh".to_string(),
+                drift: crate::scripts::CopyDrift::Unknown,
+            }],
+            ..inputs_base()
+        };
+        let checks = evaluate(&inputs);
+        let row = find(&checks, "sudo scripts");
+        assert_eq!(
+            row.level,
+            Level::Warn,
+            "an unreadable copy cannot be called matching: {row:?}"
+        );
+        assert!(
+            row.detail.contains("dark.sh"),
+            "the detail names the unreadable copy: {}",
+            row.detail
+        );
+        assert!(
+            !row.detail.contains("match"),
+            "the detail does not claim the copy matches: {}",
+            row.detail
+        );
+        assert!(
+            row.detail.contains("unreadable") || row.detail.contains("cannot compare"),
+            "the detail says the copy could not be compared: {}",
+            row.detail
         );
         assert_eq!(exit_code(&checks), 0, "Warn never changes the exit code");
     }
