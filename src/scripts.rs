@@ -21,7 +21,7 @@ pub fn scripts_dir() -> PathBuf {
 /// passwd lookup is needed. The user cannot write here, so a ghost cannot
 /// swap the content a NOPASSWD rule executes.
 pub fn root_script_path(name: &str) -> PathBuf {
-    root_script_path_for_uid(name, unsafe { libc::geteuid() })
+    root_script_path_for_uid(name, nix::unistd::geteuid().as_raw())
 }
 
 /// `root_script_path` for an explicit uid (tests pass one; callers use
@@ -233,11 +233,11 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
         bail!("Could not determine current username");
     }
 
-    let euid = unsafe { libc::geteuid() };
+    let euid = nix::unistd::geteuid().as_raw();
     let root_copy = root_script_path_for_uid(script_name, euid);
     let copy_dir = root_copy
         .parent()
-        .expect("root_script_path always has a parent directory")
+        .context("root_script_path has no parent directory")?
         .to_string_lossy()
         .into_owned();
     let copy_path = root_copy.to_string_lossy().into_owned();
@@ -257,8 +257,6 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
     let sudoers_file = format!("/etc/sudoers.d/daemoneye-{}", safe_name);
 
     let rule = sudoers_rule(&user, &copy_path);
-    let plan = sudoers_install_steps(&copy_dir, &source_path, &copy_path);
-    run_sudoers_install_plan(&plan)?;
 
     // Write the rule to a private temp file (M1): placed inside ~/.daemoneye
     // (already 0700) with O_EXCL + mode 0600, so another local user cannot
@@ -276,18 +274,12 @@ pub fn install_sudoers(script_name: &str) -> Result<()> {
         let _ = std::fs::remove_file(&tmp_path);
         return Err(e);
     }
-
-    // Install the temp file with correct permissions.  Cleanup of the temp
-    // file happens regardless of install success/failure.
     let tmp_str = tmp_path.to_str().context("rendering temp sudoers path")?;
-    let install_result = std::process::Command::new("sudo")
-        .args(["install", "-m", "0440", tmp_str, &sudoers_file])
-        .status();
+
+    let plan = sudoers_install_steps(&copy_dir, &source_path, &copy_path, tmp_str, &sudoers_file);
+    let plan_result = run_sudoers_install_plan(&plan);
     let _ = std::fs::remove_file(&tmp_path);
-    let install_status = install_result.context("running 'sudo install'")?;
-    if !install_status.success() {
-        bail!("sudo install failed with status {}", install_status);
-    }
+    plan_result?;
 
     // Validate the installed file.
     let visudo_status = std::process::Command::new("sudo")
@@ -319,11 +311,18 @@ pub struct SudoStep {
     pub args: Vec<String>,
 }
 
-/// The ordered `sudo` steps `install_sudoers` runs before writing the rule:
-/// (1) create the per-uid directory root:root mode 0755, (2) copy the script
-/// to the root-owned path root:root mode 0755. The rule install itself
-/// (`sudo install -m 0440 <tmp> <sudoers_file>`) follows the plan.
-fn sudoers_install_steps(copy_dir: &str, source_path: &str, copy_path: &str) -> Vec<SudoStep> {
+/// The ordered `sudo` steps `install_sudoers` runs: (1) create the per-uid
+/// directory root:root mode 0755, (2) copy the script to the root-owned path
+/// root:root mode 0755, (3) install the rule into `/etc/sudoers.d/` mode
+/// 0440. The copy always comes before the rule, so a rule never names a
+/// missing or user-owned file.
+fn sudoers_install_steps(
+    copy_dir: &str,
+    source_path: &str,
+    copy_path: &str,
+    rule_tmp_path: &str,
+    sudoers_file: &str,
+) -> Vec<SudoStep> {
     vec![
         SudoStep {
             args: vec![
@@ -349,6 +348,15 @@ fn sudoers_install_steps(copy_dir: &str, source_path: &str, copy_path: &str) -> 
                 "0755".into(),
                 source_path.into(),
                 copy_path.into(),
+            ],
+        },
+        SudoStep {
+            args: vec![
+                "install".into(),
+                "-m".into(),
+                "0440".into(),
+                rule_tmp_path.into(),
+                sudoers_file.into(),
             ],
         },
     ]
@@ -860,8 +868,10 @@ mod install_plan_tests {
             "/usr/local/libexec/daemoneye/1000",
             "/home/alice/.daemoneye/scripts/fix.sh",
             "/usr/local/libexec/daemoneye/1000/fix.sh",
+            "/run/daemoneye/sudoers-1234.tmp",
+            "/etc/sudoers.d/daemoneye-fix.sh",
         );
-        assert_eq!(plan.len(), 2, "mkdir and copy, in that order");
+        assert_eq!(plan.len(), 3, "mkdir, copy, then rule install, in order");
 
         assert_eq!(
             plan[0].args,
@@ -892,6 +902,17 @@ mod install_plan_tests {
                 "/usr/local/libexec/daemoneye/1000/fix.sh",
             ],
             "step 2 copies the script to the root-owned path root:root mode 0755"
+        );
+        assert_eq!(
+            plan[2].args,
+            vec![
+                "install",
+                "-m",
+                "0440",
+                "/run/daemoneye/sudoers-1234.tmp",
+                "/etc/sudoers.d/daemoneye-fix.sh",
+            ],
+            "step 3 installs the rule into /etc/sudoers.d/ mode 0440, after the copy"
         );
     }
 }

@@ -24,7 +24,7 @@ libc = "0.2.191"
 # because 0.22.1 is already in Cargo.lock (termwiz pins it).
 base64 = "0.23"
 log = "0.4.35"
-nix = { version = "0.31.3", features = ["fs"] }
+nix = { version = "0.31.3", features = ["fs", "user"] }
 # PTY spawn/resize behind a safe API — chosen so no `unsafe` (openpty, forkpty,
 # TIOCSCTTY) enters this crate; STANDARDS.md §1 forbids it in phase work.
 portable-pty = "0.9.0"
