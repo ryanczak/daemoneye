@@ -60,28 +60,34 @@ pub fn screen_tail(text: &str, rows: usize) -> String {
 }
 
 /// The text the sudo decision for `send_input` is made on: `text` with its
-/// real newlines, followed by what the keys type — each single printable
-/// character key as itself, `Space` as a space, `Enter` as a newline. A
-/// key with a prefix (`C-c`), a name the table holds (`F1`, `BTab`), or a
-/// multi-character name types nothing readable, so it contributes nothing;
-/// `sudo` can only arrive through characters the shell will echo as such.
+/// real newlines, followed by what the keys type. Each key is encoded by the
+/// same parser `send_input` sends with (`encode_keys`), so every spelling it
+/// accepts counts the same — `space`/`SPACE`/`Space`, `Enter`/`enter`, and
+/// `C-m`/`C-j`, which end the line. A key that encodes to one byte types
+/// that byte: a line end (`\r`, `\n`) is a newline, a space or tab is a
+/// space, any other printable character is itself. A key that encodes to an
+/// escape sequence or another control byte (`C-c`, `Up`, `F1`) types
+/// nothing readable and contributes nothing, as does a name the parser
+/// rejects (the send refuses it anyway).
 ///
-/// Pure, so the client-side sudo rule can be tested without a shell; the
-/// daemon derives it from the same call fields the panel shows.
+/// `text` is taken as written, not as its paste bytes, so a bracketed paste
+/// (`ESC[200~ … ESC[201~`) cannot hide `sudo` behind its start marker.
+///
+/// Pure, so the client-side sudo rule can be tested without a shell.
 pub fn sudo_decision_text(text: &str, keys: &[String]) -> String {
     let mut out = text.to_string();
     for key in keys {
-        if key == "Space" {
-            out.push(' ');
-        } else if key == "Enter" {
-            out.push('\n');
-        } else {
-            let mut chars = key.chars();
-            if let (Some(c), None) = (chars.next(), chars.next())
-                && !c.is_control()
-            {
-                out.push(c);
-            }
+        let Ok(encoded) = crate::shell::encode_keys(
+            std::slice::from_ref(key),
+            crate::shell::ShellModes::default(),
+        ) else {
+            continue;
+        };
+        match encoded.bytes.as_slice() {
+            [b'\r' | b'\n'] => out.push('\n'),
+            [b' ' | b'\t'] => out.push(' '),
+            [b] if b.is_ascii_graphic() => out.push(char::from(*b)),
+            _ => {}
         }
     }
     out

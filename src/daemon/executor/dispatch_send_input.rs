@@ -20,11 +20,9 @@ async fn resolve_send_input_shell(
         )));
     };
     let record = crate::shell::with_shells(crate::shell::registry(), |store| {
-        store
-            .get(sid.as_str())
-            .map(|r| (r.owner.key(), r.host.clone()))
+        store.get(sid.as_str()).map(|r| r.host.clone())
     });
-    let Some((_owner_key, shell_host)) = record else {
+    let Some(shell_host) = record else {
         return Err(ToolCallOutcome::Result(knowledge::unknown_shell_error(
             crate::shell::registry(),
             shell,
@@ -545,6 +543,65 @@ mod tests {
         assert!(
             !auto_approves(&crate::ipc::Classification::Command, sudo),
             "under ApprovalsConfig::default() a sudo send_input is asked, not auto-approved"
+        );
+    }
+
+    /// Drive `keys` into a local shell owned by this session and return the
+    /// prompt's `sudo` fact.
+    async fn prompt_sudo_for_keys(index: u32, keys: &[&str]) -> bool {
+        let id = insert_owned_shell(index, crate::host::HostId::Local);
+        let call = send_input_call(&format!("si-{index}"), id.as_str(), "", keys);
+        let (outcome, frames) = drive_send_input(&call).await;
+        remove_shell(&id);
+        assert!(outcome.is_err(), "EOF at the prompt, not a silent run");
+        match prompt_of(&frames) {
+            Response::ToolCallPrompt { sudo, .. } => *sudo,
+            other => panic!("not a prompt: {other:?}"),
+        }
+    }
+
+    /// bug-03-1: the key parser lowercases names and `C-m`/`C-j` end the
+    /// line, so every spelling of Space and Enter must reach the sudo
+    /// decision — a different spelling of the same key cannot hide `sudo`.
+    #[tokio::test]
+    async fn send_input_sees_sudo_through_every_spelling_of_space_and_enter() {
+        let (_guard, _home) = crate::test_home();
+        let lower = [
+            "s", "u", "d", "o", "space", "r", "e", "b", "o", "o", "t", "enter",
+        ];
+        let c_m = [
+            "e", "c", "h", "o", "C-m", "s", "u", "d", "o", "Space", "x", "C-m",
+        ];
+        let c_j = [
+            "e", "c", "h", "o", "C-j", "s", "u", "d", "o", "Space", "x", "C-j",
+        ];
+        for (index, keys) in [(908, &lower[..]), (909, &c_m[..]), (910, &c_j[..])] {
+            let sudo = prompt_sudo_for_keys(index, keys).await;
+            assert!(sudo, "the daemon says {keys:?} types sudo");
+            assert!(
+                !auto_approves(&crate::ipc::Classification::Command, sudo),
+                "under ApprovalsConfig::default() {keys:?} is asked, not auto-approved"
+            );
+        }
+    }
+
+    /// bug-03-1 (preservation): the decision reads `text` as written, so a
+    /// bracketed paste's start marker cannot glue itself onto `sudo`.
+    #[test]
+    fn send_input_bracketed_paste_of_sudo_is_still_sudo() {
+        let pasted = crate::shell::paste_bytes(
+            "sudo reboot",
+            Some(true),
+            crate::shell::ShellModes {
+                bracketed_paste: true,
+                application_cursor: false,
+            },
+        )
+        .expect("the shell asked for bracketed paste");
+        assert!(pasted.1, "the text goes out bracketed");
+        assert!(
+            crate::daemon::utils::command_has_sudo(&sudo_text("sudo reboot", &[])),
+            "a bracketed paste of sudo reboot is sudo"
         );
     }
 

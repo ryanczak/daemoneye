@@ -122,16 +122,6 @@ impl SessionApproval {
     /// nothing — no session state, and no config default, can auto-approve
     /// them.
     pub(super) fn auto_approves(&self, class: &crate::ipc::Classification, is_sudo: bool) -> bool {
-        self.auto_approves_for_tests(class, is_sudo)
-    }
-
-    /// `auto_approves` for tests outside this module tree (M39 phase-03):
-    /// the decision logic itself, reached through `stream::approval_for_tests`.
-    pub(crate) fn auto_approves_for_tests(
-        &self,
-        class: &crate::ipc::Classification,
-        is_sudo: bool,
-    ) -> bool {
         match class {
             crate::ipc::Classification::Command => {
                 if is_sudo {

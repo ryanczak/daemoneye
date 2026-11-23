@@ -207,7 +207,7 @@ pub struct TestApprovalForTests(approval::SessionApproval);
 #[cfg(test)]
 impl TestApprovalForTests {
     pub fn auto_approves(&self, class: &crate::ipc::Classification, is_sudo: bool) -> bool {
-        self.0.auto_approves_for_tests(class, is_sudo)
+        self.0.auto_approves(class, is_sudo)
     }
 }
 
