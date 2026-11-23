@@ -739,3 +739,14 @@ the mutation check from the bug is pasted here, and the lib suite reports
 at least 3077 passed. `install-sudoers` itself is still the architect's to
 run live.
 
+
+### Update — 2026-11-23 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** The bug-04-2 run (28 calls, 8 patches) ended as
+`budget_exceeded` only because `gate_retries = 0` turns the first failed
+gate into a stop. The design and both plan tests are right. The one defect
+is an inverted guard in `sudoers_install_steps`,
+`base_dir != "/usr/local/libexec/daemoneye"`, which skips the `daemoneye`
+directory in exactly the real case. Both plan tests fail on it (`left: 3,
+right: 4`). Resume keeps the work and points the executor at that line.
