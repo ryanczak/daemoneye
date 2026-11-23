@@ -1,7 +1,7 @@
 # Phase 04 — sudoers-pin
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -411,3 +411,133 @@ src/scripts.rs:            "/usr/local/libexec/daemoneye/42/fix.sh"
 src/scripts.rs:            "/usr/local/libexec/daemoneye/1000",
 src/scripts.rs:            "/usr/local/libexec/daemoneye/1000/fix.sh",
 ```
+
+### Update — 2026-11-23 03:05 (complete, server-authored)
+
+**Summary:** </think>Working tree clean (git status --short printed nothing). Status left at in-progress. Done — final summary.</think>
+**Summary:** Phase 04 (sudoers-pin) is implemented and committed (`b0e62d35`). `GhostPolicy::is_safe` now approves a sudo command only when its first word is exactly the granted path — locally `crate::scripts::root_script_path(name)` (`/usr/local/libexec/daemoneye/<euid>/<name>`), remotely the tilde path `resolve_command` emits — so bare names, the user-writable scripts dir, other directories, and non-canonical spellings are refused. `resolve_command`'s local sudo branch now resolves to `sudo <root_script_path(name)>`, and `install_sudoers` builds its rule from a root-owned copy installed via a pure, test-covered plan (`install -d … 0755` the per-uid dir, then `install … 0755` the copy, then the rule at 0440), before the rule. Seven existing tests had expectations updated to the new behaviour (named in the Update Log); none were deleted.
+
+**Notes for review:** I deviated from the spec's install-plan sketch in one shape detail — the plan is a `Vec<SudoStep>` (mkdir + copy) with the rule install kept inline in `install_sudoers` as the third step, since the rule is written to a per-PID temp file first and its tests already pin that flow; the ordering invariant (copy before rule) is still asserted. E2E verification: first red test and every other red run were captured in the Update Log before their fixes; all four gate commands ran clean (`cargo test`: 3077 lib + all integration suites green, including `tests/hygiene.rs` and `tests/doc_truth.rs`, which were run, not read); `git diff --stat` touches only the three authorized source files plus the phase doc and milestone README row. No user-facing docs were touched; `install-sudoers` itself was not run for real (needs sudo password — left for your live review). Phase doc status left at `in-progress` for the server's completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test webhook_alert_publishes_one_notice ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test g6_agent_config_roundtrip ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-c067c2b4b53c4301)
+kill: (2176555): No such process
+kill: (-2177285): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-d9a9e35dfb95286a)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e2bade347dfc2bf)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-fec57f080473704c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-b7049ce40c11944f)
+     Running tests/integration.rs (target/debug/deps/integration-521aa0dc073b7f75)
+     Running tests/isolation.rs (target/debug/deps/isolation-4e1a6c89c680c6e7)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-25580a42c302b017)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-a1f9f82f934e25c3)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/README.md` — +1 -1
+- `docs/dev/milestones/M39-critical-fixes/phase-04-sudoers-pin.md` — +135 -1
+- `src/daemon/policy.rs` — +36 -16
+- `src/daemon/policy_tests.rs` — +136 -23
+- `src/scripts.rs` — +172 -14
+
+**Commit:** b0e62d35c96c7e571b0b4b84954d2e93b6a57253
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
