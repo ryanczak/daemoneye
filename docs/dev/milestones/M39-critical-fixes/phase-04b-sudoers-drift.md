@@ -1,7 +1,7 @@
 # Phase 04b — sudoers-drift
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: bug-04b-1)
 **Drafted:** 2026-11-23
 **Depends on:** phase-04 (done)
 **Estimated diff:** ~250 lines
@@ -135,7 +135,12 @@ each red run into the Update Log before its fix lands.
 - [ ] **No refusal (preservation):** the diff to `ghost_exec.rs` adds no
       early return and does not change `cmd`, the approval request or the
       outcome. It only adds the lookup and publish.
-- [ ] **Gates:** all four pass, and the lib suite reports **at least 3085**
+- [ ] **bug-04b-1, unreadable copies:** `sudo_scripts_check_reports_unreadable_copies`
+      passes. An `Unknown` entry gives `Warn`, a detail naming the copy that
+      does not call it matching, and exit code 0. The no-copies `Ok` detail
+      does not read `0 installed …`. **The test does not exist on the
+      current tree.**
+- [ ] **Gates:** all four pass, and the lib suite reports **at least 3086**
       passed (3079 plus at least six new tests).
 
 ## Spec
@@ -401,3 +406,32 @@ kill: (-2503631): No such process
 **Commit:** 241407289d802249024ef7053192151f42e1d748
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-23 (bounced: bug-04b-1)
+
+Everything else is approved. All four gates pass with 3085 lib tests
+passing. The diff stays within the authorized files, and production code
+has no `unsafe`, `unwrap` or `expect`. The ghost path only publishes, and
+`resolve_command` returns absolute paths unchanged, so running it twice is
+harmless. The live probe on pinky passed the main flow: `Ok` while current,
+`Warn` naming the script and `install-sudoers` after an edit, exit code 0,
+and `source removed` after deletion.
+
+The bounce is [bug-04b-1](bugs/bug-04b-1.md), and the change is confined to
+`src/cli/doctor.rs`. `sudo_scripts_check` drops `CopyDrift::Unknown` from
+its warning and counts it as matching, but the phase's constraint says a
+read error must be reported.
+
+**Green gates and a clean tree are expected here, and they are NOT evidence
+the phase is done.** Leave `scripts.rs`, `ghost_exec.rs` and `artifacts.rs`
+alone. There is exactly one change left, in `sudo_scripts_check` and its
+tests: report `Unknown` copies in the `Warn` detail as unreadable, never
+count them as matching, and fix the no-copies wording. Add
+`sudo_scripts_check_reports_unreadable_copies`. Start by editing. Finish
+condition: the new test passes, the mutation check is pasted here, and the
+lib suite reports at least 3086 passed.
+
+(The Update Log's "scope widening" entry names `src/daemon/executor/mod.rs`,
+but the commit does not touch that file. The test imports
+`stale_sudo_notice` directly. Do not add the re-export.)
+
