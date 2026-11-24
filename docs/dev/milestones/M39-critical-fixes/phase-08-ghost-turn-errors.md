@@ -1,7 +1,7 @@
 # Phase 08 — ghost-turn-errors
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -95,27 +95,27 @@ red: today it returns `Ok`.
 Each item is a named test that fails on the current tree, unless marked
 preservation. Paste each red run into the Update Log before its fix.
 
-- [ ] **No `Done`:** `ghost_stream_closed_without_done_fails_the_turn`
+- [x] **No `Done`:** `ghost_stream_closed_without_done_fails_the_turn`
       passes.
-- [ ] **Chat error:** `ghost_chat_error_reaches_the_turn_as_an_error`
+- [x] **Chat error:** `ghost_chat_error_reaches_the_turn_as_an_error`
       passes. A test double's `chat()` returns `Err("boom")`. The turn
       returns an error whose text contains `boom`.
-- [ ] **Abort:** `ghost_chat_task_is_aborted_when_the_turn_ends` passes. A
+- [x] **Abort:** `ghost_chat_task_is_aborted_when_the_turn_ends` passes. A
       double whose `chat()` never finishes holds a value that signals when
       it is dropped. After the turn ends, by timeout or by cancel, the
       signal has fired.
-- [ ] **Cancel:** `ghost_cancel_during_streaming_ends_the_turn_cancelled`
+- [x] **Cancel:** `ghost_cancel_during_streaming_ends_the_turn_cancelled`
       passes. Cancel the run while the stream is open. The collector
       returns well before the 300 s timeout, with a value that says the
       turn was cancelled and no error. Test the collector only; the
       mapping onto `GhostLoopOutcome.cancelled` in `do_ghost_turn` is
       checked at review by reading it.
-- [ ] **Preservation:** `ghost_healthy_stream_turn_is_unchanged` passes.
+- [x] **Preservation:** `ghost_healthy_stream_turn_is_unchanged` passes.
       Tokens, one tool event and then `Done` give the same content, one
       pending call and `Ok`. It is green today.
-- [ ] **Mutation check,** with the output pasted: put `Ok(None) => break`
+- [x] **Mutation check,** with the output pasted: put `Ok(None) => break`
       back, run the no-`Done` test and see it fail, then restore it.
-- [ ] **Gates:** all four pass, and the lib suite reports **at least 3098**
+- [x] **Gates:** all four pass, and the lib suite reports **at least 3098**
       passed (3093 plus five new tests).
 
 ## Spec
@@ -225,3 +225,70 @@ list.
 never needed, so naming the collector-level fixtures, a closed file list
 and an edit order fixes the cause. This is the first failure, so a
 takeover isn't warranted.
+
+### Update — 2026-11-24 (escalation)
+
+**Chosen lever:** session takeover.
+**Rationale:** the refined re-dispatch failed the same way. It hit
+`NoProgressStall` after 200 turns with no edits, and ignored "your first
+tool call writes the test". That is a repeated failure of the same class
+after one refinement, so the spec is not the gap.
+
+### Update — 2026-11-24 (architect takeover: implementation and evidence)
+
+Implemented in `4f2c1dd1`. Only `src/daemon/ghost/turn_helpers.rs` and
+`src/daemon/ghost/turn.rs` changed, plus the `CLAUDE.md` turn-loop bullet.
+
+- `spawn_ghost_chat` starts the model call and returns a `GhostChatTask`
+  guard, which aborts the task on drop, and the receiver. A `chat()` error
+  is sent as `AiEvent::Error` from a cloned sender before the task ends.
+- `collect_ghost_stream_turn` now takes the guard and the cancel signal,
+  and returns `GhostStreamEnd::{Finished, Cancelled}`. A biased `select!`
+  puts the cancel ahead of the stream. `Ok(None)` before `Done` fails the
+  turn with "model stream ended without completing (no Done event)",
+  records a backend error and logs `ghost_error`. The `AiEvent::Error` arm
+  shares that bookkeeping through `record_stream_failure`.
+- `do_ghost_turn` maps `Cancelled` to `outcome.cancelled = true; break`.
+  It returns `Ok`, so `ghost_terminal_state` records `Cancelled`, not
+  `Failed`.
+
+**Red run, before any production change:**
+
+```
+thread '…::ghost_stream_closed_without_done_fails_the_turn' panicked at src/daemon/ghost/turn_helpers.rs:642:26:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3103 filtered out; finished in 0.00s
+```
+
+**Mutation checks.** Each mutation was applied, its test run, and the file
+restored with `cmp`:
+
+```
+== M1 Ok(None) => break         → ghost_stream_closed_without_done_fails_the_turn  FAILED (0.00s)
+== M2 no Error send             → ghost_chat_error_reaches_the_turn_as_an_error    FAILED (0.03s)
+== M3 guard drops, no abort     → ghost_chat_task_is_aborted_when_the_turn_ends    FAILED (5.00s)
+== M4 cancel branch never fires → ghost_cancel_during_streaming_ends_the_turn_cancelled FAILED (10.00s)
+```
+
+**Gates:**
+- `cargo fmt --all -- --check`: clean.
+- `cargo build`: clean.
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- `cargo test`: `test result: ok. 3098 passed; 0 failed; 10 ignored`
+  (lib). Every other suite is ok.
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** escalated
+- **Bounces:** 1 (refined re-dispatch, then takeover)
+- **Executor:** Claude (direct). Both GLM-5.3-Flash runs stalled at 200+
+  read-only turns without a code edit.
+- **Scope deviations:** none. The `CLAUDE.md` turn-loop bullet was stale:
+  it said the sender is moved and never cloned, and it named
+  `trigger_ghost_turn`. It was rewritten as part of the change.
+- **Calibration:** the refinement fixed the misleading criterion, listed
+  the fixtures, closed the file list, and made the red test the first tool
+  call. The re-dispatch still stalled at turn 200 with no edits; it
+  re-read `config`, `run`, `executor`, `scheduler`, `runbook` and
+  `digest`. On this model, a phase that adds a guard type, a new function
+  and an async test double has been beyond reach twice. Past one stall,
+  take over rather than refine again.
