@@ -1,7 +1,7 @@
 # Phase 08 — ghost-turn-errors
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -105,9 +105,11 @@ preservation. Paste each red run into the Update Log before its fix.
       it is dropped. After the turn ends, by timeout or by cancel, the
       signal has fired.
 - [ ] **Cancel:** `ghost_cancel_during_streaming_ends_the_turn_cancelled`
-      passes. Cancel the run while the double is streaming. The collector
-      returns well before the 300 s timeout, and the loop's outcome has
-      `cancelled` set with no error.
+      passes. Cancel the run while the stream is open. The collector
+      returns well before the 300 s timeout, with a value that says the
+      turn was cancelled and no error. Test the collector only; the
+      mapping onto `GhostLoopOutcome.cancelled` in `do_ghost_turn` is
+      checked at review by reading it.
 - [ ] **Preservation:** `ghost_healthy_stream_turn_is_unchanged` passes.
       Tokens, one tool event and then `Done` give the same content, one
       pending call and `Ok`. It is green today.
@@ -146,3 +148,80 @@ preservation. Paste each red run into the Update Log before its fix.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-24 (refined re-dispatch)
+
+**Read this first. The first run stalled after 241 turns with no code
+edits. It spent turns 44–241 reading `SessionCache`, `ScheduleStore`,
+sandboxes, shells and `Briefing`, to build fixtures for driving
+`do_ghost_turn` end to end. No test in this phase drives `do_ghost_turn`.**
+Your break-down entry and task list below are kept; don't rewrite them.
+
+**Every test drives `collect_ghost_stream_turn`, the new spawn function,
+or both.** Their fixtures are all one line each:
+
+- `SessionStore::new()`, plus a ghost entry inserted as
+  `ghost_tool_turn_persists_calls_then_results` in `src/daemon/ghost.rs`
+  does it.
+- `crate::ipc::GhostConfig::default()`.
+- `crate::config::ModelEntry { provider: "anthropic".into(), model:
+  "test".into(), ..Default::default() }`.
+- `RunId::new()` and `RunMetrics::default()`.
+- `let (handle, signal) = RunCancelSignal::new();` then
+  `handle.cancel(CancelReason::UserStop)` to fire it.
+- Take `crate::test_home_guard()` and point `HOME` at a tempdir. `Done`
+  records cost, which writes under `HOME`.
+- Build `AiEvent`s and send them on an `unbounded_channel` yourself. Only
+  the chat-error and abort tests need an `AiClient` double, a small
+  struct in the test module.
+
+**The analogue for item 3** is `ChatTaskGuard` in `src/daemon/stream.rs`.
+It is a drop guard over the chat task's `JoinHandle` that aborts on drop.
+Mirror it for the ghost; don't import the private one.
+
+**Closed file list:**
+- `src/daemon/ghost/turn_helpers.rs`
+- `src/daemon/ghost/turn.rs`
+- the `#[cfg(test)]` module of `src/daemon/ghost.rs`, if you put the tests
+  there
+
+You need no other file.
+
+**Edit order:**
+1. Your **first tool call** writes
+   `ghost_stream_closed_without_done_fails_the_turn`, then run it red.
+2. Fix the `Ok(None)` arm.
+3. Write the spawn function and the guard, and add the cancel parameter
+   to the collector.
+4. Write the other four tests.
+5. Run the mutation check, then the gates.
+
+Read at most **5** files before your first edit, and only from the closed
+list.
+
+### Update — 2026-11-24 06:47 (started)
+
+**Executor:** executor (headless run). Status flipped `todo` → `in-progress`.
+
+**Task list** (from the Spec; each names the acceptance item it closes):
+
+1. Write the first red test `ghost_stream_closed_without_done_fails_the_turn` in `turn_helpers.rs`, run it red (returns `Ok` today) — closes **No `Done`**.
+2. Make `collect_ghost_stream_turn` treat `Ok(None)` before `Done` as an error: bail with a "stream ended without completing" message, log a `ghost_error` event and `metrics.record_backend_error()`, same as the `AiEvent::Error` arm — closes **No `Done`**.
+3. Move the chat spawn in `do_ghost_turn` into its own function taking the `AiClient` as a parameter (test seam), and send the `chat()` error's text as `AiEvent::Error` before the sender drops — closes **Chat error**.
+4. Test `ghost_chat_error_reaches_the_turn_as_an_error`: a double whose `chat()` returns `Err("boom")`; the turn errors with text containing `boom` — closes **Chat error**.
+5. Add a drop guard holding the spawned task's `JoinHandle` so every turn end (Done, error, stream close, timeout, cancel) aborts a still-running chat task — closes **Abort**.
+6. Test `ghost_chat_task_is_aborted_when_the_turn_ends`: a double whose `chat()` never finishes holds a drop signal; after the turn ends the signal has fired — closes **Abort**.
+7. While waiting for stream events, the collector also selects on the run's cancel signal; on cancel, stop the turn, abort the task, set `GhostLoopOutcome.cancelled`, end the loop with `do_ghost_turn` returning `Ok` — closes **Cancel**.
+8. Test `ghost_cancel_during_streaming_ends_the_turn_cancelled`: cancel while the double streams; the collector returns well before the 300 s timeout and the outcome has `cancelled` set with no error — closes **Cancel**.
+9. Preservation test `ghost_healthy_stream_turn_is_unchanged`: `Token`, one tool event, `Done` — same content, one pending call, `Ok`, cost recorded once — closes **Preservation**.
+10. Mutation check: restore `Ok(None) => break`, run the no-`Done` test red, restore — closes **Mutation check**.
+11. Run the four gates, paste outputs plus red runs and mutation check into the end-to-end Update Log entry, commit as one `fix:` commit — closes **Gates**.
+
+### Update — 2026-11-24 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+**Rationale:** the stall came from a spec gap. The Cancel criterion's
+"loop's outcome" sent the executor looking for `do_ghost_turn` fixtures it
+never needed, so naming the collector-level fixtures, a closed file list
+and an edit order fixes the cause. This is the first failure, so a
+takeover isn't warranted.
