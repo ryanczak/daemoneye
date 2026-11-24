@@ -754,10 +754,14 @@ mod tests {
         );
     }
 
-    /// Two complete request frames arrive in one write: each must be parsed
-    /// from its own offset and answered in order, not parsed together. With
-    /// the pre-S4b slice (`&line[..end]`) the second parse sees both frames
-    /// and answers `Error { "malformed frame: …" }`.
+    /// Two complete request frames arrive in one write: each must be answered
+    /// in order with its own response. This is a preservation test, not a
+    /// red/green one: `handle_connection` reads with `read_until`, which
+    /// delivers at most one complete frame per pass, so the frame loop never
+    /// held two frames and the old `&line[..end]` slice (used where
+    /// `&line[offset..end]` was meant) was unreachable — this passes on
+    /// either slice. It guards the pipelining behaviour against a reader
+    /// change that fills its buffer in bulk.
     #[tokio::test]
     async fn host_parses_each_pipelined_frame_from_its_own_offset() {
         let server = start_server().await;

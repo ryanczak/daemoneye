@@ -284,3 +284,12 @@ kill: (-3245736): No such process
 **Commit:** 72daafe5deb974e100a4cb19061f38a97725a5bb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-24 22:17 (started)
+
+Bounce 1 (bug-10-1) started by executor. The only remaining work is the doc
+comment rewrite on `host_parses_each_pipelined_frame_from_its_own_offset`; the
+approved code fix and lagged test are left untouched. Tasks:
+1. Rewrite the test's doc comment to the true preservation-test statement (bug-10-1 DoD 1–2).
+2. Verify: greps, lib suite reports 3104, diff touches only comment lines in host.rs.
+3. Run the four gates; commit as one `docs:` commit.
