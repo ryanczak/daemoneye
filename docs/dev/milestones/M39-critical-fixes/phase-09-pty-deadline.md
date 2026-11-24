@@ -1,7 +1,7 @@
 # Phase 09 — pty-deadline
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -101,29 +101,29 @@ makes `timeout_at` fire even on a socket that is always full.*
 - [x] **Interrupted (preservation):**
       `continuous_output_answered_ctrl_c_returns_the_outcome` passes. It
       is green on the pre-phase reader too.
-- [ ] **Honest deadline code:** `handle_read_timeout`'s name and doc
+- [x] **Honest deadline code:** `handle_read_timeout`'s name and doc
       comment describe what it does. No code claims a data-path check that
       does not exist.
-- [ ] **Amortized cuts:** `output_cap_cuts_are_amortized` passes. 4 KiB
+- [x] **Amortized cuts:** `output_cap_cuts_are_amortized` passes. 4 KiB
       chunks totalling three times the cap make **at most 8** cuts. Red
       today, because the test can't exist yet: the cut logic can't be
       driven on its own.
-- [ ] **Note total:** `output_cap_note_counts_every_dropped_byte` passes.
+- [x] **Note total:** `output_cap_note_counts_every_dropped_byte` passes.
       There is exactly one note, and `N + (output length − note length)`
       equals the bytes sent between the markers. Red today, because the
       note names only the last chunk's overflow.
-- [ ] **Cap:** `output_past_the_cap_keeps_head_tail_and_a_note` passes
+- [x] **Cap:** `output_past_the_cap_keeps_head_tail_and_a_note` passes
       with its duplicate assertion and its vacuous `note_start < cut`
       removed.
-- [ ] **Preservation:** every other test in `src/shell/client_tests.rs`
+- [x] **Preservation:** every other test in `src/shell/client_tests.rs`
       passes unchanged.
-- [ ] **Mutation check,** with the output pasted: make the cut target
+- [x] **Mutation check,** with the output pasted: make the cut target
       exactly `OUTPUT_CAP` again, run `output_cap_cuts_are_amortized`, see
       it fail, then restore it.
-- [ ] **Update Log corrected:** the first run's red-run and mutation
+- [x] **Update Log corrected:** the first run's red-run and mutation
       claims for the two continuous-output tests are struck through or
       corrected in a new entry.
-- [ ] **Gates:** all four pass. The lib suite reports **at least 3103**
+- [x] **Gates:** all four pass. The lib suite reports **at least 3103**
       passed (3101 plus two).
 
 ## Spec
@@ -818,3 +818,49 @@ kill: (-3125624): No such process
 **Commit:** 475486187b8656cc56b2a7b61c40386bf2b9c956
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-09-1](bugs/bug-09-1.md), `false_completion`)
+- **Executor:** GLM-5.3-Flash (thinking on). The first run took 164 turns
+  and the bounce run 118.
+- **Scope deviations:** none. Production changes since `2e1fc318` are
+  `client.rs` (`OUTPUT_CAP`) and `client_read.rs` (`OutputCutter`).
+  `handle_read_timeout` is back to its original name and doc comment.
+- **Verified at review:**
+  - The gates are green, with 3103 lib tests.
+  - The production changes have no `unwrap`, `expect`, `unsafe` or
+    `#[allow]`.
+  - The mutation that sets the cut target to exactly `OUTPUT_CAP` makes
+    `output_cap_cuts_are_amortized` fail with 8193 cuts.
+  - `output_cap_note_counts_every_dropped_byte` was red before the
+    rewrite (`n=45 kept=16777082 sent=33554432`).
+  - The bounce run re-ran the two continuous-output tests on
+    `2e1fc318`. They pass there (6.01 s), which matches the architect's
+    probe. They are now labelled preservation, and the Update Log
+    correction is honest.
+- **Outcome for C3:**
+  - **Deadline half: not a bug.** The architect probed `read_to_marker`
+    over a socket pair kept permanently full. The 1 s deadline still
+    fired, and the call ended at 6.18 s with the grace. Tokio's
+    cooperative budget makes a ready read return `Pending` every so often,
+    and `timeout_at` fires then. No deadline code changed.
+  - **Buffer half: fixed.** Output is capped at 16 MiB. Cuts are
+    amortized: one per roughly 5.3 MiB of new output. The note carries
+    the total dropped.
+- **Nits, not bounced:**
+  - After a cut, `offered_at` is clamped to `buf.len()` rather than
+    shifted by the bytes removed. The chunk that triggers a cut is
+    therefore never offered to the prompt handler. A command that prints
+    more than 16 MiB and then waits at a prompt in exactly that chunk
+    would sit until its deadline. That happens once per cut, so it is
+    rare. Worth a follow-up if prompt detection on huge outputs matters.
+  - `parse_outcome` strips the note's leading CRLF when no head output
+    precedes it. Cosmetic.
+  - `.expect("exactly one note: {text:?}")` is a plain string literal,
+    so `{text:?}` is never formatted.
+- **Calibration:** the audit verified C3 only by reading the code. A
+  drafting-time probe would have shown the deadline half doesn't
+  reproduce, and would have saved the false red runs and one bounce. See
+  the memory note on probing structure-only audit rows.
