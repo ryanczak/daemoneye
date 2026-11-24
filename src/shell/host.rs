@@ -178,7 +178,7 @@ async fn handle_connection<B: ShellBackend>(
                 break;
             };
             let end = offset + rel + 1;
-            let result = handle_line(&mut writer, &backend, &line[..end], &mut chunks).await;
+            let result = handle_line(&mut writer, &backend, &line[offset..end], &mut chunks).await;
             if let Err(e) = result {
                 log::warn!("shell host: {e:#}");
             }
@@ -754,10 +754,51 @@ mod tests {
         );
     }
 
-    /// The subscriber cannot keep up: pushes land while it is still reading
-    /// its handshake, so its next recv reports the drops, and the host writes
-    /// a `Lagged` announcing them, then keeps streaming a normal chunk.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    /// Two complete request frames arrive in one write: each must be parsed
+    /// from its own offset and answered in order, not parsed together. With
+    /// the pre-S4b slice (`&line[..end]`) the second parse sees both frames
+    /// and answers `Error { "malformed frame: …" }`.
+    #[tokio::test]
+    async fn host_parses_each_pipelined_frame_from_its_own_offset() {
+        let server = start_server().await;
+        let client = UnixStream::connect(&server.path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        let mut pipelined = encode(&ShellRequest::Status).unwrap();
+        pipelined.push_str(&encode(&ShellRequest::Status).unwrap());
+        writer.write_all(pipelined.as_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+
+        let expected = ShellResponse::Status {
+            state: ShellState::Running,
+            rows: 24,
+            cols: 80,
+            pid: 0,
+            raw_mode: None,
+            alt_screen: None,
+            foreground: None,
+            programs: Vec::new(),
+        };
+        let first = read_response(&mut reader).await;
+        let second = read_response(&mut reader).await;
+        assert_eq!(
+            server.backend.calls(),
+            vec![Call::Status, Call::Status],
+            "both pipelined requests must be dispatched"
+        );
+        assert_eq!(first, expected, "the first pipelined frame's answer");
+        assert_eq!(second, expected, "the second pipelined frame's answer");
+        drop(writer);
+        tokio::task::yield_now().await;
+    }
+
+    /// The subscriber cannot keep up: the host task is parked on its `recv`
+    /// while the test thread bursts more pushes through than the channel has
+    /// capacity for, so the queue overflows deterministically, and the next
+    /// frame the host surfaces is a `Lagged` announcing the drops, then
+    /// keeps streaming normal chunks.
+    #[tokio::test]
     async fn host_sends_lagged_when_subscriber_falls_behind() {
         let backend = FakeBackend::new();
         let dir = tempfile::tempdir().unwrap();
@@ -773,33 +814,22 @@ mod tests {
         write_request(&mut writer, &ShellRequest::Subscribe).await;
         assert_eq!(read_response(&mut reader).await, ShellResponse::Ok);
 
-        // The subscriber is registered; the host task may not yet have
-        // reached its first recv, but the queue holds only what it has
-        // capacity for. Push one chunk now (it must arrive as a frame), wait
-        // until the host has surfaced it, then push two more in a burst: the
-        // second lands while the subscriber is still reading the first, so
-        // it is dropped from the queue and the next read reports the lag
-        // with its count, followed by streaming that continues.
+        // The channel holds 16 (FakeBackend). The subscriber is registered
+        // but the host task is blocked awaiting its next frame on a
+        // current-thread runtime: it cannot drain the queue while this test
+        // runs the burst. One fill chunk is queued on the Subscribe round
+        // trip; the burst then sends 64 more in a single, never-awaiting
+        // stretch, so the queue overflows by construction and the host's
+        // next recv reports the drop count. Streaming must continue with
+        // normal chunks after the announcement.
         backend.push(b"first".to_vec());
-        assert_eq!(
-            read_response(&mut reader).await,
-            ShellResponse::Chunk {
-                bytes: b"first".to_vec()
-            },
-            "the queued chunk arrives as a normal frame"
-        );
-        // 21 pushes over a capacity-1 channel: the first fills the queue;
-        // every later send drops the one before it, and the last one is
-        // retained. The burst therefore surfaces the chunks it kept and a
-        // `Lagged` announcing the 20 the channel dropped; streaming continues
-        // with a normal chunk after the announcement.
-        let pushes = 21u32;
+        let pushes = 64u32;
         for i in 0..pushes {
             backend.push(vec![b'q'; (i % 7 + 1) as usize]);
         }
         let mut saw_chunk_after_lag = false;
         let mut lagged_skipped: Option<u64> = None;
-        for _ in 0..3u32 {
+        for _ in 0..8u32 {
             match read_response(&mut reader).await {
                 ShellResponse::Chunk { .. } => {
                     if lagged_skipped.is_some() {
