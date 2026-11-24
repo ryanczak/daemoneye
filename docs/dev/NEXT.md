@@ -11,11 +11,11 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** M39 phase-11 — anthropic-usage
-([`phase-11-anthropic-usage.md`](milestones/M39-critical-fixes/phase-11-anthropic-usage.md)),
-drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-11`.
-Phases 01–10 are `done`. The scoping decisions in the M39 README still
-need PE sign-off.
+**Active phase:** M39 phase-12 — panic-hazards
+([`phase-12-panic-hazards.md`](milestones/M39-critical-fixes/phase-12-panic-hazards.md)),
+drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-12`.
+This is the last M39 phase; 01–11 are `done`. The scoping decisions in the
+M39 README still need PE sign-off.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
 that reports `blocked` within its first 2 s probe never produces a notice
