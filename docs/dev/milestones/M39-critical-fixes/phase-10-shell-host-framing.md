@@ -1,7 +1,7 @@
 # Phase 10 — shell-host-framing
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~120 lines
@@ -114,3 +114,22 @@ second response is `Error { "malformed frame: …" }`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-24 19:15 (started)
+
+Phase 10 (shell-host-framing) started by executor. Plan: red test first
+(`host_parses_each_pipelined_frame_from_its_own_offset`), then the slice fix and
+the deterministic lagged test, then the stress loop, mutation check, and gates.
+
+
+### Update — 2026-11-24 (escalation)
+
+**Chosen lever:** resume.
+**Rationale:** half the work is done and correct, and the only obstacle was
+mechanical. The run hit `IdenticalToolCallRepetition` after 46 turns. It
+was re-running `cargo test` one run at a time to build the stress loop. The
+architect ran the rewritten lagged test (current-thread runtime, a 64-push
+burst, up to 8 reads) 300 times, 24 in parallel, on the partial tree:
+**0 failures**. What remains is the S4b fix, the pipelining test (never
+written), the mutation check and the gates. The resume guidance gives the
+exact stress command.
