@@ -1,7 +1,7 @@
 # Phase 10 — shell-host-framing
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~120 lines
@@ -430,3 +430,20 @@ kill: (-3274829): No such process
 **Commit:** 31e1c3e921381fa7193437151563a820b258a295
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-10-1](bugs/bug-10-1.md), minor: the pipelining
+  test's doc comment claimed a red state that cannot happen. The spec bug
+  was the architect's.)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. The first run hard-failed on
+  `IdenticalToolCallRepetition` at turn 46 (it stress-tested one run at a
+  time) and was resumed with an exact batched command. The bounce re-dispatch
+  batched its own stress loop.
+- **Calibration:** S4b is **latent**. `read_until` delivers one frame per
+  pass, so the old slice was unreachable. The fix stays as hardening, and the
+  pipelining test is a preservation test. Q12 is fixed: the architect ran it
+  300 of 300, 24 in parallel. Architect re-run: the two greps print 0 and 1;
+  fmt, build and clippy are clean; the lib suite has 3104 passed.
