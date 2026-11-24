@@ -11,10 +11,10 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** M39 phase-07 — ghost-turn-history
-([`phase-07-ghost-turn-history.md`](milestones/M39-critical-fixes/phase-07-ghost-turn-history.md)),
-drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-07`.
-Phases 01–06 are `done`. The scoping decisions in the M39 README still
+**Active phase:** M39 phase-08 — ghost-turn-errors
+([`phase-08-ghost-turn-errors.md`](milestones/M39-critical-fixes/phase-08-ghost-turn-errors.md)),
+drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-08`.
+Phases 01–07 are `done`. The scoping decisions in the M39 README still
 need PE sign-off.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
