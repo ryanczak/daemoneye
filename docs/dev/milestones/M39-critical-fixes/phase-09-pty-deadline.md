@@ -1,7 +1,7 @@
 # Phase 09 — pty-deadline
 
 **Milestone:** M39 — Critical fixes
-**Status:** in-progress (bounced: [bug-09-1](bugs/bug-09-1.md))
+**Status:** review
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -687,3 +687,134 @@ failed, 10 ignored — the bug report's floor of 3103 is met.
   red-run and mutation claims for the continuous-output tests and relabels
   them preservation tests.
 - **Gates** — all four pass; lib suite 3103 passed.
+
+### Update — 2026-11-24 17:51 (complete, server-authored)
+
+**Summary:** **Summary:** Fixed both defects from bug-09-1. The output-cap cut is now amortized: `OutputCutter` (replacing `drop_middle_of_buf` in `src/shell/client_read.rs`) cuts to `cap − cap/3` (~10.7 MiB), so ~5.3 MiB of new output amortizes each cut instead of re-copying the ~16 MiB tail on every chunk, and it keeps a running dropped total so exactly one note names every dropped byte since the begin marker (the previous note is removed with the region it opened, and framing CRLF/note bytes are never counted as dropped output). `handle_read_timeout`'s name and original doc comment are restored and no data-path deadline code was added. Both new tests went red before their fix (`output_cap_note_counts_every_dropped_byte` failed with `n=45 kept=16777082 sent=33554432`; the cuts test couldn't exist pre-rewrite); the vacuous and duplicate assertions were removed from the cap test. The Update Log carries the correction of the first run's false red-run/mutation claims for the continuous-output tests, relabelled preservation — I re-verified both pass on `2e1fc318` in a throwaway worktree (2 passed, 6.01 s). All four gates pass; the lib suite reports **3103 passed, 0 failed, 10 ignored** (the bug report's floor). The mutation check (cut target pinned at exactly `OUTPUT_CAP`) failed the amortized test with 8193 cuts, then was restored. Committed as `47548618`; tree is clean; status left at `in-progress` for the server's completion tail.
+
+**Notes for review:**
+- Cut target is `cap − cap/CUT_HEADROOM_FRACTION` with fraction 3 (≈10.7 MiB target, ≈5.3 MiB amortization window); the mutation check proves the test pins this — pinning it at `cap` yields 8193 cuts on 3× cap of 4 KiB chunks.
+- The note's `N` excludes the note's own bytes and the single framing CRLF at the cut region's head, which is why `N + (output length − note length)` exactly equals the bytes the command printed between its markers.
+- The head search for the begin marker is incremental (a `searched` watermark with one byte of overlap), so past-cap output does not re-scan old buffer bytes either.
+- The preservation probe on `2e1fc318` ran the continuous-output tests against the old reader by copying the current test file (minus the two new cap tests, which cannot exist there) into a detached worktree — an environment check, not a committed artifact.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test config_pricing_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_entry_format ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_boots_in_throwaway_root ... ok
+test config_contains_webhook_and_stub_url ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-0635aac7b8e1e57e)
+kill: (3124939): No such process
+kill: (-3125624): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-f945a8c3f7582fdb)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-2e19192a3a1354c4)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-7fcecbb518583aee)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-653cf39ac0e64fe2)
+     Running tests/integration.rs (target/debug/deps/integration-849708bb7ff158dd)
+     Running tests/isolation.rs (target/debug/deps/isolation-fbc36518ed3cd563)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-ae0cb5d281522d21)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-55beac99186d4a12)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M39-critical-fixes/phase-09-pty-deadline.md` — +177 -0
+- `src/shell/client_read.rs` — +105 -34
+- `src/shell/client_tests.rs` — +90 -11
+
+**Commit:** 475486187b8656cc56b2a7b61c40386bf2b9c956
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
