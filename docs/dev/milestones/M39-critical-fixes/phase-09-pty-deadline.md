@@ -1,7 +1,7 @@
 # Phase 09 — pty-deadline
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: [bug-09-1](bugs/bug-09-1.md))
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -91,25 +91,40 @@ It is red today: the 15 s wrapper fires.
 
 ## Acceptance criteria
 
-- [ ] **Deadline:** `continuous_output_still_times_out` passes. Red run
-      pasted.
-- [ ] **Interrupted:** `continuous_output_answered_ctrl_c_returns_the_outcome`
-      passes. Output keeps flowing past the deadline. After the `0x03`
-      write, the script sends the end marker with code 130. The error is
-      `CommandTimedOut` with `interrupted` set, and that outcome's exit
-      code is 130. Red today.
-- [ ] **Cap:** `output_past_the_cap_keeps_head_tail_and_a_note` passes. A
-      command prints more than the cap, then its end marker with code 0.
-      The outcome's exit code is 0. Its output is no longer than the cap,
-      contains the `bytes of output dropped here` note, and ends with the
-      last bytes sent. Red today.
-- [ ] **Preservation:** every existing test in `src/shell/client_tests.rs`
+*Refreshed 2026-11-24 after review; see [bug-09-1](bugs/bug-09-1.md). The
+first run's deadline items are reclassified as preservation, because the
+deadline already holds on the pre-phase reader: tokio's cooperative budget
+makes `timeout_at` fire even on a socket that is always full.*
+
+- [x] **Deadline (preservation):** `continuous_output_still_times_out`
+      passes. It is green on the pre-phase reader too.
+- [x] **Interrupted (preservation):**
+      `continuous_output_answered_ctrl_c_returns_the_outcome` passes. It
+      is green on the pre-phase reader too.
+- [ ] **Honest deadline code:** `handle_read_timeout`'s name and doc
+      comment describe what it does. No code claims a data-path check that
+      does not exist.
+- [ ] **Amortized cuts:** `output_cap_cuts_are_amortized` passes. 4 KiB
+      chunks totalling three times the cap make **at most 8** cuts. Red
+      today, because the test can't exist yet: the cut logic can't be
+      driven on its own.
+- [ ] **Note total:** `output_cap_note_counts_every_dropped_byte` passes.
+      There is exactly one note, and `N + (output length − note length)`
+      equals the bytes sent between the markers. Red today, because the
+      note names only the last chunk's overflow.
+- [ ] **Cap:** `output_past_the_cap_keeps_head_tail_and_a_note` passes
+      with its duplicate assertion and its vacuous `note_start < cut`
+      removed.
+- [ ] **Preservation:** every other test in `src/shell/client_tests.rs`
       passes unchanged.
-- [ ] **Mutation check,** with the output pasted: disable the slice-end
-      check on the data path, run `continuous_output_still_times_out`, see
+- [ ] **Mutation check,** with the output pasted: make the cut target
+      exactly `OUTPUT_CAP` again, run `output_cap_cuts_are_amortized`, see
       it fail, then restore it.
-- [ ] **Gates:** all four pass. The lib suite reports **at least 3101**
-      passed (3098 plus three).
+- [ ] **Update Log corrected:** the first run's red-run and mutation
+      claims for the two continuous-output tests are struck through or
+      corrected in a new entry.
+- [ ] **Gates:** all four pass. The lib suite reports **at least 3103**
+      passed (3101 plus two).
 
 ## Spec
 
@@ -139,6 +154,37 @@ It is red today: the 15 s wrapper fires.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-24 (bounce 1, read first)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+that the phase is done.** The first run's commit `ded2f1c2` stays. Keep:
+- `OUTPUT_CAP`;
+- cutting from the middle while keeping the head through the begin
+  marker;
+- the `offered_at` clamp;
+- the three tests from the first run.
+
+What is left is in [bug-09-1](bugs/bug-09-1.md), in this order:
+
+1. Rewrite the cut so it is amortized. Cut well below the cap, so the next
+   cut is far off, and keep a running total of dropped bytes so the one
+   note shows the total. Put it where a test can drive it directly and
+   count its cuts.
+2. Add `output_cap_cuts_are_amortized` and
+   `output_cap_note_counts_every_dropped_byte`, red first. Then clean up
+   the cap test.
+3. Restore `handle_read_timeout`'s name and original doc comment. **Don't
+   add data-path deadline code.** The architect showed the deadline
+   already holds, even on a socket that is always full.
+4. Add an Update Log entry correcting the first run's claims. The two
+   continuous-output tests pass on `2e1fc318`. The mutation that was
+   pasted disabled the timeout arm, not a data-path check.
+
+Closed file list: `src/shell/client_read.rs`, `src/shell/client.rs`,
+`src/shell/client_tests.rs` and this phase doc. Make your first edit
+within **5** reads. **Finish condition:** the lib suite reports at least
+**3103** passed, and both new tests were red before the fix.
 
 ### Update — 2026-11-24 07:37 (started)
 
