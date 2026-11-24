@@ -1,7 +1,7 @@
 # Phase 05 — sudo-detection
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: [bug-05-1](bugs/bug-05-1.md))
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -116,30 +116,56 @@ and `sh -c 's\udo id'`. Run it red.
 Each item is a named test that fails on the current tree, unless marked
 preservation. Paste each red run into the Update Log before its fix.
 
-- [ ] **Spelling:** `sudo_detect_quote_and_backslash_spelling` passes.
-- [ ] **Redirections:** `sudo_detect_after_leading_redirections` passes for
+- [x] **Spelling:** `sudo_detect_quote_and_backslash_spelling` passes.
+- [x] **Redirections:** `sudo_detect_after_leading_redirections` passes for
       `</dev/null sudo id`, `2>/dev/null sudo id`, `>out sudo id`,
       `>>log sudo id` and `&>/dev/null sudo id`.
-- [ ] **Elevators:** `sudo_detect_other_elevators` passes for `su -c id`,
+- [x] **Elevators:** `sudo_detect_other_elevators` passes for `su -c id`,
       `doas id`, `pkexec id`, `run0 id`, `sudoedit /etc/x`, `/bin/su` and
       `\doas id`.
-- [ ] **Wrappers:** `sudo_detect_more_wrappers` passes for `strace sudo id`,
+- [x] **Wrappers:** `sudo_detect_more_wrappers` passes for `strace sudo id`,
       `flock /tmp/l sudo id` and one more command from each wrapper you add.
-- [ ] **Fail closed:** `sudo_detect_unresolvable_command_word_fails_closed`
+- [x] **Fail closed:** `sudo_detect_unresolvable_command_word_fails_closed`
       passes for `/usr/bin/sud? id`, `/usr/bin/s*do id`, `$S id`,
       `${X}udo id` and `"$CMD" id`.
-- [ ] **Preservation:** `sudo_detect_globs_and_expansions_in_arguments_stay_clear`
+- [x] **Preservation:** `sudo_detect_globs_and_expansions_in_arguments_stay_clear`
       passes for the must-stay-false list above. The three existing negative
       tests pass **unchanged**, so their bodies stay out of the diff.
-- [ ] **Preservation:** every existing `sudo_detect_*` / `command_has_sudo_*`
+- [x] **Preservation:** every existing `sudo_detect_*` / `command_has_sudo_*`
       test passes unchanged.
-- [ ] **Mutation check,** with the output pasted: stop removing quotes
+- [x] **Mutation check,** with the output pasted: stop removing quotes
       during word reading, run the spelling test and see it fail, then
       restore it.
-- [ ] **Gates:** all four pass, and the lib suite reports **at least 3092**
+- [x] **Gates:** all four pass, and the lib suite reports **at least 3092**
       passed (3086 plus at least six new tests). If a test in another
       module changes its expectation because a command it uses now counts
       as elevating, name it and give the reason in the Update Log.
+
+### Bounce 1 — [bug-05-1](bugs/bug-05-1.md) (2026-11-23)
+
+The items above were approved at review. Each one below fails on
+`9fa1078e`, except the last two.
+
+- [ ] **Quoted arguments:** `sudo_detect_quoted_arguments_stay_clear`
+      asserts `false` for `find . -name '*.log'`, `grep 'foo.*bar' f`,
+      `sed 's/a*/b/' f`, `awk '$3 > 5' f`, `echo "$HOME"`, `cd "$dir"`,
+      `jq '.[0]' f`, `ls "$d"/*.txt` and `git commit -m 'fix: x'`.
+- [ ] **Shell `-c` operands:** `sudo_detect_shell_c_operand_fails_closed`
+      asserts `true` for `sh -c "$CMD"`, `bash -c 'sud? id'`, `eval "$X"`
+      and `su -c "$X"`. These pass today; keep them passing.
+- [ ] **Wrappers:** `sudo_detect_expansion_behind_a_wrapper_fails_closed`
+      asserts `true` for `nohup $S id`, `env $S id` and `timeout 10 $S id`,
+      and `false` for `timeout 10 ls *.txt`.
+- [ ] **Braces:** `sudo_detect_brace_expansion_fails_closed` asserts `true`
+      for `s{u,}do id`, `{sudo,} id` and `/usr/bin/{su,x}do id`, and
+      `false` for `{ ls; }`.
+- [ ] **Nit:** the duplicated fd-digit check, the `chars[i] == '<'` block
+      straight after `read_shell_word`, is removed.
+- [ ] **Mutation check,** with the output pasted: apply the fail-closed rule
+      to every quoted region again, run the quoted-arguments test and see it
+      fail, then restore it.
+- [ ] **Gates:** all four pass, and the lib suite reports **at least 3096**
+      passed.
 
 ## Spec
 
@@ -451,3 +477,26 @@ kill: (-2614842): No such process
 **Commit:** 9fa1078e07bc35a553f8014d83615f7d0233c9e1
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-23 (bounce 1)
+
+**The four gates are green and the tree is clean, and that is expected. It
+is NOT evidence that the phase is done.** Every item under "Acceptance
+criteria" above the Bounce 1 heading is already approved; do not redo it.
+What remains is exactly the four behaviours in
+[bug-05-1](bugs/bug-05-1.md), plus one nit:
+
+1. Quoted text keeps its scan for the elevator names, but the fail-closed
+   rule applies inside quotes only to a shell's `-c` operand (`sh`, `bash`,
+   `dash`, `zsh`, `ksh`), an `eval` operand, or `su -c`'s operand.
+2. A word behind a wrapper fails closed on an unquoted `$`, but not on a
+   glob.
+3. An unquoted brace expansion (`{…,…}` or `{a..b}`) in command position is
+   unresolvable.
+4. Delete the duplicated fd-digit check.
+
+Write the three red tests first. The shell `-c` test is green today and
+pins existing behaviour. You are done when the lib suite reports at least
+**3096** passed and the bounce's mutation check is pasted. Only
+`src/daemon/utils/sudo.rs` changes. You have 1200 turns; make your first
+edit within 6 tool calls.
