@@ -1,7 +1,7 @@
 # Phase 05 — sudo-detection
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -172,14 +172,14 @@ The items above were approved at review. Each one below fails on
 Everything above was approved at review. The first item fails on
 `bb87a6f9`.
 
-- [ ] **Shell operand spellings:**
+- [x] **Shell operand spellings:**
       `sudo_detect_shell_operand_option_spellings_fail_closed` asserts
       `true` for `bash -lc '$S id'`, `bash -x -c "$X"`, `sh -ec "$X"`,
       `sh -c -- "$X"`, `/bin/sh -c "$X"` and `/bin/bash -c 'sud? id'`.
-- [ ] **Mutation check,** with the output pasted: compare the whole word
+- [x] **Mutation check,** with the output pasted: compare the whole word
       text instead of the basename, run the new test and see it fail, then
       restore it.
-- [ ] **Gates:** all four pass, and the lib suite reports **at least 3097**
+- [x] **Gates:** all four pass, and the lib suite reports **at least 3097**
       passed.
 
 ## Spec
@@ -1026,3 +1026,39 @@ kill: (-2756668): No such process
 **Commit:** a8c99459b41e7c55b77e73a3499584c2cd846d12
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** approved_after_2
+- **Bounces:** 2 ([bug-05-1](bugs/bug-05-1.md), major: quoted arguments
+  failed closed, and `$` behind a wrapper and brace expansion escaped;
+  [bug-05-2](bugs/bug-05-2.md), major: the shell `-c` operand missed option
+  clusters and absolute shell paths)
+- **Executor:** GLM-5.3-Flash (thinking on, medium): 101 turns, then 160
+  for bounce 1 and 45 for bounce 2. Every run wrote its tests red first and
+  pasted a real mutation check.
+- **Scope deviations:** none. Only `src/daemon/utils/sudo.rs` changed. The
+  executor also treated `sh "$CMD"`, with no `-c`, as a code operand, which
+  is safer than the minimum asked for. The architect wrote the README
+  Policy Gating and Security paragraphs and the CLAUDE.md `sudo.rs` entry
+  (`5cc53b35`).
+- **Verified at review:** a 23-case probe across all three rounds passes:
+  12 must-be-true (spellings, redirections, globs, elevators, wrappers,
+  `nohup $S`, braces, `bash -lc`, `/bin/sh -c`, `sh -c --`) and 11
+  must-be-false (quoted regexes, `cd "$dir"`, `ls *.txt`, `FOO=$HOME ls`,
+  `timeout 10 ls *.txt`, `grep -r -i "$x" .`, `{ ls; }`). Gates are green
+  with 3097 lib tests.
+- **Accepted trade-offs:** any argument spelled `bash`, `sh`, `su` or
+  `eval` arms the code check for the next word, so `echo bash "$HOME"`
+  counts as elevating. Behind a wrapper, `timeout 10 cat $FILE` prompts. In
+  chat, a command word written as `"$EDITOR" file` or `./*.sh` always
+  prompts. Each of these only prompts or refuses; none lets a command
+  through.
+- **Calibration:** "fail closed" and "quoted text is rescanned as a
+  command" compose badly, and that was the architect's spec gap behind
+  bug-05-1. A detector spec that adds a fail-closed rule must say which
+  scan contexts it applies in, and must list must-stay-false examples for
+  quoted arguments, not only unquoted ones. Bug-05-2 was the same gap one
+  level down: "the operand after `-c`" pinned one spelling of a construct
+  that has several. Pin every common spelling (`-lc`, `-x -c`, `--`,
+  `/bin/sh`).
