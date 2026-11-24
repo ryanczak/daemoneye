@@ -243,23 +243,99 @@ fn record_ghost_turn_cost(
     });
 }
 
+/// The ghost's in-flight model call. Dropping it aborts the task, so the
+/// provider stream ends with the turn however the turn ends: `Done`, an
+/// error, a closed stream, the timeout or a cancel.
+pub(super) struct GhostChatTask(Option<tokio::task::JoinHandle<()>>);
+
+impl Drop for GhostChatTask {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+/// Start one model call for a ghost turn. A `chat()` error is sent down the
+/// stream as `AiEvent::Error` before the sender drops, so the collector
+/// fails the turn with it rather than reading the closed channel.
+pub(super) fn spawn_ghost_chat(
+    client: Arc<Box<dyn crate::ai::AiClient>>,
+    system: String,
+    messages: Vec<Message>,
+    loaded_tools: Vec<String>,
+) -> (GhostChatTask, tokio::sync::mpsc::UnboundedReceiver<AiEvent>) {
+    let (ai_tx, ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+    let handle = tokio::spawn(async move {
+        let err_tx = ai_tx.clone();
+        if let Err(e) = client
+            .chat(&system, messages, ai_tx, true, loaded_tools)
+            .await
+        {
+            log::error!("Ghost Shell AI error: {}", e);
+            let _ = err_tx.send(AiEvent::Error(e.to_string()));
+        }
+    });
+    (GhostChatTask(Some(handle)), ai_rx)
+}
+
+/// How one ghost turn's model stream ended, when it did not fail.
+#[derive(Debug)]
+pub(super) enum GhostStreamEnd {
+    /// `Done` arrived: the turn's text and its tool calls.
+    Finished {
+        content: String,
+        calls: Vec<PendingCall>,
+    },
+    /// The run was cancelled while the stream was open.
+    Cancelled,
+}
+
+/// Log a turn-ending stream failure the way every failure arm does: a
+/// `ghost_error` event and a backend error on the run's metrics.
+fn record_stream_failure(session_id: &str, turn: usize, error: &str, metrics: &mut RunMetrics) {
+    metrics.record_backend_error();
+    crate::daemon::utils::log_event(
+        "ghost_error",
+        serde_json::json!({
+            "session_id": session_id,
+            "turn": turn,
+            "error": error,
+        }),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn collect_ghost_stream_turn(
     session_id: &str,
     turn: usize,
     ai_rx: &mut tokio::sync::mpsc::UnboundedReceiver<AiEvent>,
+    task: GhostChatTask,
+    cancel: &crate::daemon::run::RunCancelSignal,
     sessions: &SessionStore,
     ghost_config: &crate::ipc::GhostConfig,
     model_entry: &crate::config::ModelEntry,
     run_id: &RunId,
     metrics: &mut RunMetrics,
-) -> Result<(String, Vec<PendingCall>)> {
+) -> Result<GhostStreamEnd> {
+    // Held to the end of the turn: every return below drops it, aborting a
+    // chat task that is still running.
+    let _task = task;
+    let mut cancel = cancel.clone();
     let mut assistant_content = String::new();
     let mut pending_calls = Vec::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(GHOST_TURN_TIMEOUT_SECS);
 
     loop {
-        match tokio::time::timeout_at(deadline, ai_rx.recv()).await {
+        let next = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                log::info!("Ghost Shell {session_id}: cancelled during turn {turn}");
+                return Ok(GhostStreamEnd::Cancelled);
+            }
+            next = tokio::time::timeout_at(deadline, ai_rx.recv()) => next,
+        };
+        match next {
             Err(_elapsed) => {
                 log::error!(
                     "Ghost Shell {}: turn {} timed out after {}s",
@@ -277,7 +353,12 @@ pub(super) async fn collect_ghost_stream_turn(
                 );
                 anyhow::bail!("ghost turn timed out");
             }
-            Ok(None) => break,
+            Ok(None) => {
+                let error = "model stream ended without completing (no Done event)";
+                log::error!("Ghost Shell {session_id}: turn {turn}: {error}");
+                record_stream_failure(session_id, turn, error, metrics);
+                anyhow::bail!("{error}");
+            }
             Ok(Some(ev)) => match ev {
                 AiEvent::Token(t) => {
                     assistant_content.push_str(&t);
@@ -295,15 +376,7 @@ pub(super) async fn collect_ghost_stream_turn(
                     break;
                 }
                 AiEvent::Error(e) => {
-                    metrics.record_backend_error();
-                    crate::daemon::utils::log_event(
-                        "ghost_error",
-                        serde_json::json!({
-                            "session_id": session_id,
-                            "turn": turn,
-                            "error": format!("AI error: {e}"),
-                        }),
-                    );
+                    record_stream_failure(session_id, turn, &format!("AI error: {e}"), metrics);
                     anyhow::bail!("AI error: {}", e);
                 }
                 other => {
@@ -315,7 +388,10 @@ pub(super) async fn collect_ghost_stream_turn(
         }
     }
 
-    Ok((assistant_content, pending_calls))
+    Ok(GhostStreamEnd::Finished {
+        content: assistant_content,
+        calls: pending_calls,
+    })
 }
 
 pub(super) fn log_ghost_tool_batch(session_id: &str, turn: usize, pending_calls: &[PendingCall]) {
@@ -573,4 +649,241 @@ pub(super) fn maybe_nudge_uncovered_steps(
         names.join(", ")
     );
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai::AiEvent;
+
+    struct Fixture {
+        _home: crate::TestHomeGuard,
+        _tmp: tempfile::TempDir,
+        sessions: SessionStore,
+        model_entry: crate::config::ModelEntry,
+        run_id: RunId,
+        metrics: RunMetrics,
+    }
+
+    const SESSION: &str = "ghost-stream-test";
+
+    fn fixture() -> Fixture {
+        let home = crate::test_home_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().expect("ensure dirs");
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert(
+                SESSION.to_string(),
+                SessionEntry::new_ghost(
+                    "stream-test",
+                    crate::ipc::GhostConfig::default(),
+                    GhostTrigger::Webhook,
+                    Vec::new(),
+                ),
+            );
+        });
+        Fixture {
+            _home: home,
+            _tmp: tmp,
+            sessions,
+            model_entry: crate::config::ModelEntry {
+                provider: "anthropic".into(),
+                model: "test".into(),
+                ..Default::default()
+            },
+            run_id: RunId::new(),
+            metrics: RunMetrics::default(),
+        }
+    }
+
+    /// Run the collector over `rx` with this fixture.
+    async fn collect(
+        f: &mut Fixture,
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<AiEvent>,
+        task: GhostChatTask,
+        cancel: &crate::daemon::run::RunCancelSignal,
+    ) -> Result<GhostStreamEnd> {
+        collect_ghost_stream_turn(
+            SESSION,
+            1,
+            rx,
+            task,
+            cancel,
+            &f.sessions,
+            &crate::ipc::GhostConfig::default(),
+            &f.model_entry,
+            &f.run_id,
+            &mut f.metrics,
+        )
+        .await
+    }
+
+    /// Sets its flag when dropped, which is when an aborted task's future
+    /// is torn down.
+    struct DropFlag(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// A model double: `chat()` either fails at once with `fail`, or holds
+    /// a `DropFlag` and never finishes.
+    struct DoubleClient {
+        fail: Option<&'static str>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::ai::AiClient for DoubleClient {
+        async fn chat(
+            &self,
+            _system_prompt: &str,
+            _messages: Vec<Message>,
+            _tx: tokio::sync::mpsc::UnboundedSender<AiEvent>,
+            _use_tools: bool,
+            _loaded_tools: Vec<String>,
+        ) -> Result<()> {
+            if let Some(msg) = self.fail {
+                anyhow::bail!("{msg}");
+            }
+            let _flag = DropFlag(Arc::clone(&self.dropped));
+            std::future::pending::<()>().await;
+            Ok(())
+        }
+    }
+
+    fn double(
+        fail: Option<&'static str>,
+    ) -> (
+        Arc<Box<dyn crate::ai::AiClient>>,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let client: Box<dyn crate::ai::AiClient> = Box::new(DoubleClient {
+            fail,
+            dropped: Arc::clone(&dropped),
+        });
+        (Arc::new(client), dropped)
+    }
+
+    #[tokio::test]
+    async fn ghost_stream_closed_without_done_fails_the_turn() {
+        let mut f = fixture();
+        let (_handle, cancel) = crate::daemon::run::RunCancelSignal::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+        tx.send(AiEvent::Token("partial".into())).expect("send");
+        drop(tx);
+        let result = collect(&mut f, &mut rx, GhostChatTask(None), &cancel).await;
+        let err = result.expect_err("a stream without Done must fail the turn");
+        assert!(
+            err.to_string().contains("without completing"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(f.metrics.backend_errors, 1);
+    }
+
+    #[tokio::test]
+    async fn ghost_chat_error_reaches_the_turn_as_an_error() {
+        let mut f = fixture();
+        let (_handle, cancel) = crate::daemon::run::RunCancelSignal::new();
+        let (client, _) = double(Some("boom"));
+        let (task, mut rx) = spawn_ghost_chat(client, String::new(), Vec::new(), Vec::new());
+        let err = collect(&mut f, &mut rx, task, &cancel)
+            .await
+            .expect_err("a chat() error must fail the turn");
+        assert!(err.to_string().contains("boom"), "unexpected error: {err}");
+        assert_eq!(f.metrics.backend_errors, 1);
+    }
+
+    #[tokio::test]
+    async fn ghost_chat_task_is_aborted_when_the_turn_ends() {
+        let mut f = fixture();
+        let (handle, cancel) = crate::daemon::run::RunCancelSignal::new();
+        let (client, dropped) = double(None);
+        let (task, mut rx) = spawn_ghost_chat(client, String::new(), Vec::new(), Vec::new());
+        // Let the task start and park inside chat(): still running.
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !dropped.load(std::sync::atomic::Ordering::SeqCst),
+            "the chat task must be running before the turn ends"
+        );
+        handle.cancel(crate::daemon::run::CancelReason::UserStop);
+        let end = collect(&mut f, &mut rx, task, &cancel)
+            .await
+            .expect("cancel is not an error");
+        assert!(matches!(end, GhostStreamEnd::Cancelled), "got {end:?}");
+        let aborted = tokio::time::timeout(Duration::from_secs(5), async {
+            while !dropped.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(aborted.is_ok(), "the chat task outlived its turn");
+    }
+
+    #[tokio::test]
+    async fn ghost_cancel_during_streaming_ends_the_turn_cancelled() {
+        let mut f = fixture();
+        let (handle, cancel) = crate::daemon::run::RunCancelSignal::new();
+        // The sender stays alive: the stream is open and silent.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+        tx.send(AiEvent::Token("thinking".into())).expect("send");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            handle.cancel(crate::daemon::run::CancelReason::UserStop);
+        });
+        let started = std::time::Instant::now();
+        let end = tokio::time::timeout(
+            Duration::from_secs(10),
+            collect(&mut f, &mut rx, GhostChatTask(None), &cancel),
+        )
+        .await
+        .expect("a cancel must end the turn well before the 300 s timeout")
+        .expect("a cancel is not an error");
+        assert!(matches!(end, GhostStreamEnd::Cancelled), "got {end:?}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(f.metrics.backend_errors, 0);
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn ghost_healthy_stream_turn_is_unchanged() {
+        let mut f = fixture();
+        let (_handle, cancel) = crate::daemon::run::RunCancelSignal::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
+        for ev in [
+            AiEvent::Token("hello ".into()),
+            AiEvent::Token("world".into()),
+            AiEvent::ToolCall {
+                id: "tc_1".into(),
+                cmd: "df -h".into(),
+                wait: Some(false),
+                interactive: false,
+                thought_signature: None,
+                shell: None,
+                host: None,
+                timeout_secs: None,
+            },
+            AiEvent::Done(crate::ai::TokenBreakdown::default()),
+        ] {
+            tx.send(ev).expect("send");
+        }
+        let end = collect(&mut f, &mut rx, GhostChatTask(None), &cancel)
+            .await
+            .expect("a healthy turn succeeds");
+        let GhostStreamEnd::Finished { content, calls } = end else {
+            panic!("a healthy turn finishes, got {end:?}");
+        };
+        assert_eq!(content, "hello world");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(f.metrics.model_calls, 1, "cost is recorded once");
+        assert_eq!(f.metrics.backend_errors, 0);
+        drop(tx);
+    }
 }

@@ -80,22 +80,19 @@ pub(super) async fn do_ghost_turn(
             break;
         };
 
-        let client_clone = Arc::clone(&client);
-        let system_clone = system.clone();
-        let (ai_tx, mut ai_rx) = tokio::sync::mpsc::unbounded_channel::<AiEvent>();
-        tokio::spawn(async move {
-            if let Err(e) = client_clone
-                .chat(&system_clone, chat_messages, ai_tx, true, loaded_tools)
-                .await
-            {
-                log::error!("Ghost Shell AI error: {}", e);
-            }
-        });
+        let (task, mut ai_rx) = spawn_ghost_chat(
+            Arc::clone(&client),
+            system.clone(),
+            chat_messages,
+            loaded_tools,
+        );
 
-        let (assistant_content, pending_calls) = collect_ghost_stream_turn(
+        let stream_end = collect_ghost_stream_turn(
             session_id,
             turn,
             &mut ai_rx,
+            task,
+            cancel,
             sessions,
             &ghost_config,
             model_entry,
@@ -103,6 +100,15 @@ pub(super) async fn do_ghost_turn(
             metrics,
         )
         .await?;
+        let (assistant_content, pending_calls) = match stream_end {
+            GhostStreamEnd::Finished { content, calls } => (content, calls),
+            // A cancel is not an error: `ghost_terminal_state` would record
+            // an `Err` as `Failed`, ahead of `cancelled`.
+            GhostStreamEnd::Cancelled => {
+                outcome.cancelled = true;
+                break;
+            }
+        };
 
         log_ghost_tool_batch(session_id, turn, &pending_calls);
         let tool_results = execute_ghost_tool_batch(
