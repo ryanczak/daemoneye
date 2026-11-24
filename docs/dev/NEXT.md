@@ -11,10 +11,10 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** M39 phase-05 — sudo-detection
-([`phase-05-sudo-detection.md`](milestones/M39-critical-fixes/phase-05-sudo-detection.md)),
-drafted 2026-11-23, `todo`. Dispatch with `/rexymcp:dispatch phase-05`.
-Phases 01–04b are `done`. The scoping decisions in the M39 README still
+**Active phase:** M39 phase-06 — wrap-remote
+([`phase-06-wrap-remote.md`](milestones/M39-critical-fixes/phase-06-wrap-remote.md)),
+drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-06`.
+Phases 01–05 are `done`. The scoping decisions in the M39 README still
 need PE sign-off.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
