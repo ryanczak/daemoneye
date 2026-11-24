@@ -8,17 +8,21 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use super::{
     CommandTimedOut, EXIT_DRAIN_WINDOW, EXIT_POLL_INTERVAL, EXIT_STATUS_TIMEOUT, GIVE_UP_BYTES,
-    GIVE_UP_QUIET_WINDOW, GIVE_UP_SETTLE_CAP, INTERRUPT_GRACE, OFFER_WINDOW, PROMPT_ROUND_TIMEOUT,
-    PromptGivenUp, PromptReply, ShellExited, status,
+    GIVE_UP_QUIET_WINDOW, GIVE_UP_SETTLE_CAP, INTERRUPT_GRACE, OFFER_WINDOW, OUTPUT_CAP,
+    PROMPT_ROUND_TIMEOUT, PromptGivenUp, PromptReply, ShellExited, status,
 };
 use crate::shell::proto::{ShellRequest, ShellResponse, ShellState, encode};
-use crate::shell::pty::{CommandOutcome, Nonce, end_marker, parse_outcome};
+use crate::shell::pty::{
+    CommandOutcome, Nonce, begin_marker, end_marker, find_subslice, parse_outcome,
+};
 
 /// Handle a timeout slice in [`read_to_marker`]: poll whether the shell has
 /// exited or paused, extend `deadline` if paused, or type Ctrl-C into the PTY
-/// on initial timeout and wait for [`INTERRUPT_GRACE`].
+/// on initial timeout and wait for [`INTERRUPT_GRACE`]. Also run on the data
+/// path when a slice's window ends with data still arriving, so a command
+/// that never stops printing still hits its deadline.
 #[allow(clippy::too_many_arguments)]
-async fn handle_read_timeout<W>(
+async fn handle_slice_end<W>(
     sock: &Path,
     cmd: &str,
     timeout: Duration,
@@ -201,7 +205,7 @@ where
                 return Err(e).with_context(|| format!("reading frame from {}", sock.display()));
             }
             Err(_) => {
-                handle_read_timeout(
+                handle_slice_end(
                     sock,
                     cmd,
                     timeout,
@@ -247,6 +251,10 @@ where
         match frame {
             ShellResponse::Chunk { bytes } => {
                 buf.extend_from_slice(&bytes);
+                let over = buf.len().saturating_sub(OUTPUT_CAP);
+                if over > 0 {
+                    drop_middle_of_buf(&mut buf, nonce, over, &mut offered_at);
+                }
                 if end_seen || {
                     let overlap = end_marker(nonce).len().saturating_sub(1);
                     let scan_from = buf.len().saturating_sub(bytes.len() + overlap);
@@ -308,4 +316,28 @@ where
     .await
     .map_err(|_| anyhow::anyhow!("timed out writing the prompt answer into the shell"))??;
     Ok(())
+}
+
+/// Drop `over` bytes from the middle of `buf` so its length stays at the
+/// [`OUTPUT_CAP`] cap: the head through this run's begin marker is kept
+/// (`parse_outcome` needs it), the most recent tail is kept, and a one-line
+/// note marks where the cut happened, like the `Lagged` arm does. Adjusts
+/// `offered_at` so it never points past `buf.len()`.
+fn drop_middle_of_buf(buf: &mut Vec<u8>, nonce: &Nonce, over: usize, offered_at: &mut usize) {
+    let beg = begin_marker(nonce);
+    let head_end = find_subslice(buf, &beg)
+        .map(|pos| pos + beg.len())
+        .unwrap_or(0);
+    let note = format!("\r\n[daemoneye: {over} bytes of output dropped here]\r\n");
+    let note_len = note.len();
+    let note = note.into_bytes();
+    let keep_tail = OUTPUT_CAP
+        .saturating_sub(head_end + note_len)
+        .min(buf.len());
+    let tail_start = buf.len().saturating_sub(keep_tail);
+    let tail: Vec<u8> = buf[tail_start..].to_vec();
+    buf.truncate(head_end);
+    buf.extend_from_slice(&note);
+    *offered_at = (*offered_at).min(buf.len());
+    buf.extend_from_slice(&tail);
 }

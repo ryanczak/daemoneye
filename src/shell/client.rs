@@ -31,6 +31,13 @@ const PROMPT_ROUND_TIMEOUT: Duration = Duration::from_secs(10);
 /// sizes per chunk.
 const OFFER_WINDOW: usize = 4096;
 
+/// The most output `read_to_marker` accumulates for one command, in bytes.
+/// Past this, bytes from the middle are dropped — the head through the begin
+/// marker and the most recent tail are kept, with a one-line note where the
+/// cut happened — so a command that never stops printing cannot grow the
+/// buffer without bound.
+pub(crate) const OUTPUT_CAP: usize = 16 * 1024 * 1024;
+
 /// How often `read_to_marker` wakes to ask the host whether the shell's
 /// program is still alive. 500 ms keeps a dead shell's failure well under
 /// "a few seconds" while staying off a live command's critical path.

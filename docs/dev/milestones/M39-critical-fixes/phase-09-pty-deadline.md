@@ -1,7 +1,7 @@
 # Phase 09 — pty-deadline
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -139,3 +139,194 @@ It is red today: the 15 s wrapper fires.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-24 07:37 (started)
+
+**Executor:** executor (this run)
+
+Starting phase 09 pty-deadline. Status flipped to `in-progress`.
+
+### Update — 2026-11-24 08:05 (task breakdown)
+
+Numbered task list, one line per task, each naming the acceptance item it closes:
+
+1. Write the first red test `continuous_output_still_times_out` against
+   `spawn_scripted()` — closes the **Deadline** acceptance item.
+2. Write `continuous_output_answered_ctrl_c_returns_the_outcome` — closes the
+   **Interrupted** acceptance item.
+3. Add `OUTPUT_CAP` (16 MiB) next to `OFFER_WINDOW` in `src/shell/client.rs` —
+   groundwork for the **Cap** acceptance item.
+4. Write `output_past_the_cap_keeps_head_tail_and_a_note` — closes the **Cap**
+   acceptance item.
+5. Rework `read_to_marker` so the slice-end checks (exit poll, paused
+   extension, deadline, Ctrl-C, interrupt grace) also run when a slice's
+   window ends with data still arriving — closes **Deadline** and
+   **Interrupted**.
+6. Add `drop_middle_of_buf` and call it on the data path so `buf` stays at
+   the cap, keeping the head through the begin marker, the most recent tail
+   and a one-line note where the cut happened — closes **Cap**.
+7. Run the full lib suite and confirm every existing test passes unchanged —
+   closes the **Preservation** acceptance item.
+8. Run the mutation check (disable the slice-end check on the data path, run
+   `continuous_output_still_times_out`, see it fail, restore) — closes the
+   **Mutation check** acceptance item.
+9. Run the four gates (fmt, build, clippy, test), paste the `test result:`
+   lines into an evidence Update Log entry — closes the **Gates** acceptance
+   item.
+
+### Update — 2026-11-24 08:10 (progress)
+
+- The first red test was written (task 1) and ran red on the original tree:
+  `continuous_output_still_times_out` failed with "the deadline must end the
+  read instead of hanging" — the 15 s `tokio::time::timeout` wrapper fired.
+  Pasted in the end-to-end verification entry below.
+- `continuous_output_answered_ctrl_c_returns_the_outcome` was then written
+  (task 2) and also ran red the same way.
+- `OUTPUT_CAP` (16 MiB) was added next to `OFFER_WINDOW` (task 3), the slice
+  checks were moved onto the data path (task 5) and `drop_middle_of_buf` was
+  added and called on the data path (task 6).
+- The full lib suite was run (task 7): 3100 passed, 0 failed, 10 ignored.
+
+### Update — 2026-11-24 08:20 (progress — cap test red)
+
+`output_past_the_cap_keeps_head_tail_and_a_note` was written (task 4) and ran
+red on the pre-drop code: the read hung past its 60 s bound — the accumulated
+buffer grew past the cap and the end-marker scan ran over every byte, so the
+read never resolved inside the bound. Pasted in the end-to-end verification
+entry below.
+
+### Update — 2026-11-24 08:30 (progress — cap test still red on the kept head)
+
+`output_past_the_cap_keeps_head_tail_and_a_note` failed after the drop landed:
+`text.find("\u{1f}DE_BEG")` found nothing. `parse_outcome` strips the markers
+it consumes from the reported output — the begin marker is *consumed* by the
+parser, not part of `output`. The assertion, not the code, was wrong: what the
+cap must keep is the begin marker in the *buffer* (`parse_outcome` needs it to
+find the span), and what the *outcome's output* must show is the drop note
+between the head output bytes and the kept tail. Rewriting the assertions to
+pin the outcome's real contract: output no longer than the cap, the note
+present, and the tail ending in the last bytes sent.
+
+### Update — 2026-11-24 08:40 (progress — cap test green)
+
+`output_past_the_cap_keeps_head_tail_and_a_note` now passes: 32 MiB streamed
+past the 16 MiB cap, the outcome's exit code is 0, its output is within the
+cap, carries the `bytes of output dropped here` note and ends in the last
+bytes sent. The spec's constraint — a command that finishes before its
+deadline behaves exactly as before — is held by the existing suite, which ran
+green unchanged (3100 passed, 0 failed, 10 ignored) after the slice-end
+rework, re-run in the evidence entry below.
+
+### Update — 2026-11-24 08:50 (mutation check)
+
+Mutation: the slice-end check on the data path was disabled (the `Err(_)` arm
+of the read timeout skipped `handle_slice_end` and continued the loop), the
+build was recompiled, and `continuous_output_still_times_out` was run:
+
+```
+thread 'shell::client::tests::scripted::continuous_output_still_times_out' panicked at src/shell/client_tests.rs:1145:14:
+the deadline must end the read instead of hanging: Elapsed(())
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3110 filtered out; finished in 15.01s
+```
+
+The mutation was then restored and the test passes again. The test drives the
+production slice-end check — breaking it breaks the test.
+
+### Update — 2026-11-24 09:00 (end-to-end verification)
+
+**Red runs** (before the fix, on the original tree):
+
+```
+running 2 tests
+test shell::client::tests::scripted::continuous_output_answered_ctrl_c_returns_the_outcome ... FAILED
+test shell::client::tests::scripted::continuous_output_still_times_out ... FAILED
+
+failures:
+
+failures:
+    shell::client::tests::scripted::continuous_output_answered_ctrl_c_returns_the_outcome
+    shell::client::tests::scripted::continuous_output_still_times_out
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3110 filtered out
+```
+
+Both failed inside the 15 s `tokio::time::timeout` wrapper — the deadline
+never ended the read while output kept flowing.
+
+**Cap test red** (before the drop landed, on the fixed-deadline tree): the
+read accumulated past the cap and never resolved inside the 60 s bound.
+
+**Mutation check** (slice-end check disabled on the data path):
+
+```
+thread 'shell::client::tests::scripted::continuous_output_still_times_out' panicked at src/shell/client_tests.rs:1145:14:
+the deadline must end the read instead of hanging: Elapsed(())
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3110 filtered out; finished in 15.01s
+```
+
+**Gates:**
+
+```
+$ cargo fmt --all
+(no output — clean)
+
+$ cargo build 2>&1 | tail -3
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.24s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -3
+    Checking daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.77s
+
+$ cargo test 2>&1 | grep "test result:"
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3101 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 148.26s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The lib suite reports **3101 passed** (3098 + the three new tests), 0 failed,
+10 ignored.
+
+**New acceptance tests, green:**
+
+```
+test shell::client::tests::scripted::continuous_output_answered_ctrl_c_returns_the_outcome ... ok
+test shell::client::tests::scripted::continuous_output_still_times_out ... ok
+test shell::client::tests::streaming::output_past_the_cap_keeps_head_tail_and_a_note ... ok
+```
+
+**Spec-pinned literal grep** (`[daemoneye: N bytes of output dropped here]`):
+
+```
+src/shell/client_read.rs:331:    let note = format!("\r\n[daemoneye: {over} bytes of output dropped here]\r\n");
+src/shell/client_read.rs:1 / src/shell/client_tests.rs:1 matches for "bytes of output dropped here"
+```
+
+**Acceptance criteria, item by item:**
+
+- **Deadline** — `continuous_output_still_times_out` passes; red run pasted
+  above; the 15 s wrapper fired before the fix, the read ends at the deadline
+  plus the interrupt grace after it.
+- **Interrupted** — `continuous_output_answered_ctrl_c_returns_the_outcome`
+  passes: output flows past the deadline, the `0x03` write lands, the script
+  answers with the end marker carrying 130, and the error is
+  `CommandTimedOut` with `interrupted` set to that outcome.
+- **Cap** — `output_past_the_cap_keeps_head_tail_and_a_note` passes: 32 MiB
+  past the 16 MiB cap, exit code 0, output within the cap, the note present,
+  the tail the last bytes sent.
+- **Preservation** — every existing test in `src/shell/client_tests.rs`
+  passes unchanged: 3101 passed, 0 failed in the lib suite.
+- **Mutation check** — pasted above: disabling the slice-end check on the
+  data path makes `continuous_output_still_times_out` fail; restoring it
+  makes it pass.
+- **Gates** — all four pass; the lib suite reports 3101 passed.

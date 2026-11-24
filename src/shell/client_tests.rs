@@ -1114,6 +1114,123 @@ mod scripted {
             host.backend.signals()
         );
     }
+
+    /// C3: a command that never stops printing must still hit its deadline.
+    /// Output keeps flowing every 100 ms — well inside the 500 ms slice —
+    /// so no read ever times out on its own; the deadline checks must run
+    /// anyway. The command never answers the Ctrl-C, so once the interrupt
+    /// grace passes the error is a bare `CommandTimedOut` with no outcome.
+    #[tokio::test]
+    async fn continuous_output_still_times_out() {
+        let host = spawn_scripted().await;
+        let tx = host.backend.tx.clone();
+        let path = host.path.clone();
+        let client =
+            tokio::spawn(
+                async move { run_command(&path, "yes", "bash", Duration::from_secs(1)).await },
+            );
+        let wrapped = await_input(&host).await;
+        let nonce = nonce_of(&wrapped);
+        let begin = test_begin_marker(&nonce);
+        let publisher = tokio::spawn(async move {
+            let _ = tx.send(begin);
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = tx.send(b"y\r\n".to_vec());
+            }
+        });
+        let started = tokio::time::Instant::now();
+        let err = tokio::time::timeout(Duration::from_secs(15), client)
+            .await
+            .expect("the deadline must end the read instead of hanging")
+            .expect("the client task joins")
+            .expect_err("a command past its deadline must be an error");
+        publisher.abort();
+        let elapsed = started.elapsed();
+        let timed_out = err
+            .downcast_ref::<CommandTimedOut>()
+            .expect("the deadline is a typed CommandTimedOut");
+        assert!(
+            timed_out.interrupted.is_none(),
+            "the command never answered the Ctrl-C, so no outcome is invented: {timed_out:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "the read ends at the deadline plus the grace, well inside 15 s: {elapsed:?}"
+        );
+        let writes = host.backend.writes();
+        assert!(
+            writes
+                .iter()
+                .skip(1)
+                .any(|w| w.as_slice() == [0x03u8].as_slice()),
+            "the deadline typed \\x03 into the shell as input: {writes:?}"
+        );
+    }
+
+    /// C3: output that keeps flowing past the deadline does not stop the
+    /// Ctrl-C from being typed, and a command that answers it with its end
+    /// marker still delivers that real outcome — exit 130 here.
+    #[tokio::test]
+    async fn continuous_output_answered_ctrl_c_returns_the_outcome() {
+        let host = spawn_scripted().await;
+        let tx = host.backend.tx.clone();
+        let path = host.path.clone();
+        let client =
+            tokio::spawn(
+                async move { run_command(&path, "yes", "bash", Duration::from_secs(1)).await },
+            );
+        let wrapped = await_input(&host).await;
+        let nonce = nonce_of(&wrapped);
+        let begin = test_begin_marker(&nonce);
+        let end = test_end_marker(&nonce, 130);
+        let tx2 = tx.clone();
+        let publisher = tokio::spawn(async move {
+            let _ = tx.send(begin);
+            // Keep printing until the client aborts this task: the deadline
+            // must hold while output flows, unlike a quiet stream.
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = tx.send(b"y\r\n".to_vec());
+            }
+        });
+        // The Ctrl-C lands at the deadline; once its write is recorded, the
+        // script answers it the way a SIGINT-handling command does: with both
+        // markers, inside the interrupt grace.
+        let mut answered = false;
+        for _ in 0..500 {
+            if host
+                .backend
+                .writes()
+                .iter()
+                .skip(1)
+                .any(|w| w.as_slice() == [0x03u8].as_slice())
+            {
+                let _ = tx2.send(end);
+                answered = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(answered, "the deadline typed \\x03 into the shell");
+        let err = tokio::time::timeout(Duration::from_secs(15), client)
+            .await
+            .expect("the deadline must end the read instead of hanging")
+            .expect("the client task joins")
+            .expect_err("a command past its deadline must be an error");
+        publisher.abort();
+        let timed_out = err
+            .downcast_ref::<CommandTimedOut>()
+            .expect("the deadline is a typed CommandTimedOut");
+        let outcome = timed_out
+            .interrupted
+            .as_ref()
+            .expect("the command answered the Ctrl-C with a real outcome");
+        assert_eq!(
+            outcome.exit_code, 130,
+            "the interrupted outcome carries the real exit code: {outcome:?}"
+        );
+    }
 }
 
 // ── P1: the linear reader, the bounded offer, the lag gap (M36 phase-15) ──
@@ -1452,6 +1569,66 @@ mod streaming {
             writer.flush().await?;
         }
         Ok(())
+    }
+
+    /// C3: output past `OUTPUT_CAP` is cut from the middle — the head
+    /// through the begin marker and the most recent tail are kept, with a
+    /// one-line note where the cut happened, and the exit code stays real.
+    /// Streams more than the cap in 64-KiB chunks, then the end marker.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn output_past_the_cap_keeps_head_tail_and_a_note() {
+        let (host, tx) = spawn_stream().await;
+        let path = host.path.clone();
+        let client = tokio::spawn(async move {
+            run_command(&path, "yes | head -c 32M", "bash", Duration::from_secs(60)).await
+        });
+        let sent = await_input_with(|| host.backend.writes()).await;
+        let nonce = nonce_of(sent.as_slice());
+        let begin = test_begin_marker(&nonce);
+        let end = test_end_marker(&nonce, 0);
+        let chunk_len = 64 * 1024;
+        let chunks = (OUTPUT_CAP * 2) / chunk_len;
+        let chunk = vec![b'y'; chunk_len];
+        let publisher = tokio::spawn(async move {
+            let _ = tx.send(begin);
+            for _ in 0..chunks {
+                let _ = tx.send(chunk.clone());
+            }
+            let _ = tx.send(end);
+        });
+        let outcome = tokio::time::timeout(Duration::from_secs(60), client)
+            .await
+            .expect("the 60 s bound ends the read instead of hanging")
+            .expect("the client task joins")
+            .expect("a command that ends inside its deadline completes");
+        publisher.await.expect("the script task finishes");
+        assert_eq!(outcome.exit_code, 0, "the scripted exit code is real");
+        assert!(
+            outcome.output.len() <= OUTPUT_CAP,
+            "the output is capped: {} bytes",
+            outcome.output.len()
+        );
+        let text = String::from_utf8_lossy(&outcome.output);
+        let cut = text
+            .find("bytes of output dropped here")
+            .expect("the cut is announced with the drop note");
+        assert!(
+            text.ends_with("yyyy"),
+            "the tail kept is the most recent bytes sent: …{:?}",
+            &text[text.len() - 40..]
+        );
+        let note_start = text
+            .rfind("[daemoneye: ")
+            .expect("the note is one line of its own");
+        assert!(
+            note_start < cut,
+            "the note starts where the bytes were cut: {text:?}"
+        );
+        assert!(
+            outcome.output.len() <= OUTPUT_CAP,
+            "the whole outcome stays within the cap: {} bytes",
+            outcome.output.len()
+        );
     }
 }
 
