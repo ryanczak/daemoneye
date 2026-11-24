@@ -1,7 +1,7 @@
 # Phase 11 — anthropic-usage
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~60 lines
@@ -359,3 +359,16 @@ kill: (-3322280): No such process
 **Commit:** 93a7f0b1860417c6567a98c574cf23d848710bfa
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash. The started entry's "Claude Opus 4.5,
+  headless run" label is a self-misattribution, not a takeover.
+- **Scope deviations:** none. The old test keeps its 1500/800/200 fixture
+  with the corrected meaning (1500 uncached, total 2900). That reads fine.
+- **Calibration:** the first phase drafted under the batching rule (one exact
+  command, run once) finished in 56 turns with no repetition. Architect
+  re-run: the grep prints 0; fmt, build and clippy are clean; the lib suite
+  has 3106 passed.
