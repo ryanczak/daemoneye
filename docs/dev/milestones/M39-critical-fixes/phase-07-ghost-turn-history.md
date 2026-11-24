@@ -1,7 +1,7 @@
 # Phase 07 — ghost-turn-history
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -86,10 +86,10 @@ holds an `assistant` message with both calls and no results, followed by a
 Each item is a named test that fails on the current tree, unless marked
 preservation. Paste each red run into the Update Log before its fix.
 
-- [ ] **Shape:** `ghost_tool_turn_persists_calls_then_results` passes. It
+- [x] **Shape:** `ghost_tool_turn_persists_calls_then_results` passes. It
       also checks that the session file holds the same two lines, in the
       same order.
-- [ ] **Providers:** `ghost_two_turn_history_converts_for_every_provider`
+- [x] **Providers:** `ghost_two_turn_history_converts_for_every_provider`
       passes. It builds a two-turn ghost history through
       `persist_ghost_turn_message`: turn 1 with one tool call and its
       result, turn 2 a plain answer. It converts that history with all
@@ -101,15 +101,15 @@ preservation. Paste each red run into the Update Log before its fix.
         message with that `tool_call_id`.
       - Gemini: a `functionCall` before the `functionResponse` for that
         call.
-- [ ] **Preservation:** `ghost_final_turn_persists_one_message` passes. A
+- [x] **Preservation:** `ghost_final_turn_persists_one_message` passes. A
       turn with no tool calls records exactly one `assistant` message. It
       is green today.
-- [ ] **Item 4:** the Update Log lists every reader of ghost history you
+- [x] **Item 4:** the Update Log lists every reader of ghost history you
       found, each with "changed" or "already fine" and the reason.
-- [ ] **Mutation check,** with the output pasted: put the results back on
+- [x] **Mutation check,** with the output pasted: put the results back on
       the assistant message, run the providers test and see it fail, then
       restore it.
-- [ ] **Gates:** all four pass, and the lib suite reports **at least 3093**
+- [x] **Gates:** all four pass, and the lib suite reports **at least 3093**
       passed (3090 plus three new tests).
 
 ## Spec
@@ -490,3 +490,38 @@ kill: (-2933289): No such process
 **Commit:** 4fc3d6deb5074e7c62edd9d7f1c09818731a7d2b
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (thinking on, medium), 264 turns. The
+  executor's "started" entry names itself "Claude (Opus 4.5, headless
+  dispatch)". That is wrong: the run went through rexyMCP to GLM-5.3-Flash
+  at `brain:8000`.
+- **Scope deviations:** none outside what was authorized. The changes are
+  in `turn_helpers.rs`, `turn.rs` (a `#[cfg(test)]` re-export) and
+  `ghost.rs`, and the visibility of `convert_messages` in `openai.rs` and
+  `gemini.rs`. The `ghost.rs` changes are the item 4 reader fix and the
+  three tests.
+- **Verified at review:**
+  - Gates are green with 3093 lib tests. The production changes have no
+    `unwrap`, `unsafe` or `#[allow]`.
+  - The red run and the mutation check are pasted. With the results put
+    back on the assistant message, the providers test fails exactly as C1
+    describes: the converter drops the calls and duplicates the results.
+  - The reader audit lists 13 readers. It found one real bug:
+    `write_mailbox_on_exit` took `.last()` for both the mailbox result and
+    the run summary. A ghost that ended on a tool turn would have written
+    an empty answer. Both now search back for the last assistant message.
+- **Nits, not bounced:**
+  - `results.extend(gathered)` keeps any result whose id matches no call,
+    which would be an orphan again. It cannot happen today, because every
+    result is built from a call.
+  - The three tests restore `HOME` by hand, although `TestHomeGuard`
+    already restores it on drop. `crate::test_home()` would have been
+    shorter.
+- **Calibration:** asking the executor to list every reader of the changed
+  history shape, with "changed" or "already fine" and a reason for each,
+  found a bug that no named test targeted. It is worth repeating whenever
+  a phase changes a persisted shape.
