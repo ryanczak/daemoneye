@@ -133,11 +133,7 @@ fn read_script_tags(name: &str) -> Vec<String> {
         return Vec::new();
     };
     // Only scan the first 4 KiB — headers always appear near the top.
-    let sample = if content.len() > 4096 {
-        &content[..4096]
-    } else {
-        &content
-    };
+    let sample = crate::util::truncate_chars(&content, 4096);
     let (header, _) = crate::header::parse_comment_header(sample);
     header.tags
 }
@@ -658,6 +654,20 @@ mod tests {
             write_script("plain.sh", "#!/bin/bash\necho hi").unwrap();
             let tags = read_script_tags("plain.sh");
             assert!(tags.is_empty());
+        });
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn read_script_tags_cuts_on_a_char_boundary() {
+        let tmp = std::env::temp_dir().join(format!("de_sc_cut_test_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        with_home(&tmp, || {
+            // 4095 'a's puts byte 4096 inside the two-byte 'é'.
+            let content = format!("{}{}", "a".repeat(4095), "é".repeat(16));
+            write_script("wide.sh", &content).unwrap();
+            let tags = read_script_tags("wide.sh");
+            assert!(tags.is_empty(), "no tags in the filler: {tags:?}");
         });
         let _ = std::fs::remove_dir_all(&tmp);
     }

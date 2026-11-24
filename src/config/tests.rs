@@ -1395,6 +1395,19 @@ fn route_with_an_unknown_key_is_refused() {
     );
 }
 
+/// An empty `[models]` table is a config error, not a later panic in
+/// `resolve_model`.
+#[test]
+fn empty_models_table_is_a_config_error() {
+    let path = std::path::Path::new("config.toml");
+    let err = parse_config_text(path, "[models]\n").expect_err("an empty models map must fail");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("[models]"),
+        "the error names the empty table: {text}"
+    );
+}
+
 /// A config that still sets the removed `[webhook] severity_threshold` fails
 /// to load, and the error shows the equivalent route table.
 #[test]

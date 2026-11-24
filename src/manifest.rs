@@ -384,7 +384,7 @@ pub fn auto_search_context(query: &str, pane_content: &str) -> String {
             // Truncate this section to fit
             let available = CAP.saturating_sub(total_bytes + heading.len() + 2 + TRUNC_NOTE.len());
             if available > 0 {
-                let truncated = &masked[..available.min(masked.len())];
+                let truncated = crate::util::truncate_chars(&masked, available.min(masked.len()));
                 sections.push(format!("{}\n{}{}", heading, truncated, TRUNC_NOTE));
             }
             break;

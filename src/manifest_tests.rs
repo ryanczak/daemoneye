@@ -254,6 +254,26 @@ fn auto_search_respects_4kb_cap() {
 }
 
 #[test]
+fn auto_search_context_cuts_on_a_char_boundary() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || {
+        // Fill the knowledge section so the 4 KiB cap lands mid-character.
+        let filler = "é".repeat(4096);
+        let big_content = format!(
+            "# Runbook: wide-runes\n\n## Alert Criteria\n- disk full\n\n{}",
+            filler
+        );
+        crate::runbook::write_runbook("wide-runes", &big_content).unwrap();
+        let result = auto_search_context("wide-runes", "");
+        assert!(
+            result.len() <= 4096 + 200,
+            "output exceeds 4KB cap: {} bytes",
+            result.len()
+        );
+    });
+}
+
+#[test]
 fn auto_search_empty_on_no_match() {
     let tmp = TmpHome::new();
     with_home(&tmp, || {

@@ -201,6 +201,12 @@ pub fn parse_config_text(path: &std::path::Path, text: &str) -> anyhow::Result<C
     }
     let mut cfg: Config =
         toml::from_str(text).with_context(|| format!("parsing {}", path.display()))?;
+    if cfg.models.is_empty() {
+        anyhow::bail!(
+            "{}: [models] is empty — define at least one model entry",
+            path.display()
+        );
+    }
     cfg.validate_pricing();
     cfg.validate_compaction();
     cfg.validate_hosts();
@@ -220,7 +226,8 @@ impl Config {
             .get(key)
             .or_else(|| self.models.get("default"))
             .or_else(|| self.models.values().next())
-            // INVARIANT: Config::load() validates that at least one model entry is present
+            // INVARIANT: parse_config_text rejects an empty models map, and
+            // Config::load and daemon reload both go through it.
             .expect("models map must not be empty")
     }
 

@@ -1,7 +1,7 @@
 # Phase 12 — panic-hazards
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~180 lines
@@ -147,3 +147,81 @@ It is red today with a subtract-with-overflow panic.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-24 23:33 (started)
+
+**By:** executor (headless run, phase 12 panic-hazards)
+
+Status flipped to in-progress. Beginning the spec's task list: first red test
+(`wrap_words_keeps_a_whitespace_only_line`), then the numbered breakdown entry,
+then C5 → Q1 → Q2.
+
+### Task list
+
+1. Write red test `wrap_words_keeps_a_whitespace_only_line` in
+   `src/cli/viewer.rs`, run it red (panic on subtract-with-overflow). Closes
+   acceptance item "C5 whitespace".
+2. Write red test `wrap_words_fits_wide_chars_at_width_one` in `src/cli/viewer.rs`,
+   run it red (panic at `space_remaining -= w`). Closes acceptance item "C5 wide".
+3. Fix `wrap_words` in `src/cli/viewer_layout.rs`: whitespace-only hard line kept
+   as its one row; over-wide chars get a row of their own without underflow.
+   Closes both C5 items.
+4. Write red test `empty_models_table_is_a_config_error` in `src/config/tests.rs`,
+   run it red (`Ok` today, `resolve_model` panics). Closes acceptance item "Q1".
+5. Fix `parse_config_text` in `src/config/load.rs` to reject an empty `models`
+   map with a message naming `[models]`; make the `INVARIANT` comment true.
+   Closes "Q1".
+6. Write red test `read_script_tags_cuts_on_a_char_boundary` in `src/scripts.rs`
+   `mod tests`, run it red. Closes acceptance item "Q2 scripts".
+7. Write red test `auto_search_context_cuts_on_a_char_boundary` in
+   `src/manifest_tests.rs` (TmpHome harness), run it red. Closes acceptance
+   item "Q2 manifest".
+8. Replace the three byte slices in `src/manifest.rs`, `src/scripts.rs`,
+   `src/sys_context.rs` with `crate::util::truncate_chars`. Closes "Q2 scripts",
+   "Q2 manifest", and the sweep item.
+9. Run the sweep grep once (expect 0), the mutation check once, and the four
+   gates once each. Closes the sweep, mutation, and gates items.
+
+### Update — 2026-11-25 00:10 (end-to-end verification)
+
+**By:** executor (headless run, phase 12 panic-hazards)
+
+Red runs captured during TDD (one per fix, before it landed):
+
+- `wrap_words_keeps_a_whitespace_only_line` —
+  `panicked at src/cli/viewer_layout.rs:222:46: attempt to subtract with overflow`
+  (`test result: FAILED. 0 passed; 1 failed`)
+- `wrap_words_fits_wide_chars_at_width_one` —
+  `panicked at src/cli/viewer_layout.rs:265:21: attempt to subtract with overflow`
+  (`test result: FAILED. 0 passed; 1 failed`)
+- `empty_models_table_is_a_config_error` —
+  `panicked at src/config/tests.rs:1403:53: an empty models map must fail: Config { … models: {}, … }`
+  (`test result: FAILED. 0 passed; 1 failed`)
+- `read_script_tags_cuts_on_a_char_boundary` (old slice restored) —
+  `panicked at src/scripts.rs:137:17: end byte index 4096 is not a char boundary; it is inside 'é' (bytes 4095..4097 of string)`
+  (`test result: FAILED. 0 passed; 1 failed`)
+- `auto_search_context_cuts_on_a_char_boundary` (old slice restored) —
+  `panicked at src/manifest.rs:387:40: end byte index 3997 is not a char boundary; it is inside 'é' (bytes 3996..3998 of string)`
+  (`test result: FAILED. 0 passed; 1 failed`)
+
+Mutation check: the old `rest.len() - trailing_len` subtraction was restored and
+`cargo test --lib wrap_words_keeps_a_whitespace_only_line` failed again with
+`panicked at src/cli/viewer_layout.rs:222:46: attempt to subtract with overflow`
+(`test result: FAILED. 0 passed; 1 failed`); the guard was then re-applied and
+the test passes.
+
+Q2 sweep (run once):
+
+```
+$ grep -nE '&masked\[\.\.|&content\[\.\.4096\]|&path\[\.\.120\]' src/manifest.rs src/scripts.rs src/sys_context.rs | grep -c .
+0
+```
+
+Gates (run once each):
+
+- `cargo fmt --all` — clean.
+- `cargo build` — `Finished \`dev\` profile … in 8.54s`, zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` —
+  `Finished \`dev\` profile … in 13.90s`, zero warnings.
+- `cargo test --lib` — `test result: ok. 3111 passed; 0 failed; 10 ignored`.
+- full `cargo test` — every suite `test result: ok`, no failures.

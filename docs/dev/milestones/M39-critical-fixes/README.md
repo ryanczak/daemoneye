@@ -95,7 +95,7 @@ at drafting.
 | 09 | pty-deadline ([phase-09-pty-deadline.md](phase-09-pty-deadline.md)) — `client_read.rs` checks the slice and command deadlines before every read, so continuous output still times out and interrupts. The output buffer is capped | C3 | done |
 | 10 | shell-host-framing ([phase-10-shell-host-framing.md](phase-10-shell-host-framing.md)) — the shell host parses each pipelined frame from its own offset. `host_sends_lagged_when_subscriber_falls_behind` stops racing | S4b Q12 | done           |
 | 11 | anthropic-usage ([phase-11-anthropic-usage.md](phase-11-anthropic-usage.md)) — `parse_anthropic_start_usage` reports `input_tokens` as Anthropic sends it, so cached turns cost what they cost | C4 | done      |
-| 12 | panic-hazards ([phase-12-panic-hazards.md](phase-12-panic-hazards.md)) — `wrap_words` handles whitespace-only lines and wide characters at width 1. An empty `[models]` table is a config error, not a panic. The audit's byte-slice sites use `truncate_chars` | C5 Q1 Q2 | todo |
+| 12 | panic-hazards ([phase-12-panic-hazards.md](phase-12-panic-hazards.md)) — `wrap_words` handles whitespace-only lines and wide characters at width 1. An empty `[models]` table is a config error, not a panic. The audit's byte-slice sites use `truncate_chars` | C5 Q1 Q2 | in-progress |
 
 ## Notes
 

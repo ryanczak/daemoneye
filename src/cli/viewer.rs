@@ -1096,6 +1096,24 @@ mod tests {
     }
 
     #[test]
+    fn wrap_words_keeps_a_whitespace_only_line() {
+        assert_eq!(wrap_words("   ", 10), vec!["   "]);
+        assert_eq!(wrap_words(" \t ", 2), vec![" \t "]);
+    }
+
+    #[test]
+    fn wrap_words_fits_wide_chars_at_width_one() {
+        assert_eq!(wrap_words("中文字", 1), vec!["中", "文", "字"]);
+        let rows = wrap_words("a", 0);
+        let joined: String = rows
+            .iter()
+            .filter(|r| !r.is_empty())
+            .map(String::as_str)
+            .collect();
+        assert_eq!(joined, "a", "no char dropped: {rows:?}");
+    }
+
+    #[test]
     fn output_rows_keep_hard_wrap() {
         let token = "y".repeat(30);
         let rows = layout_blocks(&[output_block(&token, 2)], 10);

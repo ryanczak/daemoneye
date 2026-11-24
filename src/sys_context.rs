@@ -92,7 +92,7 @@ fn curated_env() -> String {
     // Include PATH but truncate it — the full value can be hundreds of tokens.
     if let Ok(path) = std::env::var("PATH") {
         let truncated = if path.len() > 120 {
-            format!("{}…", &path[..120])
+            format!("{}…", crate::util::truncate_chars(&path, 120))
         } else {
             path
         };

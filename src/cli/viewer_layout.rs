@@ -219,6 +219,10 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
         let leading_len = hard_line.len() - hard_line.trim_start().len();
         let trailing_len = hard_line.len() - hard_line.trim_end().len();
         let (leading, rest) = hard_line.split_at(leading_len);
+        if hard_line.trim().is_empty() {
+            out.push(hard_line.to_string());
+            continue;
+        }
         let (body, trailing) = rest.split_at(rest.len() - trailing_len);
         let leading_cols = str_width(leading);
 
@@ -257,12 +261,16 @@ pub(super) fn wrap_words(text: &str, width: usize) -> Vec<String> {
                 for ch in tok.chars() {
                     let w = char_width(ch);
                     if space_remaining < w {
-                        flush(&mut line, &mut out, &mut has_content);
-                        space_remaining = width;
+                        // A char wider than the whole row cannot be split; it
+                        // gets a row of its own, which may exceed the width.
+                        if has_content {
+                            flush(&mut line, &mut out, &mut has_content);
+                            space_remaining = width;
+                        }
                     }
                     line.push(ch);
                     has_content = true;
-                    space_remaining -= w;
+                    space_remaining = space_remaining.saturating_sub(w);
                 }
                 continue;
             }
