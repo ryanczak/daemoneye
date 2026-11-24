@@ -799,3 +799,100 @@ The test cases are in [bug-05-2](bugs/bug-05-2.md). Write the test red
 first. You are done when the lib suite reports at least **3097** passed and
 the mutation check is pasted. You have 1200 turns; make your first edit
 within 5 tool calls.
+
+### Update — 2026-11-24 04:30 (breakdown, bounce 2)
+
+Task list (numbered, each closes a bounce-2 acceptance item):
+
+1. Write red test `sudo_detect_shell_operand_option_spellings_fail_closed`
+   (Shell operand spellings item); run it red. Closes Shell operand spellings.
+2. Fix `code_operand` tracking in `scan_shell_command`: a shell counts by
+   basename (new `is_shell_command_word`, covering `/bin/sh`, `/bin/bash`)
+   and an option word (any word starting with `-`) never ends the code
+   operand. Closes Shell operand spellings.
+3. Mutation check: compare the whole word text instead of the basename in
+   `is_shell_command_word`, run the new test, paste the failure, restore.
+   Closes Mutation check.
+4. Run the four gates; confirm the lib suite reports at least 3097 passed;
+   commit as one `fix:` commit. Closes Gates.
+
+### Update — 2026-11-24 04:20 (red run — bounce 2 test, before any production change)
+
+`sudo_detect_shell_operand_option_spellings_fail_closed` written first; it
+fails on `bb87a6f9` as bug-05-2 requires:
+
+```
+---- daemon::utils::sudo::tests::sudo_detect_shell_operand_option_spellings_fail_closed stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_shell_operand_option_spellings_fail_closed' (2728090) panicked at src/daemon/utils/sudo.rs:889:13:
+a shell operand fails closed however the shell and its options are spelled: "bash -lc '$S id'"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_shell_operand_option_spellings_fail_closed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3106 filtered out; finished in 0.00s
+```
+
+### Update — 2026-11-24 04:40 (mutation check — bounce 2)
+
+Mutation: `is_shell_command_word` compared the whole word text instead of the
+basename (the `Path::file_name` reduction removed). The new test fails as
+required — `/bin/sh` is no longer recognised as a shell, so its `-c` operand
+is a plain quoted argument and does not fail closed:
+
+```
+---- daemon::utils::sudo::tests::sudo_detect_shell_operand_option_spellings_fail_closed stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_shell_operand_option_spellings_fail_closed' (2730911) panicked at src/daemon/utils/sudo.rs:895:13:
+a shell operand fails closed however the shell and its options are spelled: "/bin/sh -c \"$X\""
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_shell_operand_option_spellings_fail_closed
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3106 filtered out; finished in 0.00s
+```
+
+Restored the basename reduction; all 28 `detect_` tests are green again.
+
+### Update — 2026-11-24 04:55 (end-to-end verification — bounce 2)
+
+Gates run against the real tree, in order:
+
+```
+$ cargo fmt --all
+FMT clean
+
+$ cargo build 2>&1 | tail -2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.50s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.59s
+
+$ cargo test 2>&1 | grep "test result:"
+test result: ok. 3097 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 142.94s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.24s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.22s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Lib suite reports **3097 passed** — the bounce's required floor (3096 + 1 new
+test). No test in another module changed its expectation; every suite is green
+unchanged.
+
+Bounce acceptance evidence, item by item:
+
+- **Shell operand spellings:** `sudo_detect_shell_operand_option_spellings_fail_closed`
+  — red run (04:20), green after `code_operand` tracks a shell by basename
+  (`is_shell_command_word`, covering `/bin/sh`, `/bin/bash`) and lets any
+  option word (`-x`, `-ec`, `-lc`, `--`) pass without ending the code operand.
+- **Mutation check:** pasted above (04:40) — whole-word comparison instead of
+  basename → the new test fails on `/bin/sh -c "$X"` → restored, green again.
+

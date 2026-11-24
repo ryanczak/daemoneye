@@ -204,6 +204,16 @@ fn is_elevator(word: &str) -> bool {
     ELEVATORS.contains(&basename)
 }
 
+/// Is `word` (already dequoted) a shell that runs a code operand? By
+/// basename, so `/bin/sh` and `/usr/bin/bash` count too (bug-05-2).
+fn is_shell_command_word(word: &str) -> bool {
+    let basename = std::path::Path::new(word)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(word);
+    matches!(basename, "sh" | "bash" | "dash" | "zsh" | "ksh")
+}
+
 /// A leading `NAME=value` assignment in command position keeps the next
 /// word there too: `FOO=1 sudo id`.
 fn is_assignment(word: &str) -> bool {
@@ -373,10 +383,13 @@ fn scan_shell_command(cmd: &str, fail_closed: bool) -> bool {
                         at_command = false;
                     }
                 }
-                code_operand = matches!(
-                    word.text.as_str(),
-                    "sh" | "bash" | "dash" | "zsh" | "ksh" | "su" | "eval"
-                ) || (word.text == "-c" && code_operand);
+                if word.text.starts_with('-') {
+                    // An option word never ends the code operand: `bash
+                    // -x -c "$X"`, `sh -ec "$X"`, `sh -c -- "$X"` (bug-05-2).
+                } else {
+                    code_operand = is_shell_command_word(&word.text)
+                        || matches!(word.text.as_str(), "su" | "eval");
+                }
             }
         }
     }
@@ -869,6 +882,29 @@ mod tests {
             !command_has_sudo("{ ls; }"),
             "preservation: a bare {{ keyword stays clear: '{{ ls; }}'"
         );
+    }
+
+    /// M39 phase-05 bounce 2 (bug-05-2): a shell's `-c` operand fails
+    /// closed however the shell and its options are spelled — a full path
+    /// (`/bin/sh`, `/bin/bash`) and bundled or separated option letters
+    /// (`-lc`, `-ec`, `-x -c`) and `--` do not end the code operand.
+    /// Test written red.
+    #[test]
+    fn sudo_detect_shell_operand_option_spellings_fail_closed() {
+        for cmd in [
+            "bash -lc '$S id'",
+            "bash -x -c \"$X\"",
+            "sh -ec \"$X\"",
+            "sh -c -- \"$X\"",
+            "/bin/sh -c \"$X\"",
+            "/bin/bash -c 'sud? id'",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "a shell operand fails closed however the shell and its options are \
+                 spelled: {cmd:?}"
+            );
+        }
     }
 
     #[test]
