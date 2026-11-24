@@ -294,7 +294,7 @@ impl GeminiClient {
         }
     }
 
-    fn convert_messages(&self, messages: Vec<Message>) -> Vec<Value> {
+    pub(crate) fn convert_messages(&self, messages: Vec<Message>) -> Vec<Value> {
         let mut result = Vec::new();
         for m in messages {
             if let Some(trs) = m.tool_results {

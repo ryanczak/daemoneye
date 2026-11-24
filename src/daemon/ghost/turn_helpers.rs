@@ -449,7 +449,7 @@ pub(super) async fn execute_ghost_tool_batch(
     Ok(tool_results)
 }
 
-pub(super) fn persist_ghost_turn_message(
+pub(crate) fn persist_ghost_turn_message(
     session_id: &str,
     sessions: &SessionStore,
     assistant_content: String,
@@ -457,26 +457,61 @@ pub(super) fn persist_ghost_turn_message(
     tool_results: Vec<ToolResult>,
     turn: usize,
 ) {
-    let assistant_msg = Message {
-        role: "assistant".to_string(),
-        content: assistant_content,
-        tool_calls: if pending_calls.is_empty() {
-            None
-        } else {
-            Some(pending_calls.iter().map(|c| c.to_tool_call()).collect())
-        },
-        tool_results: if tool_results.is_empty() {
-            None
-        } else {
-            Some(tool_results)
-        },
-        turn: Some(turn),
+    // A turn with tool calls is two messages, in the chat shape
+    // (`conversation_helpers.rs`'s tool batch): the `assistant` message
+    // carries the calls and the following `user` message carries the
+    // results. One message carrying both makes every backend's converter
+    // emit only the results and drop the calls (audit C1).
+    let turn_msgs = if pending_calls.is_empty() {
+        vec![Message {
+            role: "assistant".to_string(),
+            content: assistant_content,
+            tool_calls: None,
+            tool_results: None,
+            turn: Some(turn),
+        }]
+    } else {
+        let assistant_msg = Message {
+            role: "assistant".to_string(),
+            content: assistant_content,
+            tool_calls: Some(pending_calls.iter().map(|c| c.to_tool_call()).collect()),
+            tool_results: None,
+            turn: Some(turn),
+        };
+        let mut gathered = tool_results;
+        let mut results = Vec::with_capacity(pending_calls.len());
+        for call in pending_calls {
+            match gathered.iter().position(|r| r.tool_call_id == call.id()) {
+                Some(at) => results.push(gathered.remove(at)),
+                None => results.push(ToolResult {
+                    tool_call_id: call.id().to_string(),
+                    tool_name: call.tool_name().to_string(),
+                    content: format!(
+                        "Error: this `{tool_name}` call produced no result. \
+                         Nothing was run and no output came back; re-issue the \
+                         call if the output is still needed.",
+                        tool_name = call.tool_name()
+                    ),
+                }),
+            }
+        }
+        results.extend(gathered);
+        let user_msg = Message {
+            role: "user".to_string(),
+            content: String::new(),
+            tool_calls: None,
+            tool_results: Some(results),
+            turn: Some(turn),
+        };
+        vec![assistant_msg, user_msg]
     };
 
-    append_session_message(session_id, &assistant_msg);
+    for msg in &turn_msgs {
+        append_session_message(session_id, msg);
+    }
     with_sessions(sessions, |store| {
         if let Some(entry) = store.get_mut(session_id) {
-            entry.history.messages.push(assistant_msg);
+            entry.history.messages.extend(turn_msgs);
             entry.persistence.last_accessed = Instant::now();
         }
     });

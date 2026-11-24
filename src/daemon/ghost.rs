@@ -46,8 +46,15 @@ async fn write_mailbox_on_exit(
     let last_content = with_sessions(sessions, |store| {
         store
             .get(session_id)
-            .and_then(|e| e.history.messages.last())
-            .filter(|m| m.role == "assistant")
+            .and_then(|e| {
+                // The turn's results land in a trailing `user` message, so
+                // the final assistant answer is not necessarily `.last()`.
+                e.history
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == "assistant")
+            })
             .map(|m| m.content.clone())
             .unwrap_or_default()
     });
@@ -498,8 +505,13 @@ pub async fn trigger_ghost_turn(
     let summary = with_sessions(sessions, |store| {
         store
             .get(session_id)
-            .and_then(|e| e.history.messages.last())
-            .filter(|m| m.role == "assistant")
+            .and_then(|e| {
+                e.history
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == "assistant")
+            })
             .map(|m| m.content.clone())
             .unwrap_or_default()
     });
@@ -1393,6 +1405,409 @@ mod tests {
         );
         assert!(signal.is_cancelled());
         assert_eq!(cancel_stage(&id), "user_attached");
+    }
+
+    #[test]
+    fn ghost_tool_turn_persists_calls_then_results() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().expect("ensure dirs");
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-persist-shape";
+        let entry = SessionEntry::new_ghost(
+            "investigate-disk",
+            crate::ipc::GhostConfig::default(),
+            GhostTrigger::Webhook,
+            vec![Message {
+                role: "user".to_string(),
+                content: "check disk".to_string(),
+                tool_calls: None,
+                tool_results: None,
+                turn: Some(1),
+            }],
+        );
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.to_string(), entry);
+        });
+
+        let calls = [
+            PendingCall::Background {
+                id: "tc_1".to_string(),
+                thought_signature: None,
+                cmd: "df -h".to_string(),
+                _credential: None,
+                host: None,
+            },
+            PendingCall::Background {
+                id: "tc_2".to_string(),
+                thought_signature: None,
+                cmd: "du -sh /var".to_string(),
+                _credential: None,
+                host: None,
+            },
+        ];
+        let results = vec![
+            ToolResult {
+                tool_call_id: "tc_1".to_string(),
+                tool_name: "run_terminal_command".to_string(),
+                content: "/dev/sda1 87%".to_string(),
+            },
+            ToolResult {
+                tool_call_id: "tc_2".to_string(),
+                tool_name: "run_terminal_command".to_string(),
+                content: "4.2G /var".to_string(),
+            },
+        ];
+
+        turn::persist_ghost_turn_message(
+            session_id,
+            &sessions,
+            "Checking disk pressure".to_string(),
+            &calls,
+            results,
+            1,
+        );
+
+        let history = with_sessions(&sessions, |store| {
+            store
+                .get(session_id)
+                .map(|e| e.history.messages.clone())
+                .unwrap_or_default()
+        });
+        // Turn 1's seed user message, then the turn's two messages.
+        assert_eq!(
+            history.len(),
+            3,
+            "a tool turn persists exactly two messages after the seed: {:?}",
+            history
+                .iter()
+                .map(|m| (&m.role, &m.content))
+                .collect::<Vec<_>>()
+        );
+        let assistant = &history[1];
+        assert_eq!(assistant.role, "assistant");
+        assert_eq!(assistant.content, "Checking disk pressure");
+        let assistant_calls = assistant
+            .tool_calls
+            .as_ref()
+            .expect("the assistant message carries the turn's tool calls");
+        assert_eq!(
+            assistant_calls
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tc_1", "tc_2"],
+            "the assistant message carries both calls, in order"
+        );
+        assert!(
+            assistant.tool_results.is_none(),
+            "the assistant message must not carry the results: {:?}",
+            assistant.tool_results
+        );
+        let user = &history[2];
+        assert_eq!(user.role, "user", "the results land in a user message");
+        assert!(
+            user.content.is_empty(),
+            "the user message's content is empty"
+        );
+        assert!(user.tool_calls.is_none());
+        let user_results = user
+            .tool_results
+            .as_ref()
+            .expect("the user message carries the turn's results");
+        assert_eq!(
+            user_results
+                .iter()
+                .map(|r| r.tool_call_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["tc_1", "tc_2"],
+            "the user message carries both results, in order"
+        );
+        assert_eq!(
+            assistant.turn,
+            Some(1),
+            "both messages carry the turn number"
+        );
+        assert_eq!(user.turn, Some(1), "both messages carry the turn number");
+
+        // The session file holds the same two lines, in the same order
+        // (the seed user message lives in the store, not the file —
+        // `new_ghost` seeds it without an append).
+        let path = crate::daemon::session::session_file(session_id);
+        let text = std::fs::read_to_string(&path).expect("session file exists");
+        let file_msgs: Vec<Message> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(
+            file_msgs.len(),
+            2,
+            "the session file holds exactly the turn's two lines: {text}"
+        );
+        assert_eq!(
+            serde_json::to_string(&file_msgs[0]).unwrap(),
+            serde_json::to_string(assistant).unwrap(),
+            "the file's assistant line matches the history"
+        );
+        assert_eq!(
+            serde_json::to_string(&file_msgs[1]).unwrap(),
+            serde_json::to_string(user).unwrap(),
+            "the file's user line matches the history"
+        );
+
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn ghost_two_turn_history_converts_for_every_provider() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().expect("ensure dirs");
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-two-turn-convert";
+        let entry = SessionEntry::new_ghost(
+            "investigate-disk",
+            crate::ipc::GhostConfig::default(),
+            GhostTrigger::Webhook,
+            vec![Message {
+                role: "user".to_string(),
+                content: "check disk".to_string(),
+                tool_calls: None,
+                tool_results: None,
+                turn: Some(1),
+            }],
+        );
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.to_string(), entry);
+        });
+
+        // Turn 1: one tool call and its result.
+        let call = PendingCall::Background {
+            id: "tc_a".to_string(),
+            thought_signature: None,
+            cmd: "df -h".to_string(),
+            _credential: None,
+            host: None,
+        };
+        let result = ToolResult {
+            tool_call_id: "tc_a".to_string(),
+            tool_name: "run_terminal_command".to_string(),
+            content: "/dev/sda1 87%".to_string(),
+        };
+        turn::persist_ghost_turn_message(
+            session_id,
+            &sessions,
+            "Running df".to_string(),
+            &[call],
+            vec![result],
+            1,
+        );
+        // Turn 2: a plain answer, no tool calls.
+        turn::persist_ghost_turn_message(
+            session_id,
+            &sessions,
+            "Disk is 87% full.".to_string(),
+            &[],
+            Vec::new(),
+            2,
+        );
+
+        let history = with_sessions(&sessions, |store| {
+            store
+                .get(session_id)
+                .map(|e| e.history.messages.clone())
+                .unwrap_or_default()
+        });
+        assert_eq!(history.len(), 4, "seed, assistant+results, final answer");
+        let result_call_id = "tc_a";
+
+        // Anthropic: a tool_use block with the id precedes the tool_result
+        // carrying that tool_use_id.
+        let anthropic =
+            crate::ai::AnthropicClient::new("key".to_string(), "model".to_string(), 4096)
+                .convert_messages(history.clone());
+        let tool_use_pos = anthropic.iter().position(|m| {
+            m["content"].as_array().is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .any(|b| b["type"] == "tool_use" && b["id"] == result_call_id)
+            })
+        });
+        let tool_result_pos = anthropic.iter().position(|m| {
+            m["content"].as_array().is_some_and(|blocks| {
+                blocks
+                    .iter()
+                    .any(|b| b["type"] == "tool_result" && b["tool_use_id"] == result_call_id)
+            })
+        });
+        assert!(
+            tool_use_pos.is_some(),
+            "anthropic history holds a tool_use block for {result_call_id}: {anthropic:?}"
+        );
+        assert!(
+            tool_result_pos.is_some(),
+            "anthropic history holds a tool_result for {result_call_id}: {anthropic:?}"
+        );
+        assert!(
+            tool_use_pos.unwrap() < tool_result_pos.unwrap(),
+            "anthropic: the tool_use block precedes its tool_result"
+        );
+
+        // OpenAI: an assistant tool_calls entry precedes the role:"tool"
+        // message with that tool_call_id.
+        let openai = crate::ai::OpenAiClient::new(
+            "key".to_string(),
+            "model".to_string(),
+            "https://api.openai.com/v1".to_string(),
+            4096,
+        )
+        .convert_messages(history.clone());
+        let openai_call_pos = openai.iter().position(|m| {
+            m["tool_calls"]
+                .as_array()
+                .is_some_and(|calls| calls.iter().any(|c| c["id"] == result_call_id))
+        });
+        let openai_result_pos = openai
+            .iter()
+            .position(|m| m["role"] == "tool" && m["tool_call_id"] == result_call_id);
+        assert!(
+            openai_call_pos.is_some(),
+            "openai history holds a tool_calls entry for {result_call_id}: {openai:?}"
+        );
+        assert!(
+            openai_result_pos.is_some(),
+            "openai history holds a role:tool message for {result_call_id}: {openai:?}"
+        );
+        assert!(
+            openai_call_pos.unwrap() < openai_result_pos.unwrap(),
+            "openai: the tool_calls entry precedes its role:tool message"
+        );
+
+        // Gemini: a functionCall precedes the functionResponse for that call.
+        let gemini = crate::ai::GeminiClient::new("key".to_string(), "model".to_string(), 4096)
+            .convert_messages(history.clone());
+        let gemini_call_pos = gemini.iter().position(|m| {
+            m["parts"]
+                .as_array()
+                .is_some_and(|parts| parts.iter().any(|p| p["functionCall"].is_object()))
+        });
+        let gemini_result_pos = gemini.iter().position(|m| {
+            m["parts"].as_array().is_some_and(|parts| {
+                parts
+                    .iter()
+                    .any(|p| p["functionResponse"]["name"] == "run_terminal_command")
+            })
+        });
+        assert!(
+            gemini_call_pos.is_some(),
+            "gemini history holds a functionCall: {gemini:?}"
+        );
+        assert!(
+            gemini_result_pos.is_some(),
+            "gemini history holds a functionResponse: {gemini:?}"
+        );
+        assert!(
+            gemini_call_pos.unwrap() < gemini_result_pos.unwrap(),
+            "gemini: the functionCall precedes its functionResponse"
+        );
+
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn ghost_final_turn_persists_one_message() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().expect("ensure dirs");
+
+        let sessions = SessionStore::new();
+        let session_id = "ghost-final-one-message";
+        let entry = SessionEntry::new_ghost(
+            "investigate-disk",
+            crate::ipc::GhostConfig::default(),
+            GhostTrigger::Webhook,
+            vec![Message {
+                role: "user".to_string(),
+                content: "check disk".to_string(),
+                tool_calls: None,
+                tool_results: None,
+                turn: Some(1),
+            }],
+        );
+        with_sessions(&sessions, |store| {
+            store.insert(session_id.to_string(), entry);
+        });
+
+        turn::persist_ghost_turn_message(
+            session_id,
+            &sessions,
+            "Disk is 87% full.".to_string(),
+            &[],
+            Vec::new(),
+            2,
+        );
+
+        let history = with_sessions(&sessions, |store| {
+            store
+                .get(session_id)
+                .map(|e| e.history.messages.clone())
+                .unwrap_or_default()
+        });
+        assert_eq!(
+            history.len(),
+            2,
+            "seed user message plus one assistant message"
+        );
+        let final_msg = &history[1];
+        assert_eq!(final_msg.role, "assistant");
+        assert_eq!(final_msg.content, "Disk is 87% full.");
+        assert!(
+            final_msg.tool_calls.is_none(),
+            "no tool calls on a final turn"
+        );
+        assert!(
+            final_msg.tool_results.is_none(),
+            "no tool results on a final turn"
+        );
+        assert_eq!(final_msg.turn, Some(2));
+
+        let path = crate::daemon::session::session_file(session_id);
+        let text = std::fs::read_to_string(&path).expect("session file exists");
+        let file_msgs: Vec<Message> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+        assert_eq!(file_msgs.len(), 1, "the file holds exactly the final line");
+        assert_eq!(
+            serde_json::to_string(&file_msgs[0]).unwrap(),
+            serde_json::to_string(final_msg).unwrap(),
+            "the file's line matches the history"
+        );
+
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
     }
 
     #[tokio::test(start_paused = true)]

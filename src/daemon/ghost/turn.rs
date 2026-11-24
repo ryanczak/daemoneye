@@ -8,6 +8,8 @@ use super::*;
 mod helpers;
 #[cfg(test)]
 pub(super) use helpers::ghost_event_to_pending_call;
+#[cfg(test)]
+pub(crate) use helpers::persist_ghost_turn_message;
 use helpers::*;
 
 #[allow(clippy::too_many_arguments)]
