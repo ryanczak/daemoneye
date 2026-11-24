@@ -1,7 +1,7 @@
 # Phase 05 — sudo-detection
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress (bounced: [bug-05-2](bugs/bug-05-2.md))
 **Drafted:** 2026-11-23
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -146,25 +146,40 @@ preservation. Paste each red run into the Update Log before its fix.
 The items above were approved at review. Each one below fails on
 `9fa1078e`, except the last two.
 
-- [ ] **Quoted arguments:** `sudo_detect_quoted_arguments_stay_clear`
+- [x] **Quoted arguments:** `sudo_detect_quoted_arguments_stay_clear`
       asserts `false` for `find . -name '*.log'`, `grep 'foo.*bar' f`,
       `sed 's/a*/b/' f`, `awk '$3 > 5' f`, `echo "$HOME"`, `cd "$dir"`,
       `jq '.[0]' f`, `ls "$d"/*.txt` and `git commit -m 'fix: x'`.
-- [ ] **Shell `-c` operands:** `sudo_detect_shell_c_operand_fails_closed`
+- [x] **Shell `-c` operands:** `sudo_detect_shell_c_operand_fails_closed`
       asserts `true` for `sh -c "$CMD"`, `bash -c 'sud? id'`, `eval "$X"`
       and `su -c "$X"`. These pass today; keep them passing.
-- [ ] **Wrappers:** `sudo_detect_expansion_behind_a_wrapper_fails_closed`
+- [x] **Wrappers:** `sudo_detect_expansion_behind_a_wrapper_fails_closed`
       asserts `true` for `nohup $S id`, `env $S id` and `timeout 10 $S id`,
       and `false` for `timeout 10 ls *.txt`.
-- [ ] **Braces:** `sudo_detect_brace_expansion_fails_closed` asserts `true`
+- [x] **Braces:** `sudo_detect_brace_expansion_fails_closed` asserts `true`
       for `s{u,}do id`, `{sudo,} id` and `/usr/bin/{su,x}do id`, and
       `false` for `{ ls; }`.
-- [ ] **Nit:** the duplicated fd-digit check, the `chars[i] == '<'` block
+- [x] **Nit:** the duplicated fd-digit check, the `chars[i] == '<'` block
       straight after `read_shell_word`, is removed.
-- [ ] **Mutation check,** with the output pasted: apply the fail-closed rule
+- [x] **Mutation check,** with the output pasted: apply the fail-closed rule
       to every quoted region again, run the quoted-arguments test and see it
       fail, then restore it.
-- [ ] **Gates:** all four pass, and the lib suite reports **at least 3096**
+- [x] **Gates:** all four pass, and the lib suite reports **at least 3096**
+      passed.
+
+### Bounce 2 — [bug-05-2](bugs/bug-05-2.md) (2026-11-24)
+
+Everything above was approved at review. The first item fails on
+`bb87a6f9`.
+
+- [ ] **Shell operand spellings:**
+      `sudo_detect_shell_operand_option_spellings_fail_closed` asserts
+      `true` for `bash -lc '$S id'`, `bash -x -c "$X"`, `sh -ec "$X"`,
+      `sh -c -- "$X"`, `/bin/sh -c "$X"` and `/bin/bash -c 'sud? id'`.
+- [ ] **Mutation check,** with the output pasted: compare the whole word
+      text instead of the basename, run the new test and see it fail, then
+      restore it.
+- [ ] **Gates:** all four pass, and the lib suite reports **at least 3097**
       passed.
 
 ## Spec
@@ -766,3 +781,21 @@ kill: (-2714732): No such process
 **Commit:** bb87a6f90e8cc102e3dd32831855a6baf4aefc8d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-24 (bounce 2)
+
+**The four gates are green and the tree is clean, and that is expected. It
+is NOT evidence that the phase is done.** Every bug-05-1 behaviour is
+approved; do not redo it. Exactly one thing remains, in
+`scan_shell_command`'s `code_operand` assignment in
+`src/daemon/utils/sudo.rs`:
+
+- A shell named by its basename counts as a shell, as `is_elevator` does,
+  so `/bin/sh` and `/bin/bash` are covered.
+- An option word (any word that starts with `-`, `--` included) does not
+  end the code operand.
+
+The test cases are in [bug-05-2](bugs/bug-05-2.md). Write the test red
+first. You are done when the lib suite reports at least **3097** passed and
+the mutation check is pasted. You have 1200 turns; make your first edit
+within 5 tool calls.
