@@ -13,8 +13,12 @@ pub struct GhostPolicy {
     pub auto_approve_scripts: Vec<String>,
     /// Whether to prepend `sudo` when executing pre-approved scripts.
     pub run_with_sudo: bool,
-    /// Optional SSH destination for remote execution (e.g. `user@host`).
-    /// When set, `wrap_remote()` wraps every approved command in `ssh <target> <cmd>`.
+    /// Optional SSH destination naming a configured `[hosts.<name>]` host.
+    /// When set, approved commands run in a PTY shell on the host it resolved
+    /// to (`remote_host` is that host) instead of locally, and whitelisted
+    /// script paths resolve to `~/.daemoneye/scripts/<name>` so the remote
+    /// shell expands them. When it resolves to no configured host, remote
+    /// execution is refused.
     pub ssh_target: Option<String>,
     /// When `true` the ghost shell system prompt explicitly states that non-sudo
     /// commands may be run freely.  Does not change the OS-permission boundary
@@ -241,8 +245,8 @@ impl GhostPolicy {
     /// are returned unchanged.
     ///
     /// When `ssh_target` is set the resolved path uses `~/.daemoneye/scripts/<name>`
-    /// (tilde notation) so the remote shell expands it to the correct home directory.
-    /// SSH wrapping itself is deferred to `wrap_remote()`.
+    /// (tilde notation) so the remote shell on the `[hosts]` host it resolved to
+    /// expands it to the correct home directory.
     pub fn resolve_command(&self, cmd: &str) -> String {
         // Strip a leading `sudo` so `sudo script.sh` resolves identically to
         // bare `script.sh`.  The flag is re-applied at the end to avoid
@@ -295,25 +299,6 @@ impl GhostPolicy {
         }
 
         cmd.to_string()
-    }
-
-    /// Wrap an approved command for remote SSH execution when `ssh_target` is set.
-    ///
-    /// Called after policy approval, immediately before the background PTY
-    /// shell is started.
-    /// Commands that already begin with `ssh ` are returned unchanged to prevent
-    /// double-wrapping if the AI emits an explicit SSH invocation despite instructions.
-    pub fn wrap_remote(&self, cmd: &str) -> String {
-        match &self.ssh_target {
-            Some(target) if !cmd.trim_start().starts_with("ssh ") => {
-                format!(
-                    "ssh {} {}",
-                    target,
-                    crate::daemon::utils::sh_single_quote(cmd)
-                )
-            }
-            _ => cmd.to_string(),
-        }
     }
 
     /// When `ssh_target` is set and `cmd` invokes a whitelisted script (bare or

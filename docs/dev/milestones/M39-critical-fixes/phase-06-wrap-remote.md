@@ -1,7 +1,7 @@
 # Phase 06 — wrap-remote
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~120 lines, almost all deletions
@@ -100,3 +100,13 @@ first edit within your first **5** tool calls.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-24 04:54 (started)
+
+Executor: DaemonEye (executor run). Status flipped `todo` → `in-progress`.
+
+Task breakdown (one line per Statement of work item):
+1. Break down — this entry: numbered task list into the Update Log.
+2. Implement — delete `GhostPolicy::wrap_remote` and its doc comment from `src/daemon/policy.rs`; delete the `wrap_remote_*` tests in `src/daemon/policy_tests.rs`; rewrite the `ssh_target` field doc comment and the `resolve_command` doc line that defers to `wrap_remote()`; handle `resolve_then_wrap_remote_sudo_prefix` per the SOW rule.
+3. Meet the acceptance criteria — run both greps (`wrap_remote` and `ssh <target>` in `src/daemon/policy.rs`) and confirm zero matches; confirm no behaviour change.
+4. Capture the evidence — run the four gates, paste the `test result:` lines, commit as one `refactor:` commit.

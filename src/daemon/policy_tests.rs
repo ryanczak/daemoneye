@@ -445,65 +445,6 @@ fn resolve_command_remote_absolute_unchanged() {
 }
 
 #[test]
-fn wrap_remote_no_target_returns_unchanged() {
-    let p = policy(&["fix.sh"]);
-    assert_eq!(p.wrap_remote("fix.sh"), "fix.sh");
-    assert_eq!(p.wrap_remote("ps aux"), "ps aux");
-}
-
-#[test]
-fn wrap_remote_wraps_script_in_ssh() {
-    let p = remote_policy(&["fix.sh"], "user@zap");
-    assert_eq!(
-        p.wrap_remote("~/.daemoneye/scripts/fix.sh"),
-        "ssh user@zap '~/.daemoneye/scripts/fix.sh'"
-    );
-}
-
-#[test]
-fn wrap_remote_wraps_read_only_cmd_in_ssh() {
-    let p = remote_policy(&[], "user@zap");
-    assert_eq!(p.wrap_remote("ps aux"), "ssh user@zap 'ps aux'");
-}
-
-#[test]
-fn wrap_remote_no_double_wrap() {
-    // If the AI (despite instructions) emits an SSH command, do not wrap again.
-    let p = remote_policy(&["fix.sh"], "user@zap");
-    let cmd = "ssh user@zap ~/.daemoneye/scripts/fix.sh";
-    assert_eq!(p.wrap_remote(cmd), cmd);
-}
-
-#[test]
-fn wrap_remote_sudo_script() {
-    let p = remote_sudo_policy(&["fix.sh"], "user@zap");
-    // resolve_command produces "sudo ~/.daemoneye/scripts/fix.sh"
-    // wrap_remote should wrap the whole thing, single-quoting to prevent local tilde expansion
-    assert_eq!(
-        p.wrap_remote("sudo ~/.daemoneye/scripts/fix.sh"),
-        "ssh user@zap 'sudo ~/.daemoneye/scripts/fix.sh'"
-    );
-}
-
-#[test]
-fn wrap_remote_escapes_single_quote() {
-    let p = remote_policy(&[], "user@zap");
-    assert_eq!(
-        p.wrap_remote("echo 'pwned'"),
-        r"ssh user@zap 'echo '\''pwned'\'''"
-    );
-}
-
-#[test]
-fn wrap_remote_escapes_breakout_attempt() {
-    let p = remote_policy(&[], "user@zap");
-    assert_eq!(
-        p.wrap_remote("x'; rm -rf ~ #"),
-        r"ssh user@zap 'x'\''; rm -rf ~ #'"
-    );
-}
-
-#[test]
 fn is_safe_tilde_path_on_whitelist() {
     // After resolve_command with ssh_target the command is a tilde path;
     // is_safe must still recognise it via basename matching.
@@ -565,13 +506,16 @@ fn resolve_command_sudo_prefix_with_args() {
     );
 }
 
-/// Full end-to-end: AI emits `sudo script.sh`, resolve then wrap_remote.
 #[test]
-fn resolve_then_wrap_remote_sudo_prefix() {
+fn resolve_command_remote_sudo_prefix_no_double_sudo() {
+    // Policy has run_with_sudo=true AND command starts with sudo — must not double-sudo.
     let p = remote_sudo_policy(&["fix.sh"], "user@zap");
     let resolved = p.resolve_command("sudo fix.sh");
-    let wrapped = p.wrap_remote(&resolved);
-    assert_eq!(wrapped, "ssh user@zap 'sudo ~/.daemoneye/scripts/fix.sh'");
+    assert_eq!(
+        resolved, "sudo ~/.daemoneye/scripts/fix.sh",
+        "got: {}",
+        resolved
+    );
 }
 
 // ── auto_approve_commands ────────────────────────────────────────────────
