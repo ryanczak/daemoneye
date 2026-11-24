@@ -1,7 +1,7 @@
 # Phase 10 — shell-host-framing
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~120 lines
@@ -73,6 +73,20 @@ second response is `Error { "malformed frame: …" }`.
 
 ## Acceptance criteria
 
+> **Bounce 1 ([bug-10-1](bugs/bug-10-1.md)) — read this first.** All four gates
+> are green and the tree is clean. **That is expected and is NOT evidence that
+> the phase is done.** These items are already approved and must not be
+> redone: the `&line[offset..end]` fix, the deterministic lagged test (the
+> architect ran it 300 of 300), and the pipelining test's body. **There is
+> exactly one edit left:** rewrite the doc comment on
+> `host_parses_each_pipelined_frame_from_its_own_offset` so it is true (see
+> the bug). Run each grep below **once**. Run the suite once, and it must
+> report **3104, not 3105**.
+>
+> - [ ] `grep -c 'pre-S4b slice' src/shell/host.rs` prints **0** (prints 1 today).
+> - [ ] `grep -n -B8 'fn host_parses_each_pipelined_frame_from_its_own_offset' src/shell/host.rs | grep -c 'read_until'` prints at least **1** (prints 0 today).
+> - [ ] The lib suite reports **3104** passed. Only comment lines in `src/shell/host.rs` change. Commit as one `docs:` or `test:` commit.
+
 - [ ] **Pipelining:** `host_parses_each_pipelined_frame_from_its_own_offset`
       passes. Red run pasted.
 - [ ] **No flake:** a stress loop of
@@ -114,6 +128,16 @@ second response is `Error { "malformed frame: …" }`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Notes for executor — 2026-11-24 (bounce 1)
+
+The architect reviewed `72daafe5`. The code fix and the lagged test are
+approved. The phase doc's claim that the pipelining test goes "red today"
+was the architect's error. `read_until` stops at the first newline, so the
+frame loop never holds two frames and the old slice was unreachable. Your
+completion note was right to flag it, but the reason is `read_until`, not
+`serde_json`. The only remaining work is to make that test's doc comment
+true. Leave its body alone and do not try to make it go red.
 
 ### Update — 2026-11-24 19:15 (started)
 
