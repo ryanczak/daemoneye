@@ -1,7 +1,7 @@
 # Phase 11 — anthropic-usage
 
 **Milestone:** M39 — Critical fixes
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~60 lines
@@ -126,3 +126,107 @@ yields `input_tokens == 0`.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-24 14:48 (started)
+
+**Executor:** executor (Claude Opus 4.5, headless run)
+
+Task breakdown, each line naming the acceptance item it closes:
+
+1. Write red test `anthropic_input_tokens_are_already_uncached` in `anthropic.rs`'s test module calling `parse_anthropic_start_usage` directly; run it red. — closes **Uncached as sent**.
+2. Write red test `anthropic_message_start_keeps_uncached_input` driving `AnthropicFrameHandler::on_frame` with a `message_start` frame (`input_tokens: 50`, both cache fields non-zero), asserting `usage.input_tokens == 50`; run it red. — closes **Stream path**.
+3. Fix `parse_anthropic_start_usage`: copy `input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` across unchanged (no subtraction); doc comment states the API semantics. — closes **Uncached as sent** (green).
+4. Correct `anthropic_parses_cache_creation_and_read_tokens`: realistic fixture, `input_tokens` as sent, `total()` = sum of all four fields. — closes **Old test corrected**; verify `grep -c '1500 - 800 - 200'` prints 0.
+5. Correct the doc comment on `TokenBreakdown::uncached_input_tokens` in `src/ai/types/wire.rs` (comment only). — supports **Preservation** / spec task 2.
+6. Confirm `anthropic_parses_zero_cache_when_not_present` passes unchanged. — closes **Preservation**.
+7. Mutation check: re-add `.saturating_sub(cache_read)`, run `cargo test --lib anthropic_input_tokens_are_already_uncached` once (must fail), restore. — closes **Mutation check**.
+8. Run the four gates once each; paste `test result:` lines, red runs, grep and mutation check into an end-to-end verification Update Log entry. Commit as one `fix:` commit. — closes **Gates** and **Capture the evidence**.
+
+### Update — 2026-11-24 15:00 (end-to-end verification)
+
+Red run — `anthropic_input_tokens_are_already_uncached` before the fix:
+
+```
+running 1 test
+test ai::backends::anthropic::tests::anthropic_input_tokens_are_already_uncached ... FAILED
+
+thread 'ai::backends::anthropic::tests::anthropic_input_tokens_are_already_uncached' panicked at src/ai/backends/anthropic.rs:524:9:
+assertion `left == right` failed
+  left: 0
+ right: 50
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3114 filtered out
+```
+
+Red run — `anthropic_message_start_keeps_uncached_input` before the fix:
+
+```
+running 1 test
+test ai::backends::anthropic::tests::anthropic_message_start_keeps_uncached_input ... FAILED
+
+thread 'ai::backends::anthropic::tests::anthropic_message_start_keeps_uncached_input' panicked at src/ai/backends/anthropic.rs:596:9:
+assertion `left == right` failed
+  left: 0
+ right: 50
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3115 filtered out
+```
+
+Old-subtraction grep after the fix:
+
+```
+$ grep -c '1500 - 800 - 200' src/ai/backends/anthropic.rs
+0
+```
+
+Mutation check — `.saturating_sub(cache_read)` re-added to `parse_anthropic_start_usage`:
+
+```
+running 1 test
+test ai::backends::anthropic::tests::anthropic_input_tokens_are_already_uncached ... FAILED
+
+thread 'ai::backends::anthropic::tests::anthropic_input_tokens_are_already_uncached' panicked at src/ai/backends/anthropic.rs:524:9:
+assertion `left == right` failed
+  left: 0
+ right: 50
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3115 filtered out
+```
+
+Restored; the same test passes. Preservation and corrected old test:
+
+```
+running 2 tests
+test ai::backends::anthropic::tests::anthropic_parses_cache_creation_and_read_tokens ... ok
+test ai::backends::anthropic::tests::anthropic_parses_zero_cache_when_not_present ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3114 filtered out
+```
+
+Gate runs (once each):
+
+```
+$ cargo fmt --all
+(no output — clean)
+
+$ cargo build 2>&1 | tail -5
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.48s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -5
+    Checking daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.64s
+
+$ cargo test 2>&1 | grep -E "Running unittests src/lib.rs|^test result: ok\. [0-9]{4}"
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-0635aac7b8e1e57e)
+test result: ok. 3106 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 147.75s
+```
+
+Full-suite tails (integration and doc-test targets, all green):
+
+```
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```

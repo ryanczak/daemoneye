@@ -64,8 +64,9 @@ impl TokenBreakdown {
     }
 
     /// Uncached input tokens that are billed at the full input rate.
-    /// `input_tokens` already excludes cache_read and cache_write after backend
-    /// subtraction, so this is simply the field value.
+    /// The backend reports this uncached: it subtracts the cache fields from
+    /// the total where the provider reports a total (OpenAI, Gemini), or takes
+    /// the field as sent where it is already the uncached remainder (Anthropic).
     ///
     /// Note: Phase 3 cost computation must bill all four fields independently
     /// (`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`)

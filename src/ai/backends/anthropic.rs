@@ -11,11 +11,13 @@ use crate::ai::{AiClient, http};
 use super::{SseFrameHandler, drive_sse_stream, emit_tool_call_raw_json};
 
 /// Parse the `message_start.message.usage` object from an Anthropic SSE event
-/// into a `TokenBreakdown`.  Extracts `input_tokens`, `cache_creation_input_tokens`,
-/// and `cache_read_input_tokens`; subtracts the cache fields from the total to
-/// yield the uncached `input_tokens`.
+/// into a `TokenBreakdown`.  Anthropic's `input_tokens` is the uncached
+/// remainder — tokens processed at full price, already excluding
+/// `cache_creation_input_tokens` and `cache_read_input_tokens` — so each field
+/// is copied across as sent with no subtraction.  Total prompt size is
+/// `input_tokens + cache_creation_input_tokens + cache_read_input_tokens`.
 pub(crate) fn parse_anthropic_start_usage(u: &serde_json::Map<String, Value>) -> TokenBreakdown {
-    let total_input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let uncached_input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let cache_write = u
         .get("cache_creation_input_tokens")
         .and_then(|v| v.as_u64())
@@ -25,9 +27,7 @@ pub(crate) fn parse_anthropic_start_usage(u: &serde_json::Map<String, Value>) ->
         .and_then(|v| v.as_u64())
         .unwrap_or(0) as u32;
     TokenBreakdown {
-        input_tokens: total_input
-            .saturating_sub(cache_read)
-            .saturating_sub(cache_write),
+        input_tokens: uncached_input,
         cache_read_tokens: cache_read,
         cache_write_tokens: cache_write,
         output_tokens: 0,
@@ -509,6 +509,24 @@ mod tests {
     // ── TokenBreakdown parsing from Anthropic SSE events ────────────────
 
     #[test]
+    fn anthropic_input_tokens_are_already_uncached() {
+        let usage = serde_json::json!({
+            "input_tokens": 50,
+            "cache_read_input_tokens": 800,
+            "cache_creation_input_tokens": 200
+        })
+        .as_object()
+        .cloned()
+        .unwrap();
+
+        let parsed = parse_anthropic_start_usage(&usage);
+
+        assert_eq!(parsed.input_tokens, 50);
+        assert_eq!(parsed.cache_read_tokens, 800);
+        assert_eq!(parsed.cache_write_tokens, 200);
+    }
+
+    #[test]
     fn anthropic_parses_cache_creation_and_read_tokens() {
         let message_start_usage = serde_json::json!({
             "input_tokens": 1500,
@@ -529,11 +547,11 @@ mod tests {
         let mut usage = parse_anthropic_start_usage(&message_start_usage);
         apply_anthropic_output_tokens(&mut usage, &message_delta_usage);
 
-        assert_eq!(usage.input_tokens, 500); // 1500 - 800 - 200
+        assert_eq!(usage.input_tokens, 1500);
         assert_eq!(usage.cache_read_tokens, 800);
         assert_eq!(usage.cache_write_tokens, 200);
         assert_eq!(usage.output_tokens, 400);
-        assert_eq!(usage.total(), 1900);
+        assert_eq!(usage.total(), 2900);
     }
 
     #[test]
@@ -550,6 +568,34 @@ mod tests {
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.cache_read_tokens, 0);
         assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn anthropic_message_start_keeps_uncached_input() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut handler = AnthropicFrameHandler::new("claude-sonnet-4-6");
+        let mut first_token_seen = false;
+        let mut usage = TokenBreakdown::default();
+
+        handler
+            .on_frame(
+                &json!({
+                    "type": "message_start",
+                    "message": {"usage": {
+                        "input_tokens": 50,
+                        "cache_read_input_tokens": 800,
+                        "cache_creation_input_tokens": 200
+                    }}
+                }),
+                &tx,
+                &mut first_token_seen,
+                &mut usage,
+            )
+            .unwrap();
+
+        assert_eq!(usage.input_tokens, 50);
+        assert_eq!(usage.cache_read_tokens, 800);
+        assert_eq!(usage.cache_write_tokens, 200);
     }
 
     #[test]
