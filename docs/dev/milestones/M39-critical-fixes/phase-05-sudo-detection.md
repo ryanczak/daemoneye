@@ -478,6 +478,146 @@ kill: (-2614842): No such process
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
 
+### Update — 2026-11-24 02:40 (started, bounce 1)
+
+Started phase 05 bounce 1 (bug-05-1). Executor: DaemonEye (executor run).
+Status remains `in-progress`. Task list for the bounce, each closing a bounce
+acceptance item:
+
+1. Write the three red tests (`sudo_detect_quoted_arguments_stay_clear`,
+   `sudo_detect_expansion_behind_a_wrapper_fails_closed`,
+   `sudo_detect_brace_expansion_fails_closed`) plus the green-pinning
+   `sudo_detect_shell_c_operand_fails_closed`; run them red before any
+   production change. Closes the three red items and pins the fourth.
+2. Split the scan into a mode: quoted regions are always scanned for
+   elevator names and nested commands, but the fail-closed rule applies
+   inside a quoted region only when that region is code a shell will run —
+   the operand after `-c` for `sh`/`bash`/`dash`/`zsh`/`ksh`, an `eval`
+   operand, or the operand of `su -c`. Closes Quoted arguments and
+   Shell `-c` operands.
+3. Behind a wrapper, a word carrying an unquoted `$` expansion fails closed
+   to elevation; a glob in that position does not. Closes Wrappers.
+4. An unquoted `{…}` brace expansion (`,` or `..` inside) in command
+   position is unresolvable; a bare `{` keyword is unchanged. Closes Braces.
+5. Remove the duplicated fd-digit check (the `chars[i] == '<'` block
+   straight after `read_shell_word`). Closes the nit.
+6. Mutation check: apply the fail-closed rule to every quoted region again,
+   run the quoted-arguments test, paste the failure, restore.
+7. Run the four gates; confirm the lib suite reports at least 3096 passed;
+   commit as one `fix:` commit.
+
+### Update — 2026-11-24 02:47 (red run — bounce 1 tests, before any production change)
+
+Four tests written first: three red, one green-pinning, exactly as bug-05-1
+requires. Output tail (full `detect_` filter run):
+
+```
+failures:
+
+---- daemon::utils::sudo::tests::sudo_detect_expansion_behind_a_wrapper_fails_closed stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_expansion_behind_a_wrapper_fails_closed' (2659551) panicked at src/daemon/utils/sudo.rs:796:13:
+an unquoted expansion behind a wrapper fails closed to elevation: "nohup $S id"
+
+---- daemon::utils::sudo::tests::sudo_detect_brace_expansion_fails_closed stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_brace_expansion_fails_closed' (2659550) panicked at src/daemon/utils/sudo.rs:817:13:
+an unquoted brace expansion in command position fails closed to elevation: "s{u,}do id"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- daemon::utils::sudo::tests::sudo_detect_quoted_arguments_stay_clear stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_quoted_arguments_stay_clear' (2659558) panicked at src/daemon/utils/sudo.rs:762:13:
+preservation: quoted arguments stay clear; the fail-closed rule must not fire inside a quoted region that is a plain argument: "find . -name '*.log'"
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_brace_expansion_fails_closed
+    daemon::utils::sudo::tests::sudo_detect_expansion_behind_a_wrapper_fails_closed
+    daemon::utils::sudo::tests::sudo_detect_quoted_arguments_stay_clear
+
+test result: FAILED. 24 passed; 3 failed; 0 ignored; 0 measured; 3079 filtered out; finished in 0.00s
+```
+
+`sudo_detect_shell_c_operand_fails_closed` passes on the current tree (green,
+pins `sh -c "$CMD"`, `bash -c 'sud? id'`, `eval "$X"`, `su -c "$X"`); the other
+24 `detect_` tests are unchanged and green.
+
+### Update — 2026-11-24 03:05 (mutation check — bounce 1)
+
+Mutation: applied the fail-closed rule to every quoted region again (the
+quoted-region rescan passes `true` unconditionally instead of the code-operand
+flag). The quoted-arguments test fails as required:
+
+```
+---- daemon::utils::sudo::tests::sudo_detect_quoted_arguments_stay_clear stdout ----
+
+thread 'daemon::utils::sudo::tests::sudo_detect_quoted_arguments_stay_clear' (2698532) panicked at src/daemon/utils/sudo.rs:811:13:
+preservation: quoted arguments stay clear; the fail-closed rule must not fire inside a quoted region that is a plain argument: "find . -name '*.log'"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    daemon::utils::sudo::tests::sudo_detect_quoted_arguments_stay_clear
+
+test result: FAILED. 26 passed; 1 failed; 0 ignored; 0 measured; 3079 filtered out; finished in 0.00s
+```
+
+Restored the code-operand-gated rescan; the test is green again and the lib
+suite reports 3096 passed (see the end-to-end entry below).
+
+### Update — 2026-11-24 03:15 (end-to-end verification — bounce 1)
+
+Gates run against the real tree, in order:
+
+```
+$ cargo fmt --all
+(no output — clean)
+
+$ cargo build 2>&1 | tail -3
+   Compiling daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.68s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -3
+    Checking daemoneye v2.10.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.67s
+
+$ cargo test 2>&1 | grep "test result:"
+test result: ok. 3096 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 143.25s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.26s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.25s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Lib suite reports **3096 passed** — the bounce's required floor (3092 + 4 new
+tests). No test in another module changed its expectation; every suite is green
+unchanged.
+
+Bounce acceptance evidence, item by item:
+
+- **Quoted arguments:** `sudo_detect_quoted_arguments_stay_clear` — red run
+  (02:47), green after the quoted-region rescan was gated on the code-operand
+  flag.
+- **Shell `-c` operands:** `sudo_detect_shell_c_operand_fails_closed` — green
+  on the current tree before the change (pins `sh -c "$CMD"`,
+  `bash -c 'sud? id'`, `eval "$X"`, `su -c "$X"`), still green after.
+- **Wrappers:** `sudo_detect_expansion_behind_a_wrapper_fails_closed` — red
+  run (02:47), green after `word.expansion` fails closed behind a wrapper;
+  `timeout 10 ls *.txt` stays false.
+- **Braces:** `sudo_detect_brace_expansion_fails_closed` — red run (02:47),
+  green after `{…}` with `,` or `..` in command position counts as
+  unresolvable; `{ ls; }` stays false.
+- **Nit:** the duplicated fd-digit check (the `chars[i] == '<'` block straight
+  after `read_shell_word`) is removed; the single check folds the fd number
+  into the redirection.
+- **Mutation check:** pasted above (03:05) — fail-closed on every quoted
+  region → quoted-arguments test fails → restored, green again.
+
 ### Notes for executor — 2026-11-23 (bounce 1)
 
 **The four gates are green and the tree is clean, and that is expected. It

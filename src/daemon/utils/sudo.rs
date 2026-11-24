@@ -73,9 +73,14 @@ const ELEVATORS: [&str; 6] = ["sudo", "sudoedit", "su", "doas", "pkexec", "run0"
 struct ShellWord {
     /// The dequoted text.
     text: String,
-    /// True when the word still carries an unquoted parameter expansion or
-    /// glob character after dequoting — a word the detector cannot resolve.
+    /// True when the word still carries an unquoted parameter expansion,
+    /// glob character or brace expansion after dequoting — a word the
+    /// detector cannot resolve.
     unresolvable: bool,
+    /// True when the word carries an unquoted parameter expansion (`$`),
+    /// as distinct from a glob. A wrapper runs its arguments through the
+    /// shell, so an expansion behind one fails closed; a glob does not.
+    expansion: bool,
     /// The contents of any quoted regions, scanned as a command in their own
     /// right: the string handed to `sh -c` is itself a command.
     quoted: String,
@@ -100,6 +105,7 @@ fn read_shell_word(chars: &[char], start: usize) -> (ShellWord, usize) {
     let mut text = String::new();
     let mut quoted = String::new();
     let mut unresolvable = false;
+    let mut expansion = false;
     let mut i = start;
     while i < chars.len() {
         match chars[i] {
@@ -136,6 +142,7 @@ fn read_shell_word(chars: &[char], start: usize) -> (ShellWord, usize) {
                     } else {
                         if chars[i] == '$' {
                             unresolvable = true;
+                            expansion = true;
                         }
                         text.push(chars[i]);
                         quoted.push(chars[i]);
@@ -150,6 +157,26 @@ fn read_shell_word(chars: &[char], start: usize) -> (ShellWord, usize) {
                 if matches!(c, '$' | '*' | '?' | '[') {
                     unresolvable = true;
                 }
+                if c == '$' {
+                    expansion = true;
+                }
+                if c == '{' {
+                    // bash brace expansion: `s{u,}do`, `{sudo,}`, `{a..b}`.
+                    // A `{` whose word closes with `}` and whose contents
+                    // hold `,` or `..` expands to words the detector cannot
+                    // resolve. A bare `{` — the group keyword in `{ ls; }`
+                    // — is left alone.
+                    let mut j = i + 1;
+                    while j < chars.len() && !is_word_delimiter(chars[j]) && chars[j] != '}' {
+                        j += 1;
+                    }
+                    if j < chars.len() && chars[j] == '}' {
+                        let inner = &chars[i + 1..j];
+                        if inner.contains(&',') || inner.windows(2).any(|w| w == ['.', '.']) {
+                            unresolvable = true;
+                        }
+                    }
+                }
                 text.push(c);
                 i += 1;
             }
@@ -159,6 +186,7 @@ fn read_shell_word(chars: &[char], start: usize) -> (ShellWord, usize) {
         ShellWord {
             text,
             unresolvable,
+            expansion,
             quoted,
         },
         i,
@@ -207,6 +235,15 @@ fn is_assignment(word: &str) -> bool {
 /// unquoted argument does (`grep 'sudo' log` matches); that fails closed
 /// and is accepted.
 pub fn command_has_sudo(cmd: &str) -> bool {
+    scan_shell_command(cmd, true)
+}
+
+/// The scanner behind [`command_has_sudo`]. `fail_closed` selects whether a
+/// command-position word the detector cannot resolve counts as elevation.
+/// Quoted regions that are plain arguments — a regex, a format string — are
+/// rescanned with `fail_closed` off; a region that is code a shell will run
+/// (the operand of a shell's `-c`, or of `eval`) gets it on (bug-05-1).
+fn scan_shell_command(cmd: &str, fail_closed: bool) -> bool {
     let chars: Vec<char> = cmd.chars().collect();
     let mut i = 0;
     // The start of the string is a command position; every separator makes
@@ -215,12 +252,17 @@ pub fn command_has_sudo(cmd: &str) -> bool {
     // A wrapper command is active: every later word of this simple command
     // is a command position, until the next separator.
     let mut wrapper = false;
+    // Whether the word just read (or the word before it, for `su -c` and
+    // `eval`) is a code operand: fail-closed applies inside its quoted
+    // regions and to the word itself.
+    let mut code_operand = false;
 
     while i < chars.len() {
         match chars[i] {
             ';' | '|' | '\n' | '\r' => {
                 at_command = true;
                 wrapper = false;
+                code_operand = false;
                 i += 1;
             }
             ' ' | '\t' => i += 1,
@@ -280,43 +322,47 @@ pub fn command_has_sudo(cmd: &str) -> bool {
             _ => {
                 let (word, end) = read_shell_word(&chars, i);
                 i = end;
-                if i < chars.len() && chars[i] == '<' {
-                    // An fd number written straight before a redirection
-                    // operator (`2>`, `1<`) belongs to the redirection,
-                    // not the command list.
-                    if word.text.chars().all(|c| c.is_ascii_digit()) && !word.text.is_empty() {
-                        continue;
-                    }
+                // An fd number written straight before a redirection
+                // operator (`2>`, `1<`) belongs to the redirection, not
+                // the command list; the operator arm consumes both.
+                if i < chars.len()
+                    && matches!(chars[i], '<' | '>')
+                    && !word.text.is_empty()
+                    && word.text.chars().all(|c| c.is_ascii_digit())
+                {
+                    continue;
                 }
                 if (at_command || wrapper) && is_elevator(&word.text) {
                     return true;
                 }
-                // Quoted text is scanned as a command in its own right.
-                if !word.quoted.is_empty() && command_has_sudo(&word.quoted) {
+                // The fail-closed rule applies inside a quoted region only
+                // when that region is code a shell will run: the operand
+                // after a shell's `-c`, an `eval` operand, or the operand
+                // of `su -c`. A plain quoted argument — a regex, a format
+                // string — is scanned for the elevator names but never
+                // fails closed (bug-05-1).
+                if !word.quoted.is_empty() && scan_shell_command(&word.quoted, code_operand) {
+                    return true;
+                }
+                if code_operand && word.unresolvable {
+                    // `sh -c "$CMD"`: the shell will expand and run it, so
+                    // an unresolvable operand fails closed here too.
                     return true;
                 }
                 if wrapper {
-                    // Every later word of the simple command is a command
-                    // position; nothing a word can do ends the wrapper
-                    // here, only a separator can.
-                    continue;
-                }
-                if at_command {
-                    // A leading fd number before a redirection operator
-                    // (`2>`, `1<`) belongs to the redirection, not the
-                    // command list.
-                    if i < chars.len()
-                        && matches!(chars[i], '<' | '>')
-                        && word.text.chars().all(|c| c.is_ascii_digit())
-                        && !word.text.is_empty()
-                    {
-                        continue;
+                    if word.expansion {
+                        return true;
                     }
-                    if word.unresolvable && !is_assignment(&word.text) {
+                } else if at_command {
+                    if word.unresolvable
+                        && !is_assignment(&word.text)
+                        && (fail_closed || code_operand)
+                    {
                         // A command word the detector cannot resolve — a
-                        // surviving parameter expansion or glob — fails
-                        // closed to elevation. A leading assignment keeps
-                        // its value's expansion out of command position.
+                        // surviving parameter expansion, glob or brace
+                        // expansion — fails closed to elevation. A leading
+                        // assignment keeps its value's expansion out of
+                        // command position.
                         return true;
                     }
                     if WRAPPER_COMMANDS.contains(&word.text.as_str()) {
@@ -327,12 +373,15 @@ pub fn command_has_sudo(cmd: &str) -> bool {
                         at_command = false;
                     }
                 }
+                code_operand = matches!(
+                    word.text.as_str(),
+                    "sh" | "bash" | "dash" | "zsh" | "ksh" | "su" | "eval"
+                ) || (word.text == "-c" && code_operand);
             }
         }
     }
     false
 }
-
 /// The credential-prompt text sent to the client for a sudo password
 /// request. Deliberately takes no command argument: the command is already
 /// on screen directly above the dialog (the approval flow's scrollback
@@ -740,6 +789,86 @@ mod tests {
                 "preservation: globs and expansions in argument position stay clear: {cmd:?}"
             );
         }
+    }
+
+    /// M39 phase-05 bounce 1 (bug-05-1): quoted text is always scanned for
+    /// the elevator names, but the fail-closed rule must NOT fire on a `$`
+    /// or glob that is only a quoted *argument* — a regex or format string.
+    /// Test written red.
+    #[test]
+    fn sudo_detect_quoted_arguments_stay_clear() {
+        for cmd in [
+            "find . -name '*.log'",
+            "grep 'foo.*bar' f",
+            "sed 's/a*/b/' f",
+            "awk '$3 > 5' f",
+            "echo \"$HOME\"",
+            "cd \"$dir\"",
+            "jq '.[0]' f",
+            "ls \"$d\"/*.txt",
+            "git commit -m 'fix: x'",
+        ] {
+            assert!(
+                !command_has_sudo(cmd),
+                "preservation: quoted arguments stay clear; the fail-closed rule must not \
+                 fire inside a quoted region that is a plain argument: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05 bounce 1 (bug-05-1): the fail-closed rule DOES apply
+    /// inside a quoted region that is code a shell will run — the operand
+    /// after `-c` for the shells, an `eval` operand, or the operand of
+    /// `su -c`. Green today; pins the behaviour the quoted-arguments fix
+    /// must not lose.
+    #[test]
+    fn sudo_detect_shell_c_operand_fails_closed() {
+        for cmd in [
+            "sh -c \"$CMD\"",
+            "bash -c 'sud? id'",
+            "eval \"$X\"",
+            "su -c \"$X\"",
+        ] {
+            assert!(
+                command_has_sudo(cmd),
+                "a shell -c / eval / su -c operand fails closed to elevation: {cmd:?}"
+            );
+        }
+    }
+
+    /// M39 phase-05 bounce 1 (bug-05-1): behind a wrapper, a word with an
+    /// unquoted `$` expansion fails closed to elevation; a glob in that
+    /// position does not. Test written red.
+    #[test]
+    fn sudo_detect_expansion_behind_a_wrapper_fails_closed() {
+        for cmd in ["nohup $S id", "env $S id", "timeout 10 $S id"] {
+            assert!(
+                command_has_sudo(cmd),
+                "an unquoted expansion behind a wrapper fails closed to elevation: {cmd:?}"
+            );
+        }
+        assert!(
+            !command_has_sudo("timeout 10 ls *.txt"),
+            "preservation: a glob behind a wrapper stays clear: 'timeout 10 ls *.txt'"
+        );
+    }
+
+    /// M39 phase-05 bounce 1 (bug-05-1): an unquoted brace expansion in
+    /// command position is unresolvable and fails closed; a bare `{`
+    /// keyword is unchanged. Test written red.
+    #[test]
+    fn sudo_detect_brace_expansion_fails_closed() {
+        for cmd in ["s{u,}do id", "{sudo,} id", "/usr/bin/{su,x}do id"] {
+            assert!(
+                command_has_sudo(cmd),
+                "an unquoted brace expansion in command position fails closed to \
+                 elevation: {cmd:?}"
+            );
+        }
+        assert!(
+            !command_has_sudo("{ ls; }"),
+            "preservation: a bare {{ keyword stays clear: '{{ ls; }}'"
+        );
     }
 
     #[test]
