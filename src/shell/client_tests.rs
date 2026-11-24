@@ -1238,6 +1238,7 @@ mod scripted {
 mod streaming {
     use super::scripted::{await_input_with, markers_for_sent_command, nonce_of};
     use super::*;
+    use crate::shell::client::client_read::OutputCutter;
     use crate::shell::host::{ShellBackend, bind, serve};
     use std::sync::Mutex;
 
@@ -1609,25 +1610,103 @@ mod streaming {
             outcome.output.len()
         );
         let text = String::from_utf8_lossy(&outcome.output);
-        let cut = text
-            .find("bytes of output dropped here")
-            .expect("the cut is announced with the drop note");
+        assert!(
+            text.contains("bytes of output dropped here"),
+            "the cut is announced with the drop note: {text:?}"
+        );
         assert!(
             text.ends_with("yyyy"),
             "the tail kept is the most recent bytes sent: …{:?}",
             &text[text.len() - 40..]
         );
-        let note_start = text
-            .rfind("[daemoneye: ")
-            .expect("the note is one line of its own");
+    }
+
+    /// C3: the cut is amortized — driving the cutter directly with 4 KiB
+    /// chunks totalling three times the cap must cut at most 8 times, so
+    /// steady output past the cap does not re-copy the buffer every chunk.
+    #[test]
+    fn output_cap_cuts_are_amortized() {
+        let nonce = Nonce::new();
+        let mut cutter = OutputCutter::new(OUTPUT_CAP, &nonce);
+        let mut buf = test_begin_marker(&nonce);
+        buf.extend_from_slice(b"\r\n");
+        let mut offered_at = buf.len();
+        let chunk = vec![b'y'; 4 * 1024];
+        let total = OUTPUT_CAP * 3;
+        let mut cuts = 0;
+        for _ in (0..total).step_by(chunk.len()) {
+            if cutter.absorb(&mut buf, &chunk, &mut offered_at).is_some() {
+                cuts += 1;
+            }
+        }
         assert!(
-            note_start < cut,
-            "the note starts where the bytes were cut: {text:?}"
+            cuts <= 8,
+            "4 KiB chunks totalling three times the cap must cut at most 8 times, saw {cuts}"
         );
         assert!(
-            outcome.output.len() <= OUTPUT_CAP,
-            "the whole outcome stays within the cap: {} bytes",
-            outcome.output.len()
+            buf.len() <= OUTPUT_CAP,
+            "the buffer never passes the cap: {} bytes",
+            buf.len()
+        );
+        assert!(offered_at <= buf.len(), "offered_at never points past buf");
+    }
+
+    /// C3: exactly one note names the *total* bytes dropped since the begin
+    /// marker, so `N + (output length − note length)` equals the bytes the
+    /// command actually printed between its markers.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn output_cap_note_counts_every_dropped_byte() {
+        let (host, tx) = spawn_stream().await;
+        let path = host.path.clone();
+        let client = tokio::spawn(async move {
+            run_command(&path, "yes | head -c 32M", "bash", Duration::from_secs(60)).await
+        });
+        let sent = await_input_with(|| host.backend.writes()).await;
+        let nonce = nonce_of(sent.as_slice());
+        let begin = test_begin_marker(&nonce);
+        let end = test_end_marker(&nonce, 0);
+        let chunk_len = 64 * 1024;
+        let chunks = (OUTPUT_CAP * 2) / chunk_len;
+        let between_markers = chunks * chunk_len;
+        let chunk = vec![b'y'; chunk_len];
+        let publisher = tokio::spawn(async move {
+            let _ = tx.send(begin);
+            for _ in 0..chunks {
+                let _ = tx.send(chunk.clone());
+            }
+            let _ = tx.send(end);
+        });
+        let outcome = tokio::time::timeout(Duration::from_secs(60), client)
+            .await
+            .expect("the 60 s bound ends the read instead of hanging")
+            .expect("the client task joins")
+            .expect("a command that ends inside its deadline completes");
+        publisher.await.expect("the script task finishes");
+        let text = String::from_utf8_lossy(&outcome.output);
+        let note_start = text
+            .find("[daemoneye: ")
+            .expect("exactly one note: {text:?}");
+        assert_eq!(
+            text.find("[daemoneye: "),
+            text.rfind("[daemoneye: "),
+            "there is exactly one note in the output"
+        );
+        let note_line_len = text[note_start..]
+            .find("]\r\n")
+            .map(|p| p + 3)
+            .expect("the note ends its own line");
+        let n: usize = text[note_start + "[daemoneye: ".len()..]
+            .split(" bytes of output dropped here")
+            .next()
+            .expect("the note names its byte count")
+            .parse()
+            .expect("the note's byte count is a number");
+        assert_eq!(
+            n + (text.len() - note_line_len),
+            between_markers,
+            "the note's N plus the kept bytes must equal the bytes sent between the markers: \
+             n={n} kept={} sent={between_markers}",
+            text.len() - note_line_len
         );
     }
 }

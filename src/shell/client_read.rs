@@ -16,13 +16,111 @@ use crate::shell::pty::{
     CommandOutcome, Nonce, begin_marker, end_marker, find_subslice, parse_outcome,
 };
 
+/// How far below [`OUTPUT_CAP`] a cut targets the buffer, as a fraction of
+/// the cap: cutting to this fraction means at least this fraction of the cap
+/// in new output arrives before the next cut, so steady output past the cap
+/// amortizes to one cut per that many bytes instead of copying the whole
+/// tail on every chunk.
+const CUT_HEADROOM_FRACTION: usize = 3;
+
+/// Cut-to length for a cap: below the cap by the headroom fraction.
+fn cut_target(cap: usize) -> usize {
+    cap.saturating_sub(cap / CUT_HEADROOM_FRACTION)
+}
+
+/// Accumulated output with a middle-cut at [`OUTPUT_CAP`]. The head through
+/// the run's begin marker is kept (`parse_outcome` needs it), the most recent
+/// tail is kept, and a one-line note marks where the cut happened, like the
+/// `Lagged` arm does. The note names the *total* bytes dropped since the
+/// begin marker — not the last cut's overflow — so there is always exactly
+/// one note: the previous note sits at the head of the region being dropped
+/// and is removed with it, and its synthetic bytes are not counted as dropped
+/// output. A cut targets [`cut_target`], well below the cap, so the next cut
+/// is far off: cuts amortize over the headroom instead of re-copying the
+/// tail on every chunk. Each [`absorb`](Self::absorb) folds one chunk in;
+/// a cut adjusts `offered_at` so it never points past the buffer.
+pub(super) struct OutputCutter {
+    cap: usize,
+    beg: Vec<u8>,
+    /// End of the kept head: one past the begin marker's last byte, or `None`
+    /// while the marker has not been seen yet.
+    head_end: Option<usize>,
+    /// How much of the buffer has been searched for the begin marker, so the
+    /// search is incremental and never re-scans old bytes.
+    searched: usize,
+    /// Length of the note currently in the buffer, `0` before the first cut.
+    note_len: usize,
+    dropped_total: usize,
+}
+
+impl OutputCutter {
+    pub(super) fn new(cap: usize, nonce: &Nonce) -> Self {
+        Self {
+            cap,
+            beg: begin_marker(nonce),
+            head_end: None,
+            searched: 0,
+            note_len: 0,
+            dropped_total: 0,
+        }
+    }
+
+    fn find_head(&mut self, buf: &[u8]) {
+        if self.head_end.is_some() {
+            return;
+        }
+        let overlap = self.beg.len().saturating_sub(1);
+        let from = self.searched.saturating_sub(overlap);
+        if let Some(pos) = find_subslice(&buf[from..], &self.beg) {
+            self.head_end = Some(from + pos + self.beg.len());
+        } else {
+            self.searched = buf.len();
+        }
+    }
+
+    /// Fold one chunk in. Returns `Some(())` when a cut happened, so a test
+    /// can count the cuts without reaching into the buffer.
+    pub(super) fn absorb(
+        &mut self,
+        buf: &mut Vec<u8>,
+        chunk: &[u8],
+        offered_at: &mut usize,
+    ) -> Option<()> {
+        buf.extend_from_slice(chunk);
+        self.find_head(buf);
+        if buf.len() <= self.cap {
+            return None;
+        }
+        let head_end = self.head_end.unwrap_or(0).min(buf.len());
+        let keep_tail = cut_target(self.cap).saturating_sub(head_end);
+        let tail_start = buf.len().saturating_sub(keep_tail).max(head_end);
+        let removed = tail_start - head_end;
+        // The region starts with the framing CRLF `parse_outcome` strips
+        // (first cut) or the previous note (later cuts); neither is output
+        // the command printed, so neither counts as dropped.
+        let synthetic = if self.note_len == 0 {
+            usize::from(buf[head_end..].starts_with(b"\r\n")) * 2
+        } else {
+            self.note_len
+        };
+        self.dropped_total += removed.saturating_sub(synthetic);
+        let note = format!(
+            "\r\n[daemoneye: {} bytes of output dropped here]\r\n",
+            self.dropped_total
+        );
+        let note_len = note.len();
+        buf.splice(head_end..tail_start, note.into_bytes());
+        self.note_len = note_len;
+        *offered_at = (*offered_at).min(buf.len());
+        Some(())
+    }
+}
+
 /// Handle a timeout slice in [`read_to_marker`]: poll whether the shell has
 /// exited or paused, extend `deadline` if paused, or type Ctrl-C into the PTY
-/// on initial timeout and wait for [`INTERRUPT_GRACE`]. Also run on the data
-/// path when a slice's window ends with data still arriving, so a command
-/// that never stops printing still hits its deadline.
+/// on initial timeout and wait for [`INTERRUPT_GRACE`].
 #[allow(clippy::too_many_arguments)]
-async fn handle_slice_end<W>(
+async fn handle_read_timeout<W>(
     sock: &Path,
     cmd: &str,
     timeout: Duration,
@@ -192,6 +290,7 @@ where
     let mut end_seen = false;
     let mut drain_until: Option<tokio::time::Instant> = None;
     let mut interrupted_until: Option<tokio::time::Instant> = None;
+    let mut cutter = OutputCutter::new(OUTPUT_CAP, nonce);
     loop {
         let slice_end = match drain_until {
             Some(end) => end,
@@ -205,7 +304,7 @@ where
                 return Err(e).with_context(|| format!("reading frame from {}", sock.display()));
             }
             Err(_) => {
-                handle_slice_end(
+                handle_read_timeout(
                     sock,
                     cmd,
                     timeout,
@@ -250,11 +349,7 @@ where
         line.clear();
         match frame {
             ShellResponse::Chunk { bytes } => {
-                buf.extend_from_slice(&bytes);
-                let over = buf.len().saturating_sub(OUTPUT_CAP);
-                if over > 0 {
-                    drop_middle_of_buf(&mut buf, nonce, over, &mut offered_at);
-                }
+                cutter.absorb(&mut buf, &bytes, &mut offered_at);
                 if end_seen || {
                     let overlap = end_marker(nonce).len().saturating_sub(1);
                     let scan_from = buf.len().saturating_sub(bytes.len() + overlap);
@@ -316,28 +411,4 @@ where
     .await
     .map_err(|_| anyhow::anyhow!("timed out writing the prompt answer into the shell"))??;
     Ok(())
-}
-
-/// Drop `over` bytes from the middle of `buf` so its length stays at the
-/// [`OUTPUT_CAP`] cap: the head through this run's begin marker is kept
-/// (`parse_outcome` needs it), the most recent tail is kept, and a one-line
-/// note marks where the cut happened, like the `Lagged` arm does. Adjusts
-/// `offered_at` so it never points past `buf.len()`.
-fn drop_middle_of_buf(buf: &mut Vec<u8>, nonce: &Nonce, over: usize, offered_at: &mut usize) {
-    let beg = begin_marker(nonce);
-    let head_end = find_subslice(buf, &beg)
-        .map(|pos| pos + beg.len())
-        .unwrap_or(0);
-    let note = format!("\r\n[daemoneye: {over} bytes of output dropped here]\r\n");
-    let note_len = note.len();
-    let note = note.into_bytes();
-    let keep_tail = OUTPUT_CAP
-        .saturating_sub(head_end + note_len)
-        .min(buf.len());
-    let tail_start = buf.len().saturating_sub(keep_tail);
-    let tail: Vec<u8> = buf[tail_start..].to_vec();
-    buf.truncate(head_end);
-    buf.extend_from_slice(&note);
-    *offered_at = (*offered_at).min(buf.len());
-    buf.extend_from_slice(&tail);
 }

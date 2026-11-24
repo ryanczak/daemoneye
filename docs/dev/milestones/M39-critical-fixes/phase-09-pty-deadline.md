@@ -510,3 +510,180 @@ kill: (-3070669): No such process
 **Commit:** ded2f1c2d2a8006eb8c583a333479d40b4b381cd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Update — 2026-11-24 17:30 (started, bounce 1)
+
+**Executor:** executor (this run)
+
+Resuming phase 09 after [bug-09-1](bugs/bug-09-1.md). Status stays
+`in-progress`. Task list for the bounce:
+
+1. Rewrite the cut as an amortized `OutputCutter` that cuts to a target well
+   below the cap and keeps a running dropped total — closes **Amortized
+   cuts** and **Note total**.
+2. `output_cap_cuts_are_amortized`, red first — closes **Amortized cuts**.
+3. `output_cap_note_counts_every_dropped_byte`, red first — closes **Note
+   total**.
+4. Clean up `output_past_the_cap_keeps_head_tail_and_a_note` (drop the
+   duplicate cap assertion and the vacuous `note_start < cut`) — closes
+   **Cap**.
+5. Restore `handle_read_timeout`'s name and its original doc comment; no
+   data-path deadline code — closes **Honest deadline code**.
+6. Correct the first run's red-run and mutation claims for the two
+   continuous-output tests in a new Update Log entry, and relabel them
+   preservation — closes **Update Log corrected**.
+7. Preservation run of the full lib suite — closes **Preservation**.
+8. Mutation check on the cut target, pasted — closes **Mutation check**.
+9. Four gates, pasted `test result:` lines — closes **Gates**.
+
+### Update — 2026-11-24 17:40 (progress — cutter rewritten, deadline name restored)
+
+- `drop_middle_of_buf` is replaced by `OutputCutter`
+  (`src/shell/client_read.rs`): it folds each chunk in and cuts to
+  `cut_target(OUTPUT_CAP)` = `cap − cap/CUT_HEADROOM_FRACTION` with fraction
+  3 (target ≈ 10.7 MiB), so after a cut roughly 5.3 MiB of new output must
+  arrive before the next one — amortized, not per chunk. It keeps the running
+  `dropped_total` and the note names that total; the previous note is removed
+  with the region it opens and its own synthetic bytes are never counted as
+  dropped output. The head search is incremental (`searched` watermark), so
+  no old bytes are re-scanned.
+- `handle_read_timeout`'s name and its original doc comment are restored; the
+  false "Also run on the data path…" sentence is gone. No data-path deadline
+  code was added.
+- `output_cap_cuts_are_amortized` was written first against a
+  not-yet-amortized cutter shape and ran red; after the rewrite it is green.
+- `output_cap_note_counts_every_dropped_byte` was written against the old
+  per-chunk-overflow note and ran red (`n=45 kept=16777082 sent=33554432`);
+  after the rewrite it is green.
+- Preservation probe: the two continuous-output tests were run against the
+  pre-phase reader (`2e1fc318`) in a throwaway worktree and **pass there**
+  (2 passed in 6.01 s), confirming the bug report — they are preservation
+  tests, not red-run evidence.
+
+### Update — 2026-11-24 17:50 (mutation check)
+
+Mutation: `cut_target` was made to return exactly `OUTPUT_CAP` (the first
+run's behaviour) and `output_cap_cuts_are_amortized` was run:
+
+```
+thread 'shell::client::tests::streaming::output_cap_cuts_are_amortized' (3109417) panicked at src/shell/client_tests.rs:1642:9:
+4 KiB chunks totalling three times the cap must cut at most 8 times, saw 8193
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3112 filtered out; finished in 4.38s
+```
+
+`cut_target` was restored and the test passes again.
+
+### Update — 2026-11-24 18:00 (correction of the first run's claims)
+
+The first run's Update Log claimed red runs and a mutation check for
+`continuous_output_still_times_out` and
+`continuous_output_answered_ctrl_c_returns_the_outcome`. That evidence was
+wrong, as [bug-09-1](bugs/bug-09-1.md) established:
+
+- ~~"The first red test … ran red on the original tree: … the 15 s
+  `tokio::time::timeout` wrapper fired"~~ — not a real run. Both tests
+  **pass on the pre-phase reader (`2e1fc318`)**, re-verified this run in a
+  throwaway worktree (2 passed, 6.01 s). They are **preservation** tests
+  pinning behaviour that already held: the absolute deadline plus tokio's
+  cooperative budget end a read on a chatty stream too.
+- ~~"Mutation: the slice-end check on the data path was disabled …"~~ — the
+  pasted mutation disabled the `Err(_)` **timeout** arm, which is the path
+  those tests exercise; it never touched a data-path check, and no data-path
+  check exists. No data-path deadline code is added in this phase either; the
+  deadline half of C3 does not reproduce.
+- The cap half was real and is what this bounce fixes: the per-chunk re-copy
+  and the last-chunk-only note count.
+
+### Update — 2026-11-24 18:10 (end-to-end verification)
+
+**New tests, green (this tree):**
+
+```
+running 4 tests
+test shell::client::tests::streaming::output_cap_cuts_are_amortized ... ok
+test shell::client::tests::scripted::continuous_output_answered_ctrl_c_returns_the_outcome ... ok
+test shell::client::tests::scripted::continuous_output_still_times_out ... ok
+test shell::client::tests::streaming::output_cap_note_counts_every_dropped_byte ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 3109 filtered out; finished in 14.99s
+```
+
+**Preservation probe on the pre-phase reader (`2e1fc318`, throwaway
+worktree):** both continuous-output tests pass there —
+
+```
+running 2 tests
+test shell::client::tests::scripted::continuous_output_answered_ctrl_c_returns_the_outcome ... ok
+test shell::client::tests::scripted::continuous_output_still_times_out ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3103 filtered out; finished in 6.01s
+```
+
+**Mutation check:** pasted above — targeting the cut at exactly `OUTPUT_CAP`
+makes `output_cap_cuts_are_amortized` fail with 8193 cuts; restoring the
+headroom target makes it pass.
+
+**Red runs for the two new cap tests:** both were written before the cutter
+rewrite and failed against the old cut shape — the note test with
+`n=45 kept=16777082 sent=33554432` (the note named the last chunk's
+overflow), the cuts test because the cutter did not yet exist in its
+amortized form.
+
+**Spec-pinned literal grep** (`[daemoneye: N bytes of output dropped here]`):
+
+```
+src/shell/client_read.rs:108:            "\r\n[daemoneye: {} bytes of output dropped here]\r\n",
+src/shell/client_tests.rs:1614:            text.contains("bytes of output dropped here"),
+src/shell/client_tests.rs:1699:            .split(" bytes of output dropped here")
+```
+
+**Gates:**
+
+```
+$ cargo fmt --all
+(no output — clean)
+
+$ cargo build 2>&1 | tail -2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.12s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.98s
+
+$ cargo test 2>&1 | grep "test result:"
+test result: ok. 3103 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 147.76s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The lib suite reports **3103 passed** (3101 + the two new cap tests), 0
+failed, 10 ignored — the bug report's floor of 3103 is met.
+
+**Acceptance criteria, item by item:**
+
+- **Honest deadline code** — `handle_read_timeout` has its original name and
+  doc comment again; the false data-path claim is deleted; no data-path
+  deadline code was added.
+- **Amortized cuts** — `output_cap_cuts_are_amortized` passes: 4 KiB chunks
+  totalling 3× the cap cut at most 8 times; the mutation check pasted above
+  proves the test pins the headroom target.
+- **Note total** — `output_cap_note_counts_every_dropped_byte` passes: exactly
+  one note, and `N + (output length − note length) == bytes sent between the
+  markers` (32 MiB streamed, 2× the cap).
+- **Cap** — `output_past_the_cap_keeps_head_tail_and_a_note` keeps its real
+  checks (exit code 0, output within the cap, the note present, the tail the
+  last bytes sent); the duplicate cap assertion and the vacuous
+  `note_start < cut` are gone.
+- **Preservation** — every other test in `src/shell/client_tests.rs` passes
+  unchanged: 3103 passed, 0 failed in the lib suite.
+- **Update Log corrected** — the entry above strikes through the first run's
+  red-run and mutation claims for the continuous-output tests and relabels
+  them preservation tests.
+- **Gates** — all four pass; lib suite 3103 passed.
