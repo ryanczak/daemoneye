@@ -1,7 +1,7 @@
 # Phase 06 — wrap-remote
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~120 lines, almost all deletions
@@ -62,14 +62,14 @@ first edit within your first **5** tool calls.
 
 ## Acceptance criteria
 
-- [ ] `grep -rn 'wrap_remote' src` prints nothing. Today it prints
+- [x] `grep -rn 'wrap_remote' src` prints nothing. Today it prints
       matches in `policy.rs` and `policy_tests.rs`.
-- [ ] `grep -rn 'ssh <target>' src/daemon/policy.rs` prints nothing. Today
+- [x] `grep -rn 'ssh <target>' src/daemon/policy.rs` prints nothing. Today
       it matches the `ssh_target` field's doc comment.
-- [ ] **Preservation:** every test outside `src/daemon/policy_tests.rs`
+- [x] **Preservation:** every test outside `src/daemon/policy_tests.rs`
       passes unchanged, and every remaining test in that file passes
       unchanged.
-- [ ] **Gates:** all four pass. The lib suite count falls by at most 8 from
+- [x] **Gates:** all four pass. The lib suite count falls by at most 8 from
       3097. Paste the before and after `test result:` lines.
 
 ## Spec
@@ -241,3 +241,33 @@ kill: (-2878482): No such process
 **Commit:** bfcf425bb93d590f64bdb072e2c49c719169a5ed
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-24
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (thinking on, medium)
+- **Scope deviations:** none. Only `policy.rs` and `policy_tests.rs`
+  changed (`bfcf425b`, 27 lines added, 88 removed). The executor deleted
+  the seven `wrap_remote_*` tests and kept the one remote `sudo` prefix
+  `resolve_command` assertion as
+  `resolve_command_remote_sudo_prefix_no_double_sudo`, after checking that
+  no other test pinned it.
+- **Verified at review:**
+  - Both greps print nothing.
+  - `sh_single_quote` still has five callers, and every constrained item
+    is intact.
+  - The two rewritten comments describe the PTY route on the resolved
+    `[hosts]` host.
+  - Gates are green. The lib suite went from 3097 to 3090, exactly the
+    seven deleted tests.
+  - Audit ledger rows S3a–S3d now carry their `act:` cells; the 04 and 05
+    reviews had not filled them.
+- **Calibration:** re-verifying the row at drafting found the target was
+  dead code. Hardening it as scoped would have spent a phase on a function
+  nothing calls. Re-verification at drafting is worth keeping for every
+  audit row.
+- **Nit, not bounced:** the `ssh_target` doc comment says it names "a
+  configured `[hosts.<name>]` host". It can also be a destination that
+  matches one, or an unresolved target, though the comment's last sentence
+  covers the unresolved case.
