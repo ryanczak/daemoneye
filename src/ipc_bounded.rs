@@ -296,6 +296,11 @@ mod tests {
         let _client1 = UnixStream::connect(&path).await.unwrap();
         let first = accept_bounded(&listener, &permits).await.unwrap();
         assert_eq!(permits.available_permits(), 0, "the permit is held");
+        // The second client connects before the wait, so a connection is
+        // pending in the backlog: only the held permit can keep the second
+        // call from returning. Connecting after the wait would leave `accept`
+        // itself blocked and pass even if the permit were taken after it.
+        let _client2 = UnixStream::connect(&path).await.unwrap();
         let second = tokio::spawn({
             let listener = Arc::clone(&listener);
             let permits = Arc::clone(&permits);
@@ -308,7 +313,6 @@ mod tests {
             "the second accept must wait while the permit is held"
         );
 
-        let _client2 = UnixStream::connect(&path).await.unwrap();
         drop(first);
         drop(_client1);
         tokio::task::yield_now().await;
@@ -342,7 +346,10 @@ mod tests {
         waiting.abort();
 
         drop(first);
-        let fresh = accept_bounded(&listener, &permits).await.unwrap();
+        let fresh = timeout(Duration::from_secs(2), accept_bounded(&listener, &permits))
+            .await
+            .expect("the pending second client is accepted once the permit is free")
+            .unwrap();
         drop(fresh);
         assert_eq!(
             permits.available_permits(),

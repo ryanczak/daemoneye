@@ -693,7 +693,11 @@ mod tests {
         let chunk = vec![b'a'; 64 * 1024];
         let mut accepted: u64 = 0;
         for _ in 0..(64 * 1024 * 1024 / chunk.len()) {
-            match writer.write_all(&chunk).await {
+            let write =
+                tokio::time::timeout(std::time::Duration::from_secs(5), writer.write_all(&chunk))
+                    .await
+                    .expect("a write neither completes nor fails within 5 s");
+            match write {
                 Ok(()) => accepted += chunk.len() as u64,
                 Err(e) => {
                     assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);

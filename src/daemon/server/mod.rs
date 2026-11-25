@@ -388,7 +388,13 @@ mod tests {
         let chunk = vec![b'a'; 64 * 1024];
         let mut accepted: u64 = 0;
         for _ in 0..(64 * 1024 * 1024 / chunk.len()) {
-            match client_write.write_all(&chunk).await {
+            let write = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                client_write.write_all(&chunk),
+            )
+            .await
+            .expect("a write neither completes nor fails within 5 s");
+            match write {
                 Ok(()) => accepted += chunk.len() as u64,
                 Err(e) => {
                     assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);
@@ -420,9 +426,13 @@ mod tests {
             ),
             other => panic!("expected Response::Error, got {other:?}"),
         }
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+            .await
+            .expect("handle_client returns after the refusal")
+            .expect("handle_client did not panic");
         assert!(
-            handle.await.unwrap().is_err() || true,
-            "handle_client must have returned"
+            ended.is_ok(),
+            "a refused request is answered, not an error: {ended:?}"
         );
     }
 
