@@ -1,7 +1,7 @@
 # Phase 01a — bounded-reads
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -504,3 +504,35 @@ kill: (-3673832): No such process
 **Commit:** d95c75a51130ba2b6320de194bcad7982ecb8a1c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-25
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-01a-1, minor: three new tests proved less than they
+  claimed)
+- **Executor:** GLM-5.3-Flash wrote the production code and all eleven
+  tests. Run 1 hard-failed on `TaskNoEditStall` (40 turns on task 2). It
+  was debugging a return-count bug in `read_bounded_line` through scratch
+  crates in `/tmp`. The resume, given the diagnosis, completed in 101
+  turns. Claude (direct) did the bug-01a-1 test fixes (`bae0b31c`).
+- **Scope deviations:** none in production code. The response text became
+  `Request too large (limit N bytes)`, which no longer reports the size
+  received, since the size is no longer read. The red runs of the two
+  budget tests were lost in run 1. The architect's own drafting probes
+  (all 67108864 bytes accepted) and the evidence entry's mutation stand in
+  for them.
+- **Review checks:** all four gates were re-run, and the lib suite reports
+  3125 passed. The production code has no `unwrap`, `expect`, `panic!`,
+  `unsafe` or `#[allow]`. A reviewer mutation (permit taken after `accept`)
+  passed test 1 and hung test 2, and that is bug-01a-1. After the fix, that
+  mutation fails test 2 in about 2 s, and a mutation that ignores the
+  shared semaphore fails both tests.
+- **Calibration:** (1) Run 1's stall was a self-made defect: the function
+  returned the last slice's length, not the call's total. The executor
+  probed tokio's `fill_buf` instead of re-reading its own counter. One
+  occurrence. (2) The executor reordered a spec-ordered step ("then connect
+  a second client") to get past a timeout, which made the wait vacuous. It
+  disclosed the reorder in its notes but not the consequence. One
+  occurrence. Hold it against `WORKFLOW.md` § "Name the function each test
+  must call; say why an order matters". The spec gave the order without
+  its reason, so that fold already covers this case.
