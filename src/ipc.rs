@@ -20,6 +20,10 @@ pub const CLIENT_APPROVAL_TIMEOUT: Duration =
 mod types;
 pub use types::*;
 
+#[path = "ipc_bounded.rs"]
+mod bounded;
+pub use bounded::*;
+
 /// Messages sent from the CLI client to the daemon.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum Request {

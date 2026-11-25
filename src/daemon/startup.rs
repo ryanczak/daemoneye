@@ -313,13 +313,18 @@ async fn bind_and_serve_ipc(state: Arc<DaemonState>, shutdown: Arc<AtomicBool>) 
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
         .context("Failed to install SIGINT handler")?;
 
+    let permits = Arc::new(tokio::sync::Semaphore::new(
+        crate::ipc::MAX_DAEMON_CONNECTIONS,
+    ));
+
     loop {
         tokio::select! {
-            result = listener.accept() => {
+            result = crate::ipc::accept_bounded(&listener, &permits) => {
                 match result {
-                    Ok((stream, _addr)) => {
+                    Ok((stream, permit)) => {
                         let state_conn = Arc::clone(&state);
                         tokio::spawn(async move {
+                            let _permit = permit;
                             if let Err(e) = handle_client(stream, state_conn).await {
                                 log::error!("Error handling client: {}", e);
                             }

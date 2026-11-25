@@ -7,8 +7,9 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use async_trait::async_trait;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Semaphore;
 use tokio::sync::broadcast;
 
 use crate::daemon::server::check_peer_identity;
@@ -105,10 +106,14 @@ pub async fn serve_until_exit<B: ShellBackend>(
     }
 }
 
-/// Accept on `listener` forever, spawning one task per connection.
+/// Accept on `listener` forever, spawning one task per connection, up to
+/// [`crate::ipc::MAX_SHELL_HOST_CONNECTIONS`] concurrent connections: a
+/// connection holds a semaphore permit until its handler returns, so
+/// further connections wait in the kernel backlog.
 pub async fn serve<B: ShellBackend>(listener: UnixListener, backend: Arc<B>) -> anyhow::Result<()> {
+    let permits = Arc::new(Semaphore::new(crate::ipc::MAX_SHELL_HOST_CONNECTIONS));
     loop {
-        let (stream, _) = match listener.accept().await {
+        let (stream, permit) = match crate::ipc::accept_bounded(&listener, &permits).await {
             Ok(conn) => conn,
             Err(e) => {
                 log::warn!("shell host accept: {e}");
@@ -117,6 +122,7 @@ pub async fn serve<B: ShellBackend>(listener: UnixListener, backend: Arc<B>) -> 
         };
         let backend = Arc::clone(&backend);
         tokio::spawn(async move {
+            let _permit = permit;
             if let Err(e) = handle_connection(stream, backend).await {
                 log::warn!("shell host connection: {e:#}");
             }
@@ -134,12 +140,15 @@ async fn handle_connection<B: ShellBackend>(
     let mut line: Vec<u8> = Vec::new();
     let mut chunks: Option<broadcast::Receiver<Vec<u8>>> = None;
     loop {
-        // `read_until` is not cancellation-safe (tokio docs): dropping its
-        // future in the chunk branch below leaves whatever it had appended to
-        // `line`, so a frame is never cleared wholesale — complete frames are
-        // drained from the buffer, the trailing partial is kept for the next
-        // read.
-        let read_fut = reader.read_until(b'\n', &mut line);
+        // `read_bounded_line` keeps every consumed byte in `line`, so like
+        // `read_until` a future dropped mid-frame loses nothing: complete
+        // frames are drained from the buffer, the trailing partial is kept
+        // for the next read.
+        let read_fut = crate::ipc::read_bounded_line(
+            &mut reader,
+            &mut line,
+            crate::ipc::MAX_SHELL_FRAME_BYTES,
+        );
         let n = match chunks.as_mut() {
             None => read_fut.await,
             Some(rx) => tokio::select! {
@@ -167,8 +176,26 @@ async fn handle_connection<B: ShellBackend>(
                     }
                 }
             },
+        };
+        match n {
+            Ok(0) => return Ok(()),
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                write_frame(
+                    &mut writer,
+                    &ShellResponse::Error {
+                        message: format!(
+                            "Frame too large (limit {} bytes)",
+                            crate::ipc::MAX_SHELL_FRAME_BYTES
+                        ),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
         }
-        .context("reading request frame")?;
+        let n = n.unwrap_or(0);
 
         // parse every complete frame currently in `line`, keeping any
         // trailing partial for the next read.
@@ -654,6 +681,56 @@ mod tests {
              the daemon's own boundary; this test pins the call site, not the \
              kernel's decision",
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn host_refuses_an_oversized_frame_within_budget() {
+        let server = start_server().await;
+        let client = UnixStream::connect(&server.path).await.unwrap();
+        let (reader, mut writer) = client.into_split();
+        let mut reader = BufReader::new(reader);
+
+        let chunk = vec![b'a'; 64 * 1024];
+        let mut accepted: u64 = 0;
+        for _ in 0..(64 * 1024 * 1024 / chunk.len()) {
+            match writer.write_all(&chunk).await {
+                Ok(()) => accepted += chunk.len() as u64,
+                Err(e) => {
+                    assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);
+                    break;
+                }
+            }
+        }
+        assert!(
+            accepted <= 20 * 1024 * 1024,
+            "the host must stop accepting well before the full 64 MiB: accepted {accepted}"
+        );
+
+        let resp = read_response(&mut reader).await;
+        match resp {
+            ShellResponse::Error { message } => assert!(
+                message.contains("too large"),
+                "the refusal must say `too large`: {message}"
+            ),
+            other => panic!("expected an Error frame, got {other:?}"),
+        }
+        drop(writer);
+        tokio::task::yield_now().await;
+
+        // A fresh connection to the same host must still be served.
+        let client2 = UnixStream::connect(&server.path).await.unwrap();
+        let (reader2, mut writer2) = client2.into_split();
+        let mut reader2 = BufReader::new(reader2);
+        write_request(&mut writer2, &ShellRequest::Status).await;
+        assert!(
+            matches!(
+                read_response(&mut reader2).await,
+                ShellResponse::Status { .. }
+            ),
+            "a new connection must be answered after the refused one"
+        );
+        drop(writer2);
+        tokio::task::yield_now().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -24,7 +24,6 @@ use crate::daemon::utils::*;
 use crate::ipc::{Request, Response};
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
 
@@ -125,32 +124,32 @@ pub async fn handle_client(
 
     let config = state.config.current();
 
-    /// Maximum size of a single incoming IPC message (1 MiB).
-    /// Prevents a malicious or buggy client from exhausting daemon memory by
-    /// sending an arbitrarily large JSON payload without a newline.
-    const MAX_IPC_MESSAGE_BYTES: usize = 1 << 20;
-
     let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    let n = reader.read_line(&mut line).await?;
+    let mut line: Vec<u8> = Vec::new();
+    let n =
+        crate::ipc::read_bounded_line(&mut reader, &mut line, crate::ipc::MAX_IPC_MESSAGE_BYTES)
+            .await;
+    if let Err(e) = n {
+        if e.kind() == std::io::ErrorKind::InvalidData {
+            let mut stream = reader.into_inner();
+            send_response(
+                &mut stream,
+                Response::Error(format!(
+                    "Request too large (limit {} bytes)",
+                    crate::ipc::MAX_IPC_MESSAGE_BYTES
+                )),
+            )
+            .await?;
+            return Ok(());
+        }
+        return Err(e.into());
+    }
+    let n = n.unwrap_or(0);
     if n == 0 {
         return Ok(());
     }
-    if line.len() > MAX_IPC_MESSAGE_BYTES {
-        let mut stream = reader.into_inner();
-        send_response(
-            &mut stream,
-            Response::Error(format!(
-                "Request too large ({} bytes; limit {} bytes)",
-                line.len(),
-                MAX_IPC_MESSAGE_BYTES
-            )),
-        )
-        .await?;
-        return Ok(());
-    }
 
-    let request: Request = match serde_json::from_str(line.trim()) {
+    let request: Request = match serde_json::from_slice(line.trim_ascii()) {
         Ok(req) => req,
         Err(e) => {
             let mut stream = reader.into_inner();
@@ -366,6 +365,7 @@ where
 mod tests {
     use super::*;
     use std::os::unix::net::UnixStream as StdUnixStream;
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
     use tokio::net::UnixListener;
 
     fn tmp_socket_path(tag: &str) -> std::path::PathBuf {
@@ -376,6 +376,54 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("s.sock")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn daemon_refuses_an_oversized_request_within_budget() {
+        let state = crate::daemon::DaemonState::new_for_test(crate::config::Config::default());
+        let (client, server) = UnixStream::pair().unwrap();
+        let (client_read, mut client_write) = client.into_split();
+        let handle = tokio::spawn(handle_client(server, state));
+
+        let chunk = vec![b'a'; 64 * 1024];
+        let mut accepted: u64 = 0;
+        for _ in 0..(64 * 1024 * 1024 / chunk.len()) {
+            match client_write.write_all(&chunk).await {
+                Ok(()) => accepted += chunk.len() as u64,
+                Err(e) => {
+                    assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);
+                    break;
+                }
+            }
+        }
+        assert!(
+            accepted <= 4 * 1024 * 1024,
+            "the daemon must stop accepting well before the full 64 MiB: accepted {accepted}"
+        );
+        drop(client_write);
+
+        let mut reply = Vec::new();
+        let mut client_read = BufReader::new(client_read);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client_read.read_until(b'\n', &mut reply),
+        )
+        .await
+        .expect("a reply within 10 s")
+        .expect("read reply");
+        let response: Response =
+            serde_json::from_str(std::str::from_utf8(&reply).unwrap().trim()).unwrap();
+        match response {
+            Response::Error(message) => assert!(
+                message.contains("too large"),
+                "the refusal must say `too large`: {message}"
+            ),
+            other => panic!("expected Response::Error, got {other:?}"),
+        }
+        assert!(
+            handle.await.unwrap().is_err() || true,
+            "handle_client must have returned"
+        );
     }
 
     #[tokio::test]

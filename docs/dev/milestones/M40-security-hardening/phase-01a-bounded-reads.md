@@ -1,7 +1,7 @@
 # Phase 01a — bounded-reads
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -217,3 +217,153 @@ run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-25 15:05 (started)
+
+Work on the bounded-reads phase has begun: first the red tests, then
+`src/ipc_bounded.rs` and the call-site changes.
+
+Task breakdown (each closes the acceptance item named):
+
+1. Write red test `daemon_refuses_an_oversized_request_within_budget`
+   (daemon budget) and run it red. — closes **Daemon budget**.
+2. Write red test `host_refuses_an_oversized_frame_within_budget`
+   (host budget) and run it red. — closes **Host budget**.
+3. Create `src/ipc_bounded.rs` (declared via `#[path]` as a child of
+   `src/ipc.rs`, items re-exported from `crate::ipc`) with
+   `read_bounded_line`, `accept_bounded` and the cap/limit constants,
+   plus its own test module: `bounded_line_reads_one_line_and_leaves_the_rest`,
+   `bounded_line_accepts_a_line_of_exactly_the_cap`,
+   `bounded_line_refuses_one_byte_over_the_cap`,
+   `bounded_line_returns_a_partial_line_at_eof`,
+   `bounded_line_cap_counts_bytes_already_in_the_buffer`,
+   `bounded_line_refusal_reads_within_budget`,
+   `bounded_line_keeps_bytes_across_a_cancelled_call`,
+   `accept_bounded_waits_for_a_free_permit`,
+   `accept_bounded_waiting_call_can_be_dropped`. — closes **Line
+   reader** and **Accept cap**.
+4. Apply `read_bounded_line` in `handle_client` (`src/daemon/server/mod.rs`)
+   with the `too large` error reply. — closes **Daemon budget** (green).
+5. Apply `read_bounded_line` in `handle_connection`
+   (`src/shell/host.rs`) inside the existing `select!`, writing one
+   `ShellResponse::Error` then ending the connection. — closes **Host
+   budget** (green).
+6. Apply `accept_bounded` in both accept loops (`run_daemon` /
+   `bind_and_serve_ipc` in `src/daemon/startup.rs`, `serve` in
+   `src/shell/host.rs`); the spawned task holds its permit until the
+   handler returns; `serve` keeps its signature; the daemon accept stays
+   one branch of the existing `select!`. — closes **Both loops use it**.
+7. Add the one Key files row for `src/ipc_bounded.rs` to `CLAUDE.md`.
+8. Mutation check: drop the cap check, run
+   `cargo test --lib bounded_line_refusal_reads_within_budget`, see it
+   fail, restore. — closes **Mutation check**.
+9. Run the four gates once each, capture `test result:` lines, both red
+   runs, the grep and the mutation-check output into an Update Log entry;
+   commit as one `fix:` commit. — closes **Gates** and **Capture the
+   evidence**.
+
+### Update — 2026-11-25 (escalation)
+
+**Chosen lever:** resume.
+**Rationale:** the run hard-failed on `TaskNoEditStall` (40 turns on task
+2) while debugging one defect. The rest of the work is on disk and
+correct. The architect ran the gates on the partial tree: the build is
+green, and the lib suite is 3121 passed, 2 failed
+(`bounded_line_returns_a_partial_line_at_eof`,
+`bounded_line_keeps_bytes_across_a_cancelled_call`). The cause is in
+`read_bounded_line`: it returns the length of the **last slice**, not
+the bytes this call appended. Remaining work: that fix, one wrong test
+expectation, the two missing `accept_bounded_*` tests, three clippy
+`unused_mut` errors, `cargo fmt`, and the CLAUDE.md row. After those:
+the mutation check, the evidence and the commit.
+
+### Update — 2026-11-25 15:30 (end-to-end verification)
+
+The resumed run fixed `read_bounded_line` (the return value now counts
+every byte the call appended, not just the last `fill_buf` slice),
+corrected the cancelled-call test's expectation (`n == 10`, the second
+call appends `"of a line\n"`), added the two `accept_bounded` tests,
+removed three `unused_mut`s and added the `CLAUDE.md` Key files row.
+
+**Note on the red runs:** the original red runs of
+`daemon_refuses_an_oversized_request_within_budget` and
+`host_refuses_an_oversized_frame_within_budget` were lost in the prior
+run's stall, so they could not be pasted here. In their place, the
+mutation check below shows the refusal mechanism itself going red
+(cap check removed → `bounded_line_refusal_reads_within_budget` accepts
+67108864 bytes and fails), which pins the same line of code.
+
+**Mutation check** (`if available.len() > remaining` disabled in
+`read_bounded_line`, then restored — with the restored line, the test is
+green again):
+
+```
+thread 'ipc::bounded::tests::bounded_line_refusal_reads_within_budget' (3644173) panicked at src/ipc_bounded.rs:241:61:
+called `Result::unwrap_err()` on an `Ok` value: 67108864
+failures:
+    ipc::bounded::tests::bounded_line_refusal_reads_within_budget
+test result: FAILED. 0 passed; 1 failed; ...
+```
+
+**Budget tests, green (run against the real `handle_client` via
+`UnixStream::pair()` and a real `serve`d host):**
+
+```
+running 1 test
+test daemon::server::tests::daemon_refuses_an_oversized_request_within_budget ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3134 filtered out; finished in 0.01s
+running 1 test
+test shell::host::tests::host_refuses_an_oversized_frame_within_budget ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3134 filtered out; finished in 0.07s
+```
+
+**Both loops use `accept_bounded`** (each prints 0 before the phase, 1 now):
+
+```
+src/daemon/startup.rs:1
+src/shell/host.rs:1
+```
+
+**Line reader tests (9, all calling `read_bounded_line` /
+`accept_bounded`):**
+
+```
+running 9 tests
+test ipc::bounded::tests::bounded_line_accepts_a_line_of_exactly_the_cap ... ok
+test ipc::bounded::tests::bounded_line_cap_counts_bytes_already_in_the_buffer ... ok
+test ipc::bounded::tests::bounded_line_keeps_bytes_across_a_cancelled_call ... ok
+test ipc::bounded::tests::bounded_line_reads_one_line_and_leaves_the_rest ... ok
+test ipc::bounded::tests::bounded_line_refusal_reads_within_budget ... ok
+test ipc::bounded::tests::bounded_line_refuses_one_byte_over_the_cap ... ok
+test ipc::bounded::tests::bounded_line_returns_a_partial_line_at_eof ... ok
+test ipc::bounded::tests::accept_bounded_waits_for_a_free_permit ... ok
+test ipc::bounded::tests::accept_bounded_waiting_call_can_be_dropped ... ok
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 3126 filtered out
+```
+
+**Untouched-behaviour tests kept passing unchanged:**
+`host_answers_a_request_split_around_a_chunk`,
+`host_parses_each_pipelined_frame_from_its_own_offset`,
+`host_sends_lagged_when_subscriber_falls_behind` — each `1 passed`.
+
+**Gates (four, run once each):**
+
+- `cargo fmt --all` — clean (no diff).
+- `cargo build` — zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — clean.
+- `cargo test`:
+
+```
+test result: ok. 3125 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 148.13s   (lib, ≥ 3125 required)
+test result: ok. 2 passed; 0 failed; 0 ignored; ...   (main.rs unit)
+test result: ok. 6 passed; 0 failed; ...              (tests/bug_tracker.rs)
+test result: ok. 19 passed; 0 failed; ...             (tests/doc_truth.rs)
+test result: ok. 16 passed; 0 failed; ...             (tests/hygiene.rs)
+test result: ok. 45 passed; 0 failed; 2 ignored; ...  (tests/integration.rs)
+test result: ok. 13 passed; 0 failed; 1 ignored; ...  (tests/isolation.rs)
+test result: ok. 2 passed; 0 failed; ...              (tests/lock_invariant.rs)
+test result: ok. 4 passed; 0 failed; ...              (tests/tmux_read_only.rs)
+```
+
+The lib suite reports 3125 passed (the phase required at least 3125);
+`tests/hygiene.rs` passes (16 passed).
