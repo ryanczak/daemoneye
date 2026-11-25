@@ -1,7 +1,7 @@
 # Phase 12 — panic-hazards
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~180 lines
@@ -359,3 +359,17 @@ kill: (-3367207): No such process
 **Commit:** 745890bcf9f44dbb7354d8bd2b2bf6d7a1cebb52
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. `resolve_model` keeps its `.expect`. Its
+  invariant is now enforced by `parse_config_text`, as the spec asked.
+- **Calibration:** all three items were reproduced at runtime before drafting,
+  and all five red runs are real panics matching that probe
+  (`viewer_layout.rs:222` and `:265`, `scripts.rs:137`, `manifest.rs:387`,
+  and the `Ok` config). Finished in 83 turns with no repetition. Architect
+  re-run: the sweep prints 0; fmt, build and clippy are clean; the lib suite
+  has 3111 passed and every other suite is green.

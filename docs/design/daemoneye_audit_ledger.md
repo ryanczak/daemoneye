@@ -53,7 +53,7 @@ check confirmed all ten rows marked `yes`.
 | C2 | the ghost chat task logs `chat()` errors and drops the sender; channel EOF reads as a clean empty turn and the run completes | `ghost/turn.rs`, `ghost/turn_helpers.rs` · `collect_ghost_stream_turn` | M39 08 | yes | act: M39 phase-08, `4f2c1dd1`, architect takeover. Tests: `ghost_stream_closed_without_done_fails_the_turn`, `ghost_chat_error_reaches_the_turn_as_an_error`, `ghost_chat_task_is_aborted_when_the_turn_ends`, `ghost_cancel_during_streaming_ends_the_turn_cancelled`. A `chat()` error reaches the turn as `AiEvent::Error`, and a stream that ends without `Done` fails the turn, so the run ends `Failed`. The chat task is aborted with its turn, and a cancel mid-stream ends the run `Cancelled` |
 | C3 | the PTY command deadline is checked only on a read timeout, so continuous output never times out and the buffer grows unbounded | `shell/client_read.rs` | M39 09 | yes (structure); deadline half refuted by probe | act: M39 phase-09 (`ded2f1c2`, `47548618`). **Buffer: fixed.** Output is capped at 16 MiB by `OutputCutter`, with amortized middle cuts and one note giving the total dropped (`output_cap_cuts_are_amortized`, `output_cap_note_counts_every_dropped_byte`). **Deadline: not reproduced.** Tokio's coop budget makes `timeout_at` fire even on a socket kept full (probe: a 1 s deadline ends the call at 6.18 s with the grace). Preserved by `continuous_output_still_times_out` |
 | C4 | Anthropic `input_tokens` is already uncached; subtracting cache counts zeroes it | `anthropic.rs` · `parse_anthropic_start_usage` | M39 11 | yes — fixed (`93a7f0b1`) | |
-| C5 | `wrap_words` underflows on whitespace-only lines and on a 2-col char at width 1 | `cli/viewer_layout.rs` | M39 12 | | |
+| C5 | `wrap_words` underflows on whitespace-only lines and on a 2-col char at width 1 | `cli/viewer_layout.rs` | M39 12 | yes — fixed (`745890bc`) | |
 | C6 | webhook dedup keys on fingerprint alone, so a `resolved` within 300 s of `firing` is dropped | `webhook/process.rs` | M41 09 | | |
 | C7 | circuit breaker records success on HTTP 200 headers, trips globally on 4xx, half-open has no probe gate | `ai/mod.rs` · `CircuitBreaker`, `send_with_retry` | M41 03 | | |
 | C8 | consecutive `user` messages (empty cancel, empty reply, redirect, client-gone, ghost note) reach Anthropic uncoalesced; redirect drops earlier results in the batch | `stream/conversation_helpers.rs`, `stream/endings.rs`, `anthropic.rs` | M41 05 | | |
@@ -115,8 +115,8 @@ check confirmed all ten rows marked `yes`.
 
 | ID | Finding | Where | Target | Verified | Triage |
 |----|---------|-------|--------|----------|--------|
-| Q1 | an empty `[models]` table panics `resolve_model` | `config/load.rs` | M39 12 | | |
-| Q2 | unchecked UTF-8 byte slicing | `manifest.rs`, `scripts.rs`, `sys_context.rs`, `scheduler.rs`, `executor/schedule.rs` | M39 12 | | |
+| Q1 | an empty `[models]` table panics `resolve_model` | `config/load.rs` | M39 12 | yes — fixed (`745890bc`) | |
+| Q2 | unchecked UTF-8 byte slicing | `manifest.rs`, `scripts.rs`, `sys_context.rs`, `scheduler.rs`, `executor/schedule.rs` | M39 12 | yes — fixed (`745890bc`) for the three content slices; the scheduler UUID slices are ASCII-only and unreachable | |
 | Q3a | `let _ = self.save()` drops scheduler persistence errors | `scheduler.rs` | M41 10 | | |
 | Q3b | `rename_session` ignores the `meta.toml` write | `session_store.rs` | M41 06 | | |
 | Q3c | partial log rotation leaves `daemon.log` missing; non-atomic `pane_prefs` write | `utils/log_rotation.rs`, `pane_prefs.rs` | M41 16 | | |
