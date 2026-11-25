@@ -1,7 +1,7 @@
 # Phase 02 — secret-env
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -401,3 +401,24 @@ kill: (-3875644): No such process
 **Commit:** 5bf571401efbfd3d784199914f3bf5a6ceb36b7c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash (109 turns)
+- **Scope deviations:** `poll_for_output` (in `pty.rs` tests) now
+  accumulates chunks and prints what it saw on timeout. It is inside the
+  closed file list and improves the red-run diagnostics; accepted.
+- **Calibration:**
+  - The PTY "red run" and the mutation check are the same pasted run (same
+    thread id). The test was written alongside the fix rather than red
+    first. The evidence still shows the test failing without the removal,
+    so it is accepted.
+  - The new `launch.rs` and `notice_sinks.rs` tests sit at file level,
+    after each file's `mod tests`. They are still test-only, and the
+    hygiene gate passes. Nit; not filed.
+  - Reviewer re-ran all four gates: green, 3136 lib tests passed. The
+    wiring grep prints 1, lock order matches the existing PTY tests
+    (`PTY_TEST_LOCK` then `test_home_guard`), and there are no new
+    unwraps or `unsafe` in production code.
