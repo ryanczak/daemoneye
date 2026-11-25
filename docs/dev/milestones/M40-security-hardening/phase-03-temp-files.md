@@ -1,7 +1,7 @@
 # Phase 03 — temp-files
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -352,3 +352,137 @@ test result: ok. 3141 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; 
 
 The lib suite reports 3141 passed (3136 + five new), matching the pinned
 count. Full `cargo test` across all targets: every `test result:` line ok.
+
+### Update — 2026-11-25 22:30 (complete, server-authored)
+
+**Summary:** Implemented phase 03 (temp-files) — all six predictable temp-name sites are gone. Added `exclusive_temp_file` in `ops_copy.rs` (random name from `copy_tmp_path`, `create_new` = `O_CREAT|O_EXCL`, mode 0600) and `write_via_exclusive_temp` with post-open cleanup; wired `commit_local_edit_atomic`, `commit_local_copy`, and a new `commit_local_create` (extracted from `run_create_with_spawn`) through it. Both remote edit and create payloads (Python + Perl) now use `tempfile.mkstemp` / `File::Temp::tempfile`, apply mode/owner through the fd/handle, and unlink the temp on any failure; create keeps its umask-derived mode via `0o666 & ~umask`. Added the security.md sentence, five new tests, and updated two needles in `the_edit_payloads_restore_ownership` (it pinned the old by-path chmod/chown source strings; the behavior it pins is unchanged, now through fd/handle). Wiring grep prints 0; mutation check confirmed the new test fails with the old Python temp step restored; all four gates pass, lib suite reports 3141 passed (3136 + 5).
+
+**Notes for review:**
+- Deviation 1: the phase listed `the_edit_payloads_restore_ownership` under nothing, but it was red against the new payload source (it asserts on `os.chmod(t,…)` / `chmod(…,$t)` literals). I updated its needles to the fd/handle forms rather than filing a blocker, since the pinned behavior (mode/owner restored from the original's stat) is intact — flagging so the reviewer can confirm the intent.
+- Deviation 2: `commit_local_edit_atomic` opens the temp itself (needs the handle to write) instead of calling `write_via_exclusive_temp`, because it must `set_permissions`/`chown` by path after writing and before rename; `commit_local_create` uses the shared helper directly. Cleanup-on-failure is preserved in both.
+- E2E: all acceptance-criteria tests were run against the real builders (`build_remote_edit_cmd` / `build_remote_create_cmd`) driving real `python3`/`perl` under a narrowed `PATH`, with `umask 022;` prefixed to the create command; the red runs, wiring grep, and mutation check are pasted in the end-to-end verification Update Log entry. Commit `1c2af482` leaves the tree clean; phase status remains `in-progress` awaiting the server's completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (3931400): No such process
+kill: (-3932068): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M40-security-hardening/README.md` — +1 -1
+- `docs/dev/milestones/M40-security-hardening/phase-03-temp-files.md` — +123 -1
+- `docs/security.md` — +4 -1
+- `src/daemon/executor/file_ops/ops.rs` — +54 -28
+- `src/daemon/executor/file_ops/ops_copy.rs` — +48 -2
+- `src/daemon/executor/file_ops/ops_tests.rs` — +268 -5
+- `src/daemon/executor/file_ops/write.rs` — +29 -14
+
+**Commit:** 1c2af48238eab618dd47fe66d124d8a41a3ba2f7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
