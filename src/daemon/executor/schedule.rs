@@ -136,7 +136,7 @@ pub(super) async fn run_schedule_command<W, R>(
 ) -> anyhow::Result<ToolCallOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
-    R: tokio::io::AsyncBufReadExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
 {
     let ScheduleArgs {
         call_id,
@@ -177,16 +177,25 @@ where
     )
     .await?;
 
-    let mut line = String::new();
-    let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+    let mut line = Vec::new();
+    let read_result = tokio::time::timeout(
+        USER_PROMPT_TIMEOUT,
+        crate::ipc::read_bounded_line(rx, &mut line, crate::ipc::MAX_IPC_MESSAGE_BYTES),
+    )
+    .await;
     if matches!(read_result, Ok(Ok(0))) {
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
-            Ok(Request::ScheduleWriteResponse { approved, .. }) => approved,
-            _ => false,
-        },
+        Ok(Ok(_)) => matches!(
+            serde_json::from_slice::<Request>(&line).ok(),
+            Some(Request::ScheduleWriteResponse { approved: true, .. })
+        ),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(anyhow::anyhow!(
+                "schedule reply line too large ({e}); refusing the prompt and ending the turn"
+            ));
+        }
         _ => false,
     };
 

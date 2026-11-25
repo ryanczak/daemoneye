@@ -27,12 +27,13 @@ where
     R: tokio::io::AsyncBufRead + Unpin,
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    use tokio::io::AsyncBufReadExt;
-
     let mut queue = bus.subscribe("ipc-subscriber", filter, SUBSCRIBE_CAPACITY);
     send_response_split(tx, Response::Ok).await?;
 
-    let mut client = rx.lines();
+    // Every complete line is discarded and the buffer emptied, so many small
+    // lines never add up to the cap; one oversized line ends the stream the
+    // way a hang-up does.
+    let mut line = Vec::new();
     loop {
         tokio::select! {
             notice = queue.recv() => match notice {
@@ -48,10 +49,15 @@ where
                 // holds the only receiver; treat it as the end anyway.
                 None => return Ok(()),
             },
-            line = client.next_line() => match line {
-                Ok(Some(_)) => {}
-                // The client hung up; stop streaming.
-                Ok(None) | Err(_) => return Ok(()),
+            read = crate::ipc::read_bounded_line(
+                rx,
+                &mut line,
+                crate::ipc::MAX_IPC_MESSAGE_BYTES
+            ) => match read {
+                Ok(n) if n > 0 => line.clear(),
+                // The client hung up, or sent one oversized line; stop
+                // streaming.
+                _ => return Ok(()),
             },
         }
     }
@@ -153,5 +159,33 @@ mod tests {
             .await
             .expect("the handler ends within the timeout, not an error")
             .expect("the handler task did not panic");
+    }
+
+    /// An oversized client line ends the subscribe stream within the byte
+    /// budget: the reader hands out at most `MAX_IPC_MESSAGE_BYTES + 64 KiB`
+    /// of a 64 MiB source, and `handle_subscribe` still returns `Ok(())` —
+    /// the same way a client hang-up ends it.
+    #[tokio::test]
+    async fn subscribe_ends_on_an_oversized_client_line_within_budget() {
+        let bus = std::sync::Arc::new(crate::bus::Bus::with_journal(|_| {}));
+        let mut rx = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(
+            tokio::io::repeat(b'a'),
+            64 << 20,
+        ));
+        let mut tx = std::io::Cursor::new(Vec::new());
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            handle_subscribe(&mut rx, &mut tx, &bus, Filter::default()),
+        )
+        .await
+        .expect("the stream ends within 10 s, not read to the end");
+        result.expect("an oversized line ends the stream Ok");
+
+        let handed_out = (64u64 << 20) - rx.get_ref().limit();
+        assert!(
+            handed_out <= (crate::ipc::MAX_IPC_MESSAGE_BYTES + (64 << 10)) as u64,
+            "at most the cap plus 64 KiB is handed out before the stream ends: {handed_out}"
+        );
     }
 }

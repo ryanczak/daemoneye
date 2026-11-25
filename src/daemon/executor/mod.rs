@@ -121,6 +121,7 @@ fn prompt_classification(
 }
 
 /// The outcome of a single tool call execution.
+#[derive(Debug)]
 pub enum ToolCallOutcome {
     /// Normal result string to feed back to the AI.
     Result(String),
@@ -636,6 +637,7 @@ fn ghost_auto_outcome(
 }
 
 /// What the approval reply means for the command.
+#[derive(Debug)]
 enum ApprovalReply {
     /// Approved: the stats command id the run stages under.
     Approved(usize),
@@ -643,6 +645,54 @@ enum ApprovalReply {
     Denied(ToolCallOutcome),
     /// The user typed a message instead of approving: the redirect.
     Redirected(ToolCallOutcome),
+}
+
+#[cfg(test)]
+mod approval_oversize_tests {
+    use super::{ApprovalRequest, approval_reply};
+
+    /// An oversized approval reply is refused within the byte budget: the
+    /// reader hands out at most `MAX_IPC_MESSAGE_BYTES + 64 KiB` of a 64 MiB
+    /// source, and the result is an `Err` whose text says `too large`.
+    #[tokio::test]
+    async fn approval_refuses_an_oversized_reply_within_budget() {
+        let req = ApprovalRequest {
+            id: "t-1",
+            cmd: "ls",
+            background: false,
+            target_pane_hint: None,
+            host: None,
+            user_shell: None,
+            interactive: false,
+            shell_label: None,
+            session_id: None,
+            sudo: None,
+        };
+        let mut rx = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(
+            tokio::io::repeat(b'a'),
+            64 << 20,
+        ));
+        let mut tx = std::io::Cursor::new(Vec::new());
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            approval_reply(&req, &mut tx, &mut rx),
+        )
+        .await
+        .expect("the reply is refused within 10 s, not read to the end");
+        let err = match result {
+            Err(e) => e,
+            Ok(reply) => panic!("an oversized reply is refused, got {reply:?}"),
+        };
+        assert!(
+            err.to_string().contains("too large"),
+            "the refusal names the oversized line: {err:#}"
+        );
+        let handed_out = (64u64 << 20) - rx.get_ref().limit();
+        assert!(
+            handed_out <= (crate::ipc::MAX_IPC_MESSAGE_BYTES + (64 << 10)) as u64,
+            "at most the cap plus 64 KiB is handed out before the refusal: {handed_out}"
+        );
+    }
 }
 
 /// Send the prompt frame, await the reply until `APPROVAL_TIMEOUT`, and turn
@@ -655,14 +705,18 @@ async fn approval_reply<W, R>(
 ) -> anyhow::Result<ApprovalReply>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
-    R: tokio::io::AsyncBufReadExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
 {
     let id = req.id;
     let cmd = req.cmd;
     let background = req.background;
     let session_id = req.session_id;
-    let mut line = String::new();
-    let read_result = tokio::time::timeout(APPROVAL_TIMEOUT, rx.read_line(&mut line)).await;
+    let mut line = Vec::new();
+    let read_result = tokio::time::timeout(
+        APPROVAL_TIMEOUT,
+        crate::ipc::read_bounded_line(rx, &mut line, crate::ipc::MAX_IPC_MESSAGE_BYTES),
+    )
+    .await;
 
     if matches!(read_result, Ok(Ok(0))) {
         return Err(anyhow::anyhow!("EOF"));
@@ -676,7 +730,7 @@ where
         UserMessage(String),
     }
     let parsed = match read_result {
-        Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
+        Ok(Ok(_)) => match serde_json::from_slice::<Request>(&line) {
             Ok(Request::ToolCallResponse {
                 id: resp_id,
                 approved,
@@ -692,6 +746,11 @@ where
             }
             _ => Parsed::Denied,
         },
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(anyhow::anyhow!(
+                "approval reply line too large ({e}); refusing the prompt and ending the turn"
+            ));
+        }
         _ => Parsed::Denied,
     };
 

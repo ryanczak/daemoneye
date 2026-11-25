@@ -1396,3 +1396,59 @@ fn last_line_is_the_last_visible_non_empty_line() {
         "all-blank input gives None"
     );
 }
+
+/// An oversized client line ends the tail within the byte budget: the tail
+/// ends Ok, and the client had at most 2 MiB accepted before its first
+/// write failed.
+#[tokio::test]
+async fn shell_tail_ends_on_an_oversized_client_line() {
+    use tokio::io::AsyncWriteExt;
+
+    let (_guard, _dir) = crate::test_home();
+    let reg = ShellRegistry::default();
+    let owner = Owner::Chat("t".into());
+    let id = crate::shell::spawn_for(&reg, owner.clone(), 5, false, |id| {
+        Box::pin(spawn_in_process_host(id))
+    })
+    .await
+    .unwrap();
+    let (mut lines, mut client_w, task) = spawn_tail(reg.clone(), id.as_str().to_string());
+
+    match next_response(&mut lines).await {
+        Response::ShellScreen { .. } => {}
+        other => panic!("the tail's first frame is the screen, got {other:?}"),
+    }
+
+    // Feed one oversized line: more than the 1 MiB cap, no newline yet. The
+    // duplex's 1 MiB buffer bounds what the daemon accepts before the
+    // writer must block; the bounded read refuses at the cap, and the tail
+    // ends. The write loop is under a timeout so a regression that never
+    // refuses fails instead of hanging.
+    let chunk = vec![b'a'; 64 << 10];
+    let mut accepted: usize = 0;
+    let write = async {
+        while let Ok(()) = client_w.write_all(&chunk).await {
+            accepted += chunk.len();
+        }
+    };
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), write).await;
+    assert!(
+        result.is_ok(),
+        "the write loop ends within 10 s once the daemon stops reading"
+    );
+    let _ = client_w.shutdown().await;
+
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .expect("the tail ends within 10 s of the oversized line")
+        .expect("the tail task did not panic");
+    assert!(
+        matches!(&outcome, Ok(())),
+        "the tail ends Ok on an oversized line, got {outcome:?}"
+    );
+    assert!(
+        accepted <= 2 << 20,
+        "at most 2 MiB is accepted before the daemon stops reading: {accepted}"
+    );
+    close_tail_shell(&reg, id.as_str(), &owner).await;
+}

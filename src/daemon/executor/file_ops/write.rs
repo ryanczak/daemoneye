@@ -198,40 +198,46 @@ pub(super) async fn await_edit_file_response<R>(
     rx: &mut R,
 ) -> anyhow::Result<Result<bool, ToolCallOutcome>>
 where
-    R: tokio::io::AsyncBufReadExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
 {
-    let mut line = String::new();
-    let read_result = tokio::time::timeout(USER_PROMPT_TIMEOUT, rx.read_line(&mut line)).await;
+    let mut line = Vec::new();
+    let read_result = tokio::time::timeout(
+        USER_PROMPT_TIMEOUT,
+        crate::ipc::read_bounded_line(rx, &mut line, crate::ipc::MAX_IPC_MESSAGE_BYTES),
+    )
+    .await;
     if matches!(read_result, Ok(Ok(0))) {
         return Err(anyhow::anyhow!("EOF"));
     }
-    match read_result {
-        Ok(Ok(_)) => match serde_json::from_str::<Request>(line.trim()) {
-            Ok(Request::EditFileResponse {
-                id: resp_id,
-                approved,
-                user_message,
-            }) if resp_id == id => {
-                if let Some(msg) = user_message {
-                    crate::daemon::stats::inc_file_edits_denied();
-                    return Ok(Err(ToolCallOutcome::UserMessage(msg)));
-                }
-                if !approved {
-                    crate::daemon::stats::inc_file_edits_denied();
-                    return Ok(Err(ToolCallOutcome::Result(
-                        "User denied execution".to_string(),
-                    )));
-                }
-                crate::daemon::stats::inc_file_edits_approved();
-                Ok(Ok(true))
-            }
-            _ => {
+    let parsed = match read_result {
+        Ok(Ok(_)) => serde_json::from_slice::<Request>(&line).ok(),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(anyhow::anyhow!(
+                "reply line too large ({e}); refusing the prompt and ending the turn"
+            ));
+        }
+        // A timeout or a read error reads as a denial, as today.
+        _ => None,
+    };
+    match parsed {
+        Some(Request::EditFileResponse {
+            id: resp_id,
+            approved,
+            user_message,
+        }) if resp_id == id => {
+            if let Some(msg) = user_message {
                 crate::daemon::stats::inc_file_edits_denied();
-                Ok(Err(ToolCallOutcome::Result(
-                    "User denied execution".to_string(),
-                )))
+                return Ok(Err(ToolCallOutcome::UserMessage(msg)));
             }
-        },
+            if !approved {
+                crate::daemon::stats::inc_file_edits_denied();
+                return Ok(Err(ToolCallOutcome::Result(
+                    "User denied execution".to_string(),
+                )));
+            }
+            crate::daemon::stats::inc_file_edits_approved();
+            Ok(Ok(true))
+        }
         _ => {
             crate::daemon::stats::inc_file_edits_denied();
             Ok(Err(ToolCallOutcome::Result(
@@ -324,4 +330,39 @@ pub(super) fn build_remote_sudo_edit_cmd(path: &str, old_string: &str, new_strin
             set -- perl -e 'eval(pack(\"H*\",\"{pl_hex}\"))'; \
          fi; sudo \"$@\" 2>&1; echo '__DE_DONE__'"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An oversized edit reply is refused within the byte budget: the reader
+    /// hands out at most `MAX_IPC_MESSAGE_BYTES + 64 KiB` of a 64 MiB source,
+    /// and the result is an `Err` whose text says `too large`.
+    #[tokio::test]
+    async fn edit_reply_refuses_an_oversized_reply_within_budget() {
+        let mut rx = tokio::io::BufReader::new(tokio::io::AsyncReadExt::take(
+            tokio::io::repeat(b'a'),
+            64 << 20,
+        ));
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            await_edit_file_response("t-1", &mut rx),
+        )
+        .await
+        .expect("the reply is refused within 10 s, not read to the end");
+        let err = match result {
+            Err(e) => e,
+            Ok(inner) => panic!("an oversized reply is refused, got {inner:?}"),
+        };
+        assert!(
+            err.to_string().contains("too large"),
+            "the refusal names the oversized line: {err:#}"
+        );
+        let handed_out = (64u64 << 20) - rx.get_ref().limit();
+        assert!(
+            handed_out <= (crate::ipc::MAX_IPC_MESSAGE_BYTES + (64 << 10)) as u64,
+            "at most the cap plus 64 KiB is handed out before the refusal: {handed_out}"
+        );
+    }
 }

@@ -11,7 +11,7 @@ use crate::daemon::session::{
 use crate::daemon::utils::send_response_split;
 use crate::ipc::Response;
 use anyhow::Result;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncWriteExt};
 
 /// Compute the catch-up brief for a session id at attach time, then clear the
 /// session's detach state.
@@ -65,7 +65,7 @@ pub async fn handle_chat_attach<R, W>(
     tx: &mut W,
 ) -> Result<()>
 where
-    R: AsyncBufReadExt + Unpin,
+    R: AsyncBufRead + Unpin,
     W: AsyncWriteExt + Unpin,
 {
     let (push_tx, mut push_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -136,18 +136,31 @@ where
         // traffic; the client talks over its other connections. Pushes queued
         // by `presence_broadcast_frame` are written ahead of the reads, with
         // the read parked until one arrives so a quiet connection costs
-        // nothing. EOF, a read error, or a failed write (reply or push) all
-        // end the hold.
-        let mut discarded = String::new();
+        // nothing. Every complete line is discarded and the buffer emptied,
+        // so many small lines never add up to the cap; one oversized line
+        // ends the hold the way a hang-up does. EOF, a read error, or a
+        // failed write (reply or push) all end the hold.
+        let mut discarded = Vec::new();
         loop {
             let line = tokio::select! {
-                n = rx.read_line(&mut discarded) => {
+                n = crate::ipc::read_bounded_line(
+                    rx,
+                    &mut discarded,
+                    crate::ipc::MAX_IPC_MESSAGE_BYTES,
+                ) => {
                     // EOF or a read error both end the hold; `?` propagates
-                    // the error, EOF returns Ok.
-                    if n? == 0 {
-                        return Ok(());
+                    // the error, EOF returns Ok. An oversized line ends the
+                    // hold Ok, like a hang-up — the tail of that line must
+                    // not be read as anything else.
+                    match n {
+                        Ok(0) => return Ok(()),
+                        Ok(_) => {
+                            discarded.clear();
+                            None
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Ok(()),
+                        Err(e) => return Err(e.into()),
                     }
-                    None
                 }
                 Some(frame) = push_rx.recv() => Some(frame),
             };
@@ -156,7 +169,6 @@ where
             // serialised `Response`, and the hold loop does not re-wrap it.
             tx.write_all(frame.as_bytes()).await?;
             tx.write_all(b"\n").await?;
-            discarded.clear();
         }
     };
     let result = held.await;
@@ -206,7 +218,7 @@ mod tests {
     use std::io::Write;
     use std::sync::Mutex;
     use std::time::Instant;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
     fn entry(messages: Vec<Message>) -> SessionEntry {
         let mut e = SessionEntry::new_interactive("test");
@@ -682,7 +694,7 @@ mod tests {
             let mut tx = server_w;
             handle_chat_attach(store, sid, &mut rx, &mut tx).await
         });
-        let (client_r, mut client_w) = tokio::io::split(client);
+        let (client_r, client_w) = tokio::io::split(client);
         let mut rx = tokio::io::BufReader::new(client_r);
         let replies = read_responses(&mut rx, 1).await;
         assert!(
@@ -690,11 +702,20 @@ mod tests {
             "no detach state → Ok alone, got {replies:?}"
         );
 
-        // Non-UTF-8 bytes make the hold's `read_line` return `Err(InvalidData)`.
-        client_w.write_all(&[0xff, 0xfe, b'\n']).await.unwrap();
-        client_w.shutdown().await.unwrap();
+        // A write error on the push path ends the hold in an I/O error: the
+        // bounded read no longer turns non-UTF-8 bytes into
+        // `Err(InvalidData)` (it copies bytes, never decodes them), so the
+        // error path is exercised by failing the write instead. Dropping the
+        // client's reader breaks the daemon's next push write; the push is
+        // broadcast after the drop so it is the write that fails.
+        drop(rx);
+        presence_broadcast("ALERT: the write fails");
+        drop(client_w);
 
-        let result = task.await.unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("the hold ends within 5 s of the failed write")
+            .expect("the hold task did not panic");
         assert!(result.is_err(), "the hold ends in an I/O error: {result:?}");
         assert_eq!(
             presence_count("s-io"),
@@ -1339,6 +1360,118 @@ mod tests {
         assert!(
             after >= before,
             "the stamp moved forward to the close time: {after} < {before}"
+        );
+    }
+
+    /// A hold fed many small lines (2 MiB as 1 KiB lines) survives: the cap
+    /// counts the buffer as a whole, and the buffer is emptied after every
+    /// complete line, so the lines never add up. A presence push still
+    /// reaches the client afterwards. This is a preservation test — it
+    /// passes today — and it goes red if the hold's read stops emptying its
+    /// buffer after each line, because the cap would then end the hold.
+    #[tokio::test]
+    async fn presence_hold_survives_lines_totalling_over_the_cap() {
+        let (_home, _dir) = crate::test_home();
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("s-many".to_string(), entry(vec![msg("hello")]));
+        });
+
+        let (mut rx, mut client_w, task) = drive(sessions.clone(), "s-many").await;
+        let _ = read_responses(&mut rx, 1).await;
+
+        // 2 MiB as 1 KiB lines, each under the 1 MiB cap, written with a
+        // timeout so a regression that never drains fails instead of hanging.
+        let line = vec![b'a'; 1023];
+        let full_line: Vec<u8> = line
+            .iter()
+            .chain(std::iter::once(&b'\n'))
+            .copied()
+            .collect();
+        let write = async {
+            for _ in 0..(2 << 10) {
+                client_w
+                    .write_all(&full_line)
+                    .await
+                    .expect("a 1 KiB line is written");
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), write)
+            .await
+            .expect("2 MiB of 1 KiB lines is written within 30 s");
+
+        presence_broadcast("ALERT: still here after many lines");
+        let got = read_until_text(&mut rx, "ALERT: still here after many lines").await;
+        assert!(
+            matches!(got.last(), Some(Response::SystemMsg(m)) if m == "ALERT: still here after many lines"),
+            "a presence push still reaches the client after 2 MiB of small lines: {got:?}"
+        );
+
+        close(&mut client_w, task).await;
+    }
+
+    /// One oversized line with no newline ends the hold: the client had at
+    /// most 2 MiB accepted, the hold ends Ok through its existing path, and
+    /// the unregister bookkeeping still runs.
+    #[tokio::test]
+    async fn presence_hold_ends_on_an_oversized_line() {
+        let (_home, _dir) = crate::test_home();
+        let sessions = SessionStore::new();
+        with_sessions(&sessions, |store| {
+            store.insert("s-big".to_string(), entry(vec![msg("hello")]));
+        });
+
+        let (client, server) = tokio::io::duplex(1 << 20);
+        let (server_r, server_w) = tokio::io::split(server);
+        let store = sessions.clone();
+        let sid = "s-big".to_string();
+        let task = tokio::spawn(async move {
+            let mut rx = tokio::io::BufReader::new(server_r);
+            let mut tx = server_w;
+            handle_chat_attach(store, sid, &mut rx, &mut tx).await
+        });
+        let (_client_r, mut client_w) = tokio::io::split(client);
+        let mut rx = tokio::io::BufReader::new(_client_r);
+        let replies = read_responses(&mut rx, 1).await;
+        assert!(
+            matches!(replies.as_slice(), [Response::Ok]),
+            "no detach state → Ok alone, got {replies:?}"
+        );
+        assert_eq!(presence_count("s-big"), 1, "the connection is registered");
+
+        // One oversized line: more than the 1 MiB cap, no newline. The
+        // duplex's 1 MiB buffer bounds what the daemon accepts before the
+        // writer must block; the bounded read refuses at the cap and the
+        // hold ends. Under a timeout so a regression that never refuses
+        // fails instead of hanging.
+        let chunk = vec![b'a'; 64 << 10];
+        let mut accepted: usize = 0;
+        let write = async {
+            while let Ok(()) = client_w.write_all(&chunk).await {
+                accepted += chunk.len();
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), write)
+            .await
+            .expect("the write loop ends within 30 s once the daemon stops reading");
+        let _ = client_w.shutdown().await;
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), task)
+            .await
+            .expect("the hold ends within 10 s of the oversized line")
+            .expect("the hold task did not panic");
+        assert!(
+            result.is_ok(),
+            "an oversized line ends the hold Ok, like a hang-up: {result:?}"
+        );
+        assert!(
+            accepted <= 2 << 20,
+            "at most 2 MiB is accepted before the daemon stops reading: {accepted}"
+        );
+        assert_eq!(
+            presence_count("s-big"),
+            0,
+            "the unregister bookkeeping after the hold still runs"
         );
     }
 }

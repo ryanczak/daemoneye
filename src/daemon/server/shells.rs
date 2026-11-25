@@ -687,7 +687,10 @@ where
         return Ok(());
     }
 
-    let mut client = rx.lines();
+    // Every complete line the client sends is discarded and the buffer
+    // emptied, so many small lines never add up to the cap; one oversized
+    // line ends the tail the way a hang-up does.
+    let mut client_line = Vec::new();
     let mut tick = tokio::time::interval(TAIL_STATUS_POLL);
     loop {
         tokio::select! {
@@ -709,10 +712,15 @@ where
                     return Ok(());
                 }
             },
-            line = client.next_line() => match line {
-                Ok(Some(_)) => {}
-                // The client hung up; stop relaying.
-                Ok(None) | Err(_) => return Ok(()),
+            read = crate::ipc::read_bounded_line(
+                rx,
+                &mut client_line,
+                crate::ipc::MAX_IPC_MESSAGE_BYTES
+            ) => match read {
+                Ok(n) if n > 0 => client_line.clear(),
+                // The client hung up, or sent one oversized line; stop
+                // relaying.
+                _ => return Ok(()),
             },
             _ = tick.tick() => {
                 if shell_has_exited(&sock).await {

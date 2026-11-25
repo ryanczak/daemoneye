@@ -721,6 +721,9 @@ pub(super) use auth::{ensure_connected, index_command_output};
 use super::USER_PROMPT_TIMEOUT;
 
 #[cfg(test)]
+#[path = "shell_exec_auth_tests.rs"]
+mod auth_tests;
+#[cfg(test)]
 #[path = "shell_exec_connect_tests.rs"]
 mod connect_tests;
 #[cfg(test)]

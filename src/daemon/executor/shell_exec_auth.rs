@@ -35,7 +35,7 @@ fn ssh_credential_prompt(kind: PromptKind) -> String {
 /// two cannot diverge on the wire shape, the timeout, the zeroizing or the
 /// attempt count. `id` is the prompt id the client echoes back; `prompt` is
 /// the human-facing wording.
-async fn credential_round_trip<W, R>(
+pub(super) async fn credential_round_trip<W, R>(
     id: &str,
     tx: &mut W,
     rx: &mut R,
@@ -43,7 +43,7 @@ async fn credential_round_trip<W, R>(
 ) -> PromptReply
 where
     W: tokio::io::AsyncWriteExt + Unpin,
-    R: tokio::io::AsyncBufReadExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
 {
     let write = send_response_split(
         tx,
@@ -56,8 +56,12 @@ where
     if let Err(e) = write {
         return PromptReply::GiveUp(format!("credential prompt could not be sent: {e}"));
     }
-    let mut cred_line = String::new();
-    let read = tokio::time::timeout(super::USER_PROMPT_TIMEOUT, rx.read_line(&mut cred_line)).await;
+    let mut cred_line = Vec::new();
+    let read = tokio::time::timeout(
+        super::USER_PROMPT_TIMEOUT,
+        crate::ipc::read_bounded_line(rx, &mut cred_line, crate::ipc::MAX_IPC_MESSAGE_BYTES),
+    )
+    .await;
     let answer = match read {
         // 0 bytes is EOF: nobody is attached to answer — every ghost reads
         // from `tokio::io::empty()`. Name that, not a parse failure.
@@ -67,7 +71,13 @@ where
              this command passwordless access on that host, or run it from a chat session."
                 .to_string(),
         ),
-        Ok(Ok(_)) => match serde_json::from_str::<Request>(cred_line.trim()) {
+        // An oversized reply cannot be a credential; give up rather than
+        // leave the line's tail in the stream for the next prompt to read.
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => PromptReply::GiveUp(format!(
+            "credential reply line too large ({e}) — the command did not run with \
+                 elevated privileges"
+        )),
+        Ok(Ok(_)) => match serde_json::from_slice::<Request>(&cred_line) {
             Ok(Request::CredentialResponse { credential, .. }) => {
                 let credential = zeroize::Zeroizing::new(credential);
                 let mut bytes = credential.as_bytes().to_vec();

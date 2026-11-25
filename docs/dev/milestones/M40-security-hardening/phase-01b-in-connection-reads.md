@@ -1,7 +1,7 @@
 # Phase 01b — in-connection-reads
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-25
 **Depends on:** phase-01a (done: `read_bounded_line` and
 `MAX_IPC_MESSAGE_BYTES` in `src/ipc_bounded.rs`, re-exported from
@@ -175,3 +175,114 @@ result is `Ok`. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-25 17:10 (started)
+
+Work on phase 01b has begun: converting the 13 in-connection reads to
+`read_bounded_line`, per the work list, with the first red test written
+before any production change.
+
+### Update — 2026-11-25 17:20 (breakdown)
+
+Task list, one line per work-list row, each naming the acceptance item it
+closes:
+
+1. `write.rs` `await_edit_file_response` → bounded read, `Err` on
+   oversized — closes **Edit reply**.
+2. `executor/mod.rs` `approval_reply` → bounded read, `Err` — closes
+   **Approval**.
+3. `shell_exec_auth.rs` `credential_round_trip` → bounded read, `GiveUp`
+   — closes **Credential**.
+4. `schedule.rs` `run_schedule_command` → bounded read, `Err` — part of
+   the prompt-site sweep (no dedicated acceptance item).
+5. `knowledge/agents.rs` `create_agent`, `delete_agent` → bounded reads —
+   same sweep.
+6. `knowledge/artifacts.rs` `write_script`, `delete_script`,
+   `write_runbook`, `delete_runbook` → bounded reads — same sweep.
+7. `notices.rs` `handle_subscribe` → bounded read, ends the stream —
+   closes **Notices**.
+8. `shells.rs` `handle_shell_tail` → bounded read, ends the tail — closes
+   **Tail**.
+9. `chat_presence.rs` `handle_chat_attach` → bounded hold loop — closes
+   **Presence, small lines** and **Presence, one big line**.
+
+First red test written (`edit_reply_refuses_an_oversized_reply_within_budget`)
+and run red:
+
+```
+test daemon::executor::file_ops::write::tests::edit_reply_refuses_an_oversized_reply_within_budget ... FAILED
+thread 'daemon::executor::file_ops::write::tests::edit_reply_refuses_an_oversized_reply_within_budget' panicked at src/daemon/executor/file_ops/write.rs:349:26:
+an oversized reply is refused, got Err(Result("User denied execution"))
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3135 filtered out; finished in 0.05s
+```
+
+(The full 64 MiB was handed out and parsed as a non-reply, reading as a
+denial — the failure the phase exists to close.)
+
+### Update — 2026-11-25 17:55 (end-to-end verification)
+
+All nine work-list rows converted in place to
+`crate::ipc::read_bounded_line` at `crate::ipc::MAX_IPC_MESSAGE_BYTES`;
+the hold loop's buffer is now emptied after every complete line, and one
+oversized line ends the stream/tail/hold `Ok(())` like a hang-up.
+
+Per-acceptance-item evidence (each `test result` line from its own run):
+
+- **Edit reply** (`edit_reply_refuses_an_oversized_reply_within_budget`,
+  `write.rs` tests): `test result: ok. 1 passed; 0 failed; 0 ignored;
+  0 measured; 3141 filtered out; finished in 0.01s`
+- **Approval** (`approval_refuses_an_oversized_reply_within_budget`,
+  `executor/mod.rs` `approval_oversize_tests`): `test result: ok. 1 passed;
+  0 failed; 0 ignored; 0 measured; 3141 filtered out; finished in 0.01s`
+- **Credential** (`credential_prompt_refuses_an_oversized_reply_within_budget`,
+  `shell_exec_auth_tests.rs`): `test result: ok. 1 passed; 0 failed;
+  0 ignored; 0 measured; 3141 filtered out; finished in 0.01s` — the
+  give-up reason contains `too large` and reuses neither the
+  "nobody is attached" nor "not supplied in time" wording; the buffer is
+  zeroized on every path as before.
+- **Notices** (`subscribe_ends_on_an_oversized_client_line_within_budget`,
+  `notices.rs` tests): `test result: ok. 1 passed; 0 failed; 0 ignored;
+  0 measured; 3141 filtered out; finished in 0.01s`
+- **Tail** (`shell_tail_ends_on_an_oversized_client_line`,
+  `shells_tests.rs`, `spawn_tail` helper): `test result: ok. 1 passed;
+  0 failed; 0 ignored; 0 measured; 3141 filtered out; finished in 1.56s` —
+  the write loop ends with the client having accepted at most 2 MiB.
+- **Presence, small lines**
+  (`presence_hold_survives_lines_totalling_over_the_cap`): `test result:
+  ok. 1 passed` (within the `presence_hold` run below) — 2 MiB as 1 KiB
+  lines, then a push still arrives.
+- **Presence, one big line** (`presence_hold_ends_on_an_oversized_line`):
+  same run — hold ends Ok with at most 2 MiB accepted and
+  `presence_count == 0` afterwards.
+
+`presence_hold` combined run: `test result: ok. 2 passed; 0 failed;
+0 ignored; 0 measured; 3140 filtered out; finished in 0.02s`
+
+**Sweep** (run once; printed 13 before the work):
+
+```
+$ grep -rnE 'rx\.read_line\(|rx\.lines\(\)' src/daemon/executor src/daemon/server | grep -c .
+0
+```
+
+**Mutation check** (cap replaced with `usize::MAX` in
+`await_edit_file_response`, run once, then restored):
+
+```
+thread 'daemon::executor::file_ops::write::tests::edit_reply_refuses_an_oversized_reply_within_budget' panicked at src/daemon/executor/file_ops/write.rs:356:26:
+an oversized reply is refused, got Err(Result("User denied execution"))
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3141 filtered out; finished in 0.23s
+```
+
+(cap restored: `test result: ok. 1 passed; 0 failed; 0 ignored;
+0 measured; 3141 filtered out; finished in 0.01s`)
+
+**Gates** (run once each; `cargo fmt --all` before staging):
+
+```
+cargo build:      Finished `dev` profile, no warnings
+cargo clippy --all-targets --all-features -- -D warnings: Finished, no warnings
+cargo test (lib): test result: ok. 3132 passed; 0 failed; 10 ignored
+cargo test (all): 10 suites, all `test result: ok`, 0 failed
+tests/hygiene.rs: test result: ok. 16 passed; 0 failed; 0 ignored
+```
