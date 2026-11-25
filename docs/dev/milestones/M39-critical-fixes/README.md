@@ -8,7 +8,7 @@ providers and report the failures they hit. A command that never stops
 printing still times out. Cost accounting counts uncached input, and the
 known panic paths no longer panic.
 
-**Status:** in progress — phase 13 (live-check finding 1) added at the close on PE request; then the 2.11.0 release
+**Status:** phases done (01–13) 2026-11-25 — awaiting the 2.11.0 release
 
 **Release:** 2.11.0
 
@@ -96,7 +96,7 @@ at drafting.
 | 10 | shell-host-framing ([phase-10-shell-host-framing.md](phase-10-shell-host-framing.md)) — the shell host parses each pipelined frame from its own offset. `host_sends_lagged_when_subscriber_falls_behind` stops racing | S4b Q12 | done           |
 | 11 | anthropic-usage ([phase-11-anthropic-usage.md](phase-11-anthropic-usage.md)) — `parse_anthropic_start_usage` reports `input_tokens` as Anthropic sends it, so cached turns cost what they cost | C4 | done      |
 | 12 | panic-hazards ([phase-12-panic-hazards.md](phase-12-panic-hazards.md)) — `wrap_words` handles whitespace-only lines and wide characters at width 1. An empty `[models]` table is a config error, not a panic. The audit's byte-slice sites use `truncate_chars` | C5 Q1 Q2 | done      |
-| 13 | webhook-live-config ([phase-13-webhook-live-config.md](phase-13-webhook-live-config.md)) — a webhook ghost reads the daemon's config handle, so `reload` reaches it. An unconfigured model name is warned about, and the log names the model actually used. Found in the M39 live check; the PE asked for it before 2.11.0 | live | review    |
+| 13 | webhook-live-config ([phase-13-webhook-live-config.md](phase-13-webhook-live-config.md)) — a webhook ghost reads the daemon's config handle, so `reload` reaches it. An unconfigured model name is warned about, and the log names the model actually used. Found in the M39 live check; the PE asked for it before 2.11.0 | live | done    |
 
 ## Notes
 
@@ -154,7 +154,8 @@ at drafting.
 
 **Found in the live check:**
 1. **A webhook ghost reads the startup config, not `config::current()`.**
-   **PE (2026-11-24): fix before 2.11.0, as phase 13.** Keep the fallback
+   **Fixed in phase 13 (`69dc83a8`, approved first try, verified live
+   2026-11-25).** PE (2026-11-24): fix before 2.11.0. Keep the fallback
    but warn: three of the PE's real agents name unconfigured models.
    `process_alert` hands `trigger_ghost_turn` `state.config`, a snapshot
    taken at start. A `[models.*]` entry added by `daemoneye reload` is

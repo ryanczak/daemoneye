@@ -1,7 +1,7 @@
 # Phase 13 — webhook-live-config
 
 **Milestone:** M39 — Critical fixes
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-24
 **Depends on:** none
 **Estimated diff:** ~150 lines
@@ -390,3 +390,33 @@ kill: (-3417018): No such process
 **Commit:** 69dc83a8cd81967829f65ac1cdea4448d884c319
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-25
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash, 112 turns. The "started" entry says
+  "Claude (headless run)", which is wrong: the run was GLM.
+- **Scope deviations:** `tests/integration.rs` (11 sites) and
+  `tests/isolation.rs` (2 sites) build `WebhookState` directly. They had to
+  wrap their `Config` in `ConfigHandle::new` to compile. That is constructor
+  churn only, and it was the architect's omission: `WORKFLOW.md` § "A struct
+  field's blast radius is every construction site" says the Authorizations
+  must name them. Accepted.
+- **Live check (architect, 2026-11-25, `/tmp/de39-live`):** the daemon
+  started without `badkey`, which was then added by `reload`.
+  - `GhostBadKey` ran on `badkey` and failed with Anthropic's 401. Before
+    the fix it silently ran on GLM and ended `Completed`.
+  - `GhostTwoTurn` with `model: nosuch` logged `WARN … requested model
+    'nosuch' is not configured, using 'default'`, then `using model
+    'default'`, and completed in 2 turns.
+
+  The first attempt hit pinky's outbound flap to 192.168.50.0/24, during
+  which brain was unreachable for about 11 minutes. That was not a code
+  fault.
+- **Calibration:** `webhook_state_sees_a_reloaded_model` builds its state
+  with `test_state_from`, not `serve`. It would still pass if `serve`
+  wrapped a fresh copy in a new handle, so that half is pinned only by the
+  live run. The architect re-run: fmt, build and clippy are clean; the lib
+  suite reports 3114 passed and every other suite is green; the grep
+  prints 0. The red runs and the mutation check are pasted.
