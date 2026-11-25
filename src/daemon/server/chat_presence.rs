@@ -677,6 +677,31 @@ mod tests {
         close(&mut client_w, task).await;
     }
 
+    /// A reader that passes bytes through until `fail` is set, then fails
+    /// every read with `ConnectionReset`. The hold's read-error path needs it
+    /// since `read_bounded_line` copies bytes and never decodes them, so
+    /// non-UTF-8 input no longer produces a read error.
+    struct FailOnDemand<R> {
+        inner: R,
+        fail: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for FailOnDemand<R> {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            let this = self.get_mut();
+            if this.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return std::task::Poll::Ready(Err(std::io::Error::from(
+                    std::io::ErrorKind::ConnectionReset,
+                )));
+            }
+            std::pin::Pin::new(&mut this.inner).poll_read(cx, buf)
+        }
+    }
+
     #[tokio::test]
     async fn presence_unregisters_when_the_hold_ends_in_error() {
         let (_home, _dir) = crate::test_home();
@@ -687,14 +712,19 @@ mod tests {
 
         let (client, server) = tokio::io::duplex(1 << 16);
         let (server_r, server_w) = tokio::io::split(server);
+        let fail = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let store = sessions.clone();
         let sid = "s-io".to_string();
+        let reader = FailOnDemand {
+            inner: server_r,
+            fail: std::sync::Arc::clone(&fail),
+        };
         let task = tokio::spawn(async move {
-            let mut rx = tokio::io::BufReader::new(server_r);
+            let mut rx = tokio::io::BufReader::new(reader);
             let mut tx = server_w;
             handle_chat_attach(store, sid, &mut rx, &mut tx).await
         });
-        let (client_r, client_w) = tokio::io::split(client);
+        let (client_r, mut client_w) = tokio::io::split(client);
         let mut rx = tokio::io::BufReader::new(client_r);
         let replies = read_responses(&mut rx, 1).await;
         assert!(
@@ -702,19 +732,22 @@ mod tests {
             "no detach state → Ok alone, got {replies:?}"
         );
 
-        // A write error on the push path ends the hold in an I/O error: the
-        // bounded read no longer turns non-UTF-8 bytes into
-        // `Err(InvalidData)` (it copies bytes, never decodes them), so the
-        // error path is exercised by failing the write instead. Dropping the
-        // client's reader breaks the daemon's next push write; the push is
-        // broadcast after the drop so it is the write that fails.
-        drop(rx);
-        presence_broadcast("ALERT: the write fails");
-        drop(client_w);
+        // Arm the reader, then send one byte to wake the hold's read: its
+        // next poll is a read error. Both client halves stay open and no push
+        // is queued, so EOF and a push cannot race the error — the hold's
+        // `select!` has exactly one ready branch.
+        fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client_w.write_all(b"x\n"),
+        )
+        .await
+        .expect("the wake byte is written within 5 s")
+        .expect("the wake byte is written");
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(5), task)
             .await
-            .expect("the hold ends within 5 s of the failed write")
+            .expect("the hold ends within 5 s of the read error")
             .expect("the hold task did not panic");
         assert!(result.is_err(), "the hold ends in an I/O error: {result:?}");
         assert_eq!(
