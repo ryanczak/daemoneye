@@ -128,5 +128,5 @@ check confirmed all ten rows marked `yes`.
 | Q9 | 17 `with_home(&tmp, \|\| {})` no-op tests drop the guard before awaiting (env UB) | `file_ops/read_tests.rs` | M41 01 | | |
 | Q10 | `TestHomeGuard` held across `.await` on a multi-thread runtime | `shell/launch.rs` tests | M41 01 | | |
 | Q11 | test cleanup permanently removes `$SHELL`, `$TMUX`, `$TMUX_PANE` | `shell_exec_tests.rs`, `session_tests.rs`, `tests/isolation.rs` | M41 01 | | |
-| Q12 | `host_sends_lagged_when_subscriber_falls_behind` flakes under load | `shell/host.rs` tests | M39 10 | | |
+| Q12 | `host_sends_lagged_when_subscriber_falls_behind` flakes under load | `shell/host.rs` tests | M39 10 | yes — fixed (`72daafe5`): 0 failures in 300 parallel runs, 0 in 20 sequential at the close | |
 | Q13 | no direct unit tests on the orchestration modules | `stream_ask.rs`, `conversation.rs`, `ask.rs`, `handlers.rs`, `route.rs`, `tmux/{pane,window}.rs` | — | | reject: a coverage count is not a defect (WORKFLOW § "Coverage claims are inadmissible without mutation proof"); tests arrive with the fixes that touch these modules |

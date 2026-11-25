@@ -8,7 +8,7 @@ providers and report the failures they hit. A command that never stops
 printing still times out. Cost accounting counts uncached input, and the
 known panic paths no longer panic.
 
-**Status:** planning (scoped 2026-11-21)
+**Status:** phases done 2026-11-24 — retrospective written, awaiting PE sign-off and the 2.11.0 release
 
 **Release:** 2.11.0
 
@@ -109,3 +109,121 @@ at drafting.
 - **Still open from earlier milestones:** GitHub issue #13 (a `wait:
   false` shell blocked within its first probe never produces a notice).
   Issue #4 (cron time zones, due before March 2027) is M41 phase 10b.
+
+## Retrospective (2026-11-24)
+
+**Exit criteria.**
+- **Met:**
+  - **Ledger.** Every row targeted at M39 reads `M39 NN`. 15 are fixed,
+    each with a named test that went red first. One is latent and
+    hardened anyway: S4b, whose pipelining test is a preservation test.
+    The last row, Q12, is the flaky test that now passes. S3d's target,
+    `GhostPolicy::wrap_remote`, turned out to be dead code at drafting,
+    so phase 06 deleted it instead of hardening it.
+  - **Test count.** `#[test]` / `#[tokio::test]` attributes went from
+    3156 at `v2.10.0` to 3231, which is +75 against 16 fixed rows.
+    `host_sends_lagged_when_subscriber_falls_behind` ran 20 of 20 in a
+    row, as a single test per pass. `tests/hygiene.rs` and
+    `tests/doc_truth.rs` passed in the phase-12 review's full run.
+- **Live check, 2026-11-24.** Debug binary at `d41b474e`, throwaway
+  `HOME=/tmp/de39-live`, private tmux, GLM-5.3-Flash at brain. The config
+  was the M38 harness copy, with the webhook moved to port 19439.
+  - **Webhook injection: met.** An alert named `#(touch /tmp/de-pwn)`,
+    with `#{pane_id} %H` in its summary, was delivered to a session with
+    a chat pane. `/tmp/de-pwn` was never created. The client's terminal
+    stream shows the text literally: `[Webhook Alert] [FIRING] #(touch
+    /tmp/de-pwn) — #(touch /tmp/de-pwn) #{pane_id} %H literal check`.
+  - **Two-turn ghost: met on GLM, Anthropic leg not run.** Runbook
+    `ghost-two-turn` called `list_memories` once and then gave a final
+    answer ("listed 10 memories"). The run record reads `complete`, 2
+    turns, on the `openai` provider. No Anthropic key was available to
+    the harness, so the success half on Anthropic is unverified live.
+    Phase 07's unit tests cover all three providers' history shapes.
+  - **Bad key: met after a restart.** Runbook `ghost-bad-key`
+    (`model: badkey`, provider `anthropic`, invalid key) produced a run
+    record of `hard_fail` with 1 turn. The notice read `[Ghost Shell
+    Failed] … AI error: API error 401 Unauthorized: … invalid x-api-key`.
+    Before the restart, with `badkey` added by `reload`, the same run
+    ended `Completed` on GLM. See finding 1.
+  - **`yes` with `timeout_secs: 5`: partly met.** The call came back
+    interrupted, with a bounded 441-byte result. The shell `s0` cast shows
+    Ctrl-C typed at 5.03 s and the prompt back at 5.10 s. But the result
+    arrived at about 10.2 s, not about 5 s. See finding 2.
+
+**Found in the live check (not fixed, proposed for M41):**
+1. **A webhook ghost reads the startup config, not `config::current()`.**
+   `process_alert` hands `trigger_ghost_turn` `state.config`, a snapshot
+   taken at start. A `[models.*]` entry added by `daemoneye reload` is
+   invisible to it, and `Config::resolve_model` silently falls back to
+   `default`. The log line still says `using model 'badkey'` while the
+   call goes to GLM. This breaks the invariant in `CLAUDE.md`, and the
+   silent fallback for an unknown model name hides it. Proposed for an
+   M41 ledger row: route the ghost through `config::current()`, and make
+   an unknown runbook `model` an error, or at least log the fallback.
+2. **A timed-out command that stops on Ctrl-C always waits out the 5 s
+   grace.** The interactive Ctrl-C aborts the whole wrapped line, so the
+   end marker never prints. `read_to_marker` then waits the full
+   `INTERRUPT_GRACE` even though the shell is back at its prompt. This
+   is the behaviour phase 09 specified ("the deadline plus the interrupt
+   grace"). The "about 5 s" wording of the exit criterion was the
+   architect's. Proposed for M41 or M42: end the grace when the shell
+   returns to its prompt.
+
+**Outcomes:** 13 phases (01–12, plus 04b).
+- 4 `approved_first_try`: 06, 07, 11, 12.
+- 4 `approved_after_1`: 02, 04b, 09, 10.
+- 1 `approved_after_2`: 05.
+- 1 `approved_after_3`: 04.
+- 3 `escalated`:
+  - 01: a green-bounce poll loop ran to the turn cap.
+  - 03: run 1 hard-failed on E0382, and a resume finished it.
+  - 08: two stalls at 200+ turns with no edits, then a takeover.
+
+**What went well.**
+- **Re-verifying each row at drafting paid off.** Phase 06's target was
+  dead code. Phase 12's three items were reproduced at runtime before
+  drafting, and every red run matched the probe.
+- **The batching rule held.** It is one exact command, run once. Phase
+  10's first run hard-failed on `IdenticalToolCallRepetition` because it
+  ran `cargo test` once per repetition. Phases 11 and 12 were drafted
+  under the rule and finished in 56 and 83 turns, with no repetition.
+- **The systemic-reader list.** Phase 07 asked for every reader of the
+  changed history shape and found a bug no named test targeted.
+
+**What cost the most.**
+- **Audit rows verified only by reading.** C3's deadline half (phase 09)
+  and S4b (phase 10) did not reproduce. Each cost false red runs and a
+  bounce.
+- **Sudoers needed a real install.** Phase 04 bounced three times: the
+  umask on implicit parents, and `@includedir` skipping dotted names.
+  `visudo -cf` passed a file that sudo never reads.
+- **Security detectors with named spellings.** Phase 03 named `Space` and
+  `Enter`, and phase 05 named `-c`. Each missed other spellings of the
+  same construct, three bounces in all.
+- **Read paralysis.** Phase 02's statement-of-work runs made 0 edits in
+  1039 and 1200 turns, and phase 08 stalled twice. Naming the first red
+  test (phase 02, run 3), or taking over (phase 08), ended them.
+
+**Calibration proposals (PE sign-off needed; `WORKFLOW.md` untouched):**
+- **A. Reproduce a defect before drafting its phase.** This has come up
+  three times: 06, 09 and 10, and 12 did it right. Proposed fold: an
+  audit or bug row is made to fail at runtime (a scratch test or a probe)
+  before the phase is drafted. A row that cannot be made to fail is
+  labelled latent, and its test is a preservation test.
+- **B. One exact command, run once.** This has come up three times: M38
+  08b and 09c, and M39 10. Proposed fold: every check the executor must
+  repeat ships as an exact one-liner that loops internally, with "run it
+  once". The rexyMCP-side half (a contract rule and a nudge before the
+  hard fail) is drafted as a rexyMCP issue, not yet filed.
+- **C. Security detectors pin behaviour, not spellings.** This has come
+  up three times: 03, 05-1 and 05-2. Proposed fold: the spec derives the
+  spellings from the parser ("agrees with the bytes sent"), and lists
+  must-stay-false examples for quoted arguments.
+- **Held (two occurrences):** a phase that writes system state runs its
+  live effect probe before the first approval (04, 04b).
+
+**Release notes must say:** re-run `daemoneye install-sudoers <script>`
+for every installed script. Rules for dotted script names were never read
+by sudo before 2.11.0, and the rule now names a root-owned copy. Sudo
+detection now fails closed: an unresolvable command word counts as
+elevation.
