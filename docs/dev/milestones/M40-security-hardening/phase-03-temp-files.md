@@ -1,7 +1,7 @@
 # Phase 03 — temp-files
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: [bug-03-1](bugs/bug-03-1.md))
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -191,8 +191,11 @@ It is red today. Paste the red run.
       2. run `cargo test --lib remote_edit_ignores_a_planted_temp_symlink`
          once and see the Python branch fail;
       3. restore it.
+- [ ] **Failures name their cause (bug-03-1):**
+      `remote_payload_failures_name_their_cause` passes, per the bug's
+      Definition of done. It fails today with `None` for both branches.
 - [ ] **Gates:** all four pass, run once each. The lib suite reports **at
-      least 3141** passed (3136 plus five).
+      least 3142** passed (3141 plus one).
 
 ## Spec
 
@@ -486,3 +489,39 @@ kill: (-3932068): No such process
 **Commit:** 1c2af48238eab618dd47fe66d124d8a41a3ba2f7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-25 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+the phase is done.**
+
+**Already approved, do not redo:**
+- the exclusive temp creation (local helper, both remote payloads);
+- the five new tests;
+- the wiring grep;
+- the mutation check;
+- the updated `the_edit_payloads_restore_ownership` needles.
+
+**Exactly one piece of work is left:**
+[bug-03-1](bugs/bug-03-1.md). A failing remote edit or create must print
+`DE_ERROR: <non-empty reason>` in both interpreter branches. Today a
+temp-creation failure prints no result line at all. The bug names the
+three causes:
+- Perl's `tempfile` croaks inside the outer `eval`;
+- Perl's message uses `${…}`, which dereferences instead of
+  interpolating;
+- Python's `mkstemp` and `makedirs` run outside its `try`, and its
+  `except` drops the exception text.
+
+**Plan:**
+- **Closed file list:** `src/daemon/executor/file_ops/write.rs`,
+  `src/daemon/executor/file_ops/ops.rs`,
+  `src/daemon/executor/file_ops/ops_tests.rs`.
+- **Reads:** at most 2 files before your first edit.
+- **First edit:** the red test `remote_payload_failures_name_their_cause`,
+  in `ops_tests.rs` beside `remote_edit_ignores_a_planted_temp_symlink`.
+  Run it once and paste the red run.
+- **Then:** the four payloads (Python and Perl, in edit and create).
+- **Mutation check:** restore one Perl payload's `${…}` message, run the
+  new test once, see it fail, then restore.
+- **Finish condition:** the lib suite reports **3142**.
