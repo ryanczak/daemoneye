@@ -64,7 +64,7 @@ at drafting.
 | #  | Phase | Ledger | Status |
 |----|-------|--------|--------|
 | 01a | [bounded-reads](phase-01a-bounded-reads.md) — `read_bounded_line` (cap before allocation) and `accept_bounded` (a semaphore permit before `accept`), applied to the daemon's first request read, the shell host's frames and both accept loops | S4a | done |
-| 01b | [in-connection-reads](phase-01b-in-connection-reads.md) — the approval, credential and prompt replies, and the presence, notices and tail loops, read through `read_bounded_line` | S4a | review      |
+| 01b | [in-connection-reads](phase-01b-in-connection-reads.md) — the approval, credential and prompt replies, and the presence, notices and tail loops, read through `read_bounded_line` | S4a | done |
 | 02 | secret-env — provider key variables are removed from the environment of `PtyShell::spawn`, `spawn_detached` and the command sink's `deliver_command` | S5 | todo |
 | 03 | temp-files — remote edits write through an `O_EXCL`, 0600 temp file the payload creates (`tempfile` / `File::Temp`), so a pre-planted `.de_tmp` symlink is never followed; local edits use `create_new` + mode 0600 + a random suffix | S6 | todo |
 | 04 | path-guard — `resolve_path_for_guard` canonicalizes the deepest existing ancestor and re-joins the rest; `is_blocked_secret_path` checks the canonical path | S7 | todo |

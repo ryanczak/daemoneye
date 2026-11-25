@@ -1,7 +1,7 @@
 # Phase 01b — in-connection-reads
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-25
 **Depends on:** phase-01a (done: `read_bounded_line` and
 `MAX_IPC_MESSAGE_BYTES` in `src/ipc_bounded.rs`, re-exported from
@@ -428,3 +428,42 @@ kill: (-3783473): No such process
 **Commit:** 9a19c241b9b3011b0a1f94e0174c32c4a31fe198
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-25
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-01b-1, major: the re-pointed
+  `presence_unregisters_when_the_hold_ends_in_error` failed 136 of 300
+  runs)
+- **Executor:** GLM-5.3-Flash. The first dispatch completed all nine
+  work-list rows, all seven acceptance tests, the sweep and the mutation
+  check. Claude (direct) did the bug-01b-1 test fix (`5ae8afb0`).
+- **Scope deviations, all accepted:**
+  - The credential test lives in a new `shell_exec_auth_tests.rs`,
+    declared from `shell_exec.rs`, which is outside the closed list.
+    `credential_round_trip` widened to `pub(super)` so that test can call
+    it.
+  - `ToolCallOutcome` and `ApprovalReply` derive `Debug` for test
+    messages.
+  - The executor re-pointed one pre-existing test, because non-UTF-8 input
+    no longer errors, and disclosed it. That disclosure is what led the
+    review to bug-01b-1.
+- **Review checks:**
+  - All four gates were re-run: lib suite 3132 passed. No `unwrap`,
+    `expect`, `panic!`, `unsafe` or `#[allow]` in added production lines.
+    The executor's red run and mutation check are pasted and accepted.
+  - Every new test was stress-run 100 times on the lib binary `--exact`,
+    with 0 failures. The path of each was checked with `--list`: an
+    `--exact` filter that matches nothing runs no tests and passes. That
+    hit the review once, on the tail test's path.
+- **Calibration:**
+  1. **A test that races two `select!` branches.** The executor's own
+     comment asserted an order that `tokio::select!` does not keep. One
+     occurrence of this shape. It is the second M40 bounce in a row on test
+     mechanics rather than production code (bug-01a-1 was a test that
+     waited on the wrong thing).
+  2. **A stress loop has to prove it ran the test.** The review's first
+     loop pointed at the bin binary and its second at a mistyped path; both
+     reported nonsense (200/200 failed, then 0/100). Pin the test-count
+     check (`grep -q '1 passed'`) in any stress criterion. Fold candidate
+     with M39 phase 10's stress loop.
