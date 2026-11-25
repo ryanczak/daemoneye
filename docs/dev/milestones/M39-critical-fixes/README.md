@@ -8,7 +8,7 @@ providers and report the failures they hit. A command that never stops
 printing still times out. Cost accounting counts uncached input, and the
 known panic paths no longer panic.
 
-**Status:** phases done (01–13) 2026-11-25 — awaiting the 2.11.0 release
+**Status:** closed 2026-11-25 — released as 2.11.0 on PE sign-off
 
 **Release:** 2.11.0
 

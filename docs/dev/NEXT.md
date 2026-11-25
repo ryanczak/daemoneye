@@ -1,23 +1,19 @@
 # NEXT
 
-**Active milestone:** M39 — Critical fixes
-([`README.md`](milestones/M39-critical-fixes/README.md)), scoped
-2026-11-21 from the 2.10.0 audit
-([`daemoneye_audit.md`](../design/daemoneye_audit.md), triaged in
-[`daemoneye_audit_ledger.md`](../design/daemoneye_audit_ledger.md)). The
-audit is five milestones: M39 Critical fixes, M40 Security hardening, M41
-Correctness & reliability, M42 Performance & concurrency, M43
-Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
-(PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
-`2.10.0`; M37 closed as `2.9.0` (2026-11-16).
+**Active milestone:** none. M39 (Critical fixes) closed 2026-11-25 as
+`2.11.0` ([`README.md`](milestones/M39-critical-fixes/README.md)), its
+retrospective written and folds A, B and C in `WORKFLOW.md`. Next is M40
+Security hardening ([`README.md`](milestones/M40-security-hardening/README.md)),
+then M41 Correctness, M42 Performance and M43 Architecture, then the MCP
+surface (M44) and Knowledge (M45). M40 waits on PE sign-off. M38 closed
+as `2.10.0` (2026-11-18).
 
-**Active phase:** M39 phase-13 — webhook-live-config
-([`phase-13-webhook-live-config.md`](milestones/M39-critical-fixes/phase-13-webhook-live-config.md)),
-drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-13`. It
-fixes live-check finding 1, which the PE asked for before 2.11.0. Phases
-01–12 are `done`, the retrospective is written, and folds A, B and C are in
-`WORKFLOW.md`. After phase 13 comes the 2.11.0 release. The Anthropic leg
-of the live check is waived.
+**Active phase:** none.
+
+**Deferred from the M39 live check:** a command that times out and stops
+on Ctrl-C always waits the full 5 s interrupt grace, because the end
+marker never prints. That makes `timeout_secs: 5` return after about 10 s.
+Candidate for M41 or M42.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
 that reports `blocked` within its first 2 s probe never produces a notice

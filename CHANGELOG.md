@@ -8,6 +8,82 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.11.0] — 2026-11-25 — M39 Critical fixes
+
+This release fixes the 2.10.0 audit's P0 rows: the exploitable holes and
+broken core flows. Each fix came with a test that failed first. The
+retrospective, live check and audit ledger are in
+`docs/dev/milestones/M39-critical-fixes/README.md` and
+`docs/design/daemoneye_audit_ledger.md`.
+
+> **Action required — re-run `install-sudoers`.** Run
+> `daemoneye install-sudoers <script>` again for every script you have
+> installed. The NOPASSWD rule now names a root-owned copy at
+> `/usr/local/libexec/daemoneye/<euid>/<name>`, not the user-writable
+> script. sudo also skipped rule files with a dot in their name, so a
+> rule for any `.sh` / `.py` script was never read before 2.11.0. Re-run
+> it after every edit to a script too. `daemoneye doctor` warns when a
+> copy has drifted from its source.
+
+> **Behaviour change — sudo detection fails closed.** A command word that
+> cannot be resolved (`$VAR`, a glob or a brace expansion) now counts as
+> elevation. Such commands now get the sudo approval path, and a ghost's
+> policy treats them as sudo.
+
+**Security**
+- **Webhook text is inert in tmux.** The chat-pane overlay escapes `#`
+  and `%`, strips control characters and passes `--`. An alert named
+  `#(touch /tmp/x)` can no longer run a command through tmux.
+- **Ghost shells:**
+  - `open_shell` from a ghost goes through the same sandbox and startup
+    gates as a command.
+  - Every shell tool records ghost-opened shells as the ghost's, so the
+    ghost's teardown closes them.
+- **`send_input`:**
+  - It refuses a shell id that does not parse, or one the daemon does not
+    hold, before any prompt.
+  - Input to a remote shell takes that host's per-host grant.
+  - `sudo` spelled across a newline or through single-character keys
+    reaches the sudo check.
+- **Sudoers:**
+  - A ghost may run only the exact root-owned copy under sudo, so
+    rewriting the script no longer reuses the rule.
+  - A ghost running a stale copy publishes a `Warning` notice.
+  - `write_script` notes that the sudo version is unchanged until you
+    re-install it.
+- **Sudo detection** sees through quoting, backslashes, leading
+  redirections, the other elevators (`doas`, `pkexec`, `run0`, …) and the
+  wrapper commands.
+- **Removed:** `GhostPolicy::wrap_remote`, dead code that the audit
+  flagged.
+
+**Fixes**
+- **Multi-turn ghost runs work on all three providers.** A turn with
+  tool calls is stored as the providers expect.
+- **Ghost runs report model errors.** A model error, or a stream that
+  ends early, now ends the run `Failed` with the provider's error, not
+  `Completed`.
+- **Command output is capped at 16 MiB.** A command that never stops
+  printing is cut from the middle, with a note saying how many bytes
+  were dropped. The deadline and the Ctrl-C still fire.
+- **The shell host parses every pipelined frame from its own offset**
+  (hardening). `host_sends_lagged_when_subscriber_falls_behind` no longer
+  flakes.
+- **Cost accounting on Anthropic.** It no longer subtracts cached tokens
+  from `input_tokens`, which are already uncached, so cached turns stop
+  under-reporting.
+- **No more panics:**
+  - the transcript viewer on a whitespace-only line, or a wide character
+    at width 1;
+  - an empty `[models]` table, which is now a config error that names it;
+  - three byte slices that could cut a UTF-8 character.
+- **A webhook ghost reads the live config.**
+  - A model added by `daemoneye reload` now reaches it. Before, it ran on
+    the startup config.
+  - A runbook or agent naming an unconfigured model logs a warning and
+    falls back to `default`.
+  - The log names the model actually used.
+
 ## [2.10.0] — 2026-11-18 — M38 The notice bus
 
 Every subsystem that tells someone something now publishes one `Notice`
