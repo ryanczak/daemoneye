@@ -2173,3 +2173,57 @@ delete the filter check) and the test must fail.
 08b's journal fixture and 10a restated the code under test, even though the
 spec said not to. 10b, whose plan named each function, did not. 10b reversed
 an ordering the spec stated without its reason.)*
+
+### Reproduce a defect before drafting its phase
+
+An audit row or bug report is a claim until it fails at runtime. Before a
+fix phase is drafted, the architect makes the defect happen: a scratch
+test, a probe over a socket pair, or a live run. The scratch work is
+reverted before drafting. A defect that reproduces gets a red test the
+executor can trust. A row that cannot be made to fail is labelled
+**latent**. Any hardening it gets is tested by a **preservation** test,
+which passes before and after and is named as such in the doc, so the
+executor never chases a red run that cannot happen.
+
+*(Folded 2026-11-24 at the M39 close, on PE sign-off. Phase 06's target
+was found to be dead code at drafting. C3's deadline half (phase 09) and
+S4b (phase 10) were verified only by reading. They did not reproduce, and
+each cost false red runs and a bounce. Phase 12 reproduced all three items
+first, and its five red runs matched the probe.)*
+
+### Every repeated check is one exact command, run once
+
+The executor does not batch. Told to run a test 300 times, or a grep over
+every file, it makes one tool call per repetition. That trips the
+`IdenticalToolCallRepetition` governor or burns the turn budget. So every
+check that repeats ships in the spec as **one exact one-liner that loops
+internally**, with the words "run it once". For a stress run, that is a
+`seq … | xargs -P …` over the test binary, with a failure count as its
+only output. For a sweep, it is one `grep -c` whose number is the
+criterion.
+
+*(Folded 2026-11-24 at the M39 close, on PE sign-off. M38 08b stalled on a
+repeated grep and 09c on another. M39 phase 10's first run hard-failed
+running `cargo test` once per repetition. Phases 11 and 12, drafted under
+the rule, finished in 56 and 83 turns with no repetition. The rexyMCP side
+is a separate issue.)*
+
+### Security detectors pin behaviour, not spellings
+
+A spec for a security check names the rule, not the spellings it has
+thought of. "`send_input` refuses a line end" names a behaviour. "Refuse
+`Enter`" lets `C-m`, `\r` and a pasted newline through. Derive the
+spellings from the parser the check sits behind, or state the rule as
+"agrees with the bytes actually sent". When a construct has several common
+forms, pin every one in the acceptance criteria (`-c`, `-lc`, `-x -c`,
+`--`, `/bin/sh`).
+
+The other half is the **must-stay-false** list. A fail-closed rule says
+which scan contexts it applies in, and lists examples that must not trip
+it, quoted arguments especially. Without the list, a fail-closed detector
+flags `grep "sudo" log`.
+
+*(Folded 2026-11-24 at the M39 close, on PE sign-off. Phase 03 named
+`Space` and `Enter`, and other spellings hid `sudo`. Phase 05's bug-05-1
+was a fail-closed rule that fired inside quoted arguments, and bug-05-2
+pinned only one spelling of `sh -c`.)*
