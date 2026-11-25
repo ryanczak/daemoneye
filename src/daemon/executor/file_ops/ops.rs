@@ -420,18 +420,30 @@ fn commit_local_edit_atomic(
     let original_owner = std::fs::metadata(std_path)
         .map(|md| (md.uid(), md.gid()))
         .unwrap_or((u32::MAX, u32::MAX));
-    let tmp_path = std_path.with_extension("de_tmp");
-    std::fs::write(&tmp_path, updated).map_err(|e| format!("Error writing temp file: {}", e))?;
+    let (tmp_path, mut tmp_file) = copy::exclusive_temp_file(std_path)
+        .map_err(|e| format!("Error writing temp file: {}", e))?;
+    let cleanup = |tmp: &std::path::Path| {
+        let _ = std::fs::remove_file(tmp);
+    };
+    let fail = |msg: String, tmp: &std::path::Path| -> Result<(), String> {
+        cleanup(tmp);
+        Err(msg)
+    };
+    use std::io::Write as _;
+    if let Err(e) = tmp_file.write_all(updated.as_bytes()) {
+        return fail(format!("Error writing temp file: {}", e), &tmp_path);
+    }
     if let Err(e) =
         std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(original_mode))
     {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!("Error preserving the file's permissions: {}", e));
+        return fail(
+            format!("Error preserving the file's permissions: {}", e),
+            &tmp_path,
+        );
     }
     let _ = std::os::unix::fs::chown(&tmp_path, Some(original_owner.0), Some(original_owner.1));
     if let Err(e) = std::fs::rename(&tmp_path, std_path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!("Error committing edit: {}", e));
+        return fail(format!("Error committing edit: {}", e), &tmp_path);
     }
     Ok(())
 }
@@ -462,14 +474,24 @@ fn build_remote_create_cmd(path: &str, content: &str) -> String {
     let content_hex = super::to_hex(content);
 
     let py = format!(
-        "import os,sys\n\
+        "import os,sys,tempfile\n\
          p=bytes.fromhex('{path_hex}').decode()\n\
          c=bytes.fromhex('{content_hex}').decode()\n\
          if os.path.exists(p): print('DE_ERROR: file already exists: '+p); sys.exit(1)\n\
          os.makedirs(os.path.dirname(p) or '.', exist_ok=True)\n\
-         t=p+'.de_tmp'\n\
-         open(t,'w').write(c)\n\
-         os.rename(t,p)\n\
+         m=os.umask(0); os.umask(m)\n\
+         fd,t=tempfile.mkstemp(suffix='.de_tmp',prefix='.',dir=os.path.dirname(p) or '.')\n\
+         try:\n\
+         \x20 f=os.fdopen(fd,'w')\n\
+         \x20 f.write(c)\n\
+         \x20 f.flush()\n\
+         \x20 os.fchmod(fd,0o666&~m)\n\
+         \x20 f.close()\n\
+         \x20 os.rename(t,p)\n\
+         except BaseException:\n\
+         \x20 try: os.unlink(t)\n\
+         \x20 except OSError: pass\n\
+         \x20 print('DE_ERROR: create failed'); sys.exit(1)\n\
          print('DE_OK: Created '+p)\n"
     );
     let py_hex = super::to_hex(&py);
@@ -477,14 +499,21 @@ fn build_remote_create_cmd(path: &str, content: &str) -> String {
     let pl = format!(
         "use File::Path qw(make_path);\n\
          use File::Basename qw(dirname);\n\
+         use File::Temp qw(tempfile);\n\
          my $p=pack('H*','{path_hex}');\n\
          my $c=pack('H*','{content_hex}');\n\
          if(-e $p){{print \"DE_ERROR: file already exists\\n\";exit 1}}\n\
          make_path(dirname($p));\n\
-         my $t=\"$p.de_tmp\";\n\
-         open(my $f,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
-         print $f $c;close $f;\n\
-         rename($t,$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my $m=umask;\n\
+         my ($f,$t)=tempfile('.deXXXXXXXX',DIR=>dirname($p),SUFFIX=>'.de_tmp',UNLINK=>0) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my $ok=eval{{\n\
+         \x20 print $f $c or die;\n\
+         \x20 $f->flush or die;\n\
+         \x20 chmod(0666&~$m,$f) or die;\n\
+         \x20 close($f) or die;\n\
+         \x20 rename($t,$p) or die;\n\
+         \x20 1}};\n\
+         if(!$ok){{my $e=$@;close($f);unlink($t);print \"DE_ERROR: ${{$e||'create failed'}}\\n\";exit 1}}\n\
          print \"DE_OK: Created $p\\n\";\n"
     );
     let pl_hex = super::to_hex(&pl);
@@ -631,21 +660,9 @@ where
         )));
     }
 
-    let tmp_path = std_path.with_extension("de_tmp");
-    if let Err(e) = std::fs::write(&tmp_path, content) {
+    if let Err(msg) = commit_local_create(std_path, content) {
         crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error writing temp file: {}",
-            e
-        )));
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, std_path) {
-        let _ = std::fs::remove_file(&tmp_path);
-        crate::daemon::stats::finish_command(cmd_id, 1);
-        return Ok(ToolCallOutcome::Result(format!(
-            "Error committing new file: {}",
-            e
-        )));
+        return Ok(ToolCallOutcome::Result(msg));
     }
 
     crate::daemon::stats::finish_command(cmd_id, 0);
@@ -660,12 +677,21 @@ where
     )))
 }
 
+/// Write `content` to `std_path` through an exclusive temp and rename it into
+/// place, mirroring [`commit_local_edit_atomic`]: the temp is `O_EXCL` at a
+/// random name, and any failure after the open removes it.
+fn commit_local_create(std_path: &std::path::Path, content: &str) -> Result<(), String> {
+    copy::write_via_exclusive_temp(std_path, content)
+}
+
 #[path = "ops_copy.rs"]
 mod copy;
 #[path = "ops_delete.rs"]
 mod delete;
 #[cfg(test)]
 use copy::copy_tmp_path;
+#[cfg(test)]
+use copy::exclusive_temp_file;
 pub(super) use copy::run_copy;
 #[cfg(test)]
 use copy::run_copy_with_spawn;

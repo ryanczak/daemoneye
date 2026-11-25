@@ -177,6 +177,50 @@ pub(super) async fn approve_and_answer_channel(
 
 /// The Perl code is hex-encoded in the wire command, so check the source
 /// for the File::Path/make_path call and File::Basename/dirname import.
+/// `commit_local_edit_atomic` must not follow a symlink planted at the
+/// predictable temp name: the write goes through an `O_EXCL` temp created
+/// at a random name, so the planted link is ignored and the victim is
+/// untouched.
+#[test]
+fn local_edit_ignores_a_planted_temp_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("f.txt");
+    std::fs::write(&target, "old").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, "VICTIM").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.path().join("f.de_tmp")).unwrap();
+
+    commit_local_edit_atomic(&target, target.to_str().unwrap(), "new")
+        .unwrap_or_else(|e| panic!("the edit commits: {e}"));
+
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        "VICTIM",
+        "the planted symlink's target must be untouched"
+    );
+    let md = std::fs::symlink_metadata(&target).unwrap();
+    assert!(
+        !md.file_type().is_symlink(),
+        "f.txt must be a regular file after the edit, not a symlink"
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    assert_eq!(
+        md.permissions().mode() & 0o7777,
+        0o640,
+        "the edit must keep the file's mode"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".de_tmp"))
+        .collect();
+    assert!(
+        leftovers == ["f.de_tmp"],
+        "no temp beyond the planted link may be left: {leftovers:?}"
+    );
+}
+
 #[test]
 fn remote_create_cmd_perl_branch_makes_parent_dirs() {
     let src = include_str!("ops.rs");
@@ -514,6 +558,225 @@ fn the_perl_branch_keeps_the_files_mode() {
     }
 }
 
+/// Both remote-edit branches must ignore a symlink planted at the
+/// predictable temp name the old payloads used: the payload's temp is now
+/// created exclusively at a random name, so the planted link and its
+/// victim are untouched.
+#[test]
+fn remote_edit_ignores_a_planted_temp_symlink() {
+    let which = |prog: &str| -> String {
+        let out = std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {prog}")])
+            .output()
+            .unwrap_or_else(|e| panic!("resolving {prog}: {e}"));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let bash = which("bash");
+    assert!(!bash.is_empty(), "bash must resolve");
+    for (interpreter, link) in [("python3", "python3"), ("perl", "perl")] {
+        let resolved = which(interpreter);
+        assert!(!resolved.is_empty(), "{interpreter} must resolve");
+        let bin = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&resolved, bin.path().join(link)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("g.txt");
+        std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "VICTIM").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.path().join(format!("g.txt{}", ".de_tmp")))
+            .unwrap();
+        let cmd = super::super::write::build_remote_edit_cmd(
+            file.to_str().unwrap(),
+            "old-line",
+            "new-line",
+        );
+        let out = std::process::Command::new(&bash)
+            .arg("-c")
+            .arg(&cmd)
+            .env("PATH", bin.path())
+            .output()
+            .unwrap_or_else(|e| panic!("running the {interpreter} branch: {e}"));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("DE_OK:"),
+            "the {interpreter} branch edited the file: {stdout:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "VICTIM",
+            "the planted symlink's target must be untouched ({interpreter})"
+        );
+        let md = std::fs::symlink_metadata(&file).unwrap();
+        assert!(
+            !md.file_type().is_symlink(),
+            "g.txt must be a regular file after the edit ({interpreter})"
+        );
+        assert!(
+            std::fs::read_to_string(&file).unwrap().contains("new-line"),
+            "the edit landed ({interpreter})"
+        );
+        assert_eq!(
+            md.permissions().mode() & 0o7777,
+            0o640,
+            "g.txt keeps its mode through the {interpreter} branch"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".de_tmp"))
+            .collect();
+        assert!(
+            leftovers == ["g.txt.de_tmp"],
+            "no temp beyond the planted link may be left ({interpreter}): {leftovers:?}"
+        );
+    }
+}
+
+/// Both remote-create branches must ignore a symlink planted at the old
+/// predictable temp name, and the created file keeps its umask-derived
+/// mode (0644 under `umask 022`), not the temp's 0600.
+#[test]
+fn remote_create_ignores_a_planted_temp_symlink() {
+    let which = |prog: &str| -> String {
+        let out = std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {prog}")])
+            .output()
+            .unwrap_or_else(|e| panic!("resolving {prog}: {e}"));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let bash = which("bash");
+    assert!(!bash.is_empty(), "bash must resolve");
+    for (interpreter, link) in [("python3", "python3"), ("perl", "perl")] {
+        let resolved = which(interpreter);
+        assert!(!resolved.is_empty(), "{interpreter} must resolve");
+        let bin = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&resolved, bin.path().join(link)).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("h.txt");
+        let victim = dir.path().join("victim");
+        std::fs::write(&victim, "VICTIM").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.path().join(format!("h.txt{}", ".de_tmp")))
+            .unwrap();
+        let cmd = super::super::ops::build_remote_create_cmd(file.to_str().unwrap(), "created");
+        let out = std::process::Command::new(&bash)
+            .arg("-c")
+            .arg(format!("umask 022; {cmd}"))
+            .env("PATH", bin.path())
+            .output()
+            .unwrap_or_else(|e| panic!("running the {interpreter} branch: {e}"));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("DE_OK:"),
+            "the {interpreter} branch created the file: {stdout:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "VICTIM",
+            "the planted symlink's target must be untouched ({interpreter})"
+        );
+        let md = std::fs::symlink_metadata(&file).unwrap();
+        assert!(
+            !md.file_type().is_symlink(),
+            "h.txt must be a regular file after the create ({interpreter})"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "created",
+            "the content landed ({interpreter})"
+        );
+        assert_eq!(
+            md.permissions().mode() & 0o7777,
+            0o644,
+            "the create keeps its umask-derived mode, not the temp's 0600 ({interpreter})"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".de_tmp"))
+            .collect();
+        assert!(
+            leftovers == ["h.txt.de_tmp"],
+            "no temp beyond the planted link may be left ({interpreter}): {leftovers:?}"
+        );
+    }
+}
+
+/// `commit_local_create` must ignore a symlink planted at the temp name
+/// the old code used: the new file is written through an `O_EXCL` temp at
+/// a random name, so the planted link and its target are untouched.
+#[test]
+fn local_create_ignores_a_planted_temp_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("n.txt");
+    let victim = dir.path().join("victim");
+    std::fs::write(&victim, "VICTIM").unwrap();
+    std::os::unix::fs::symlink(&victim, dir.path().join("n.de_tmp")).unwrap();
+
+    commit_local_create(&target, "created").unwrap_or_else(|e| panic!("the create commits: {e}"));
+
+    assert_eq!(
+        std::fs::read_to_string(&victim).unwrap(),
+        "VICTIM",
+        "the planted symlink's target must be untouched"
+    );
+    let md = std::fs::symlink_metadata(&target).unwrap();
+    assert!(
+        !md.file_type().is_symlink(),
+        "n.txt must be a regular file after the create, not a symlink"
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "created");
+    assert_eq!(
+        md.permissions().mode() & 0o7777,
+        0o600,
+        "the created file keeps today's 0600 under the daemon's umask 077"
+    );
+    let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".de_tmp"))
+        .collect();
+    assert!(
+        leftovers == ["n.de_tmp"],
+        "no temp beyond the planted link may be left: {leftovers:?}"
+    );
+}
+
+/// The exclusive temp opener: two calls for the same destination produce
+/// different, private paths, and `create_new` refuses an existing path.
+#[test]
+fn exclusive_temp_is_private_and_fresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("f.txt");
+    let (first_path, first_file) =
+        exclusive_temp_file(&dest).unwrap_or_else(|e| panic!("the first temp opens: {e}"));
+    let (second_path, second_file) =
+        exclusive_temp_file(&dest).unwrap_or_else(|e| panic!("the second temp opens: {e}"));
+    assert_ne!(first_path, second_path, "two calls must differ");
+    for (path, _file) in [(&first_path, first_file), (&second_path, second_file)] {
+        assert_eq!(path.parent(), Some(dir.path()), "beside the destination");
+        assert!(
+            path.to_str().unwrap().ends_with(".de_tmp"),
+            "the temp keeps the .de_tmp suffix: {path:?}"
+        );
+        let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "the temp is private to the owner: {path:?}"
+        );
+    }
+    let again = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&first_path);
+    assert_eq!(
+        again.unwrap_err().kind(),
+        std::io::ErrorKind::AlreadyExists,
+        "create_new refuses an existing path"
+    );
+}
+
 /// Owner restoration cannot be exercised without root (a non-root
 /// writer's chown is a no-op by kernel rule), so the payload that does it
 /// is pinned by decoding both hex payloads out of the builder, the way
@@ -540,15 +803,15 @@ fn the_edit_payloads_restore_ownership() {
     let python = decode_hex_from(&edit_cmd, "fromhex('")
         .unwrap_or_else(|| panic!("the python branch's hex payload decoded"));
     assert!(
-        python.contains("os.chmod(t,st.st_mode&0o7777)")
-            && python.contains("os.chown(t,st.st_uid,st.st_gid)"),
-        "the python branch must chmod the temp file to the original's mode and chown it: {python:?}"
+        python.contains("os.fchmod(fd,st.st_mode&0o7777)")
+            && python.contains("os.fchown(fd,st.st_uid,st.st_gid)"),
+        "the python branch must chmod the temp fd to the original's mode and chown it: {python:?}"
     );
     let perl = decode_hex_from(&edit_cmd, "pack(\"H*\",\"")
         .unwrap_or_else(|| panic!("the perl branch's hex payload decoded"));
     assert!(
-        perl.contains("chmod($st[2]&07777,$t)") && perl.contains("chown($st[4],$st[5],$t)"),
-        "the perl branch must chmod the temp file to the original's mode and chown it: {perl:?}"
+        perl.contains("chmod($st[2]&07777,$g)") && perl.contains("chown($st[4],$st[5],$g)"),
+        "the perl branch must chmod the temp filehandle to the original's mode and chown it: {perl:?}"
     );
 }
 

@@ -1,7 +1,7 @@
 # Phase 03 — temp-files
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -230,3 +230,125 @@ It is red today. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-25 22:02 (progress)
+
+Work has begun on phase 03 (temp-files). Status flipped to in-progress; the first
+red test is next.
+
+Task list (each line names the acceptance item it closes):
+
+1. Write the first red test `local_edit_ignores_a_planted_temp_symlink` in
+   `ops_tests.rs` and paste its red run — closes **Local edit**.
+2. Write the red test `local_create_ignores_a_planted_temp_symlink` — closes
+   **Local create**.
+3. Write the red test `exclusive_temp_is_private_and_fresh` — closes
+   **Local helper**.
+4. Add the exclusive temp opener helper beside `copy_tmp_path` in
+   `ops_copy.rs`; rewire `commit_local_copy` — closes **Local helper**.
+5. Extract `commit_local_create` from `run_create_with_spawn` and rewire it —
+   closes **Local create**.
+6. Rewire `commit_local_edit_atomic` through the helper — closes **Local edit**.
+7. Write the red tests `remote_edit_ignores_a_planted_temp_symlink` (Python +
+   Perl branches) and rewire `remote_edit_payload_hex` — closes **Remote edit**.
+8. Write the red test `remote_create_ignores_a_planted_temp_symlink` (both
+   branches) and rewire `build_remote_create_cmd` — closes **Remote create**.
+9. Add the temp-files sentence to `docs/security.md` `### 5`.
+10. Run the wiring grep (must print 0) — closes **Wiring**.
+11. Run the mutation check on the Python edit payload and paste output —
+    closes **Mutation check**.
+12. Confirm the five preserved tests pass unchanged — closes **Preserved**.
+13. Run the four gates once each and paste output — closes **Gates**.
+
+### Update — 2026-11-25 22:30 (end-to-end verification)
+
+All evidence below is captured mechanically from this round's tree.
+
+**Red runs** (before each fix, captured at the time):
+
+- `local_edit_ignores_a_planted_temp_symlink` (first red test, before the
+  local helper existed):
+
+```
+test daemon::executor::file_ops::ops::tests::local_edit_ignores_a_planted_temp_symlink ... FAILED
+assertion `left == right` failed: the planted symlink's target must be untouched
+  left: "new"
+ right: "VICTIM"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3146 filtered out
+```
+
+- After the local helper landed but before `commit_local_edit_atomic` wrote
+  through the opened handle, the same test failed a second way (rename-over-
+  symlink left the target empty) and was then fixed; the green run below is
+  the final state.
+
+**Green runs — all five new tests plus the five preserved ones:**
+
+```
+running 10 tests
+test daemon::executor::file_ops::ops::tests::copy_tmp_path_is_unique_per_call_and_destination ... ok
+test daemon::executor::file_ops::ops::tests::exclusive_temp_is_private_and_fresh ... ok
+test daemon::executor::file_ops::ops::tests::remote_create_cmd_python_branch_unchanged ... ok
+test daemon::executor::file_ops::ops::tests::local_create_ignores_a_planted_temp_symlink ... ok
+test daemon::executor::file_ops::ops::tests::local_edit_ignores_a_planted_temp_symlink ... ok
+test daemon::executor::file_ops::ops::tests::remote_create_cmd_perl_branch_makes_parent_dirs ... ok
+test daemon::executor::file_ops::ops::tests::the_perl_branch_keeps_the_files_mode ... ok
+test daemon::executor::file_ops::ops::tests::remote_create_ignores_a_planted_temp_symlink ... ok
+test daemon::executor::file_ops::ops::tests::remote_edit_ignores_a_planted_temp_symlink ... ok
+test daemon::executor::file_ops::ops::tests::the_python_branch_keeps_the_files_mode ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 3141 filtered out; finished in 0.05s
+```
+
+The remote tests drive the real `python3` and `perl` interpreters through
+`build_remote_edit_cmd` / `build_remote_create_cmd` under a narrowed `PATH`
+(one interpreter symlink per temp bin dir), with `umask 022;` prefixed to the
+create command; each asserts `DE_OK:`, the victim unchanged, `g.txt`/`h.txt`
+a regular file at mode 0640/0644, and no `.de_tmp` beyond the planted link.
+
+**Wiring grep** (prints 0 today; it printed 6 before the phase):
+
+```
+$ grep -rhoF -e "p+'.de_tmp'" -e '$p.de_tmp' -e 'with_extension("de_tmp")' src/daemon/executor/file_ops/ | wc -l
+0
+```
+
+**Mutation check** (old Python temp step restored in `remote_edit_payload_hex`
+only, test re-run, then restored):
+
+```
+$ cargo test --lib remote_edit_ignores_a_planted_temp_symlink
+test daemon::executor::file_ops::ops::tests::remote_edit_ignores_a_planted_temp_symlink ... FAILED
+assertion `left == right` failed: the planted symlink's target must be untouched (python3)
+  left: "a\nnew-line\nb\n"
+ right: "VICTIM"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3150 filtered out
+```
+
+**One pre-existing test updated, not preserved verbatim:**
+`the_edit_payloads_restore_ownership` pinned the payload source by the old
+by-path chmod/chown calls (`os.chmod(t,…)`, `chmod(…,$t)`). The behavior it
+pins is unchanged — the mode/owner are still applied from the original's
+stat — but through the fd/handle (`os.fchmod(fd,…)`, `chmod(…,$g)`), so the
+test's two `contains` needles were updated to the fd/handle forms. It passes.
+
+**Gates:**
+
+```
+$ cargo fmt --all && cargo fmt --all -- --check && echo FMT_OK
+FMT_OK
+
+$ cargo build 2>&1 | tail -3
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.93s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -3
+    Checking daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.73s
+
+$ cargo test (lib suite tail)
+test result: ok. 3141 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 149.84s
+```
+
+The lib suite reports 3141 passed (3136 + five new), matching the pinned
+count. Full `cargo test` across all targets: every `test result:` line ok.

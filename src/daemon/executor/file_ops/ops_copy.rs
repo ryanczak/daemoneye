@@ -231,8 +231,15 @@ fn commit_local_copy(
         return ToolCallOutcome::Result(format!("Error creating destination directory: {}", e));
     }
 
-    let tmp_path = copy_tmp_path(dest_std);
-    if let Err(e) = std::fs::write(&tmp_path, source_content) {
+    let (tmp_path, mut tmp_file) = match copy::exclusive_temp_file(dest_std) {
+        Ok(opened) => opened,
+        Err(msg) => {
+            crate::daemon::stats::finish_command(cmd_id, 1);
+            return ToolCallOutcome::Result(msg);
+        }
+    };
+    if let Err(e) = std::io::Write::write_all(&mut tmp_file, source_content.as_bytes()) {
+        let _ = std::fs::remove_file(&tmp_path);
         crate::daemon::stats::finish_command(cmd_id, 1);
         return ToolCallOutcome::Result(format!("Error writing temp file: {}", e));
     }
@@ -252,6 +259,45 @@ fn commit_local_copy(
         "Copied {} to {}: {} line(s).",
         src_path, dest, line_count
     ))
+}
+
+/// Open a fresh temp file beside `dest`: the name comes from
+/// [`copy_tmp_path`] (random, ending `.de_tmp`), and `create_new` is
+/// `O_CREAT|O_EXCL`, so a planted symlink at any predictable name is
+/// refused instead of followed. The mode is 0600 regardless of umask.
+pub(super) fn exclusive_temp_file(
+    dest: &std::path::Path,
+) -> Result<(std::path::PathBuf, std::fs::File), String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let tmp_path = copy_tmp_path(dest);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp_path)
+        .map_err(|e| format!("Error creating temp file {}: {}", tmp_path.display(), e))?;
+    Ok((tmp_path, file))
+}
+
+/// Write `content` through an exclusive temp and rename it over `dest`,
+/// removing the temp on any failure after the open.
+pub(super) fn write_via_exclusive_temp(
+    dest: &std::path::Path,
+    content: &str,
+) -> Result<(), String> {
+    let (tmp_path, mut file) = exclusive_temp_file(dest)?;
+    let fail = |msg: String, tmp: &std::path::Path| -> Result<(), String> {
+        let _ = std::fs::remove_file(tmp);
+        Err(msg)
+    };
+    use std::io::Write as _;
+    if let Err(e) = file.write_all(content.as_bytes()) {
+        return fail(format!("Error writing temp file: {}", e), &tmp_path);
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, dest) {
+        return fail(format!("Error committing the file: {}", e), &tmp_path);
+    }
+    Ok(())
 }
 
 /// The temp file a local copy writes before renaming into `dest`. It lives

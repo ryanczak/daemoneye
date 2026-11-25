@@ -273,7 +273,7 @@ pub(super) fn remote_edit_payload_hex(
     let new_hex = super::to_hex(new_string);
 
     let py = format!(
-        "import os,sys\n\
+        "import os,sys,tempfile\n\
          p=bytes.fromhex('{path_hex}').decode()\n\
          o=bytes.fromhex('{old_hex}').decode()\n\
          n=bytes.fromhex('{new_hex}').decode()\n\
@@ -282,18 +282,28 @@ pub(super) fn remote_edit_payload_hex(
          if cnt==0: print('DE_ERROR: old_string not found in '+p); sys.exit(1)\n\
          if cnt>1: print('DE_ERROR: old_string appears '+str(cnt)+' times in '+p); sys.exit(1)\n\
          st=os.stat(p)\n\
-         t=p+'.de_tmp'\n\
-         open(t,'w').write(c.replace(o,n,1))\n\
-         os.chmod(t,st.st_mode&0o7777)\n\
-         try: os.chown(t,st.st_uid,st.st_gid)\n\
-         except OSError: pass\n\
-         os.rename(t,p)\n\
+         fd,t=tempfile.mkstemp(suffix='.de_tmp',prefix='.',dir=os.path.dirname(p) or '.')\n\
+         try:\n\
+         \x20 f=os.fdopen(fd,'w')\n\
+         \x20 f.write(c.replace(o,n,1))\n\
+         \x20 f.flush()\n\
+         \x20 os.fchmod(fd,st.st_mode&0o7777)\n\
+         \x20 try: os.fchown(fd,st.st_uid,st.st_gid)\n\
+         \x20 except OSError: pass\n\
+         \x20 f.close()\n\
+         \x20 os.rename(t,p)\n\
+         except BaseException:\n\
+         \x20 try: os.unlink(t)\n\
+         \x20 except OSError: pass\n\
+         \x20 print('DE_ERROR: edit failed'); sys.exit(1)\n\
          print('DE_OK: Edited '+p)\n"
     );
     let py_hex = super::to_hex(&py);
 
     let pl = format!(
-        "my $p=pack('H*','{path_hex}');\n\
+        "use File::Temp qw(tempfile);\n\
+         use File::Basename qw(dirname);\n\
+         my $p=pack('H*','{path_hex}');\n\
          my $o=pack('H*','{old_hex}');\n\
          my $n=pack('H*','{new_hex}');\n\
          open(my $f,'<',$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
@@ -303,12 +313,17 @@ pub(super) fn remote_edit_payload_hex(
          if(@m>1){{print \"DE_ERROR: \".scalar(@m).\" matches\\n\";exit 1}}\n\
          my @st=stat($p);\n\
          $c=~s/\\Q$o\\E/$n/;\n\
-         my $t=\"$p.de_tmp\";\n\
-         open(my $g,'>',$t) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
-         print $g $c;close $g;\n\
-         chmod($st[2]&07777,$t);\n\
-         chown($st[4],$st[5],$t);\n\
-         rename($t,$p) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my $d=dirname($p);\n\
+         my ($g,$t)=tempfile('.deXXXXXXXX',DIR=>$d,SUFFIX=>'.de_tmp',UNLINK=>0) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my $ok=eval{{\n\
+         \x20 print $g $c or die;\n\
+         \x20 $g->flush or die;\n\
+         \x20 chmod($st[2]&07777,$g) or die;\n\
+         \x20 eval{{chown($st[4],$st[5],$g)}};\n\
+         \x20 close($g) or die;\n\
+         \x20 rename($t,$p) or die;\n\
+         \x20 1}};\n\
+         if(!$ok){{my $e=$@;close($g);unlink($t);print \"DE_ERROR: ${{$e||'edit failed'}}\\n\";exit 1}}\n\
          print \"DE_OK: Edited $p\\n\";\n"
     );
     let pl_hex = super::to_hex(&pl);

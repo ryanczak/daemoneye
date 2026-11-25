@@ -87,7 +87,10 @@ response lacks the marker the daemon refuses to act (and logs why).
 `install_sudoers` writes to `~/.daemoneye/var/run/sudoers-<pid>.tmp` with
 `O_CREAT|O_EXCL` and mode `0600`, never `/tmp` — eliminating the symlink
 race and other-users' read/tamper window. The `sudo install` + `visudo -c -f`
-steps are unchanged.
+steps are unchanged. `edit_file`'s temp files — local and in the remote
+edit/create payloads — are created exclusively (`O_EXCL`) at mode `0600`
+with an unpredictable name beside the destination, so a pre-planted symlink
+at any predictable name is refused rather than followed.
 
 ### 6. Shell-string hygiene
 
