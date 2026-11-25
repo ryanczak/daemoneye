@@ -71,6 +71,40 @@ the phase's Update Log — never silently mark a phase done.
 - [ ] Phase doc's Update Log filled in (see WORKFLOW.md).
 - [ ] One conventional commit per logical change (see §6).
 
+### 1.1 An end-to-end verification must prove it is live
+
+An end-to-end check has to be able to **fail**. If the number you report is also
+the number you would get when nothing ran, you have not verified anything — you
+have observed silence and called it success.
+
+So every end-to-end verification carries a **positive control**: an observation,
+in the same session, that would come out differently if the measurement were not
+live.
+
+- [ ] The end-to-end check includes a positive control, and its result is quoted
+      alongside the headline number in the Update Log.
+
+In practice:
+
+- **Seed a known-good starting state** so the first observation *must* be
+  non-zero. Harvesting into an empty store must append records; only then does a
+  second harvest appending none mean anything.
+- **Prefer a difference measured in one session** — before/after, or A/B against
+  the previous binary — over an absolute number carried in from another
+  environment. Absolute thresholds silently depend on a baseline you do not
+  control.
+- **Assert the subject exists and survived.** Confirm the process you sampled is
+  the one under test (`/proc/<pid>/comm`, a pidfile, `$!` — never a `pgrep -f`
+  substring that a wrapper like `script`/`sh -c`/`timeout` also matches), that it
+  was still alive at the end of the window, and that the file you measured is the
+  one the binary actually writes.
+- **Check exit status.** A command that errors produces no output and changes no
+  files, which reads identically to a clean pass on any "should be zero" metric.
+
+If the phase doc's stated criterion cannot be given a positive control, say so in
+the Update Log and report what you measured instead — do not report a bare zero
+as a pass.
+
 ---
 
 ## 2. Code Quality

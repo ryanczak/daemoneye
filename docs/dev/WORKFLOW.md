@@ -607,6 +607,11 @@ Three entry types — use whichever fits.
 now, anything surprising. No need to log every micro-step.>
 ```
 
+Do **not** write an `**Executor:**` or model-name line in executor-authored
+Update Log entries — the server stamps the true model identity in the
+server-authored completion entry (synced from rexyMCP `plugin/templates/WORKFLOW.md`,
+folded 2026-11-25).
+
 ### Blocker (stop and wait)
 
 ```markdown
@@ -2227,3 +2232,18 @@ flags `grep "sudo" log`.
 `Space` and `Enter`, and other spellings hid `sudo`. Phase 05's bug-05-1
 was a fail-closed rule that fired inside quoted arguments, and bug-05-2
 pinned only one spelling of `sh -c`.)*
+
+### Spec behaviour, not derivation
+
+A phase doc states **what must be true afterwards** and the constraints the
+change must respect. It does not pre-derive what the executor can derive
+from the repo: no line-numbered "current state", no test bodies, no pinned
+`grep -c` counts, no mutation runs performed by the architect. The executor
+holds the compiler, the tests and the tree, and verifying a premise against
+the source is its job, not the spec's.
+
+Keep what the executor genuinely cannot get: an external API excerpt, a
+gotcha that bit before, a constraint it would not infer (hermeticity, a
+forbidden mechanism). Cut everything that is a quotation of the repo.
+
+*(Synced from rexyMCP `plugin/templates/WORKFLOW.md`, folded 2026-10-08.)*
