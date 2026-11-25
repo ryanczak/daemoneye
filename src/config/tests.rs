@@ -106,6 +106,31 @@ fn resolve_model_unknown_name_falls_back_to_default() {
 }
 
 #[test]
+fn resolve_model_key_names_the_fallback() {
+    let toml = r#"
+            [models.default]
+            provider = "anthropic"
+            model    = "claude-sonnet-4-6"
+
+            [models.big]
+            provider = "anthropic"
+            model    = "claude-opus-4-6"
+        "#;
+    let cfg: Config = toml::from_str(toml).unwrap();
+    assert_eq!(cfg.resolve_model_key(Some("big")), "big");
+    assert_eq!(cfg.resolve_model_key(Some("badkey")), "default");
+    assert_eq!(cfg.resolve_model_key(None), "default");
+
+    let toml = r#"
+            [models.alpha]
+            provider = "anthropic"
+            model    = "claude-opus-4-6"
+        "#;
+    let cfg: Config = toml::from_str(toml).unwrap();
+    assert_eq!(cfg.resolve_model_key(Some("x")), "alpha");
+}
+
+#[test]
 fn available_models_returns_sorted_keys() {
     let toml = r#"
             [models.default]

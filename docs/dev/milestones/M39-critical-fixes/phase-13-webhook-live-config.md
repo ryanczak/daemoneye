@@ -169,3 +169,89 @@ Red today: the function does not exist. Paste the compile error.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-25 00:25 (started)
+
+Executor: Claude (headless run). Status flipped to `in-progress`.
+
+**Task list** (each line names the acceptance item it closes):
+
+1. Red test `resolve_model_key_names_the_fallback` in `src/config/tests.rs`,
+   run red (compile error: no method `resolve_model_key`) — closes **Key**.
+2. Implement `Config::resolve_model_key` in `src/config/load.rs`,
+   re-express `resolve_model` through it — closes **Key**.
+3. Red test `ghost_model_fallback_is_warned` in `turn_helpers.rs` tests,
+   run red — closes **Warning**.
+4. Implement `model_fallback_warning` in `src/daemon/ghost/turn_helpers.rs`;
+   wire `do_ghost_turn` (`src/daemon/ghost/turn.rs`) to log WARN + info
+   naming the used model via `resolve_model_key` — closes **Warning**.
+5. Red test `webhook_state_sees_a_reloaded_model` in `server.rs` tests,
+   run red (compile error: field is a `Config`) — closes **Reload reaches
+   the webhook**.
+6. Change `WebhookState.config` to `Arc<ConfigHandle>`, update all
+   `state.config` reads in `src/webhook/` to `state.config.current()`,
+   fix the `trigger.rs` snapshot comment, fix test constructors — closes
+   **Reload reaches the webhook** and **No snapshot reads** (grep prints 0).
+7. Mutation check on `resolve_model_key`; run once, paste output — closes
+   **Mutation check**.
+8. Run the four gates once each; paste `test result:` lines into an
+   end-to-end evidence entry; single `fix:` commit — closes **Gates**.
+
+### Update — 2026-11-25 01:20 (end-to-end verification)
+
+All four gates ran once each, after `cargo fmt --all`:
+
+```
+cargo test  (lib suite):
+test result: ok. 3114 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 148.42s
+(integration suites:) 2 passed / 6 passed / 19 passed / 16 passed / 45 passed; 2 ignored /
+13 passed; 1 ignored / 2 passed / 4 passed — all ok, 0 failed.
+```
+
+**Red runs (pasted as captured):**
+
+1. `cargo test --lib resolve_model_key_names_the_fallback` before the fix:
+
+```
+error[E0599]: no method named `resolve_model_key` found for struct `config::types::Config` in the current scope
+   --> src/config/tests.rs:130:20
+    |
+130 |     assert_eq!(cfg.resolve_model_key(Some("x")), "alpha");
+    |                    ^^^^^^^^^^^^^^^^^
+```
+
+2. `cargo test --lib ghost_model_fallback_is_warned` before the fix:
+
+```
+error[E0425]: cannot find function `model_fallback_warning` in this scope
+   --> src/daemon/ghost/turn_helpers.rs:899:17
+```
+
+3. `cargo test --lib webhook_state_sees_a_reloaded_model` before the fix:
+
+```
+error[E0308]: mismatched types
+   --> src/webhook/trigger.rs:106:13
+    |
+106 |             config,
+    |             ^^^^^^ expected `Arc<ConfigHandle>`, found `Config`
+```
+
+**Grep** (`grep -n 'state\.config' src/webhook/*.rs | grep -v 'state\.config\.current()' | grep -c .`):
+prints `0` (was 10 — every snapshot read now goes through `current()`).
+
+**Mutation check:** `resolve_model_key` mutated to return any requested name
+whenever one is given (`Some(n) => n`), then
+`cargo test --lib resolve_model_key_names_the_fallback` — the test fails,
+pinning the production line:
+
+```
+thread 'config::tests::resolve_model_key_names_the_fallback' panicked at src/config/tests.rs:121:5:
+assertion `left == right` failed
+  left: "badkey"
+ right: "default"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3123 filtered out
+```
+
+The function was restored to `get_key_value`-based lookup; the test passes
+again (`test result: ok. 1 passed`).

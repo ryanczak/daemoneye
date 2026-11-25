@@ -6,6 +6,22 @@ use super::*;
 
 const GHOST_TURN_TIMEOUT_SECS: u64 = 300;
 
+/// Warn message when a ghost's requested model name is not configured and the
+/// fallback entry is used instead. `None` when no lie would be logged.
+pub(super) fn model_fallback_warning(
+    session_id: &str,
+    requested: Option<&str>,
+    used: &str,
+) -> Option<String> {
+    let requested = requested?;
+    if requested == used {
+        return None;
+    }
+    Some(format!(
+        "Ghost Shell {session_id}: requested model '{requested}' is not configured, using '{used}'"
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_ghost_turn_step(
     session_id: &str,
@@ -885,5 +901,21 @@ mod tests {
         assert_eq!(f.metrics.model_calls, 1, "cost is recorded once");
         assert_eq!(f.metrics.backend_errors, 0);
         drop(tx);
+    }
+
+    #[test]
+    fn ghost_model_fallback_is_warned() {
+        let warning = model_fallback_warning("ghost-1", Some("badkey"), "default");
+        let warning = warning.expect("an unknown requested model is warned");
+        assert!(warning.contains("ghost-1"), "names the session: {warning}");
+        assert!(warning.contains("badkey"), "names the request: {warning}");
+        assert!(warning.contains("not configured"));
+        assert!(
+            warning.contains("default"),
+            "names the model used: {warning}"
+        );
+
+        assert!(model_fallback_warning("ghost-1", Some("big"), "big").is_none());
+        assert!(model_fallback_warning("ghost-1", None, "default").is_none());
     }
 }

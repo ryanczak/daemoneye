@@ -96,7 +96,8 @@ fn is_duplicate(
 
 pub async fn process_alert(alert: InternalAlert, state: Arc<WebhookState>) {
     crate::daemon::stats::record_webhook();
-    let cfg = &state.config.webhook;
+    let config = state.config.current();
+    let cfg = &config.webhook;
 
     // 1. Deduplication check: a duplicate is discarded here.
     if is_duplicate(&alert, &state.dedup, cfg.dedup_window_secs) {
@@ -437,11 +438,12 @@ pub(crate) async fn run_watchdog_query(
 /// Run runbook-based AI analysis for the alert, rate-limited per alert name.
 pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &WebhookState) {
     // Rate limit: skip if we analysed the same alert_name within dedup_window_secs.
+    let config = state.config.current();
     {
         let mut rl = state.rate_limit.lock().unwrap_or_log();
         let now = now_secs();
         if let Some(&last) = rl.get(&notice.name)
-            && now.saturating_sub(last) < state.config.webhook.dedup_window_secs
+            && now.saturating_sub(last) < config.webhook.dedup_window_secs
         {
             return;
         }
@@ -460,7 +462,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
     // `[budget] max_cost_per_day` the analysis is skipped and logged, the
     // alert is still logged and the session goes on, nothing is retried.
     if let Err(message) =
-        crate::daemon::spend::cost_gate(&state.config, crate::daemon::spend::SpendPath::Webhook)
+        crate::daemon::spend::cost_gate(&config, crate::daemon::spend::SpendPath::Webhook)
     {
         log::warn!(
             "Webhook: analysis for '{}' skipped — daily cost cap: {message}",
@@ -483,7 +485,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
         .unwrap_or(&notice.history_text())
         .to_string();
 
-    let wd = run_watchdog_query(&state.config, &rb, format!("Incoming alert:\n{alert_msg}")).await;
+    let wd = run_watchdog_query(&config, &rb, format!("Incoming alert:\n{alert_msg}")).await;
     if let Some(ref e) = wd.api_error {
         log::error!(
             "Webhook: runbook analysis API call failed for '{}': {}",
@@ -541,11 +543,12 @@ fn spawn_webhook_ghost(
     rb: &crate::runbook::Runbook,
     state: &WebhookState,
 ) -> bool {
-    if !crate::daemon::ghost::check_ghost_capacity(&state.config) {
+    let snapshot = state.config.current();
+    if !crate::daemon::ghost::check_ghost_capacity(&snapshot) {
         log::warn!(
             "Webhook: ghost shell skipped for '{}' — concurrency limit ({}) reached",
             alert_name,
-            state.config.ghost.max_concurrent_ghosts
+            snapshot.ghost.max_concurrent_ghosts
         );
         publish_ghost_event(
             &state.bus,
@@ -562,7 +565,7 @@ fn spawn_webhook_ghost(
     let sessions = state.sessions.clone();
     let alert_msg = alert_msg.to_string();
     let rb_clone = rb.clone();
-    let config_clone = state.config.clone();
+    let config_clone = state.config.current();
     let cache_clone = state.cache.clone();
     let schedule_store_clone = state.schedule_store.clone();
     let bus = state.bus.clone();

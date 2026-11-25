@@ -40,9 +40,13 @@ pub(super) async fn do_ghost_turn(
 
     let model_entry = config.resolve_model(ghost_active_model.as_deref());
     metrics.set_model(model_entry.provider.clone(), model_entry.model.clone());
-    if let Some(ref name) = ghost_active_model {
-        log::info!("Ghost Shell {}: using model '{}'", session_id, name);
+    let used_model = config.resolve_model_key(ghost_active_model.as_deref());
+    if let Some(warning) =
+        helpers::model_fallback_warning(session_id, ghost_active_model.as_deref(), used_model)
+    {
+        log::warn!("{warning}");
     }
+    log::info!("Ghost Shell {}: using model '{}'", session_id, used_model);
     let client: Arc<Box<dyn crate::ai::AiClient>> = Arc::new(make_client(
         &model_entry.provider,
         model_entry.resolve_api_key(),

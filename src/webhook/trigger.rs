@@ -36,15 +36,14 @@ async fn ghost_trigger_task(
 ) {
     while let Some(notice) = rx.recv().await {
         // The gate owns the `kind` rule; the config is read per notice so
-        // `daemoneye reload` applies route changes. `state.config` is a
-        // startup snapshot `reload` never updates — never route on it.
+        // `daemoneye reload` applies route changes here too.
         if !crate::daemon::notice_sinks::analyze_routed(
             &crate::config::current().notifications,
             &notice,
         ) {
             continue;
         }
-        if !state.config.webhook.auto_analyze {
+        if !state.config.current().webhook.auto_analyze {
             continue;
         }
         crate::webhook::process::maybe_analyze_alert(&notice, &state).await;
@@ -104,7 +103,7 @@ mod tests {
         let mut config = Config::default();
         config.webhook.auto_analyze = auto_analyze;
         Arc::new(WebhookState {
-            config,
+            config: Arc::new(crate::config::ConfigHandle::new(config)),
             sessions: SessionStore::new(),
             cache: Arc::new(crate::tmux::cache::SessionCache::new("test")),
             schedule_store: Arc::new(crate::scheduler::ScheduleStore::new_empty()),

@@ -772,7 +772,7 @@ fn webhook_alert_to_event_log() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions,
         cache,
         schedule_store,
@@ -870,7 +870,7 @@ fn webhook_alert_below_threshold_is_not_injected() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions: sessions.clone(),
         cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
@@ -951,7 +951,7 @@ fn webhook_alert_at_threshold_is_injected() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions: sessions.clone(),
         cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
@@ -1040,7 +1040,7 @@ fn webhook_alert_below_threshold_is_recorded_active() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions,
         cache: std::sync::Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: std::sync::Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
@@ -1137,7 +1137,7 @@ fn webhook_alert_no_severity_is_below_threshold() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions: sessions.clone(),
         cache,
         schedule_store,
@@ -1241,7 +1241,7 @@ fn webhook_alert_unrankable_severity_is_below_threshold() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions: sessions.clone(),
         cache,
         schedule_store,
@@ -1335,7 +1335,7 @@ fn webhook_alert_below_threshold_discarded() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions,
         cache,
         schedule_store,
@@ -1410,7 +1410,7 @@ fn webhook_alert_publishes_one_notice() {
 
     let config = daemoneye::config::Config::default();
     let state = std::sync::Arc::new(WebhookState {
-        config,
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config)),
         sessions: daemoneye::daemon::session::SessionStore::default(),
         cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
@@ -1496,7 +1496,9 @@ fn webhook_alert_without_sinks_reaches_no_history() {
     });
     let bus = Arc::new(daemoneye::bus::Bus::with_journal(|_| {}));
     let state = std::sync::Arc::new(WebhookState {
-        config: daemoneye::config::Config::default(),
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(
+            daemoneye::config::Config::default(),
+        )),
         sessions: sessions.clone(),
         cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
@@ -1577,7 +1579,9 @@ fn webhook_alert_unknown_severity_publishes_debug() {
         sink.lock().expect("journal").push(n.clone())
     }));
     let state = std::sync::Arc::new(WebhookState {
-        config: daemoneye::config::Config::default(),
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(
+            daemoneye::config::Config::default(),
+        )),
         sessions: sessions.clone(),
         cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),
@@ -1674,7 +1678,9 @@ fn webhook_alert_error_severity_passes_warning_gate() {
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config: daemoneye::config::Config::default(),
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(
+            daemoneye::config::Config::default(),
+        )),
         sessions: sessions.clone(),
         cache: Arc::new(daemoneye::daemon::SessionCache::new("test")),
         schedule_store: Arc::new(daemoneye::scheduler::ScheduleStore::new_empty()),

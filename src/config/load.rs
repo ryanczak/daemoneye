@@ -221,7 +221,7 @@ impl Config {
     /// entry.  Panics only if the models map is completely empty (should never
     /// happen with `Default::default()`).
     pub fn resolve_model(&self, name: Option<&str>) -> &ModelEntry {
-        let key = name.unwrap_or("default");
+        let key = self.resolve_model_key(name);
         self.models
             .get(key)
             .or_else(|| self.models.get("default"))
@@ -229,6 +229,21 @@ impl Config {
             // INVARIANT: parse_config_text rejects an empty models map, and
             // Config::load and daemon reload both go through it.
             .expect("models map must not be empty")
+    }
+
+    /// Key of the model entry `resolve_model` returns: the requested name if
+    /// it is configured, else `"default"`, else the first entry's key.
+    pub fn resolve_model_key(&self, name: Option<&str>) -> &str {
+        match name.and_then(|n| self.models.get_key_value(n)) {
+            Some((key, _)) => key.as_str(),
+            None if self.models.contains_key("default") => "default",
+            None => self
+                .models
+                .keys()
+                .next()
+                .map(|s| s.as_str())
+                .unwrap_or("default"),
+        }
     }
 
     /// Return a sorted list of all configured model names.

@@ -384,7 +384,7 @@ max_ghost_turns: 1
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config: config.clone(),
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config.clone())),
         sessions,
         cache,
         schedule_store,
@@ -625,7 +625,7 @@ ssh_target: e2e-host
         daemoneye::bus::Severity::Warning,
     );
     let state = std::sync::Arc::new(WebhookState {
-        config: config.clone(),
+        config: std::sync::Arc::new(daemoneye::config::ConfigHandle::new(config.clone())),
         sessions,
         cache,
         schedule_store,

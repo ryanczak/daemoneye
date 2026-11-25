@@ -30,7 +30,10 @@ const IP_WINDOW_MAX: u32 = 30;
 
 /// Shared state passed to every Axum handler.
 pub struct WebhookState {
-    pub config: Config,
+    /// The daemon's live config handle — the same `Arc` `run_daemon`
+    /// installs, so `daemoneye reload` reaches every reader here. Read it
+    /// through `current()` and take one snapshot per code path.
+    pub config: Arc<crate::config::ConfigHandle>,
     pub sessions: SessionStore,
     pub cache: Arc<crate::tmux::cache::SessionCache>,
     pub schedule_store: Arc<crate::scheduler::ScheduleStore>,
@@ -106,7 +109,7 @@ async fn handle_webhook(
         return StatusCode::TOO_MANY_REQUESTS;
     }
 
-    if !is_authorized(&state.config.webhook.secret, &headers) {
+    if !is_authorized(&state.config.current().webhook.secret, &headers) {
         log::warn!("Webhook: rejected request — invalid or missing Bearer token");
         crate::daemon::stats::record_webhook_rejected();
         crate::daemon::utils::log_event(
@@ -198,7 +201,7 @@ pub async fn serve(
     daemon: Arc<crate::daemon::DaemonState>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(WebhookState {
-        config: (*daemon.config.current()).clone(),
+        config: Arc::clone(&daemon.config),
         sessions: daemon.sessions.clone(),
         cache: Arc::clone(&daemon.tmux_cache),
         schedule_store: Arc::clone(&daemon.schedules),
@@ -317,9 +320,24 @@ mod tests {
 
     fn test_state() -> WebhookState {
         WebhookState {
-            config: Config::default(),
+            config: std::sync::Arc::new(crate::config::ConfigHandle::new(Config::default())),
             sessions: SessionStore::new(),
             cache: Arc::new(crate::tmux::cache::SessionCache::new("unused")), // unused in these tests
+            schedule_store: Arc::new(crate::scheduler::ScheduleStore::new_empty()),
+            bus: crate::bus::global().clone(),
+            dedup: Mutex::new(HashMap::new()),
+            rate_limit: Mutex::new(HashMap::new()),
+            ip_limits: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// A state on a caller-supplied handle, so a test can drive a reload
+    /// through it. Same private-bus shape as [`test_state`].
+    fn test_state_from(config: std::sync::Arc<crate::config::ConfigHandle>) -> WebhookState {
+        WebhookState {
+            config,
+            sessions: SessionStore::new(),
+            cache: Arc::new(crate::tmux::cache::SessionCache::new("unused")),
             schedule_store: Arc::new(crate::scheduler::ScheduleStore::new_empty()),
             bus: crate::bus::global().clone(),
             dedup: Mutex::new(HashMap::new()),
@@ -379,6 +397,35 @@ mod tests {
             fresh,
             (now_secs() / IP_WINDOW_SECS, 1),
             "the kept entry is this window's, with its first bump"
+        );
+    }
+
+    // ── Live config (M39 phase 13) ────────────────────────────────────────
+
+    #[test]
+    fn webhook_state_sees_a_reloaded_model() {
+        let (_guard, _home) = crate::test_home();
+        crate::config::Config::ensure_dirs().ok();
+        let config_path = crate::config::etc_dir().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "[models.default]\nprovider = \"anthropic\"\nmodel = \"claude-sonnet-4-6\"\n",
+        )
+        .unwrap();
+        let handle = std::sync::Arc::new(crate::config::ConfigHandle::new(Config::load().unwrap()));
+        let state = test_state_from(handle.clone());
+
+        std::fs::write(
+            &config_path,
+            "[models.default]\nprovider = \"anthropic\"\nmodel = \"claude-sonnet-4-6\"\n\n[models.late]\nprovider = \"anthropic\"\nmodel = \"claude-opus-4-6\"\n",
+        )
+        .unwrap();
+        handle.reload();
+
+        assert!(
+            state.config.current().models.contains_key("late"),
+            "a reload must reach the webhook state's handle: {:?}",
+            state.config.current().models.keys().collect::<Vec<_>>()
         );
     }
 }
