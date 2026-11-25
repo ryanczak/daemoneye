@@ -8,7 +8,7 @@ delegation and schedule deletion go through policy and approval. The
 webhook listener authenticates before it parses. Masking does what its
 rules say.
 
-**Status:** planning (scoped 2026-11-21)
+**Status:** active (scoped 2026-11-21, signed off by the PE 2026-11-25)
 
 **Release:** 2.12.0
 
@@ -18,7 +18,7 @@ rules say.
 [`docs/design/daemoneye_audit_ledger.md`](../../../design/daemoneye_audit_ledger.md)
 not taken by M39.
 
-**Decisions (architect proposals at scoping, for PE sign-off):**
+**Decisions (proposed at scoping, signed off by the PE 2026-11-25):**
 
 1. M39's decisions 1–4 carry over unchanged: a failing test first,
    re-verification at drafting, lean closed specs, fail closed.
@@ -63,7 +63,8 @@ at drafting.
 
 | #  | Phase | Ledger | Status |
 |----|-------|--------|--------|
-| 01 | ipc-bounded-reads — one `read_bounded_line` (cap before allocation) for the daemon's request, approval and credential reads and the shell host's frames. Accept loops are bounded by a semaphore | S4a | todo |
+| 01a | [bounded-reads](phase-01a-bounded-reads.md) — `read_bounded_line` (cap before allocation) and `accept_bounded` (a semaphore permit before `accept`), applied to the daemon's first request read, the shell host's frames and both accept loops | S4a | todo |
+| 01b | in-connection-reads — the approval, credential and prompt replies, and the presence, notices and tail loops, read through `read_bounded_line` | S4a | todo |
 | 02 | secret-env — provider key variables are removed from the environment of `PtyShell::spawn`, `spawn_detached` and the command sink's `deliver_command` | S5 | todo |
 | 03 | temp-files — remote edits write through an `O_EXCL`, 0600 temp file the payload creates (`tempfile` / `File::Temp`), so a pre-planted `.de_tmp` symlink is never followed; local edits use `create_new` + mode 0600 + a random suffix | S6 | todo |
 | 04 | path-guard — `resolve_path_for_guard` canonicalizes the deepest existing ancestor and re-joins the rest; `is_blocked_secret_path` checks the canonical path | S7 | todo |
@@ -83,3 +84,8 @@ at drafting.
   (01) and secret exposure (02–04) lead, then path validation and the
   policy gates (05–07). The argv and webhook phases (08, 09a, 09b) follow,
   and the masking and fd tidies close the milestone.
+- **Phase 01 split at drafting (2026-11-25)** into 01a (the two tools,
+  the two socket entry points and the accept loops, 5 files) and 01b (13
+  reads inside an open connection across 9 files). One phase would have
+  touched about 12 files. Both reads in 01a were reproduced with 64 MiB
+  probes: every byte was accepted before any refusal.

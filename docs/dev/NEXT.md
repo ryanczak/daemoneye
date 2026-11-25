@@ -1,14 +1,13 @@
 # NEXT
 
-**Active milestone:** none. M39 (Critical fixes) closed 2026-11-25 as
-`2.11.0` ([`README.md`](milestones/M39-critical-fixes/README.md)), its
-retrospective written and folds A, B and C in `WORKFLOW.md`. Next is M40
-Security hardening ([`README.md`](milestones/M40-security-hardening/README.md)),
-then M41 Correctness, M42 Performance and M43 Architecture, then the MCP
-surface (M44) and Knowledge (M45). M40 waits on PE sign-off. M38 closed
-as `2.10.0` (2026-11-18).
+**Active milestone:** M40 Security hardening
+([`README.md`](milestones/M40-security-hardening/README.md)), target
+`2.12.0`, signed off by the PE 2026-11-25. Then M41 Correctness, M42
+Performance and M43 Architecture, then the MCP surface (M44) and
+Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** none.
+**Active phase:** [phase-01a bounded-reads](milestones/M40-security-hardening/phase-01a-bounded-reads.md)
+(`todo`): dispatch with `/rexymcp:dispatch 01a`.
 
 **Deferred from the M39 live check:** a command that times out and stops
 on Ctrl-C always waits the full 5 s interrupt grace, because the end
