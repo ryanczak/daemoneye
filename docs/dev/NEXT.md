@@ -6,8 +6,9 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** [phase-01a bounded-reads](milestones/M40-security-hardening/phase-01a-bounded-reads.md)
-(`todo`): dispatch with `/rexymcp:dispatch 01a`.
+**Active phase:** [phase-01b in-connection-reads](milestones/M40-security-hardening/phase-01b-in-connection-reads.md)
+(`todo`): dispatch with `/rexymcp:dispatch 01b`. Phase 01a is done
+(2026-11-25, escalated).
 
 **Deferred from the M39 live check:** a command that times out and stops
 on Ctrl-C always waits the full 5 s interrupt grace, because the end
