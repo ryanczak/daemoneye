@@ -1625,3 +1625,26 @@ fn analyze_route_refuses_a_command() {
         "the error names the route: {err:#}"
     );
 }
+
+/// Every provider `api_key_env_var` names must appear in
+/// `PROVIDER_KEY_VARS` with a non-empty name: a provider added without its
+/// env-var name in the removal list would leak its key to model-run
+/// children (M40 phase 02).
+#[test]
+fn provider_key_vars_cover_every_provider() {
+    let providers = ["anthropic", "openai", "gemini", "ollama", "lmstudio"];
+    for provider in providers {
+        let entry = ModelEntry {
+            provider: provider.to_string(),
+            ..ModelEntry::default()
+        };
+        let env_var = entry.api_key_env_var();
+        if env_var.is_empty() {
+            continue;
+        }
+        assert!(
+            crate::config::PROVIDER_KEY_VARS.contains(&env_var),
+            "{provider}'s {env_var} must be in PROVIDER_KEY_VARS"
+        );
+    }
+}

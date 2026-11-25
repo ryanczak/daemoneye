@@ -108,6 +108,21 @@ transcripts and daemon.log are NOT masked** — they are private (see §2) but
 contain unmasked text. If you need a scrubbed export, don't rely on the log
 files.
 
+### 8. Provider keys are not inherited by spawned children
+
+The daemon's provider API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY` — `PROVIDER_KEY_VARS` in `src/config/models.rs`, kept in
+step with `ModelEntry::api_key_env_var`) are removed from the environment
+of every process a model-chosen command reaches: `PtyShell::spawn`
+(`src/shell/pty.rs`), `spawn_detached`'s shell host
+(`src/shell/launch.rs`, via `shell_host_command`) and the command sink's
+`deliver_command` (`src/daemon/notice_sinks.rs`). Only these names are
+removed — the environment is not cleared — so `PATH`, `HOME`, `TERM`,
+`SSH_AUTH_SOCK` and the `DAEMONEYE_*` variables still reach the child. A
+user who exports a key in their own shell rc file still gets it in login
+shells, by their own choice; this guard covers only what the daemon
+itself passes down.
+
 ---
 
 ## The agent sandbox (opt-in)

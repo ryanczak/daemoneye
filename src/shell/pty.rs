@@ -247,6 +247,9 @@ impl PtyShell {
         let mut cmd = CommandBuilder::new(shell);
         cmd.args(args);
         cmd.env("TERM", "xterm-256color");
+        for name in crate::config::PROVIDER_KEY_VARS {
+            cmd.env_remove(name);
+        }
         // portable-pty starts the child in $HOME when no cwd is set; a HOME
         // that is not a directory makes the child's chdir fail and the whole
         // spawn return ENOENT. Start in HOME when it exists, else in `/`.
@@ -1269,20 +1272,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn pty_child_sees_no_provider_keys() {
+        let _pty = PTY_TEST_LOCK.lock().unwrap();
+        let _home = crate::test_home_guard();
+        struct Restore(Vec<(&'static str, Option<String>)>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                for (name, value) in self.0.drain(..) {
+                    unsafe {
+                        match value {
+                            Some(v) => std::env::set_var(name, v),
+                            None => std::env::remove_var(name),
+                        }
+                    }
+                }
+            }
+        }
+        let mut names = crate::config::PROVIDER_KEY_VARS.to_vec();
+        names.push("DE_ENV_PROBE_KEEP");
+        let _restore = Restore(names.iter().map(|n| (*n, std::env::var(n).ok())).collect());
+        for (name, value) in [
+            ("ANTHROPIC_API_KEY", "sk-ant-PROBE-SENTINEL"),
+            ("OPENAI_API_KEY", "sk-PROBE-SENTINEL"),
+            ("GEMINI_API_KEY", "sk-gem-PROBE-SENTINEL"),
+            ("DE_ENV_PROBE_KEEP", "kept"),
+        ] {
+            unsafe { std::env::set_var(name, value) };
+        }
+        let shell = PtyShell::spawn(
+            "sh",
+            &["-c".to_string(), "sleep 0.3; echo \"K=[$ANTHROPIC_API_KEY$OPENAI_API_KEY$GEMINI_API_KEY] KEEP=[$DE_ENV_PROBE_KEEP]\"".to_string()],
+            (24, 80),
+        )
+        .expect("sh available in the test env");
+        poll_for_output(&shell, b"K=[] KEEP=[kept]");
+    }
+
     /// Wait for the shell's reader task to surface `needle` on the broadcast
     /// stream. `echo` needs no input, so the only wait is the reader's.
-    fn poll_for_output(shell: &PtyShell, needle: &[u8]) {
+    fn poll_for_output(shell: &PtyShell, needle: &[u8]) -> String {
         let mut rx = shell.subscribe();
         let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen: Vec<u8> = Vec::new();
         loop {
-            match rx.try_recv() {
-                Ok(chunk) if chunk.windows(needle.len()).any(|w| w == needle) => return,
-                _ => {}
+            if let Ok(chunk) = rx.try_recv() {
+                seen.extend_from_slice(&chunk);
+            }
+            if seen.windows(needle.len()).any(|w| w == needle) {
+                return String::from_utf8_lossy(&seen).to_string();
             }
             assert!(
                 Instant::now() < deadline,
-                "output {:?} never appeared within the wait",
-                std::str::from_utf8(needle)
+                "output {:?} never appeared within the wait; seen so far: {:?}",
+                std::str::from_utf8(needle),
+                String::from_utf8_lossy(&seen)
             );
             std::thread::sleep(Duration::from_millis(20));
         }

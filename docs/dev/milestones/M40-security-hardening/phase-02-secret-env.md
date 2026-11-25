@@ -1,7 +1,7 @@
 # Phase 02 — secret-env
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -161,3 +161,106 @@ It is red today: the line carries the three sentinels. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-25 19:40 (started)
+
+Work has begun: first red test being written (`pty_child_sees_no_provider_keys`), then the fix at each spawn site in the pinned edit order.
+
+**Task list** (each line names the acceptance item it closes):
+
+1. Write red test `pty_child_sees_no_provider_keys` in `src/shell/pty.rs` tests; run it red. → closes **PTY**.
+2. Add `PROVIDER_KEY_VARS` to `src/config/models.rs` + `provider_key_vars_cover_every_provider` test in `src/config/tests.rs`. → closes **One list**.
+3. Remove listed vars in `PtyShell::spawn` (`src/shell/pty.rs`); make test green. → closes **PTY**.
+4. `shell_host_command` builder in `src/shell/launch.rs` + `shell_host_command_removes_provider_keys` test; wire `spawn_detached` through it. → closes **Shell host** and **Wiring**; the three `spawn_detached_*` argv tests pin **Preserved**.
+5. Remove listed vars in `deliver_command` (`src/daemon/notice_sinks.rs`) + `command_sink_child_sees_no_provider_keys` test. → closes **Command sink**.
+6. Docs: guard paragraph `### 8` in `docs/security.md`; fix `deliver_command` doc comment (`fire_notification` no longer exists). → docs part of the Spec.
+7. Mutation check on the PTY removal step, pasted. → closes **Mutation check**.
+8. Run the four gates once each; paste `test result:` lines into a new Update Log entry. → closes **Gates**.
+9. Commit as one `fix:` commit.
+
+### Update — 2026-11-25 19:58 (end-to-end verification)
+
+All four gates run once each, in order. The lib suite reports **3136 passed** (3132 + 4 new), 0 failed.
+
+**Gate 1 — `cargo fmt --all`:** clean (no output, exit 0).
+
+**Gate 2 — `cargo build`:**
+
+```
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.12s
+```
+
+**Gate 3 — `cargo clippy --all-targets --all-features -- -D warnings`:**
+
+```
+    Checking daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.08s
+```
+
+**Gate 4 — `cargo test`:**
+
+```
+test result: ok. 3136 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 149.52s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.27s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.41s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Red run 1 — `pty_child_sees_no_provider_keys` before the fix** (the fix removed, one run):
+
+```
+thread 'shell::pty::tests::pty_child_sees_no_provider_keys' (3836085) panicked at src/shell/pty.rs:1322:13:
+output Ok("K=[] KEEP=[kept]") never appeared within the wait; seen so far: "K=[sk-ant-PROBE-SENTINELsk-PROBE-SENTINELsk-gem-PROBE-SENTINEL] KEEP=[kept]\r\n"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3145 filtered out; finished in 10.01s
+```
+
+**Red run 2 — `command_sink_child_sees_no_provider_keys` before its fix** (the
+sink's env-removal loop deleted, one run, then restored — same mutation shape
+as the PTY check, this run captured after the first):
+
+```
+thread 'daemon::notice_sinks::command_sink_child_sees_no_provider_keys' (3853749) panicked at src/daemon/notice_sinks.rs:1086:5:
+assertion `left == right` failed: the child must keep unrelated env, lose the keys, and see the notice's name
+  left: "K=[sk-ant-PROBE-SENTINELsk-PROBE-SENTINELsk-gem-PROBE-SENTINEL] KEEP=[kept] JOB=[probe-job]"
+ right: "K=[] KEEP=[kept] JOB=[probe-job]"
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3145 filtered out; finished in 0.02s
+```
+
+**Wiring grep (criterion: prints 1):**
+
+```
+$ awk '/pub async fn spawn_detached/,/^}/' src/shell/launch.rs | grep -c 'shell_host_command('
+1
+```
+
+**Mutation check — removal step deleted from `PtyShell::spawn`, one test run, then restored:**
+
+```
+$ # after deleting the three-line env_remove loop from src/shell/pty.rs:
+$ cargo test --lib pty_child_sees_no_provider_keys 2>&1 | tail -12
+thread 'shell::pty::tests::pty_child_sees_no_provider_keys' (3836085) panicked at src/shell/pty.rs:1322:13:
+output Ok("K=[] KEEP=[kept]") never appeared within the wait; seen so far: "K=[sk-ant-PROBE-SENTINELsk-PROBE-SENTINELsk-gem-PROBE-SENTINEL] KEEP=[kept]\r\n"
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3145 filtered out; finished in 10.01s
+$ # loop restored; test green again:
+test shell::pty::tests::pty_child_sees_no_provider_keys ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3145 filtered out; finished in 0.31s
+```
+
+**Preserved argv tests, unchanged:**
+
+```
+test shell::launch::tests::spawn_detached_appends_argv_after_a_separator ... ok
+test shell::launch::tests::spawn_detached_omits_the_separator_when_argv_is_empty ... ok
+test shell::launch::tests::spawn_detached_command_line_format_passes_the_args_through ... ok
+```

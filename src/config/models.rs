@@ -113,6 +113,14 @@ fn default_model() -> String {
     "claude-sonnet-4-6".to_string()
 }
 
+/// The environment variable names that hold provider API keys. Spawn sites
+/// that run model-chosen commands remove exactly these names from the
+/// child's environment, so a key inherited by the daemon never reaches a
+/// process the model can read. Kept beside [`ModelEntry::api_key_env_var`]:
+/// a provider added there must add its name here, and
+/// `provider_key_vars_cover_every_provider` pins the pairing.
+pub const PROVIDER_KEY_VARS: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"];
+
 impl Default for ModelEntry {
     fn default() -> Self {
         ModelEntry {

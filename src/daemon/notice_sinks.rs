@@ -201,11 +201,15 @@ pub fn command_env(notice: &Notice) -> Vec<(&'static str, String)> {
 }
 
 /// One command sink delivery: spawn `sh -c <cmd>` with the notice's
-/// environment — the same fire-and-forget `fire_notification` does. The
-/// command comes from `command_targets` (a configured `command` route).
+/// environment, minus the provider API-key variables, so a key the daemon
+/// inherited never reaches a process the model could read. The command
+/// comes from `command_targets` (a configured `command` route).
 async fn deliver_command(cmd: String, notice: Notice) {
     let mut command = tokio::process::Command::new("sh");
     command.arg("-c").arg(cmd);
+    for name in crate::config::PROVIDER_KEY_VARS {
+        command.env_remove(name);
+    }
     for (key, value) in command_env(&notice) {
         command.env(key, value);
     }
@@ -1029,4 +1033,62 @@ mod tests {
             "the resolved notice removes the entry: {snapshot:?}"
         );
     }
+}
+
+/// A command-sink child must see the notice's `DAEMONEYE_*` environment and
+/// an unrelated probe variable, but none of the provider key variables —
+/// the names, not a cleared environment (M40 phase 02).
+#[tokio::test]
+async fn command_sink_child_sees_no_provider_keys() {
+    let _home = crate::test_home_guard();
+    struct Restore(Vec<(&'static str, Option<String>)>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            for (name, value) in self.0.drain(..) {
+                unsafe {
+                    match value {
+                        Some(v) => std::env::set_var(name, v),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
+    }
+    let mut names: Vec<&'static str> = crate::config::PROVIDER_KEY_VARS.to_vec();
+    names.push("DE_ENV_PROBE_KEEP");
+    let _restore = Restore(names.iter().map(|n| (*n, std::env::var(n).ok())).collect());
+    for (name, value) in [
+        ("ANTHROPIC_API_KEY", "sk-ant-PROBE-SENTINEL"),
+        ("OPENAI_API_KEY", "sk-PROBE-SENTINEL"),
+        ("GEMINI_API_KEY", "sk-gem-PROBE-SENTINEL"),
+        ("DE_ENV_PROBE_KEEP", "kept"),
+    ] {
+        unsafe { std::env::set_var(name, value) };
+    }
+    let dir = tempfile::tempdir().expect("tempdir for the probe file");
+    let out = dir.path().join("out");
+    let notice = Notice::new(Severity::Info, Source::Scheduler, "probe-job", "probe");
+    deliver_command(
+        format!(
+            "echo \"K=[$ANTHROPIC_API_KEY$OPENAI_API_KEY$GEMINI_API_KEY] KEEP=[$DE_ENV_PROBE_KEEP] JOB=[$DAEMONEYE_JOB]\" > {}",
+            out.display()
+        ),
+        notice,
+    )
+    .await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let text = loop {
+        match std::fs::read_to_string(&out) {
+            Ok(text) => break text,
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Err(e) => panic!("the probe file {out:?} never appeared within the wait: {e}"),
+        }
+    };
+    assert_eq!(
+        text.trim(),
+        "K=[] KEEP=[kept] JOB=[probe-job]",
+        "the child must keep unrelated env, lose the keys, and see the notice's name"
+    );
 }

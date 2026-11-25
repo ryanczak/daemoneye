@@ -178,6 +178,46 @@ pub async fn await_ready(sock: &Path, deadline: Instant) -> Result<()> {
     }
 }
 
+/// The `shell-host` command `spawn_detached` runs: the current binary
+/// re-invoked with the host's argv. Its environment is the daemon's own
+/// minus the provider API-key variables, so a key the daemon inherited
+/// never reaches the host's PTY children.
+fn shell_host_command(
+    exe: std::path::PathBuf,
+    id: &str,
+    shell: &str,
+    args: &[String],
+    rows: &str,
+    cols: &str,
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(exe);
+    cmd.args([
+        "shell-host",
+        "--id",
+        id,
+        "--shell",
+        shell,
+        "--rows",
+        rows,
+        "--cols",
+        cols,
+    ]);
+    // `--` must be omitted when argv is empty: a trailing bare separator
+    // changes the child's command line, which the phase pins as observable.
+    if !args.is_empty() {
+        cmd.arg("--");
+        cmd.args(args);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    for name in crate::config::PROVIDER_KEY_VARS {
+        cmd.env_remove(name);
+    }
+    cmd
+}
+
 /// Spawn a detached shell host for `id` — a fresh `daemoneye shell-host`
 /// process in its own process group, with stdio detached — and wait until it
 /// answers `Status`. A blocking thread reaps the child the moment it exits,
@@ -194,28 +234,7 @@ pub async fn spawn_detached(
     validate_shell_id(id)?;
     let rows = rows.to_string();
     let cols = cols.to_string();
-    let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.args([
-        "shell-host",
-        "--id",
-        id,
-        "--shell",
-        shell,
-        "--rows",
-        &rows,
-        "--cols",
-        &cols,
-    ]);
-    // `--` must be omitted when argv is empty: a trailing bare separator
-    // changes the child's command line, which the phase pins as observable.
-    if !args.is_empty() {
-        cmd.arg("--");
-        cmd.args(args);
-    }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .process_group(0);
+    let mut cmd = shell_host_command(std::env::current_exe()?, id, shell, args, &rows, &cols);
     let child = cmd.spawn()?;
     reap_detached_child(id, child)?;
     await_ready(&socket_path(id), Instant::now() + Duration::from_secs(10)).await
@@ -572,5 +591,27 @@ mod tests {
              behind means the child was dropped unwaited"
         );
         reap_thread.join().expect("the reaper thread joins cleanly");
+    }
+}
+
+/// Every provider key variable is explicitly removed from the shell host's
+/// environment — as `(name, None)`, an env-removal — whatever the test's
+/// own environment holds (M40 phase 02).
+#[test]
+fn shell_host_command_removes_provider_keys() {
+    let cmd = shell_host_command(
+        std::path::PathBuf::from("/bin/echo"),
+        "probe-id",
+        "/bin/bash",
+        &[],
+        "24",
+        "80",
+    );
+    for name in crate::config::PROVIDER_KEY_VARS {
+        assert!(
+            cmd.get_envs()
+                .any(|(k, v)| k == std::ffi::OsStr::new(name) && v.is_none()),
+            "{name} must be explicitly removed from the shell host's env"
+        );
     }
 }
