@@ -11,13 +11,13 @@ Architecture & debt. The MCP surface moves to M44 and Knowledge to M45
 (PE decision 2026-11-21). M38 (The notice bus) closed 2026-11-18 as
 `2.10.0`; M37 closed as `2.9.0` (2026-11-16).
 
-**Active phase:** none. All 13 M39 phases are `done` (2026-11-24). The
-retrospective is in the M39 README. **Waiting on the PE:**
-- sign-off on the scoping decisions and the three calibration proposals;
-- the Anthropic leg of the live check, which needs a key;
-- the 2.11.0 release, per `REXYMCP.md` § Versioning.
-
-M40 (Security hardening) is not started until the PE signs off.
+**Active phase:** M39 phase-13 — webhook-live-config
+([`phase-13-webhook-live-config.md`](milestones/M39-critical-fixes/phase-13-webhook-live-config.md)),
+drafted 2026-11-24, `todo`. Dispatch with `/rexymcp:dispatch phase-13`. It
+fixes live-check finding 1, which the PE asked for before 2.11.0. Phases
+01–12 are `done`, the retrospective is written, and folds A, B and C are in
+`WORKFLOW.md`. After phase 13 comes the 2.11.0 release. The Anthropic leg
+of the live check is waived.
 
 **Open from the M38 live check:** GitHub issue #13. A `wait: false` shell
 that reports `blocked` within its first 2 s probe never produces a notice

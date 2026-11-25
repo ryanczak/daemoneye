@@ -8,7 +8,7 @@ providers and report the failures they hit. A command that never stops
 printing still times out. Cost accounting counts uncached input, and the
 known panic paths no longer panic.
 
-**Status:** phases done 2026-11-24 — retrospective written, awaiting PE sign-off and the 2.11.0 release
+**Status:** in progress — phase 13 (live-check finding 1) added at the close on PE request; then the 2.11.0 release
 
 **Release:** 2.11.0
 
@@ -96,6 +96,7 @@ at drafting.
 | 10 | shell-host-framing ([phase-10-shell-host-framing.md](phase-10-shell-host-framing.md)) — the shell host parses each pipelined frame from its own offset. `host_sends_lagged_when_subscriber_falls_behind` stops racing | S4b Q12 | done           |
 | 11 | anthropic-usage ([phase-11-anthropic-usage.md](phase-11-anthropic-usage.md)) — `parse_anthropic_start_usage` reports `input_tokens` as Anthropic sends it, so cached turns cost what they cost | C4 | done      |
 | 12 | panic-hazards ([phase-12-panic-hazards.md](phase-12-panic-hazards.md)) — `wrap_words` handles whitespace-only lines and wide characters at width 1. An empty `[models]` table is a config error, not a panic. The audit's byte-slice sites use `truncate_chars` | C5 Q1 Q2 | done      |
+| 13 | webhook-live-config ([phase-13-webhook-live-config.md](phase-13-webhook-live-config.md)) — a webhook ghost reads the daemon's config handle, so `reload` reaches it. An unconfigured model name is warned about, and the log names the model actually used. Found in the M39 live check; the PE asked for it before 2.11.0 | live | todo      |
 
 ## Notes
 
@@ -138,6 +139,7 @@ at drafting.
     answer ("listed 10 memories"). The run record reads `complete`, 2
     turns, on the `openai` provider. No Anthropic key was available to
     the harness, so the success half on Anthropic is unverified live.
+    **Waived by the PE (2026-11-24).**
     Phase 07's unit tests cover all three providers' history shapes.
   - **Bad key: met after a restart.** Runbook `ghost-bad-key`
     (`model: badkey`, provider `anthropic`, invalid key) produced a run
@@ -150,8 +152,10 @@ at drafting.
     Ctrl-C typed at 5.03 s and the prompt back at 5.10 s. But the result
     arrived at about 10.2 s, not about 5 s. See finding 2.
 
-**Found in the live check (not fixed, proposed for M41):**
+**Found in the live check:**
 1. **A webhook ghost reads the startup config, not `config::current()`.**
+   **PE (2026-11-24): fix before 2.11.0, as phase 13.** Keep the fallback
+   but warn: three of the PE's real agents name unconfigured models.
    `process_alert` hands `trigger_ghost_turn` `state.config`, a snapshot
    taken at start. A `[models.*]` entry added by `daemoneye reload` is
    invisible to it, and `Config::resolve_model` silently falls back to
@@ -204,7 +208,8 @@ at drafting.
   1039 and 1200 turns, and phase 08 stalled twice. Naming the first red
   test (phase 02, run 3), or taking over (phase 08), ended them.
 
-**Calibration proposals (PE sign-off needed; `WORKFLOW.md` untouched):**
+**Calibration folded (PE sign-off 2026-11-24):** A, B and C below are in
+`WORKFLOW.md`. The held item stays held.
 - **A. Reproduce a defect before drafting its phase.** This has come up
   three times: 06, 09 and 10, and 12 did it right. Proposed fold: an
   audit or bug row is made to fail at runtime (a scratch test or a probe)
