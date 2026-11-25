@@ -1,7 +1,7 @@
 # Phase 02 — secret-env
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~200 lines
@@ -264,3 +264,140 @@ test shell::launch::tests::spawn_detached_appends_argv_after_a_separator ... ok
 test shell::launch::tests::spawn_detached_omits_the_separator_when_argv_is_empty ... ok
 test shell::launch::tests::spawn_detached_command_line_format_passes_the_args_through ... ok
 ```
+
+### Update — 2026-11-25 20:10 (complete, server-authored)
+
+**Summary:** Phase 02 (secret-env) is implemented and committed as one `fix:` commit (`5bf57140`), working tree clean. `PROVIDER_KEY_VARS` now lives in `src/config/models.rs` beside `api_key_env_var`, pinned by `provider_key_vars_cover_every_provider`; the three names are removed from children's environments at all three model-reachable spawn sites — `PtyShell::spawn` (via `CommandBuilder::env_remove`), the shell host (built through the new `shell_host_command`, with `spawn_detached` wired through it and the three argv tests passing unchanged), and `deliver_command` — without `env_clear`, so `DE_ENV_PROBE_KEEP`-style variables and the `DAEMONEYE_*` set still arrive. `docs/security.md` gained guard `### 8` (the existing masking section renumbered to `### 7` to keep the ordered list intact), and `deliver_command`'s stale `fire_notification` doc-comment reference is corrected.
+
+**Notes for review**
+
+- Both red runs are pasted in the end-to-end verification Update Log entry. The PTY red run showed `K=[sk-ant-PROBE-SENTINELsk-PROBE-SENTINELsk-gem-PROBE-SENTINEL] KEEP=[kept]`; the sink red run was captured by mutation (deleting the sink's env-removal loop, one run, restored) because the fix landed in the same edit pass as the test — flagged in the entry rather than hidden.
+- The mutation check on `PtyShell::spawn`'s removal step is pasted: removal deleted → test fails with the sentinel leak → restored → green.
+- Wiring grep prints 1 as pinned; all four gates ran once each, lib suite reports **3136 passed, 0 failed** (3132 + 4 new).
+- One test-infra improvement beyond the strict spec: `poll_for_output` now accumulates chunks and reports what it saw on timeout — the phase's "every wait bounded, no assertion true by construction" rule; the failure message made the red run self-documenting. Phase doc status left at `in-progress` per the contract; the server owns the completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.22s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test attach_sends_session_counters_after_ok ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (3874951): No such process
+kill: (-3875644): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M40-security-hardening/README.md` — +1 -1
+- `docs/dev/milestones/M40-security-hardening/phase-02-secret-env.md` — +104 -1
+- `docs/security.md` — +15 -0
+- `src/config/models.rs` — +8 -0
+- `src/config/tests.rs` — +23 -0
+- `src/daemon/notice_sinks.rs` — +64 -2
+- `src/shell/launch.rs` — +57 -16
+- `src/shell/pty.rs` — +50 -6
+
+**Commit:** 5bf571401efbfd3d784199914f3bf5a6ceb36b7c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
