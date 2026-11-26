@@ -1,7 +1,7 @@
 # Phase 07 — schedule-delete-gate
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** 06b (done)
 **Estimated diff:** ~250 lines
@@ -474,3 +474,151 @@ $ cargo test --lib delete_schedule_from_chat_asks_first
 test daemon::executor::schedule::tests::delete_schedule_from_chat_asks_first ... ok
 test result: ok. 1 passed; 0 failed
 ```
+
+### Update — 2026-11-26 18:59 (complete, server-authored)
+
+**Summary:** Phase 07 (schedule-delete-gate) is implemented and committed as `051e6c5d`, working tree clean. `cancel_schedule` and `delete_schedule` in `src/daemon/executor/schedule.rs` are now async, take `call_id`/`is_ghost`/`tx`/`rx`, and follow `schedule_command`'s shape: ghosts are refused with the spec's exact error text, an unknown id returns `Job <id> not found` with no prompt, chat gets a `ScheduleRemovePrompt` round trip (timeout, `read_bounded_line` with `MAX_IPC_MESSAGE_BYTES`, Err on EOF/over-long line — only `approved: true` approves), denials return `Job removal denied by user` and log `command_approval` with `schedule_cancel`/`schedule_delete` mode, and approvals do the pre-existing cancel/delete with today's text and events. Wire variants landed in `src/ipc.rs` with `ipc_types.rs` arms, a `schedule_remove_prompt_round_trips` wire test, client handling (`stream_ask.rs` dispatch + a new `prompt_schedule_remove_ratatui` with no session-approval path, `ask.rs` denies, both `program_status_emit.rs` lists plus a `Kind::Permission` table row), both tools joined `APPROVAL_GATED_TOOLS` (grep prints **2**), `approval_gated_contains_expected_tools` flipped, README/CLAUDE/sre.toml/docs/security.md updated, and the `daemoneye schedule` CLI subcommands untouched. All four gates pass (`cargo test`: 3177 lib + all integration targets green, doc_truth 19/19, hygiene 16/16), `git diff 640d4fea -- src | grep -cE '^-\s*#\[(tokio::)?test\]'` prints **0**.
+
+**Notes for review**
+
+- **Hygiene allowlist used, once:** `src/ipc.rs` stayed under its cap, but `src/cli/commands/stream_prompts.rs` grew past 800 with the new prompt (810 lines) — added to `tests/hygiene_allowlist.txt` with a reason, per the spec's item-1 instruction.
+- **Mutation-run honesty:** my first two mutation attempts were no-ops (a shadowed binding that rebinds on the next line — the pasted `ok` was a non-mutation, not a surviving one). The real mutation — hard-return before sending the prompt or reading the reply — is pasted verbatim in the 11:08 Update Log entry: the test fails in 0.00s (`deleted text: Job removal denied by user`), and `git diff --stat` is identical before/after restore. The Update Log carries that correction rather than hiding it.
+- **One deviation from the spec sketch:** `remove_schedule` shares the whole gate between both tools via a `delete: bool` (the spec's "one prompt that names the job and says whether it is a cancel or a delete"); `cancel_schedule`/`delete_schedule` remain the public entry points dispatch_schedule calls.
+- The end-to-end evidence entries were authored by me, per the contract's §1.1 box; the server's completion entry will follow.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.43s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+nfig_parsing ... ok
+test config_pricing_round_trip ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test attach_sends_session_counters_after_ok ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_read_and_clear ... ok
+test event_log_entry_format ... ok
+test g6_agent_config_roundtrip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test daemon_boots_in_throwaway_root ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (340168): No such process
+kill: (-340881): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +2 -2
+- `README.md` — +2 -2
+- `assets/prompts/sre.toml` — +2 -1
+- `docs/dev/milestones/M40-security-hardening/phase-07-schedule-delete-gate.md` — +234 -1
+- `docs/security.md` — +8 -0
+- `src/ai/tools/defs.rs` — +2 -0
+- `src/cli/commands/ask.rs` — +4 -0
+- `src/cli/commands/stream_ask.rs` — +14 -0
+- `src/cli/commands/stream_prompts.rs` — +30 -0
+- `src/cli/program_status_emit.rs` — +2 -0
+- `src/cli/program_status_emit_tests.rs` — +11 -0
+- `src/daemon/executor/dispatch_schedule.rs` — +32 -6
+- `src/daemon/executor/schedule.rs` — +388 -26
+- `src/daemon/stream.rs` — +10 -6
+- `src/ipc.rs` — +18 -0
+- `src/ipc_tests.rs` — +64 -0
+- `src/ipc_types.rs` — +2 -0
+- `tests/hygiene_allowlist.txt` — +4 -0
+
+**Commit:** 051e6c5d18cdb7b6e119512a7973858e3b386338
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
