@@ -1,7 +1,7 @@
 # Phase 05 — name-validation
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -623,3 +623,43 @@ kill: (-26321): No such process
 **Commit:** 1413e8ca4e3c2aef91670d108b5c7128a847ff0d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1
+  - [bug-05-1](bugs/bug-05-1.md), major: the prompt test planted its file
+    where `"../evil"` does not point, so it passed without the fix.
+  - [bug-05-2](bugs/bug-05-2.md), minor: the memory readers' refusals had
+    no test.
+- **Executor:** GLM-5.3-Flash. Run 1 completed in 203 turns, and the
+  bounce in 45.
+- **Scope deviations:**
+  - `list_memories_with_tags` skips an invalid namespace rather than
+    refusing it. Accepted: agent configs are validated when they load.
+  - Ingress also checks `SaveSession`'s and `LoadSession`'s `name`.
+    Accepted: it is stricter in a harmless way.
+- **Review re-run:**
+  - All four gates pass, and the lib suite reports **3159**, exactly as
+    pinned.
+  - Both greps pass: `ingress_name_error` 9, removed tests 0.
+  - No production `unwrap`, `expect`, `panic!` or `unsafe` was added.
+  - The reviewer's own mutation of `validate_path_name` to always return
+    `Ok`, at the first review, failed five of the six refusal tests. That
+    is what found bug-05-1. The bounce's pasted mutation run now fails
+    both repaired tests.
+- **Nits, not bounced:**
+  - In `memory_readers_refuse_a_traversing_namespace`, the `read_memory`
+    leg would also be `Err` without the validator, since the file is
+    missing. `delete_memory` and `list_memories` are what make the test
+    real.
+  - `chat --resume <ghost id>`, where the runbook name has `.` or a
+    space, is now refused at ingress. No tool offers such an id for
+    resuming.
+- **Calibration:**
+  - Run 1 pasted one of the five red runs the spec required. The missing
+    four hid a vacuous test, which only a reviewer mutation found.
+  - When a spec requires red runs for several refusal tests, require one
+    pasted **mutation run covering all of them**, for example the
+    validator neutered to `Ok`. That is cheaper for the executor than
+    five pre-fix runs, and harder to fake.

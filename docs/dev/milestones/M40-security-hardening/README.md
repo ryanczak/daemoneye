@@ -68,7 +68,7 @@ at drafting.
 | 02 | [secret-env](phase-02-secret-env.md) — provider key variables are removed from the environment of `PtyShell::spawn`, `spawn_detached` and the command sink's `deliver_command` | S5 | done |
 | 03 | [temp-files](phase-03-temp-files.md) — remote edits write through an `O_EXCL`, 0600 temp file the payload creates (`tempfile` / `File::Temp`), so a pre-planted `.de_tmp` symlink is never followed; local edits use `create_new` + mode 0600 + a random suffix | S6 | done |
 | 04 | [path-guard](phase-04-path-guard.md) — `resolve_path_for_guard` canonicalizes the deepest existing ancestor and re-joins the rest; `is_blocked_secret_path` checks the canonical path | S7 | done |
-| 05 | [name-validation](phase-05-name-validation.md) — one validator (`[A-Za-z0-9_-]`, non-empty, bounded length) applied at IPC ingress and inside the path builders for memory namespaces, session ids and prompt names | S8 | review      |
+| 05 | [name-validation](phase-05-name-validation.md) — one validator (`[A-Za-z0-9_-]`, non-empty, bounded length) applied at IPC ingress and inside the path builders for memory namespaces, session ids and prompt names | S8 | done |
 | 06 | ghost-delegation — `spawn_ghost_shell` always intersects the child's hosts, scripts and tool policy with the caller's, `host: None` included; from interactive chat it is approval-gated | S9 | todo |
 | 07 | schedule-delete-gate — `cancel_schedule` / `delete_schedule` are refused to ghosts without policy and approval-gated in chat | S12 | todo |
 | 08 | argv-injection — `HostId::parse` rejects a leading `-`; ssh argv builders put `--` before the destination; remote `grep` takes `-e`; `infocmp` takes `--` | S11 | todo |
