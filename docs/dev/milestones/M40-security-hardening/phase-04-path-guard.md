@@ -1,7 +1,7 @@
 # Phase 04 — path-guard
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: [bug-04-1](bugs/bug-04-1.md), [bug-04-2](bugs/bug-04-2.md))
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -136,8 +136,15 @@ It is red today. Paste the red run.
       2. run `cargo test --lib path_guard_resolves_through_missing_dirs_under_a_symlink`
          once and see it fail;
       3. restore it.
+- [ ] **Every missing component kept (bug-04-1):**
+      `path_guard_keeps_every_missing_component` passes. It fails today.
+- [ ] **Deleted test and comment restored (bug-04-2):**
+      `read_file_default_reads_from_start` passes, and
+      `grep -c 'Preservation: the command the new transport runs is byte-for-byte the' src/daemon/executor/file_ops/read_tests.rs`
+      prints `1`. It prints `0` today.
 - [ ] **Gates:** all four pass, run once each. The lib suite reports
-      **more than 3143** passed (3143 today).
+      **exactly 3149** passed: 3147 today, plus the restored test, plus
+      `path_guard_keeps_every_missing_component`.
 
 ## Spec
 
@@ -436,3 +443,41 @@ kill: (-4038329): No such process
 **Commit:** 725b8c40d9b00390f1c27e047ac8a0fbdce0a820
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+the phase is done.**
+
+**Already approved, do not redo:**
+- the `is_blocked_secret_path` change (raw and resolved path, raw and
+  canonical `$HOME/.ssh`);
+- the five new tests;
+- the async `with_home` / `with_home_set` helpers and the migrated
+  callers;
+- the `docs/security.md` sentence.
+
+**Exactly two pieces of work are left:**
+
+1. **[bug-04-1](bugs/bug-04-1.md):** `resolve_path_for_guard` drops the
+   first missing component. `lnk/f.txt` resolves to the link's target
+   directory itself, and `lnk/a/b/f.txt` to `<target>/b/f.txt`. Write
+   `path_guard_keeps_every_missing_component` first, beside
+   `path_guard_resolves_through_missing_dirs_under_a_symlink`. Run it
+   once, red, and paste the run. Then fix the resolver's missing branch,
+   so the result is the canonical deepest existing ancestor joined with
+   **every** component below it, in order.
+2. **[bug-04-2](bugs/bug-04-2.md):** restore `read_file_default_reads_from_start`
+   and the first five lines of `build_remote_read_cmd_is_unchanged`'s doc
+   comment, as they are in `git show fc832c51:src/daemon/executor/file_ops/read_tests.rs`.
+   Adapt the test only to `with_home_set(&tmp).await`.
+
+**Closed file list:** `src/daemon/executor/file_ops/mod.rs` and
+`src/daemon/executor/file_ops/read_tests.rs`. Read at most **2** files
+before your first edit, and make your first edit the new red test.
+
+**Mutation check:** put back the `saturating_sub(1)` take, run
+`cargo test --lib path_guard_keeps_every_missing_component` once, see it
+fail, and restore.
+
+**Finish condition:** the lib suite reports **3149**, not 3147 or 3148.
