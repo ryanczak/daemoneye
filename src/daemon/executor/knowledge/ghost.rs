@@ -56,6 +56,100 @@ pub(super) fn spawn_host_target(
 /// (a configured `[hosts]` key or `"local"`), overriding the runbook's
 /// `ssh_target`, and `caller_policy` is the calling ghost's `hosts:` fence
 /// (`None` for a chat caller).
+/// Narrow a child ghost, about to be spawned by `caller`, so it never holds
+/// more than its caller: hosts, `ssh_target`, pre-approved sudo scripts, the
+/// sudo/command/TUI flags and the agent tool policy. Mutates `child` in
+/// place, or refuses with a sentence when the child cannot be narrowed
+/// (disjoint host lists, or an `ssh_target` outside the caller's fence).
+/// The caller's tool policy comes from the calling session's agent
+/// (`None` for a chat caller, which is not narrowed at all).
+pub(super) fn narrow_to_caller(
+    child: &mut crate::ipc::GhostConfig,
+    caller: &crate::daemon::policy::GhostPolicy,
+    caller_tool_policy: Option<&crate::agents::ToolPolicy>,
+    hosts: &std::collections::HashMap<String, crate::config::HostEntry>,
+) -> Result<(), String> {
+    // Hosts: an empty caller list is unrestricted; an empty child list
+    // inherits the caller's; otherwise intersect — and disjoint non-empty
+    // lists refuse, because an empty result would mean unrestricted.
+    if !caller.hosts.is_empty() {
+        if child.hosts.is_empty() {
+            child.hosts = caller.hosts.clone();
+        } else {
+            let intersection: Vec<String> = child
+                .hosts
+                .iter()
+                .filter(|h| caller.hosts.contains(h))
+                .cloned()
+                .collect();
+            if intersection.is_empty() {
+                let caller_list = caller.hosts.join(", ");
+                let child_list = child.hosts.join(", ");
+                return Err(format!(
+                    "Error: cannot spawn this specialist. Its hosts ({child_list}) \
+                     and yours ({caller_list}) share no host, so it could not be \
+                     narrowed to your fence."
+                ));
+            }
+            child.hosts = intersection;
+        }
+    }
+
+    // ssh_target: resolved as at ghost start, it must pass the narrowed
+    // hosts: list. A child with no ssh_target passes.
+    if let Some(target) = child.ssh_target.as_deref() {
+        let remote_host = match crate::host::resolve_ssh_target(target, hosts) {
+            crate::host::SshTargetResolution::Configured(key) => {
+                crate::host::HostId::parse(&key).ok()
+            }
+            crate::host::SshTargetResolution::Unconfigured
+            | crate::host::SshTargetResolution::Ambiguous(_) => None,
+        };
+        let granted = match &remote_host {
+            Some(crate::host::HostId::Named(name)) => {
+                child.hosts.is_empty() || child.hosts.iter().any(|h| h == name)
+            }
+            Some(crate::host::HostId::Local) => true,
+            None => child.hosts.is_empty(),
+        };
+        if !granted {
+            let caller_list = if caller.hosts.is_empty() {
+                "all hosts".to_string()
+            } else {
+                caller.hosts.join(", ")
+            };
+            return Err(format!(
+                "Error: cannot spawn this specialist. Its ssh_target '{target}' \
+                 is outside your host fence ({caller_list})."
+            ));
+        }
+    }
+
+    // Pre-approved sudo scripts: keep only the names the caller also holds.
+    child.auto_approve_scripts = child
+        .auto_approve_scripts
+        .iter()
+        .filter(|s| caller.auto_approve_scripts.contains(s))
+        .cloned()
+        .collect();
+
+    // Flags: child and caller.
+    child.run_with_sudo = child.run_with_sudo && caller.run_with_sudo;
+    child.auto_approve_commands = child.auto_approve_commands && caller.auto_approve_commands;
+    child.allow_tui_input = child.allow_tui_input && caller.allow_tui_input;
+
+    // Tool policy: intersect with the caller's; a child with no policy takes
+    // the caller's; no caller policy (a chat caller) leaves the child's.
+    if let Some(caller_tools) = caller_tool_policy {
+        child.tool_policy = Some(match &child.tool_policy {
+            Some(child_tools) => child_tools.intersect(caller_tools),
+            None => caller_tools.clone(),
+        });
+    }
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn spawn_ghost(
     runbook: &str,
@@ -63,6 +157,7 @@ pub async fn spawn_ghost(
     agent_name: Option<&str>,
     host: Option<&str>,
     caller_policy: Option<&crate::daemon::policy::GhostPolicy>,
+    caller_tool_policy: Option<&crate::agents::ToolPolicy>,
     sessions: &SessionStore,
     spawn_depth: u8,
     parent_job_id: Option<&str>,
@@ -100,6 +195,27 @@ pub async fn spawn_ghost(
 
     ghost_config.spawn_depth = spawn_depth + 1;
     ghost_config.parent_job_id = parent_job_id.map(|s| s.to_string());
+
+    if let Some(caller) = caller_policy
+        && let Err(msg) = narrow_to_caller(
+            &mut ghost_config,
+            caller,
+            caller_tool_policy,
+            &spawn_config.hosts,
+        )
+    {
+        crate::daemon::utils::log_event(
+            "ghost_spawn_narrowed_refused",
+            serde_json::json!({
+                "session": "spawn_ghost_shell",
+                "tool": "spawn_ghost_shell",
+                "runbook": runbook,
+                "caller_hosts": caller.hosts,
+                "child_hosts": ghost_config.hosts,
+            }),
+        );
+        return Ok(ToolCallOutcome::Result(msg));
+    }
 
     if let Some(host_name) = host {
         match spawn_host_target(host_name, &ghost_config, caller_policy, &spawn_config.hosts) {
@@ -196,6 +312,215 @@ async fn start_spawn_session(
                 job_id,
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod ghost_narrow_tests {
+    use super::narrow_to_caller;
+    use crate::agents::ToolPolicy;
+    use crate::daemon::policy::GhostPolicy;
+    use crate::ipc::GhostConfig;
+
+    fn host_map(names: &[&str]) -> std::collections::HashMap<String, crate::config::HostEntry> {
+        names
+            .iter()
+            .map(|n| {
+                (
+                    n.to_string(),
+                    crate::config::HostEntry {
+                        ssh: n.to_string(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn child(hosts: &[&str]) -> GhostConfig {
+        GhostConfig {
+            hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    fn caller(hosts: &[&str]) -> GhostPolicy {
+        GhostPolicy {
+            hosts: hosts.iter().map(|h| h.to_string()).collect(),
+            ..GhostPolicy::from_config(&GhostConfig::default())
+        }
+    }
+
+    #[test]
+    fn narrow_to_caller_intersects_hosts() {
+        // caller [] (unrestricted): the child keeps its list.
+        let mut c = child(&["db01"]);
+        narrow_to_caller(&mut c, &caller(&[]), None, &host_map(&["db01", "db02"]))
+            .expect("an unrestricted caller changes nothing");
+        assert_eq!(c.hosts, vec!["db01".to_string()]);
+
+        // child [] (unrestricted): it takes the caller's list.
+        let mut c = child(&[]);
+        narrow_to_caller(
+            &mut c,
+            &caller(&["db01", "db02"]),
+            None,
+            &host_map(&["db01", "db02", "db03"]),
+        )
+        .expect("an unfenced child inherits the caller's fence");
+        assert_eq!(c.hosts, vec!["db01".to_string(), "db02".to_string()]);
+
+        // both non-empty: intersection.
+        let mut c = child(&["db02", "db03"]);
+        narrow_to_caller(
+            &mut c,
+            &caller(&["db01", "db02"]),
+            None,
+            &host_map(&["db01", "db02", "db03"]),
+        )
+        .expect("overlapping lists intersect");
+        assert_eq!(c.hosts, vec!["db02".to_string()]);
+
+        // disjoint non-empty lists: refuse.
+        let mut c = child(&["db02"]);
+        let err = narrow_to_caller(
+            &mut c,
+            &caller(&["db01"]),
+            None,
+            &host_map(&["db01", "db02"]),
+        )
+        .expect_err("disjoint host lists must refuse");
+        assert!(
+            err.contains("db01") && err.contains("db02"),
+            "the refusal must name both fences: {err}"
+        );
+    }
+
+    #[test]
+    fn narrow_to_caller_refuses_an_ssh_target_outside_the_caller_fence() {
+        let hosts = host_map(&["db01", "db02"]);
+        let fence = caller(&["db01"]);
+
+        let mut c = GhostConfig {
+            ssh_target: Some("db02".to_string()),
+            ..child(&[])
+        };
+        let err = narrow_to_caller(&mut c, &fence, None, &hosts)
+            .expect_err("an ssh_target outside the caller's fence must refuse");
+        assert!(
+            err.contains("db02"),
+            "the refusal must name the target: {err}"
+        );
+
+        let mut c = GhostConfig {
+            ssh_target: Some("db01".to_string()),
+            ..child(&[])
+        };
+        narrow_to_caller(&mut c, &fence, None, &hosts)
+            .expect("an ssh_target inside the caller's fence passes");
+
+        let mut c = child(&[]);
+        narrow_to_caller(&mut c, &fence, None, &hosts).expect("a child with no ssh_target passes");
+    }
+
+    #[test]
+    fn narrow_to_caller_intersects_scripts_and_flags() {
+        let mut c = GhostConfig {
+            auto_approve_scripts: vec!["b.sh".to_string(), "c.sh".to_string()],
+            run_with_sudo: true,
+            auto_approve_commands: true,
+            allow_tui_input: true,
+            ..child(&[])
+        };
+        let mut f = GhostPolicy::from_config(&GhostConfig::default());
+        f.auto_approve_scripts = vec!["a.sh".to_string(), "b.sh".to_string()];
+        narrow_to_caller(&mut c, &f, None, &host_map(&[]))
+            .expect("a caller with no host fence does not refuse");
+        assert_eq!(
+            c.auto_approve_scripts,
+            vec!["b.sh".to_string()],
+            "only scripts the caller also holds survive"
+        );
+
+        // Child true / caller false: each flag must be false afterwards.
+        let mut c = GhostConfig {
+            run_with_sudo: true,
+            auto_approve_commands: true,
+            allow_tui_input: true,
+            ..child(&[])
+        };
+        narrow_to_caller(&mut c, &f, None, &host_map(&[])).expect("narrowed");
+        assert!(!c.run_with_sudo && !c.auto_approve_commands && !c.allow_tui_input);
+
+        // Both true: each flag stays true.
+        let mut t = GhostPolicy::from_config(&GhostConfig::default());
+        t.run_with_sudo = true;
+        t.auto_approve_commands = true;
+        t.allow_tui_input = true;
+        let mut c = GhostConfig {
+            run_with_sudo: true,
+            auto_approve_commands: true,
+            allow_tui_input: true,
+            ..child(&[])
+        };
+        narrow_to_caller(&mut c, &t, None, &host_map(&[])).expect("narrowed");
+        assert!(c.run_with_sudo && c.auto_approve_commands && c.allow_tui_input);
+    }
+
+    #[test]
+    fn narrow_to_caller_intersects_the_tool_policy() {
+        let mut c = GhostConfig {
+            tool_policy: Some(ToolPolicy {
+                allow: Some(vec!["read_file".to_string(), "send_input".to_string()]),
+                deny: None,
+            }),
+            ..child(&[])
+        };
+        let caller_policy = ToolPolicy {
+            allow: None,
+            deny: Some(vec!["send_input".to_string()]),
+        };
+        narrow_to_caller(&mut c, &caller(&[]), Some(&caller_policy), &host_map(&[]))
+            .expect("a caller with no host fence does not refuse");
+        let narrowed = c.tool_policy.expect("the child keeps a policy");
+        assert!(
+            narrowed.permits("read_file"),
+            "read_file survives the intersection"
+        );
+        assert!(
+            !narrowed.permits("send_input"),
+            "send_input the caller denies must be refused"
+        );
+
+        // A child with no policy takes the caller's.
+        let mut c = child(&[]);
+        let caller_policy = ToolPolicy {
+            allow: Some(vec!["read_file".to_string()]),
+            deny: None,
+        };
+        narrow_to_caller(&mut c, &caller(&[]), Some(&caller_policy), &host_map(&[]))
+            .expect("narrowed");
+        let narrowed = c
+            .tool_policy
+            .expect("the child inherits the caller's policy");
+        assert!(narrowed.permits("read_file"));
+        assert!(!narrowed.permits("send_input"));
+    }
+
+    /// With no caller tool policy, the child's is unchanged (a chat caller).
+    #[test]
+    fn narrow_to_caller_keeps_the_child_tool_policy_without_a_caller_policy() {
+        let mut c = GhostConfig {
+            tool_policy: Some(ToolPolicy {
+                allow: Some(vec!["read_file".to_string()]),
+                deny: None,
+            }),
+            ..child(&[])
+        };
+        narrow_to_caller(&mut c, &caller(&[]), None, &host_map(&[])).expect("narrowed");
+        let kept = c.tool_policy.expect("policy unchanged");
+        assert!(kept.permits("read_file"));
+        assert!(!kept.permits("send_input"), "still only its own allow list");
     }
 }
 
@@ -323,6 +648,7 @@ mod ghost_host_tests {
                 None,
                 Some("db02"),
                 None,
+                None,
                 &sessions,
                 0,
                 None,
@@ -343,6 +669,70 @@ mod ghost_host_tests {
         assert!(
             !started,
             "no session may be started when the host is refused"
+        );
+        drop(guard);
+    }
+
+    /// Door test: a spawn whose runbook `hosts:` falls entirely outside the
+    /// caller's fence is refused with a `Result` sentence, and no session is
+    /// started — even with `host` omitted, where the child's `ssh_target`
+    /// would otherwise run unchecked.
+    #[test]
+    fn spawn_ghost_refuses_a_child_outside_the_caller_fence() {
+        let guard = crate::test_home_guard();
+        let home = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("HOME", home.path());
+        }
+        crate::config::Config::ensure_dirs().expect("daemon tree");
+        std::fs::write(
+            crate::config::etc_dir().join("config.toml"),
+            "[hosts.db01]\nssh = \"db01\"\n\n[hosts.db02]\nssh = \"db02\"\n",
+        )
+        .expect("write config");
+        std::fs::write(
+            crate::config::runbooks_dir().join("rb06a.md"),
+            "---\nenabled: true\nhosts: [db02]\n---\n# Runbook: rb06a\n\n## Alert Criteria\n- x\n",
+        )
+        .expect("write runbook");
+
+        let sessions = crate::daemon::session::SessionStore::new();
+        let caller = GhostPolicy {
+            hosts: vec!["db01".to_string()],
+            ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let outcome = rt
+            .block_on(crate::daemon::executor::knowledge::spawn_ghost(
+                "rb06a",
+                "task",
+                None,
+                None,
+                Some(&caller),
+                None,
+                &sessions,
+                0,
+                None,
+            ))
+            .expect("a refusal is a normal outcome, not an error");
+        let text = match outcome {
+            crate::daemon::executor::ToolCallOutcome::Result(text) => text,
+            crate::daemon::executor::ToolCallOutcome::UserMessage(t) => t,
+            crate::daemon::executor::ToolCallOutcome::SpawnGhostSession { tool_result, .. } => {
+                tool_result
+            }
+        };
+        assert!(
+            text.contains("cannot spawn this specialist"),
+            "the refusal must say the spawn was narrowed away: {text}"
+        );
+        let started = with_sessions(&sessions, |store| !store.is_empty());
+        assert!(
+            !started,
+            "no session may be started when the spawn is refused"
         );
         drop(guard);
     }

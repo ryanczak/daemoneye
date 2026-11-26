@@ -97,6 +97,7 @@ where
                 session_id,
                 sessions,
                 &snap.ghost_policy,
+                &snap.tool_policy,
                 snap.spawn_depth,
                 &snap.effective_parent_job_id,
             )

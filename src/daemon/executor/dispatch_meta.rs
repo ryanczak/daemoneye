@@ -3,12 +3,14 @@
 
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn dispatch<W>(
     call: &PendingCall,
     tx: &mut W,
     session_id: Option<&str>,
     sessions: &SessionStore,
     ghost_policy: &Option<GhostPolicy>,
+    tool_policy: &Option<crate::agents::ToolPolicy>,
     spawn_depth: u8,
     effective_parent_job_id: &Option<String>,
 ) -> anyhow::Result<ToolCallOutcome>
@@ -87,6 +89,7 @@ where
                 agent.as_deref(),
                 host.as_deref(),
                 ghost_policy.as_ref(),
+                tool_policy.as_ref(),
                 sessions,
                 spawn_depth,
                 effective_parent_job_id.as_deref(),

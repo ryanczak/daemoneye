@@ -48,6 +48,62 @@ impl ToolPolicy {
         Ok(())
     }
 
+    /// The conjunction of two policies: a tool is permitted exactly when both
+    /// inputs permit it. The result always passes `validate()`; an `allow`
+    /// list that comes out empty stays `Some(vec![])`, which permits nothing
+    /// (`None` would mean unrestricted).
+    pub fn intersect(&self, other: &ToolPolicy) -> ToolPolicy {
+        enum Terms {
+            Unrestricted,
+            Allow(Vec<String>),
+            Deny(Vec<String>),
+        }
+
+        fn terms(p: &ToolPolicy) -> Terms {
+            match (&p.allow, &p.deny) {
+                (Some(allow), _) => Terms::Allow(allow.clone()),
+                (None, Some(deny)) => Terms::Deny(deny.clone()),
+                (None, None) => Terms::Unrestricted,
+            }
+        }
+
+        fn allows_only(names: Vec<String>) -> ToolPolicy {
+            ToolPolicy {
+                allow: Some(names),
+                deny: None,
+            }
+        }
+
+        match (terms(self), terms(other)) {
+            (Terms::Unrestricted, Terms::Unrestricted) => ToolPolicy::default(),
+            (Terms::Unrestricted, t) | (t, Terms::Unrestricted) => match t {
+                Terms::Unrestricted => ToolPolicy::default(),
+                Terms::Allow(allow) => allows_only(allow),
+                Terms::Deny(deny) => ToolPolicy {
+                    allow: None,
+                    deny: Some(deny),
+                },
+            },
+            (Terms::Allow(a), Terms::Allow(b)) => {
+                allows_only(a.into_iter().filter(|t| b.contains(t)).collect())
+            }
+            (Terms::Allow(a), Terms::Deny(b)) => {
+                allows_only(a.into_iter().filter(|t| !b.contains(t)).collect())
+            }
+            (Terms::Deny(a), Terms::Allow(b)) => {
+                allows_only(b.into_iter().filter(|t| !a.contains(t)).collect())
+            }
+            (Terms::Deny(a), Terms::Deny(b)) => {
+                let mut deny = a;
+                deny.extend(b);
+                ToolPolicy {
+                    allow: None,
+                    deny: Some(deny),
+                }
+            }
+        }
+    }
+
     /// Return a human-readable list of permitted tool names, or `None` when
     /// unrestricted. Used for system prompt annotation.
     pub fn permitted_tools(&self) -> Option<Vec<String>> {
@@ -108,6 +164,64 @@ pub fn format_tool_restriction_block(policy: &ToolPolicy) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_policy_intersect_is_the_conjunction() {
+        let unrestricted = ToolPolicy::default();
+        let allow_ab = ToolPolicy {
+            allow: Some(vec!["a".to_string(), "b".to_string()]),
+            deny: None,
+        };
+        let allow_c = ToolPolicy {
+            allow: Some(vec!["c".to_string()]),
+            deny: None,
+        };
+        let deny_b = ToolPolicy {
+            allow: None,
+            deny: Some(vec!["b".to_string()]),
+        };
+        let deny_c = ToolPolicy {
+            allow: None,
+            deny: Some(vec!["c".to_string()]),
+        };
+        let policies: Vec<(String, ToolPolicy)> = vec![
+            ("unrestricted".to_string(), unrestricted.clone()),
+            ("allow_ab".to_string(), allow_ab.clone()),
+            ("allow_c".to_string(), allow_c.clone()),
+            ("deny_b".to_string(), deny_b.clone()),
+            ("deny_c".to_string(), deny_c.clone()),
+        ];
+        let tools = ["a", "b", "c", "d"];
+
+        for (xi, (xname, x)) in policies.iter().enumerate() {
+            for (yi, (yname, y)) in policies.iter().enumerate() {
+                if xi == yi {
+                    continue;
+                }
+                let combined = x.intersect(y);
+                combined
+                    .validate()
+                    .unwrap_or_else(|e| panic!("{xname} ∩ {yname} invalid: {e}"));
+                for t in tools {
+                    let expected = x.permits(t) && y.permits(t);
+                    assert_eq!(
+                        combined.permits(t),
+                        expected,
+                        "{xname} ∩ {yname}.permits({t}) should be {expected}"
+                    );
+                }
+            }
+        }
+
+        // The empty-allow edge: two disjoint allow lists permit nothing, and
+        // the empty allow list must stay `Some(vec![])` — `None` means
+        // unrestricted.
+        let none = allow_ab.intersect(&allow_c);
+        assert_eq!(none.allow, Some(vec![]));
+        for t in tools {
+            assert!(!none.permits(t), "disjoint allows must not permit {t}");
+        }
+    }
 
     #[test]
     fn explicitly_allows_matches_only_the_allow_list() {

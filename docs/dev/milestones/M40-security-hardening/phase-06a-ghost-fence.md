@@ -1,7 +1,7 @@
 # Phase 06a — ghost-fence
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -222,3 +222,84 @@ error as the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+### Update — 2026-11-26 05:52 (started)
+
+Work on phase 06a ghost-fence has begun: status flipped to in-progress, first red test next.
+
+Task list (each names the acceptance item it closes):
+
+1. Write red test `tool_policy_intersect_is_the_conjunction` in `src/agents/policy.rs` tests (closes: Intersect).
+2. Implement `ToolPolicy::intersect` (closes: Intersect).
+3. Write red tests `narrow_to_caller_*` and implement the narrowing function in `knowledge/ghost.rs` (closes: Hosts, ssh_target, Scripts and flags, Tool policy).
+4. Write red test `spawn_ghost_refuses_a_child_outside_the_caller_fence` and wire narrowing into `spawn_ghost` + `dispatch_meta::dispatch`/`route.rs` with `ghost_spawn_narrowed_refused` log_event (closes: Wired).
+5. Docs: guard line in `docs/security.md`, `spawn_ghost_shell` row in `CLAUDE.md`.
+6. Mutation run, no-test-removed grep, four gates, end-to-end/log entry (closes: Mutation run, Preserved, No test removed, Gates).
+### Update — 2026-11-26 06:20 (end-to-end verification)
+
+**Red run** (first test, before `intersect` existed):
+
+```
+error[E0599]: no method named `intersect` found for struct `agents::policy::ToolPolicy` in the current scope
+   --> src/agents/policy.rs:163:29
+    |
+163 |         let none = allow_ab.intersect(&allow_c);
+    |                             ^^^^^^^^^ method not found in `agents::policy::ToolPolicy`
+error: could not compile `daemoneye` (lib test) due to 2 previous errors
+```
+
+**Red run** (wiring test, before `narrow_to_caller` was called from `spawn_ghost`):
+
+```
+failures:
+    daemon::executor::knowledge::ghost::ghost_host_tests::spawn_ghost_refuses_a_child_outside_the_caller_fence
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3175 filtered out; finished in 0.04s
+```
+
+**Mutation run** (narrowing function returns `Ok(())` as its first statement):
+
+```
+failures:
+    daemon::executor::knowledge::ghost::ghost_host_tests::spawn_ghost_refuses_a_child_outside_the_caller_fence
+    daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_intersects_hosts
+    daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_intersects_scripts_and_flags
+    daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_intersects_the_tool_policy
+    daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_refuses_an_ssh_target_outside_the_caller_fence
+test result: FAILED. 1 passed; 5 failed; 0 ignored; 0 measured; 3170 filtered out; finished in 0.04s
+```
+
+(1 passed = the no-caller-policy chat-caller test, which correctly expects no
+narrowing. Restored afterwards; `git diff --stat` unchanged from the mutation.)
+
+**Targeted tests after restore** (`cargo test --lib -- narrow_to_caller spawn_ghost_refuses tool_policy_intersect`):
+
+```
+test agents::policy::tests::tool_policy_intersect_is_the_conjunction ... ok
+test daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_intersects_scripts_and_flags ... ok
+test daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_intersects_the_tool_policy ... ok
+test daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_intersects_hosts ... ok
+test daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_refuses_an_ssh_target_outside_the_caller_fence ... ok
+test daemon::executor::knowledge::ghost::ghost_narrow_tests::narrow_to_caller_keeps_the_child_tool_policy_without_a_caller_policy ... ok
+test daemon::executor::knowledge::ghost::ghost_host_tests::spawn_host_target_is_granted_only_by_both_hosts_lists ... ok
+test daemon::executor::knowledge::ghost::ghost_host_tests::spawn_ghost_refuses_an_unlisted_host_before_any_ghost_starts ... ok
+test daemon::executor::knowledge::ghost::ghost_host_tests::spawn_ghost_refuses_a_child_outside_the_caller_fence ... ok
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 3168 filtered out; finished in 0.04s
+```
+
+**No test removed** (`git diff 9fd155bb -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`): **0**.
+
+**Spec-pinned literals greps**:
+
+```
+$ grep -n ghost_spawn_narrowed_refused src/daemon/executor/knowledge/ghost.rs
+208:            "ghost_spawn_narrowed_refused",
+$ grep -n "pub fn intersect" src/agents/policy.rs
+55:    pub fn intersect(&self, other: &ToolPolicy) -> ToolPolicy {
+```
+
+**Four gates** (run once each):
+
+- `cargo fmt --all` — clean; `cargo fmt --all -- --check` → `FMT_OK`.
+- `cargo build` — `Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.27s`, zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — `Finished `dev` profile ... in 15.11s`.
+- `cargo test` — `test result: ok. 3166 passed; 0 failed; 10 ignored` (lib) plus all
+  integration suites ok (2, 6, 19, 16, 45, 13, 2, 4, 0 passed; 0 failed everywhere).

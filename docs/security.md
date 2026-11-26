@@ -153,6 +153,30 @@ or `_` — no separators, no `.` prefix, no traversal. Where each is checked:
   `src/session_store.rs`. Saving a session is stricter: `validate_session_name`
   also refuses reserved names and the `auto-` prefix.
 
+### 10. A delegated ghost never holds more than its caller
+
+When a ghost spawns a specialist with `spawn_ghost_shell`, the child's grants
+are narrowed to the intersection with its caller's before the session starts
+(`narrow_to_caller` in `src/daemon/executor/knowledge/ghost.rs`, run whenever
+the caller is a ghost). Six fields:
+
+- **`hosts:`** — the child's list becomes the intersection with the
+  caller's (an unrestricted caller, empty list, changes nothing; an
+  unfenced child inherits the caller's fence). Two non-empty lists that
+  share no host **refuse the spawn** — an empty result would mean
+  unrestricted.
+- **`ssh_target`** — with `host` omitted, the child's runbook
+  `ssh_target`, resolved against `[hosts]` as at ghost start, must pass
+  the narrowed `hosts:` list; outside it, the spawn is refused.
+- **`auto_approve_scripts`** — only names the caller also holds survive.
+- **`run_with_sudo`, `auto_approve_commands`, `allow_tui_input`** —
+  each becomes child **and** caller.
+- **`tool_policy`** — the child's becomes `child.intersect(caller)`;
+  a child with no policy takes the caller's.
+
+A chat caller (`caller_policy: None`) is not narrowed and sees none of
+this; the interactive-chat approval prompt for a spawn is a separate gate.
+
 ---
 
 ## The agent sandbox (opt-in)
