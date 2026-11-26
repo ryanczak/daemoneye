@@ -365,15 +365,10 @@ where
                 .to_string(),
         ));
     }
-    if !schedule_store.list().iter().any(|j| j.id == job_id) {
+    let Some(job) = schedule_store.list().into_iter().find(|j| j.id == job_id) else {
         return Ok(ToolCallOutcome::Result(format!("Job {} not found", job_id)));
-    }
-    let (name, kind, action) = schedule_store
-        .list()
-        .iter()
-        .find(|j| j.id == job_id)
-        .map(|j| (j.name.clone(), j.kind.describe(), j.action.describe()))
-        .expect("job was found above");
+    };
+    let (name, kind, action) = (job.name.clone(), job.kind.describe(), job.action.describe());
     send_response_split(
         tx,
         Response::ScheduleRemovePrompt {
