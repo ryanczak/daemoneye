@@ -304,6 +304,8 @@ impl Response {
             Response::ScriptDeletePrompt { .. } => "ScriptDeletePrompt",
             Response::ScriptWritePrompt { .. } => "ScriptWritePrompt",
             Response::ScheduleWritePrompt { .. } => "ScheduleWritePrompt",
+            Response::ScheduleRemovePrompt { .. } => "ScheduleRemovePrompt",
+            Response::ScheduleRemoveResponse { .. } => "ScheduleRemoveResponse",
             Response::GhostSpawnPrompt { .. } => "GhostSpawnPrompt",
             Response::ScheduleList { .. } => "ScheduleList",
             Response::ScriptList { .. } => "ScriptList",

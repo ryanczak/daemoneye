@@ -59,7 +59,8 @@ Non-obvious annotations that require a behavioural response:
   `/approvals revoke commands`).
 - Write/destructive tools — `edit_file`, `write_script`, `write_runbook`, \
   `schedule_command`, `spawn_ghost_shell`, `delete_script`, `delete_runbook`, \
-  `delete_schedule` — and **all sudo commands** require one user confirmation per call.
+  `cancel_schedule`, `delete_schedule` — and **all sudo commands** require one \
+  user confirmation per call.
 - Read-only tools (reads, memory CRUD, search) have no per-turn cap.
 
 ### `run_terminal_command` — two modes

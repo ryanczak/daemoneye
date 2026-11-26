@@ -96,6 +96,10 @@ fn auto_deny_raw_prompt(msg: &Response) -> Option<Request> {
             id: id.clone(),
             approved: false,
         }),
+        Response::ScheduleRemovePrompt { id, .. } => Some(Request::ScheduleRemoveResponse {
+            id: id.clone(),
+            approved: false,
+        }),
         Response::GhostSpawnPrompt { id, .. } => Some(Request::GhostSpawnResponse {
             id: id.clone(),
             approved: false,

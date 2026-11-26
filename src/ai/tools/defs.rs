@@ -26,9 +26,11 @@ use super::schema::{Category, ParamDef, ParamTy, ToolDef};
 /// Add it only after confirming its executor arm really does send a
 /// `Response::*Prompt` and block on the reply.
 pub static APPROVAL_GATED_TOOLS: &[&str] = &[
+    "cancel_schedule",
     "create_agent",
     "delete_agent",
     "delete_runbook",
+    "delete_schedule",
     "delete_script",
     "edit_file",
     "run_terminal_command",

@@ -448,6 +448,17 @@ fn program_status_emit_frame_mapping() {
             Kind::Permission,
         ),
         (
+            R::ScheduleRemovePrompt {
+                id: String::new(),
+                job_id: String::new(),
+                name: String::new(),
+                kind: String::new(),
+                action: String::new(),
+                delete: false,
+            },
+            Kind::Permission,
+        ),
+        (
             R::GhostSpawnPrompt {
                 id: String::new(),
                 runbook: String::new(),

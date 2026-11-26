@@ -194,6 +194,20 @@ async fn handle_script_or_schedule_prompt(
                     .await;
             send_request(tx, Request::ScheduleWriteResponse { id, approved }).await?;
         }
+        Response::ScheduleRemovePrompt {
+            id,
+            job_id,
+            name,
+            kind,
+            action,
+            delete,
+        } => {
+            let approved = prompt_schedule_remove_ratatui(
+                renderer, stdin, sb, &job_id, &name, &kind, &action, delete,
+            )
+            .await;
+            send_request(tx, Request::ScheduleRemoveResponse { id, approved }).await?;
+        }
         Response::GhostSpawnPrompt {
             id,
             runbook,

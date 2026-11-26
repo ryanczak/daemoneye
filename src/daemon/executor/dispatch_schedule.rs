@@ -51,13 +51,39 @@ where
 
         PendingCall::ListSchedules { .. } => schedule::list_schedules(schedule_store, tx).await,
 
-        PendingCall::CancelSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
-            schedule::cancel_schedule(schedule_store, job_id, session_id),
-        )),
+        PendingCall::CancelSchedule {
+            id: call_id,
+            job_id,
+            ..
+        } => {
+            schedule::cancel_schedule(
+                call_id,
+                job_id,
+                is_ghost,
+                schedule_store,
+                session_id,
+                tx,
+                rx,
+            )
+            .await
+        }
 
-        PendingCall::DeleteSchedule { job_id, .. } => Ok(ToolCallOutcome::Result(
-            schedule::delete_schedule(schedule_store, job_id, session_id),
-        )),
+        PendingCall::DeleteSchedule {
+            id: call_id,
+            job_id,
+            ..
+        } => {
+            schedule::delete_schedule(
+                call_id,
+                job_id,
+                is_ghost,
+                schedule_store,
+                session_id,
+                tx,
+                rx,
+            )
+            .await
+        }
 
         other => anyhow::bail!("{} is not one of the schedule tools", other.tool_name()),
     }

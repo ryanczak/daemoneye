@@ -767,6 +767,70 @@ fn response_schedule_write_prompt_roundtrip() {
 }
 
 #[test]
+fn schedule_remove_prompt_round_trips() {
+    let cancel = Response::ScheduleRemovePrompt {
+        id: "sr_1".to_string(),
+        job_id: "job-1".to_string(),
+        name: "MyJob".to_string(),
+        kind: "every 5m".to_string(),
+        action: "echo Hello".to_string(),
+        delete: false,
+    };
+    match roundtrip_resp(&cancel) {
+        Response::ScheduleRemovePrompt {
+            id,
+            job_id,
+            name,
+            kind,
+            action,
+            delete,
+        } => {
+            assert_eq!(id, "sr_1");
+            assert_eq!(job_id, "job-1");
+            assert_eq!(name, "MyJob");
+            assert_eq!(kind, "every 5m");
+            assert_eq!(action, "echo Hello");
+            assert!(!delete);
+        }
+        _ => panic!("wrong variant"),
+    }
+    let delete = Response::ScheduleRemovePrompt {
+        id: "sr_2".to_string(),
+        job_id: "job-2".to_string(),
+        name: "Other".to_string(),
+        kind: "once at 2026-01-01".to_string(),
+        action: "cmd: df -h".to_string(),
+        delete: true,
+    };
+    match roundtrip_resp(&delete) {
+        Response::ScheduleRemovePrompt { delete, .. } => assert!(delete),
+        _ => panic!("wrong variant"),
+    }
+    let deny = Request::ScheduleRemoveResponse {
+        id: "sr_1".to_string(),
+        approved: false,
+    };
+    match roundtrip_req(&deny) {
+        Request::ScheduleRemoveResponse { id, approved } => {
+            assert_eq!(id, "sr_1");
+            assert!(!approved);
+        }
+        _ => panic!("wrong variant"),
+    }
+    let approve = Request::ScheduleRemoveResponse {
+        id: "sr_2".to_string(),
+        approved: true,
+    };
+    match roundtrip_req(&approve) {
+        Request::ScheduleRemoveResponse { id, approved } => {
+            assert_eq!(id, "sr_2");
+            assert!(approved);
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
 fn response_schedule_list_roundtrip() {
     let resp = Response::ScheduleList {
         jobs: vec![ScheduleListItem {

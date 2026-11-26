@@ -144,6 +144,11 @@ pub enum Request {
         id: String,
         approved: bool,
     },
+    /// Approve or deny a schedule removal (cancel / delete) proposed by the AI.
+    ScheduleRemoveResponse {
+        id: String,
+        approved: bool,
+    },
     /// Approve or deny a ghost shell spawn proposed by the AI.
     GhostSpawnResponse {
         id: String,
@@ -515,6 +520,19 @@ pub enum Response {
         kind: String,
         action: String,
     },
+    /// The AI wants to cancel or delete a scheduled job; the client MUST show
+    /// the job's name and whether the call cancels (kept in the list) or
+    /// deletes permanently, then return `Request::ScheduleRemoveResponse`.
+    ScheduleRemovePrompt {
+        id: String,
+        job_id: String,
+        name: String,
+        kind: String,
+        action: String,
+        delete: bool,
+    },
+    /// Approve or deny a schedule removal proposed by the AI.
+    ScheduleRemoveResponse { id: String, approved: bool },
     /// The AI wants to spawn a ghost shell; the client MUST prompt the user
     /// for approval, then return `Request::GhostSpawnResponse`.
     GhostSpawnPrompt {

@@ -181,6 +181,14 @@ session-approved, and — being on `APPROVAL_GATED_TOOLS` — is exempt from
 the per-turn, per-session and per-tool budget caps in `daemon::stream`
 (spawns stay bounded by `max_concurrent_ghosts` and the depth cap).
 
+`cancel_schedule` and `delete_schedule` are gated the same way (M40 phase
+07): a ghost is refused outright — it cannot cancel or delete any
+scheduled job, including the job that watches it — and from interactive
+chat each call asks first with a prompt that names the job and says
+whether it is a cancel (kept in the list) or a permanent delete. Like
+`spawn_ghost_shell`, both sit on `APPROVAL_GATED_TOOLS`, so they are also
+exempt from the per-turn, per-session and per-tool budget caps.
+
 ---
 
 ## The agent sandbox (opt-in)

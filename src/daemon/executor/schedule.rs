@@ -291,41 +291,171 @@ where
     }
 }
 
-pub(super) fn cancel_schedule(
-    schedule_store: &Arc<ScheduleStore>,
+pub(super) async fn cancel_schedule<W, R>(
+    call_id: &str,
     job_id: &str,
+    is_ghost: bool,
+    schedule_store: &Arc<ScheduleStore>,
     session_id: Option<&str>,
-) -> String {
-    match schedule_store.cancel(job_id) {
-        Ok(true) => {
-            log::info!("Job canceled: {}", &job_id[..job_id.len().min(8)]);
-            log_event(
-                "job_canceled",
-                serde_json::json!({ "session": session_id.unwrap_or("-"), "job_id": job_id }),
-            );
-            format!("Job {} cancelled", &job_id[..job_id.len().min(8)])
-        }
-        Ok(false) => format!("Job {} not found", job_id),
-        Err(e) => format!("Failed to cancel job: {}", e),
-    }
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    remove_schedule(
+        call_id,
+        job_id,
+        is_ghost,
+        schedule_store,
+        session_id,
+        false,
+        tx,
+        rx,
+    )
+    .await
 }
 
-pub(super) fn delete_schedule(
-    schedule_store: &Arc<ScheduleStore>,
+pub(super) async fn delete_schedule<W, R>(
+    call_id: &str,
     job_id: &str,
+    is_ghost: bool,
+    schedule_store: &Arc<ScheduleStore>,
     session_id: Option<&str>,
-) -> String {
-    match schedule_store.delete(job_id) {
-        Ok(true) => {
-            log::info!("Job deleted: {}", &job_id[..job_id.len().min(8)]);
-            log_event(
-                "job_deleted",
-                serde_json::json!({ "session": session_id.unwrap_or("-"), "job_id": job_id }),
-            );
-            format!("Job {} deleted permanently", &job_id[..job_id.len().min(8)])
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    remove_schedule(
+        call_id,
+        job_id,
+        is_ghost,
+        schedule_store,
+        session_id,
+        true,
+        tx,
+        rx,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn remove_schedule<W, R>(
+    call_id: &str,
+    job_id: &str,
+    is_ghost: bool,
+    schedule_store: &Arc<ScheduleStore>,
+    session_id: Option<&str>,
+    delete: bool,
+    tx: &mut W,
+    rx: &mut R,
+) -> anyhow::Result<ToolCallOutcome>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufRead + Unpin,
+{
+    let verb = if delete { "delete" } else { "cancel" };
+    if is_ghost {
+        return Ok(ToolCallOutcome::Result(
+            "Error: cannot cancel or delete scheduled jobs in a Ghost Shell (requires user approval)."
+                .to_string(),
+        ));
+    }
+    if !schedule_store.list().iter().any(|j| j.id == job_id) {
+        return Ok(ToolCallOutcome::Result(format!("Job {} not found", job_id)));
+    }
+    let (name, kind, action) = schedule_store
+        .list()
+        .iter()
+        .find(|j| j.id == job_id)
+        .map(|j| (j.name.clone(), j.kind.describe(), j.action.describe()))
+        .expect("job was found above");
+    send_response_split(
+        tx,
+        Response::ScheduleRemovePrompt {
+            id: call_id.to_string(),
+            job_id: job_id.to_string(),
+            name,
+            kind,
+            action,
+            delete,
+        },
+    )
+    .await?;
+
+    let mut line = Vec::new();
+    let read_result = tokio::time::timeout(
+        USER_PROMPT_TIMEOUT,
+        crate::ipc::read_bounded_line(rx, &mut line, crate::ipc::MAX_IPC_MESSAGE_BYTES),
+    )
+    .await;
+    if matches!(read_result, Ok(Ok(0))) {
+        return Err(anyhow::anyhow!("EOF"));
+    }
+    let approved = match read_result {
+        Ok(Ok(_)) => matches!(
+            serde_json::from_slice::<Request>(&line).ok(),
+            Some(Request::ScheduleRemoveResponse { approved: true, .. })
+        ),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
+            return Err(anyhow::anyhow!(
+                "schedule removal reply line too large ({e}); refusing the prompt and ending the turn"
+            ));
         }
-        Ok(false) => format!("Job {} not found", job_id),
-        Err(e) => format!("Failed to delete job: {}", e),
+        _ => false,
+    };
+
+    if !approved {
+        log_event(
+            "command_approval",
+            serde_json::json!({
+                "session": session_id.unwrap_or("-"),
+                "mode": if delete { "schedule_delete" } else { "schedule_cancel" },
+                "job_id": job_id,
+                "decision": "denied",
+            }),
+        );
+        return Ok(ToolCallOutcome::Result(
+            "Job removal denied by user".to_string(),
+        ));
+    }
+
+    let result = if delete {
+        schedule_store.delete(job_id)
+    } else {
+        schedule_store.cancel(job_id)
+    };
+    match result {
+        Ok(true) => {
+            let short = &job_id[..job_id.len().min(8)];
+            if delete {
+                log::info!("Job deleted: {}", short);
+                log_event(
+                    "job_deleted",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "job_id": job_id }),
+                );
+            } else {
+                log::info!("Job canceled: {}", short);
+                log_event(
+                    "job_canceled",
+                    serde_json::json!({ "session": session_id.unwrap_or("-"), "job_id": job_id }),
+                );
+            }
+            Ok(ToolCallOutcome::Result(if delete {
+                format!("Job {} deleted permanently", short)
+            } else {
+                format!("Job {} cancelled", short)
+            }))
+        }
+        Ok(false) => Ok(ToolCallOutcome::Result(format!("Job {} not found", job_id))),
+        Err(e) => Ok(ToolCallOutcome::Result(format!(
+            "Failed to {} job: {}",
+            verb, e
+        ))),
     }
 }
 
@@ -465,5 +595,237 @@ mod tests {
         assert!(msg.contains("Invalid run_at '2026-03-01 15:00'"));
         assert!(out.is_empty(), "no prompt sent on invalid run_at");
         assert!(store.list().is_empty(), "no job added to store");
+    }
+
+    fn canned_reader(reply: &Request) -> tokio::io::BufReader<std::io::Cursor<Vec<u8>>> {
+        tokio::io::BufReader::new(std::io::Cursor::new(
+            format!("{}\n", serde_json::to_string(reply).unwrap()).into_bytes(),
+        ))
+    }
+
+    fn parse_first_frame(out: &[u8]) -> Response {
+        let end = out.iter().position(|&b| b == b'\n').expect("a frame");
+        serde_json::from_slice(&out[..end]).expect("valid response frame")
+    }
+
+    fn test_store() -> (Arc<ScheduleStore>, String) {
+        let store = Arc::new(ScheduleStore::new_empty());
+        let job_id = store
+            .add(ScheduledJob::new(
+                "nightly".to_string(),
+                ScheduleKind::Once {
+                    at: chrono::Utc::now(),
+                },
+                ActionOn::Alert,
+                None,
+            ))
+            .unwrap();
+        (store, job_id)
+    }
+
+    #[tokio::test]
+    async fn delete_schedule_from_chat_asks_first() {
+        let _guard = crate::test_home();
+        // Denied leg.
+        let (store, job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut rx = canned_reader(&Request::ScheduleRemoveResponse {
+            id: "c1".to_string(),
+            approved: false,
+        });
+        let outcome = delete_schedule(
+            "c1",
+            &job_id,
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut rx,
+        )
+        .await
+        .expect("denial returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("denied"), "denied text: {msg}");
+        match parse_first_frame(&out) {
+            Response::ScheduleRemovePrompt { name, delete, .. } => {
+                assert_eq!(name, "nightly");
+                assert!(delete);
+            }
+            other => panic!("expected ScheduleRemovePrompt, got {:?}", other.kind()),
+        }
+        assert_eq!(store.list().len(), 1, "job still listed after denial");
+
+        // Approved leg.
+        let (store, job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut rx = canned_reader(&Request::ScheduleRemoveResponse {
+            id: "c2".to_string(),
+            approved: true,
+        });
+        let outcome = delete_schedule(
+            "c2",
+            &job_id,
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut rx,
+        )
+        .await
+        .expect("approval returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("deleted permanently"), "deleted text: {msg}");
+        assert!(store.list().is_empty(), "store empty after approval");
+    }
+
+    #[tokio::test]
+    async fn cancel_schedule_from_chat_asks_first() {
+        let _guard = crate::test_home();
+        // Denied leg.
+        let (store, job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut rx = canned_reader(&Request::ScheduleRemoveResponse {
+            id: "c1".to_string(),
+            approved: false,
+        });
+        let outcome = cancel_schedule(
+            "c1",
+            &job_id,
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut rx,
+        )
+        .await
+        .expect("denial returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("denied"), "denied text: {msg}");
+        match parse_first_frame(&out) {
+            Response::ScheduleRemovePrompt { delete, .. } => assert!(!delete),
+            other => panic!("expected ScheduleRemovePrompt, got {:?}", other.kind()),
+        }
+        assert_eq!(
+            store.list()[0].status,
+            JobStatus::Pending,
+            "job still Pending after denial"
+        );
+
+        // Approved leg.
+        let (store, job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut rx = canned_reader(&Request::ScheduleRemoveResponse {
+            id: "c2".to_string(),
+            approved: true,
+        });
+        let outcome = cancel_schedule(
+            "c2",
+            &job_id,
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut rx,
+        )
+        .await
+        .expect("approval returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("cancelled"), "cancelled text: {msg}");
+        assert_eq!(store.list().len(), 1, "cancelled job stays listed");
+        assert_eq!(
+            store.list()[0].status,
+            JobStatus::Cancelled,
+            "job status is Cancelled after approval"
+        );
+    }
+
+    #[tokio::test]
+    async fn schedule_removal_from_a_ghost_is_refused() {
+        let (store, job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut empty_rx = tokio::io::BufReader::new(tokio::io::empty());
+        for call_id in ["g1", "g2"] {
+            let outcome = cancel_schedule(
+                call_id,
+                &job_id,
+                true,
+                &store,
+                Some("sess-1"),
+                &mut out,
+                &mut empty_rx,
+            )
+            .await
+            .expect("ghost refusal returns Ok");
+            let ToolCallOutcome::Result(msg) = outcome else {
+                panic!("expected Result");
+            };
+            assert!(msg.contains("Ghost Shell"), "ghost refusal text: {msg}");
+            let outcome = delete_schedule(
+                call_id,
+                &job_id,
+                true,
+                &store,
+                Some("sess-1"),
+                &mut out,
+                &mut empty_rx,
+            )
+            .await
+            .expect("ghost refusal returns Ok");
+            let ToolCallOutcome::Result(msg) = outcome else {
+                panic!("expected Result");
+            };
+            assert!(msg.contains("Ghost Shell"), "ghost refusal text: {msg}");
+        }
+        assert!(out.is_empty(), "no prompt sent to a ghost");
+        assert_eq!(store.list().len(), 1, "job unchanged after ghost refusal");
+        assert_eq!(store.list()[0].status, JobStatus::Pending, "job unchanged");
+    }
+
+    #[tokio::test]
+    async fn schedule_removal_of_an_unknown_id_sends_no_prompt() {
+        let (store, _job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut empty_rx = tokio::io::BufReader::new(tokio::io::empty());
+        let outcome = delete_schedule(
+            "u1",
+            "no-such-job",
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut empty_rx,
+        )
+        .await
+        .expect("unknown id returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("not found"), "not-found text: {msg}");
+        assert!(out.is_empty(), "no prompt sent for an unknown id");
+
+        let outcome = cancel_schedule(
+            "u2",
+            "no-such-job",
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut empty_rx,
+        )
+        .await
+        .expect("unknown id returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("not found"), "not-found text: {msg}");
+        assert!(out.is_empty(), "no prompt sent for an unknown id");
     }
 }

@@ -678,6 +678,36 @@ pub(super) async fn prompt_ghost_spawn_ratatui(
     approved
 }
 
+/// A schedule removal is never auto-approved: no session approval covers
+/// cancelling or deleting a scheduled job. The prompt names the job and says
+/// whether the call cancels it (kept in the list) or deletes it permanently.
+#[allow(clippy::too_many_arguments)] // 8 params: renderer, stdin, status, job_id, name, kind, action, delete
+pub(super) async fn prompt_schedule_remove_ratatui(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    status: &crate::cli::status_bar::StatusModel,
+    job_id: &str,
+    name: &str,
+    kind: &str,
+    action: &str,
+    delete: bool,
+) -> bool {
+    let removal = if delete {
+        "delete permanently"
+    } else {
+        "cancel (kept in the list)"
+    };
+    let _ = renderer.commit(&format!(
+        "\n  ⚙ AI wants to {removal} scheduled job: {} ({} {})\n  Action: {}\n",
+        name, job_id, kind, action
+    ));
+    let approved = prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await;
+    if approved {
+        let _ = renderer.commit("  ✓ approved\n");
+    }
+    approved
+}
+
 /// A sudo edit is never auto-approved: neither the session-wide file-edit
 /// approval nor a per-path one covers an edit that runs as root. Neither
 /// covers a config edit (`always_asked`) either.

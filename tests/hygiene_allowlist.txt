@@ -19,3 +19,7 @@
 test tests/integration.rs 3016
 # M36 phase-21b — the OSC 7501 watch/listing tests (12 named in the plan) grew the file past the cap.
 test src/daemon/executor/knowledge/shell_observer_tests.rs 2233
+
+# M40 phase-07 — the `ScheduleRemovePrompt` arms (dispatch + the new
+# `prompt_schedule_remove_ratatui` prompt) grew the file past the cap.
+file src/cli/commands/stream_prompts.rs 810
