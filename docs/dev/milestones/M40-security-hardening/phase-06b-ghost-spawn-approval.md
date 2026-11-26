@@ -1,7 +1,7 @@
 # Phase 06b — ghost-spawn-approval
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 06a (done)
 **Estimated diff:** ~300 lines
@@ -97,8 +97,12 @@ Phase 06a already narrows a ghost caller's child to the caller's grants.
 
 Read at most **3** files before your first edit.
 
-**Edit order:** the first red test, then the wire variants, then the
-daemon gate, then the clients, then the list and docs.
+**Edit order (refined 2026-11-26, see the bounce notes):**
+1. the wire variants;
+2. the wire test;
+3. the daemon gate and its two tests;
+4. the clients;
+5. the list and docs.
 
 **Budget.** You have **1200 turns**, so use them efficiently. Your
 **first tool call** after reading writes the first red test.
@@ -186,3 +190,132 @@ It is red today: no prompt frame is sent. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-25 22:52 (started)
+
+Work on phase 06b has begun. Status flipped to `in-progress`.
+
+Task breakdown (numbered, each naming the acceptance item it closes):
+
+1. Write the first red test `spawn_ghost_from_chat_asks_first` in
+   `dispatch_meta.rs`'s tests, run it red — closes **Chat asks**.
+2. Wire variants: `Response::GhostSpawnPrompt` and
+   `Request::GhostSpawnResponse` in `src/ipc.rs`, plus the round-trip
+   test `ghost_spawn_prompt_round_trips` in `src/ipc_tests.rs` — closes
+   **Wire**.
+3. Daemon gate: `dispatch_meta::dispatch` gains `rx`; the chat
+   (`ghost_policy: None`) branch of the `SpawnGhost` arm prompts and
+   awaits `GhostSpawnResponse` before `spawn_ghost`, denying on
+   timeout/EOF/over-long/anything-but-approved — closes **Chat asks**
+   and **Ghost does not ask**.
+4. Clients: `stream_ask.rs`, new `prompt_ghost_spawn_ratatui` in
+   `stream_prompts.rs` (never session-approved), `ask.rs` denies,
+   `program_status_emit.rs` maps to `Blocked`/`Permission` (with a
+   frame-state test in `program_status_emit_tests.rs`), `ipc_types.rs`
+   variant name — closes **Status frames**.
+5. Approval-gated list: `spawn_ghost_shell` into
+   `APPROVAL_GATED_TOOLS` in `src/ai/tools/defs.rs`, `**⚠**` in
+   README.md's tool table — closes **Gated list** (grep prints 1).
+6. Docs: `docs/security.md` §10 sentence, CLAUDE.md row note,
+   `doc_truth` test sync — closes **Docs in sync**.
+7. Preservation checks: `ghost_narrow_tests` and `ghost_host_tests`
+   pass; `git diff 93da74f6 -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`
+   prints 0 — closes **Preserved** and **No test removed**.
+8. Mutation run: skip the prompt, confirm the red test fails, restore,
+   `git diff --stat` clean — closes **Mutation run**.
+9. Capture evidence: four gates once each, paste `test result:` lines,
+   red run, mutation run, the two greps into an Update Log entry —
+   closes **Capture the evidence** and **Gates**.
+
+### Notes for executor — 2026-11-26 (refined re-dispatch)
+
+**The previous run read about 20 files and made no code edit.** It was
+stopped after 60 read-only turns. Every fact it went looking for is below,
+checked against the tree on 2026-11-26. **Do not re-derive them, and do
+not read a file to confirm one.** The working tree holds that run's status
+flip and task list. Keep both.
+
+**Your first tool call edits `src/ipc.rs`.**
+- Add `GhostSpawnPrompt { id: String, runbook: String, agent:
+  Option<String>, host: Option<String>, message: String }` to `Response`,
+  directly after `ScheduleWritePrompt`. Mark `agent` and `host`
+  `#[serde(default)]`.
+- Add `GhostSpawnResponse { id: String, approved: bool }` to `Request`,
+  directly after `ScheduleWriteResponse`.
+- One-line doc comments only.
+
+**Then follow the edit order. Each step gets one build:**
+
+1. **`src/ipc_types.rs`:** add `Response::GhostSpawnPrompt { .. } =>
+   "GhostSpawnPrompt"` beside the `ScheduleWritePrompt` arm.
+2. **`src/ipc_tests.rs`:** add `ghost_spawn_prompt_round_trips` beside
+   `response_schedule_write_prompt_roundtrip`. Use the same
+   `roundtrip_resp` helper; for the request, round-trip with
+   `serde_json`. Run that one test.
+3. **`src/daemon/executor/dispatch_meta.rs`:**
+   - add `rx: &mut R` after `tx`, with
+     `R: tokio::io::AsyncBufReadExt + Unpin`;
+   - in `route.rs`, pass `rx` at the `dispatch_meta::dispatch` call,
+     where `rx` is already in scope.
+   - **Already in scope** through `use super::*`: `send_response_split`,
+     `Request`, `Response`, `USER_PROMPT_TIMEOUT` (a private const in
+     `executor/mod.rs`, visible to the child module), `with_sessions` and
+     `SessionStore`.
+   - **Use full paths** for: `crate::daemon::utils::log_event`,
+     `crate::ipc::read_bounded_line` and
+     `crate::ipc::MAX_IPC_MESSAGE_BYTES`.
+   - **The round trip** is the one in `schedule_command`, in
+     `src/daemon/executor/schedule.rs`, between `send_response_split(…,
+     Response::ScheduleWritePrompt…)` and the `let approved = …` match.
+     Copy it, swapping in the new frame and `GhostSpawnResponse`.
+4. **Tests in `dispatch_meta.rs`.** Add a `#[cfg(test)] mod tests`, with
+   these facts:
+   - `PendingCall::SpawnGhost { id, thought_signature: None, runbook,
+     message, agent: None, host: None }`;
+   - `crate::daemon::session::SessionStore::new()`;
+   - `crate::test_home_guard()`, taken **once** at the top of each test;
+   - the duplex pairs exactly as `dispatch_open_shell.rs`'s
+     `harness::run_call` builds them;
+   - read a frame with `crate::ipc::read_bounded_line`, then
+     `serde_json::from_slice::<Response>`.
+   - **GOTCHA, or the test hangs:** run the daemon side and the client
+     side concurrently with `tokio::join!`. The daemon side is an
+     `async move` block that **owns** its `tx` and drops it when
+     `dispatch` returns. Then the client's read ends on EOF instead of
+     waiting for ever. That is also how `spawn_ghost_from_a_ghost_sends_no_prompt`
+     sees "no bytes".
+   - Run each test once red, then once green.
+5. **Clients**, at the sites
+   `grep -rn "ScheduleWritePrompt\|ScheduleWriteResponse" src` lists:
+   - `stream_ask.rs`: add `GhostSpawnPrompt` to the
+     `ScriptDeletePrompt | ScriptWritePrompt | ScheduleWritePrompt`
+     group, and an arm inside `handle_script_or_schedule_prompt` that
+     calls the new `prompt_ghost_spawn_ratatui` and sends
+     `GhostSpawnResponse`;
+   - `stream_prompts.rs`: the new `prompt_ghost_spawn_ratatui`, written
+     like `prompt_schedule_write_ratatui` but **with no
+     `prompt_auto_approves` check**;
+   - `ask.rs`: the deny arm, beside the `ScheduleWritePrompt` one;
+   - `program_status_emit.rs`: the new variant in both prompt lists;
+   - `program_status_emit_tests.rs`: a `(R::GhostSpawnPrompt {…},
+     Kind::Permission)` entry beside the `ScheduleWritePrompt` one.
+6. **List and docs**, as the statement of work's items 4 and 5 say.
+
+**Budget rule:** after every **5** reads in a row, your next call must be
+an edit or a `cargo` command.
+
+### Update — 2026-11-26 (escalation)
+
+**Chosen lever:** refined re-dispatch.
+
+**Rationale:**
+- The stall was read paralysis: 60 read-only turns and no code edit,
+  against a 13-file spec.
+- That is a spec-shape gap, not an unreachable task. The facts the run
+  went hunting for are now in the spec:
+  - the call shapes and the imports already in scope;
+  - the test idioms, and the `tokio::join!` gotcha that keeps the test
+    from hanging;
+  - an edit order that starts with the smallest mechanical edit,
+    `src/ipc.rs`.
+- A takeover is held back for a second same-class stall.
