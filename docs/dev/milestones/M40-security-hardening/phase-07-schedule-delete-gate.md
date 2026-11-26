@@ -1,7 +1,7 @@
 # Phase 07 — schedule-delete-gate
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress (bounced: bug-07-1)
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** 06b (done)
 **Estimated diff:** ~250 lines
@@ -652,3 +652,133 @@ nothing, and `cargo test` reports **3177** lib tests passed, **not 3178**.
 Paste both outputs and the four gate results. No mutation run is needed:
 the edit adds no behaviour.
 
+### Update — 2026-11-26 19:21 (complete, server-authored)
+
+**Summary:** Applied the single remaining edit from bug-07-1: `remove_schedule` in `src/daemon/executor/schedule.rs` now does one `let Some(job) = schedule_store.list().into_iter().find(|j| j.id == job_id) else { return … "Job {} not found" }` lookup, replacing the separate `any(…)` membership check plus the `find(…).expect("job was found above")` that could race between two store snapshots and panic the daemon. Committed as `1c0090ba` (`fix:`), working tree clean.
+
+**Notes for review:**
+- Finish condition met: the bug-07-1 awk/grep prints **nothing** (exit 1) — no `unwrap`/`expect`/`panic!` remains in the production half of `schedule.rs`.
+- `cargo test` reports **3177** lib tests passed (0 failed), not 3178 — the fix adds no behaviour and no new test, exactly as the bounce note required. All integration targets green (2/6/19/16/45/13/2/4/0), `cargo fmt --all -- --check` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean, zero new build warnings.
+- Full gate run, once each, pasted as output: `test result: ok. 3177 passed; 0 failed; 10 ignored` plus the nine integration/doc/hygiene tails above; format and lint finished clean.
+- The five phase-07 tests were re-run and pass: `schedule_removal_from_a_ghost_is_refused`, `schedule_removal_of_an_unknown_id_sends_no_prompt`, `delete_schedule_from_chat_asks_first`, `cancel_schedule_from_chat_asks_first`, `schedule_remove_prompt_round_trips`.
+- No mutation run was performed, per the bounce note: the edit removes an `expect` and merges two lookups; it adds no behaviour a mutation could skip. `git diff --stat` before commit showed exactly `1 file changed, 3 insertions(+), 8 deletions(-)`.
+- `git diff 640d4fea -- src | grep -cE '^-\s*#\[(tokio::)?test\]'` was verified in the prior run (prints 0); this commit touches only `src/daemon/executor/schedule.rs` and removes no tests.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+t ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_append_read ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (373163): No such process
+kill: (-373890): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `src/daemon/executor/schedule.rs` — +3 -8
+
+**Commit:** 1c0090baa5035b2964731fffb80a2d9dc72f7605
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
