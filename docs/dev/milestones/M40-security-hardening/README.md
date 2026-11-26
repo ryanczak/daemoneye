@@ -69,7 +69,7 @@ at drafting.
 | 03 | [temp-files](phase-03-temp-files.md) — remote edits write through an `O_EXCL`, 0600 temp file the payload creates (`tempfile` / `File::Temp`), so a pre-planted `.de_tmp` symlink is never followed; local edits use `create_new` + mode 0600 + a random suffix | S6 | done |
 | 04 | [path-guard](phase-04-path-guard.md) — `resolve_path_for_guard` canonicalizes the deepest existing ancestor and re-joins the rest; `is_blocked_secret_path` checks the canonical path | S7 | done |
 | 05 | [name-validation](phase-05-name-validation.md) — one validator (`[A-Za-z0-9_-]`, non-empty, bounded length) applied at IPC ingress and inside the path builders for memory namespaces, session ids and prompt names | S8 | done |
-| 06a | [ghost-fence](phase-06a-ghost-fence.md) — a ghost's `spawn_ghost_shell` narrows the child to the caller's hosts (`host: None` included), scripts, flags and tool policy; disjoint host lists refuse | S9 | in-progress |
+| 06a | [ghost-fence](phase-06a-ghost-fence.md) — a ghost's `spawn_ghost_shell` narrows the child to the caller's hosts (`host: None` included), scripts, flags and tool policy; disjoint host lists refuse | S9 | review      |
 | 06b | ghost-spawn-approval — `spawn_ghost_shell` from interactive chat is approval-gated (a dedicated prompt, joining `APPROVAL_GATED_TOOLS`) | S9 | todo |
 | 07 | schedule-delete-gate — `cancel_schedule` / `delete_schedule` are refused to ghosts without policy and approval-gated in chat | S12 | todo |
 | 08 | argv-injection — `HostId::parse` rejects a leading `-`; ssh argv builders put `--` before the destination; remote `grep` takes `-e`; `infocmp` takes `--` | S11 | todo |
