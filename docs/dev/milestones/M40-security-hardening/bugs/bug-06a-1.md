@@ -1,7 +1,7 @@
 # Bug 1 on phase-06a: a `host` override is refused for the runbook's `ssh_target`
 
 **Severity:** major
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `ec909c03`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong

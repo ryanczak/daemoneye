@@ -1,7 +1,7 @@
 # Phase 06a — ghost-fence
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -615,3 +615,39 @@ kill: (-92899): No such process
 **Commit:** ec909c0346e9a8a1987aebbcc993638943fe7dda
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1
+  - [bug-06a-1](bugs/bug-06a-1.md), major: the narrowing checked the
+    runbook's `ssh_target` even with a `host` override, so a valid
+    delegation was refused. It failed safe.
+  - [bug-06a-2](bugs/bug-06a-2.md), minor: `spawn_ghost`'s doc comment
+    was glued onto `narrow_to_caller`, and the CLAUDE.md row lost its
+    `host?` sentence.
+- **Executor:** GLM-5.3-Flash. Run 1 completed in 124 turns, and the
+  bounce in 53.
+- **Scope deviations:**
+  - A new `#[allow(clippy::too_many_arguments)]` on
+    `dispatch_meta::dispatch`. Accepted: the codebase holds 41, and the
+    parameter the spec authorized is what crossed the limit.
+  - An extra test, `narrow_to_caller_keeps_the_child_tool_policy_without_a_caller_policy`.
+    Additive.
+- **Review re-run:**
+  - All four gates pass, and the lib suite reports **3167**, exactly as
+    pinned.
+  - The no-test-removed grep prints 0, and both doc greps print as
+    pinned.
+  - Run 1's pasted mutation run, with the narrowing returning `Ok`,
+    failed all five narrowing and wiring tests.
+  - The reviewer's scratch test, since reverted, reproduced bug-06a-1
+    red. The bounce's test uses the same setup.
+- **Calibration:**
+  - The spec said "`ssh_target`, when `host` is omitted", but the
+    narrowing function's signature had no way to know. When a rule is
+    conditional on an argument, **name that argument in the function's
+    inputs**.
+  - Two inserts landed between an existing item's `///` doc comment and
+    the item. For a spec that adds a function above an existing one, say
+    where it goes: "above the doc comment", not "above the function".

@@ -1,7 +1,7 @@
 # Bug 2 on phase-06a: two doc regressions
 
 **Severity:** minor
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `ec909c03`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong
