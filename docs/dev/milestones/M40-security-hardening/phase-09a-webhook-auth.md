@@ -1,7 +1,7 @@
 # Phase 09a — webhook-auth
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: bug-09a-1, bug-09a-2)
 **Drafted:** 2026-11-26
 **Depends on:** 08 (done)
 **Estimated diff:** ~250 lines
@@ -98,6 +98,7 @@ and untrusted-data framing.
 
 **Closed file list:**
 - `src/webhook/server.rs`;
+- `src/webhook/parse.rs` (added at the bounce, for bug-09a-2 only);
 - `src/config/handle.rs`;
 - `README.md`, `CLAUDE.md`, `docs/security.md`.
 
@@ -186,6 +187,15 @@ restart. Paste the red run.
       3. Restore by undoing that one edit, never by copying a backup file.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 70a7e93e -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`
+- [ ] **bug-09a-1 (the bounce):**
+      `reload_with_a_disabled_webhook_skips_the_secret_check` passes, and
+      `reload_refuses_to_empty_the_secret_on_a_public_bind` passes with
+      `enabled = true` in both of its fixtures. Paste the new test's red run.
+- [ ] **bug-09a-2 (the bounce):** `generic_non_object_body_still_alerts`
+      passes, and `generic_empty_object_yields_no_alert` still passes. Paste
+      the red run.
+- [ ] **Bounce test count:** the lib suite reports **3188** passed: 3186
+      plus the two new tests. More means scope creep.
 - [ ] **Gates:** all four pass, each run once.
 
 ## Spec
@@ -495,3 +505,42 @@ kill: (-510308): No such process
 **Commit:** 7f1ceb619b928522c95b6712186f43cfb180475d
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence that
+the phase is done.**
+
+Everything from the first run is approved and must not be redone:
+
+- the handler reorder and its four-leg test;
+- `constant_time_eq`;
+- the secret rotation;
+- the port-hold test;
+- the docs;
+- the mutation evidence.
+
+There are exactly **two** edits left, each red-test first:
+
+1. **bug-09a-1** (`bugs/bug-09a-1.md`): in `ConfigHandle::reload`, the
+   fail-closed secret check applies only when the **running** config's
+   `webhook.enabled` is true. Add `enabled = true` to both `[webhook]`
+   fixtures of `reload_refuses_to_empty_the_secret_on_a_public_bind`, and
+   add `reload_with_a_disabled_webhook_skips_the_secret_check`.
+2. **bug-09a-2** (`bugs/bug-09a-2.md`): in `parse_generic`, only an
+   **empty object** yields no alert. A string, array or number body keeps
+   the full-body description fallback. Add
+   `generic_non_object_body_still_alerts`.
+
+**Finish condition:** the lib suite reports **3188** passed, not 3186 and not
+more.
+
+**Mutation check:** remove the `enabled` condition and confirm that the new
+handle.rs test fails, then restore it by undoing that one edit. Paste the
+failing run.
+
+Run the four gates once each, then make one `fix:` commit.
+
+**Your first tool call is an edit to `src/config/handle.rs`.** Do not re-read
+`server.rs`.
+
