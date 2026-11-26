@@ -1,7 +1,7 @@
 # Phase 04 — path-guard
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -612,3 +612,39 @@ kill: (-4080170): No such process
 **Commit:** aff87f0301a60f66e37b89f56ea42a58d79c0412
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1
+  - [bug-04-1](bugs/bug-04-1.md), major: the resolver dropped the first
+    missing component, so `lnk/f.txt` resolved to the link's target
+    directory.
+  - [bug-04-2](bugs/bug-04-2.md), major: an existing test and a doc
+    comment were deleted.
+- **Executor:** GLM-5.3-Flash. Run 1 completed in 310 turns, and the
+  bounce in 44.
+- **Scope deviations:** `with_home` in `read_tests.rs` became `async`, with
+  a `with_home_set` helper, and every caller was migrated. Accepted: it is
+  test support only, and it keeps `HOME` set across the new tests' awaits.
+- **Review re-run:**
+  - All four gates pass, and the lib suite reports **3149**, exactly as
+    pinned.
+  - The restored comment's grep prints 1.
+  - No production `unwrap`, `expect`, `panic!`, `unsafe` or `allow` was
+    added to `mod.rs`.
+- **Nits, not bounced:**
+  - The new resolver test covers `f.txt` and `a/b/f.txt`, not the
+    `a/f.txt` case the bug listed. The fix is count-based, so the two
+    cases cover it.
+  - The restored section header reads `(x3)`.
+  - Both runs summarized their red runs and mutation checks rather than
+    pasting the output. They were accepted because the reviewer's own
+    scratch run at the first review showed the old resolver's output.
+- **Calibration:**
+  - My first-red-test spec pinned only a `starts_with` assertion, and that
+    let an off-by-one pass. A resolver or normalizer test must assert
+    equality on the whole resolved value, at more than one depth.
+  - The executor's file-wide rewrite of a test helper also deleted
+    neighbouring code. When a spec authorizes migrating helpers, it should
+    say "no existing test removed" and give a count that would catch it.
