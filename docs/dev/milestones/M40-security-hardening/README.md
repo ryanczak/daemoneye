@@ -22,7 +22,7 @@ not taken by M39.
 
 1. M39's decisions 1–4 carry over unchanged: a failing test first,
    re-verification at drafting, lean closed specs, fail closed.
-2. **A tool that starts prompting changes its budget.** Phases 06 and 07
+2. **A tool that starts prompting changes its budget.** Phases 06b and 07
    make `spawn_ghost_shell` (interactive) and `cancel_schedule` /
    `delete_schedule` approval-gated. Each one joins `APPROVAL_GATED_TOOLS`,
    gets its README `**⚠**`, and passes `tests/doc_truth.rs`. That list
@@ -69,7 +69,8 @@ at drafting.
 | 03 | [temp-files](phase-03-temp-files.md) — remote edits write through an `O_EXCL`, 0600 temp file the payload creates (`tempfile` / `File::Temp`), so a pre-planted `.de_tmp` symlink is never followed; local edits use `create_new` + mode 0600 + a random suffix | S6 | done |
 | 04 | [path-guard](phase-04-path-guard.md) — `resolve_path_for_guard` canonicalizes the deepest existing ancestor and re-joins the rest; `is_blocked_secret_path` checks the canonical path | S7 | done |
 | 05 | [name-validation](phase-05-name-validation.md) — one validator (`[A-Za-z0-9_-]`, non-empty, bounded length) applied at IPC ingress and inside the path builders for memory namespaces, session ids and prompt names | S8 | done |
-| 06 | ghost-delegation — `spawn_ghost_shell` always intersects the child's hosts, scripts and tool policy with the caller's, `host: None` included; from interactive chat it is approval-gated | S9 | todo |
+| 06a | [ghost-fence](phase-06a-ghost-fence.md) — a ghost's `spawn_ghost_shell` narrows the child to the caller's hosts (`host: None` included), scripts, flags and tool policy; disjoint host lists refuse | S9 | todo |
+| 06b | ghost-spawn-approval — `spawn_ghost_shell` from interactive chat is approval-gated (a dedicated prompt, joining `APPROVAL_GATED_TOOLS`) | S9 | todo |
 | 07 | schedule-delete-gate — `cancel_schedule` / `delete_schedule` are refused to ghosts without policy and approval-gated in chat | S12 | todo |
 | 08 | argv-injection — `HostId::parse` rejects a leading `-`; ssh argv builders put `--` before the destination; remote `grep` takes `-e`; `infocmp` takes `--` | S11 | todo |
 | 09a | webhook-auth — constant-time secret compare, auth and rate limit before the body is parsed, the secret read through `config::current()` so a reload rotates it | S10 | todo |
