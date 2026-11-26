@@ -1,7 +1,7 @@
 # Phase 06b — ghost-spawn-approval
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** 06a (done)
 **Estimated diff:** ~300 lines
@@ -413,3 +413,149 @@ The named acceptance tests, driven once against the real code paths:
   `test result: ok. 1 passed`;
 - `ghost_narrow` (5) and `ghost_host` (4) phase-06a tests pass unchanged;
 - `cargo test --test doc_truth` — `test result: ok. 19 passed; 0 failed`.
+
+### Update — 2026-11-26 16:30 (complete, server-authored)
+
+**Summary:** Phase 06b is implemented and committed as `4f2b7cbe`; the working tree is clean. A chat caller's `spawn_ghost_shell` now round-trips a new `Response::GhostSpawnPrompt` / `Request::GhostSpawnResponse` pair (in `src/ipc.rs`, modeled on `ScheduleWritePrompt/Response`) before `knowledge::spawn_ghost` runs — the gate lives in `ask_chat_approval` in `dispatch_meta.rs`, follows the `schedule_command` idiom (`send_response_split`, `USER_PROMPT_TIMEOUT`, `read_bounded_line` with `MAX_IPC_MESSAGE_BYTES`, Err on EOF and on over-long lines) and accepts only an explicit `approved: true`; a denial returns `Ghost shell spawn denied by user` and a `ghost_spawn_approval` event with `decision: "denied"`, an approval logs `"approved"`. `dispatch_meta::dispatch` gained the `rx` reader (`route.rs` passes it); ghost callers send no prompt. All clients handle the new pair: `stream_ask.rs` + a new `prompt_ghost_spawn_ratatui` in `stream_prompts.rs` (no auto-approve path), `ask.rs` denies, `program_status_emit.rs` maps to `Blocked`/`Permission` with a frame-state test entry, `ipc_types.rs` names the variant. `spawn_ghost_shell` is on `APPROVAL_GATED_TOOLS` (grep prints 1) with the `**⚠**` README marker, and docs were updated (`docs/security.md` §10, CLAUDE.md, plus the pre-existing budget-cap assertion in `daemon/stream.rs` now asserts the exemption). All acceptance criteria are met with evidence pasted into the phase doc's Update Log: red run, mutation run, both greps (`1`, `0`), and all four gates — `cargo test` ends `3171 passed; 0 failed` (lib) plus all integration suites green, `doc_truth` 19/0, `hygiene` 16/0, clippy and fmt clean.
+
+**Notes for review**
+
+- The test client half wraps its prompt read in a 5 s `tokio::time::timeout`, so the red and mutation runs fail in ~5 s instead of hanging the suite — that is what made the pasted red/mutation output capturable at all.
+- One test outside the closed file list changed: `daemon::stream::tests::approval_gated_contains_expected_tools` pinned the *old* rule (`spawn_ghost_shell` must be cappable); adding the tool to the gated list flipped that assertion to pin the new exemption (milestone decision 2), comment updated. Flagging it since `src/daemon/stream.rs` is not on the closed list.
+- The approval event is logged for both decisions (approved and denied), with `decision` derived from the reply — the spec names both events; a ghost caller logs none.
+- The mutation run was performed by replacing the approval call with `true` (prompt skipped); the restore was verified by re-running the three dispatch_meta tests green and confirming `git diff --stat` before commit matched the pre-mutation diff.
+- `spawn_ghost_from_a_ghost_sends_no_prompt` asserts zero bytes read on EOF after the daemon drops its writer, per the spec's assert.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+TEST
+t ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test default_server_unchanged ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.16s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (234716): No such process
+kill: (-235437): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `CLAUDE.md` — +1 -1
+- `README.md` — +1 -1
+- `docs/dev/milestones/M40-security-hardening/phase-06b-ghost-spawn-approval.md` — +94 -0
+- `docs/security.md` — +5 -1
+- `src/ai/tools/defs.rs` — +1 -0
+- `src/cli/commands/ask.rs` — +4 -0
+- `src/cli/commands/stream_ask.rs` — +21 -1
+- `src/cli/commands/stream_prompts.rs` — +29 -0
+- `src/cli/program_status_emit.rs` — +2 -0
+- `src/cli/program_status_emit_tests.rs` — +10 -0
+- `src/daemon/executor/dispatch_meta.rs` — +218 -1
+- `src/daemon/executor/route.rs` — +1 -0
+- `src/daemon/stream.rs` — +6 -5
+- `src/ipc.rs` — +16 -0
+- `src/ipc_tests.rs` — +52 -0
+- `src/ipc_types.rs` — +1 -0
+
+**Commit:** 4f2b7cbeb9189229f6c43d8621fab7f13379c953
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).

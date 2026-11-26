@@ -70,7 +70,7 @@ at drafting.
 | 04 | [path-guard](phase-04-path-guard.md) — `resolve_path_for_guard` canonicalizes the deepest existing ancestor and re-joins the rest; `is_blocked_secret_path` checks the canonical path | S7 | done |
 | 05 | [name-validation](phase-05-name-validation.md) — one validator (`[A-Za-z0-9_-]`, non-empty, bounded length) applied at IPC ingress and inside the path builders for memory namespaces, session ids and prompt names | S8 | done |
 | 06a | [ghost-fence](phase-06a-ghost-fence.md) — a ghost's `spawn_ghost_shell` narrows the child to the caller's hosts (`host: None` included), scripts, flags and tool policy; disjoint host lists refuse | S9 | done |
-| 06b | [ghost-spawn-approval](phase-06b-ghost-spawn-approval.md) — `spawn_ghost_shell` from interactive chat is approval-gated (a dedicated prompt, joining `APPROVAL_GATED_TOOLS`) | S9 | in-progress |
+| 06b | [ghost-spawn-approval](phase-06b-ghost-spawn-approval.md) — `spawn_ghost_shell` from interactive chat is approval-gated (a dedicated prompt, joining `APPROVAL_GATED_TOOLS`) | S9 | review      |
 | 07 | schedule-delete-gate — `cancel_schedule` / `delete_schedule` are refused to ghosts without policy and approval-gated in chat | S12 | todo |
 | 08 | argv-injection — `HostId::parse` rejects a leading `-`; ssh argv builders put `--` before the destination; remote `grep` takes `-e`; `infocmp` takes `--` | S11 | todo |
 | 09a | webhook-auth — constant-time secret compare, auth and rate limit before the body is parsed, the secret read through `config::current()` so a reload rotates it | S10 | todo |
