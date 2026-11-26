@@ -491,3 +491,56 @@ Run the four gates once each, then make one `fix:` commit.
 `tests/hygiene_allowlist.txt` was bumped. It was not: the file is
 unchanged, and the hygiene suite passes. Do not touch it.
 
+
+### Update — 2026-11-26 23:50 (bounce 1: bug-09b-1 fixed)
+
+`neutralise_markers` now folds ASCII-case-insensitively over `text.bytes()`
+(`b.to_ascii_lowercase()`), which preserves byte lengths, so every offset
+indexes the original text exactly. Non-marker text is copied byte-for-byte;
+the function never panics.
+
+Red run (mutation check: `to_lowercase` restored, test fails, then undone):
+
+```
+$ cargo test --lib untrusted_alert_block_survives_non_ascii_text
+running 1 test
+test webhook::untrusted::tests::untrusted_alert_block_survives_non_ascii_text ... FAILED
+
+failures:
+
+---- webhook::untrusted::tests::untrusted_alert_block_survives_non_ascii_text stdout ----
+
+thread '...' panicked at src/webhook/untrusted.rs:12:27:
+end byte index 2 is not a char boundary; it is inside 'ẞ' (bytes 0..3 of string)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+failures:
+    webhook::untrusted::tests::untrusted_alert_block_survives_non_ascii_text
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3205 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+Restored the ASCII fold; both `untrusted` tests green. Bug-09b-1 closed.
+
+```
+$ git diff 3c6fde51 -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+$ grep -rn "untrusted-alert-data" src docs/security.md tests/integration.rs | wc -l
+22
+$ cargo test
+test result: ok. 3196 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 151.49s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Gates: `cargo fmt --all` clean, `cargo build` Finished, `cargo clippy
+--all-targets --all-features -- -D warnings` Finished, `cargo test` all green
+(lib suite: 3196 passed, as the bounce condition requires).
