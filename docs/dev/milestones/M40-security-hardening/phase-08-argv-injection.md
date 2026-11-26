@@ -1,7 +1,7 @@
 # Phase 08 — argv-injection
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 07 (done)
 **Estimated diff:** ~200 lines
@@ -417,3 +417,25 @@ kill: (-427534): No such process
 **Commit:** 6dceef9e71106018ac03af5990b70d4d1504d3fd
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_first_try
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** none. `infocmp_args` borrows its termname
+  (`fn infocmp_args(termname: &str) -> [&str; 3]`), which is what the spec
+  sketched.
+- **Reviewer checks:** four gates green (lib 3180 = 3177 + the three new
+  tests, doc_truth 19, hygiene 16); grep `-e` prints 1; no test removed
+  (0); no new `unwrap`/`expect`/`#[allow]`. `ghost_ssh_argv` and the
+  hosted pinky test both insert `BatchMode` before the `--`. The pasted
+  mutation (drop `ssh_argv`'s `--`) fails
+  `ssh_argvs_end_with_double_dash_then_destination`, which asserts the last
+  two elements — accepted as output.
+- **Calibration:** architect slip — the Goal claimed `-oProxyCommand=x`
+  parsed as a host name; `=` was already outside the charset, so it was
+  refused before. The red run was still real (`-web`, `--x` parsed, and the
+  test pins the error wording). Run a one-line check for each claimed
+  bypass example at drafting. 93 turns, no stall, closed file list held.
+
