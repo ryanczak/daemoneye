@@ -135,7 +135,7 @@ where
                 ));
             }
             let approved = if ghost_policy.is_none() {
-                ask_chat_approval(
+                let approved = ask_chat_approval(
                     call,
                     tx,
                     rx,
@@ -144,18 +144,19 @@ where
                     host.as_deref(),
                     message,
                 )
-                .await?
+                .await?;
+                crate::daemon::utils::log_event(
+                    "ghost_spawn_approval",
+                    serde_json::json!({
+                        "session": session_id.unwrap_or("-"),
+                        "runbook": runbook,
+                        "decision": if approved { "approved" } else { "denied" },
+                    }),
+                );
+                approved
             } else {
                 true
             };
-            crate::daemon::utils::log_event(
-                "ghost_spawn_approval",
-                serde_json::json!({
-                    "session": session_id.unwrap_or("-"),
-                    "runbook": runbook,
-                    "decision": if approved { "approved" } else { "denied" },
-                }),
-            );
             if !approved {
                 break 'arm Ok(ToolCallOutcome::Result(
                     "Ghost shell spawn denied by user".to_string(),
@@ -199,15 +200,14 @@ mod tests {
 
     async fn run_spawn(approved: bool) -> ToolCallOutcome {
         let (_guard, _home) = crate::test_home();
-        let (daemon_tx, client_rx) = tokio::io::duplex(64 * 1024);
+        let (mut daemon_tx, client_rx) = tokio::io::duplex(64 * 1024);
         let (mut client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
-        let mut daemon_tx = daemon_tx;
         let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
         let mut client_rx = tokio::io::BufReader::new(client_rx);
         let sessions = SessionStore::new();
         let call = spawn_ghost_call();
 
-        let daemon = async {
+        let daemon = async move {
             dispatch(
                 &call,
                 &mut daemon_tx,
@@ -318,5 +318,60 @@ mod tests {
             .await
             .expect("read after drop");
         assert_eq!(n, 0, "no prompt frame may reach the client");
+    }
+
+    #[tokio::test]
+    async fn spawn_ghost_from_a_ghost_logs_no_approval_event() {
+        let (_guard, home) = crate::test_home();
+        let (daemon_tx, client_rx) = tokio::io::duplex(64 * 1024);
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_tx = daemon_tx;
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let mut client_rx = tokio::io::BufReader::new(client_rx);
+        let sessions = SessionStore::new();
+        let policy = crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig {
+            spawn_depth: 1,
+            ..Default::default()
+        });
+        let ghost_policy = Some(policy);
+
+        let outcome = dispatch(
+            &spawn_ghost_call(),
+            &mut daemon_tx,
+            &mut daemon_rx,
+            Some("gsid-1"),
+            &sessions,
+            &ghost_policy,
+            &None,
+            1,
+            &None,
+        )
+        .await
+        .expect("dispatch must not error");
+        let ToolCallOutcome::Result(text) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(
+            text.contains("Failed to load runbook"),
+            "a ghost caller spawns without asking, got: {text}"
+        );
+        drop(daemon_tx);
+        let mut line = Vec::new();
+        let n = crate::ipc::read_bounded_line(&mut client_rx, &mut line, 1024 * 1024)
+            .await
+            .expect("read after drop");
+        assert_eq!(n, 0, "no prompt frame may reach the client");
+
+        let mut saw_approval = false;
+        crate::daemon::utils::for_each_event_between(None, None, &mut |v| {
+            if v.get("event").and_then(|e| e.as_str()) == Some("ghost_spawn_approval") {
+                saw_approval = true;
+            }
+        });
+        assert!(
+            !saw_approval,
+            "a ghost caller must not log a ghost_spawn_approval event (home: {})",
+            home.path().display()
+        );
     }
 }
