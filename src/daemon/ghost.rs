@@ -265,11 +265,19 @@ impl GhostManager {
         let prior = crate::daemon::situational::assemble_incident_context(alert_msg)
             .map(|b| format!("\n\n{}", b))
             .unwrap_or_default();
+        // The alert text is attacker-controlled, so when the trigger is the
+        // webhook it enters the prompt inside an untrusted-data block. The
+        // incident-context block is a search query and keeps the raw text.
+        let alert_body = if trigger == GhostTrigger::Webhook {
+            crate::webhook::untrusted_alert_block(alert_msg)
+        } else {
+            alert_msg.to_string()
+        };
         let user_msg = Message {
             role: "user".to_string(),
             content: format!(
                 "Incoming alert:\n{}\n\nRunbook: {}\n\n{}{}",
-                alert_msg, runbook.name, runbook.content, prior,
+                alert_body, runbook.name, runbook.content, prior,
             ),
             tool_calls: None,
             tool_results: None,
@@ -1556,6 +1564,87 @@ mod tests {
             serde_json::to_string(&file_msgs[1]).unwrap(),
             serde_json::to_string(user).unwrap(),
             "the file's user line matches the history"
+        );
+
+        unsafe {
+            match saved {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn webhook_ghost_first_turn_frames_the_alert() {
+        let _lock = crate::test_home_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let saved = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", tmp.path()) };
+        crate::config::Config::ensure_dirs().expect("ensure dirs");
+
+        let runbook = Runbook {
+            name: "investigate-disk".to_string(),
+            content: "# Runbook: investigate-disk\n\n## Alert Criteria\nhigh disk".to_string(),
+            tags: Vec::new(),
+            memories: Vec::new(),
+            ghost_config: crate::ipc::GhostConfig::default(),
+        };
+        let alert_msg = "alertname=DiskFull node=host-1 summary=87% full";
+        let alert_in_block = format!("\n{alert_msg}\n");
+
+        let sessions = SessionStore::new();
+        let webhook_id = GhostManager::start_session(
+            sessions.clone(),
+            &runbook,
+            alert_msg,
+            GhostTrigger::Webhook,
+            false,
+        )
+        .await
+        .expect("webhook ghost starts");
+        let scheduled_id = GhostManager::start_session(
+            sessions.clone(),
+            &runbook,
+            alert_msg,
+            GhostTrigger::Scheduled,
+            false,
+        )
+        .await
+        .expect("scheduled ghost starts");
+
+        let first_turn = |id: &str| {
+            with_sessions(&sessions, |store| {
+                store
+                    .get(id)
+                    .map(|e| e.history.messages[0].content.clone())
+                    .unwrap_or_default()
+            })
+        };
+        let webhook_turn = first_turn(&webhook_id);
+        let scheduled_turn = first_turn(&scheduled_id);
+
+        assert!(
+            webhook_turn.contains("<untrusted-alert-data>")
+                && webhook_turn.contains("</untrusted-alert-data>"),
+            "a webhook ghost's first turn holds the untrusted-data block: {webhook_turn}"
+        );
+        assert!(
+            webhook_turn.contains(&alert_in_block),
+            "the alert text is inside the block: {webhook_turn}"
+        );
+        let lower = webhook_turn.to_lowercase();
+        assert_eq!(
+            lower.matches("<untrusted-alert-data>").count(),
+            1,
+            "exactly one opening marker: {webhook_turn}"
+        );
+        assert!(
+            !scheduled_turn.contains("<untrusted-alert-data>"),
+            "a scheduled ghost's first turn is not framed: {scheduled_turn}"
+        );
+        assert!(
+            scheduled_turn.contains(alert_msg),
+            "a scheduled ghost's first turn still carries the alert text: {scheduled_turn}"
         );
 
         unsafe {

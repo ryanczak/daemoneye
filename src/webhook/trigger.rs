@@ -193,4 +193,27 @@ mod tests {
         )
         .await;
     }
+
+    #[tokio::test]
+    async fn analyze_rate_limit_drops_expired_names() {
+        let state = state(true);
+        let now = crate::webhook::process::now_secs_pub();
+        let window = state.config.current().webhook.dedup_window_secs;
+        {
+            let mut rl = state.rate_limit.lock().unwrap_or_log();
+            rl.insert("stale".to_string(), now - window - 1);
+            rl.insert("fresh".to_string(), now);
+        }
+        crate::webhook::process::maybe_analyze_alert(&alert(Severity::Warning, "other"), &state)
+            .await;
+        let rl = state.rate_limit.lock().unwrap_or_log();
+        assert!(
+            !rl.contains_key("stale"),
+            "a name older than the window can never suppress an analysis again and must be evicted: {rl:?}"
+        );
+        assert!(
+            rl.contains_key("fresh") && rl.contains_key("other"),
+            "the unexpired name and the just-analysed name stay: {rl:?}"
+        );
+    }
 }

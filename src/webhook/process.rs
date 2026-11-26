@@ -435,6 +435,16 @@ pub(crate) async fn run_watchdog_query(
     }
 }
 
+/// The watchdog query's user turn for `alert_msg`. The alert text is
+/// attacker-controlled, so it enters the prompt inside an untrusted-data
+/// block. Pure so the framing is testable without a model call.
+pub(crate) fn watchdog_message(alert_msg: &str) -> String {
+    format!(
+        "Incoming alert:\n{}",
+        crate::webhook::untrusted_alert_block(alert_msg)
+    )
+}
+
 /// Run runbook-based AI analysis for the alert, rate-limited per alert name.
 pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &WebhookState) {
     // Rate limit: skip if we analysed the same alert_name within dedup_window_secs.
@@ -442,8 +452,10 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
     {
         let mut rl = state.rate_limit.lock().unwrap_or_log();
         let now = now_secs();
+        let window = config.webhook.dedup_window_secs;
+        rl.retain(|_, &mut last| now.saturating_sub(last) < window);
         if let Some(&last) = rl.get(&notice.name)
-            && now.saturating_sub(last) < config.webhook.dedup_window_secs
+            && now.saturating_sub(last) < window
         {
             return;
         }
@@ -485,7 +497,7 @@ pub(crate) async fn maybe_analyze_alert(notice: &crate::bus::Notice, state: &Web
         .unwrap_or(&notice.history_text())
         .to_string();
 
-    let wd = run_watchdog_query(&config, &rb, format!("Incoming alert:\n{alert_msg}")).await;
+    let wd = run_watchdog_query(&config, &rb, watchdog_message(&alert_msg)).await;
     if let Some(ref e) = wd.api_error {
         log::error!(
             "Webhook: runbook analysis API call failed for '{}': {}",
@@ -685,6 +697,26 @@ mod tests {
         assert_eq!(severity_rank(""), None);
         assert_eq!(severity_rank("  "), None);
         assert_eq!(severity_rank("banana"), None);
+    }
+
+    #[test]
+    fn watchdog_message_frames_the_alert() {
+        let alert_msg = "alertname=DiskFull node=host-1";
+        let msg = watchdog_message(alert_msg);
+        assert!(
+            msg.starts_with("Incoming alert:\n"),
+            "the watchdog query keeps its preamble: {msg}"
+        );
+        let expected_block = crate::webhook::untrusted_alert_block(alert_msg);
+        assert!(
+            msg.contains(&expected_block),
+            "the alert text enters the watchdog message inside the untrusted-data block: {msg}"
+        );
+        assert!(
+            msg.matches("<untrusted-alert-data>").count() == 1
+                && msg.matches("</untrusted-alert-data>").count() == 1,
+            "exactly one pair of markers: {msg}"
+        );
     }
 
     #[test]

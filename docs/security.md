@@ -82,6 +82,28 @@ bytes matched. A `daemoneye reload` rotates `webhook.secret` live, and a
 reload that would empty the secret while the running bind is non-loopback is
 refused whole — nothing applied, the running config untouched.
 
+Because the alert array's length is attacker-controlled and distinct
+`alertname` labels defeat dedup, one POST is also bounded in fan-out: at most
+100 alerts (`MAX_ALERTS_PER_POST`) survive parsing, anything past the cap is
+dropped with a single `webhook_discarded` event (`reason: "too_many_alerts"`,
+count in `dropped`), the POST still answers `200`, and the kept alerts are
+processed **one at a time** in a single spawned task — not one task per
+alert. The per-alert-name analysis rate-limit map (`WebhookState.rate_limit`)
+evicts: before each insert, entries at least `dedup_window_secs` old are
+removed, so a name that can no longer suppress an analysis cannot accumulate
+for ever. Finally, alert text is attacker-controlled data, so wherever it
+enters a model prompt it is wrapped in an untrusted-data block
+(`untrusted_alert_block`, `src/webhook/untrusted.rs`): a fixed preamble
+stating the text between `<untrusted-alert-data>` / `</untrusted-alert-data>`
+markers is data, not instructions, followed by the text itself — with any
+marker the text contains neutralised, so exactly one pair of markers survives
+whatever the input. The block is applied at the three prompt sites: the
+watchdog analysis query, a webhook-triggered ghost's first user turn, and the
+history sink's injected message for `Source::Webhook` notices (every other
+source passes through unchanged; non-webhook ghost triggers are unchanged,
+and `assemble_incident_context` still receives the raw text because it is a
+search query, not a prompt).
+
 ### 4. Ghost trigger strictness
 
 `evaluate_watchdog_response` acts **only** on an explicit, final

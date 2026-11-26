@@ -28,6 +28,22 @@ use super::*;
 const IP_WINDOW_SECS: u64 = 60;
 const IP_WINDOW_MAX: u32 = 30;
 
+/// The most alerts one POST may enqueue (S10). Distinct alertname labels
+/// defeat dedup, so an unbounded array would fan out hundreds of thousands
+/// of concurrent `process_alert` tasks from a single authenticated POST.
+const MAX_ALERTS_PER_POST: usize = 100;
+
+/// Keep at most [`MAX_ALERTS_PER_POST`] of `alerts`, returning the kept
+/// alerts and how many were dropped. Pure, so the cap is unit-testable
+/// without an HTTP round trip.
+fn cap_alerts(alerts: Vec<InternalAlert>) -> (Vec<InternalAlert>, usize) {
+    let dropped = alerts.len().saturating_sub(MAX_ALERTS_PER_POST);
+    (
+        alerts.into_iter().take(MAX_ALERTS_PER_POST).collect(),
+        dropped,
+    )
+}
+
 /// Shared state passed to every Axum handler.
 pub struct WebhookState {
     /// The daemon's live config handle — the same `Arc` `run_daemon`
@@ -186,13 +202,25 @@ async fn handle_webhook(
         return StatusCode::BAD_REQUEST;
     }
 
-    // Process each alert asynchronously so we return 200 immediately.
-    for alert in alerts {
-        let state2 = Arc::clone(&state);
-        tokio::spawn(async move {
-            process_alert(alert, state2).await;
-        });
+    // One task per POST, processing the kept alerts in turn: the array's
+    // length is attacker-controlled, so an unbounded per-alert spawn would
+    // fan out unboundedly from a single authenticated request (S10).
+    let (alerts, dropped) = cap_alerts(alerts);
+    if dropped > 0 {
+        crate::daemon::utils::log_event(
+            "webhook_discarded",
+            serde_json::json!({
+                "reason": "too_many_alerts",
+                "dropped": dropped,
+            }),
+        );
     }
+    tokio::spawn(async move {
+        let state2 = Arc::clone(&state);
+        for alert in alerts {
+            process_alert(alert, state2.clone()).await;
+        }
+    });
 
     StatusCode::OK
 }
@@ -453,6 +481,91 @@ mod tests {
     fn bind_accepts_external_addr_with_secret() {
         let ip: std::net::IpAddr = "0.0.0.0".parse().unwrap();
         assert!(validate_webhook_bind(&ip, "s3cret").is_ok());
+    }
+
+    #[test]
+    fn alerts_over_the_cap_are_dropped_and_counted() {
+        let make = |i: usize| InternalAlert {
+            alert_name: format!("alert-{i}"),
+            status: crate::webhook::AlertStatus::Firing,
+            severity: "warning".to_string(),
+            summary: format!("alert {i}"),
+            description: String::new(),
+            labels: HashMap::from([("alertname".to_string(), format!("alert-{i}"))]),
+            fingerprint: format!("fp-{i}"),
+            source: "alertmanager",
+        };
+        let (kept, dropped) = cap_alerts((0..150).map(make).collect());
+        assert_eq!(kept.len(), 100, "the first 100 alerts are kept");
+        assert_eq!(dropped, 50, "the 50 alerts past the cap are dropped");
+        assert_eq!(kept[0].alert_name, "alert-0", "the first alert survives");
+        assert_eq!(
+            kept[99].alert_name, "alert-99",
+            "the alert at the cap boundary survives"
+        );
+
+        let (kept, dropped) = cap_alerts((0..3).map(make).collect());
+        assert_eq!(kept.len(), 3, "a payload under the cap keeps every alert");
+        assert_eq!(dropped, 0, "a payload under the cap drops nothing");
+    }
+
+    #[tokio::test]
+    async fn webhook_post_over_the_cap_logs_one_discard() {
+        let _guard = crate::test_home();
+        let mut cfg = crate::config::Config::default();
+        cfg.webhook.secret = "s3cret".into();
+        let handle = std::sync::Arc::new(crate::config::ConfigHandle::new(cfg));
+        let state = std::sync::Arc::new(test_state_from(handle));
+        let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        let alerts: Vec<String> = (0..150)
+            .map(|i| {
+                serde_json::json!({
+                    "status": "firing",
+                    "labels": {
+                        "alertname": format!("CapAlert{i}"),
+                        "fingerprint": format!("fp-cap-{i}"),
+                    },
+                    "annotations": {"summary": format!("alert {i}")},
+                })
+                .to_string()
+            })
+            .collect();
+        let body = format!(r#"{{"alerts": [{}]}}"#, alerts.join(","));
+        assert!(!body.is_empty());
+
+        let resp = handle_webhook(
+            State(std::sync::Arc::clone(&state)),
+            headers_with_bearer("s3cret"),
+            ConnectInfo(addr),
+            axum::body::Body::from(body),
+        )
+        .await;
+        assert_eq!(
+            resp,
+            StatusCode::OK,
+            "a POST over the cap still answers 200"
+        );
+
+        let discards = std::cell::RefCell::new(Vec::new());
+        crate::daemon::utils::for_each_event_between(None, None, &mut |v| {
+            if v.get("event").and_then(|e| e.as_str()) == Some("webhook_discarded")
+                && v.get("reason").and_then(|r| r.as_str()) == Some("too_many_alerts")
+            {
+                discards.borrow_mut().push(v.clone());
+            }
+        });
+        let discards = discards.into_inner();
+        assert_eq!(
+            discards.len(),
+            1,
+            "exactly one webhook_discarded event for the whole POST: {discards:?}"
+        );
+        assert_eq!(
+            discards[0].get("dropped").and_then(|d| d.as_u64()),
+            Some(50),
+            "the event counts the 50 dropped alerts"
+        );
     }
 
     #[test]

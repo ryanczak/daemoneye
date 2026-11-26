@@ -1,7 +1,7 @@
 # Phase 09b — webhook-fanout
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 09a (done)
 **Estimated diff:** ~300 lines
@@ -202,3 +202,104 @@ claim against the tree on 2026-11-26.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 22:30 (started)
+
+Work begun on phase 09b (webhook-fanout). Status flipped to in-progress; first
+red test written (`untrusted_alert_block_wraps_and_neutralises_markers`),
+currently failing against the stub.
+
+Task list (each line names the acceptance item it closes):
+
+1. Implement `untrusted_alert_block` so `untrusted_alert_block_wraps_and_neutralises_markers` goes green — closes "The block".
+2. Site (c): history sink frames `Source::Webhook` notices; new test `history_sink_frames_only_webhook_notices`; adjust the two pre-named assertions — closes "History framing".
+3. Site (a): factor the watchdog message into a pure function, frame the alert text; test `watchdog_message_frames_the_alert` — closes "Watchdog framing".
+4. Site (b): `GhostManager::start_session_with_config` frames the alert text when `trigger == GhostTrigger::Webhook`; test `webhook_ghost_first_turn_frames_the_alert` — closes "Ghost framing".
+5. Rate-limit eviction in `maybe_analyze_alert`; test `analyze_rate_limit_drops_expired_names`; existing `trigger.rs` suppression tests must pass unchanged — closes "Eviction" and "Suppression unchanged".
+6. `MAX_ALERTS_PER_POST = 100`, pure truncation helper, one spawned task per POST, single `webhook_discarded` event; tests `alerts_over_the_cap_are_dropped_and_counted` and `webhook_post_over_the_cap_logs_one_discard` — closes "Cap" and "Handler".
+7. Mutation run on the truncation (must fail), then restore by undoing the edit.
+8. `git diff 3c6fde51` test-count grep prints 0.
+9. `docs/security.md` § 3 paragraph.
+10. Four gates, evidence entry, one `fix:` commit.
+
+### Update — 2026-11-26 23:30 (end-to-end verification)
+
+```
+=== RED RUN (step 1: untrusted.rs stub, test first) ===
+running 1 test
+test webhook::untrusted::tests::untrusted_alert_block_wraps_and_neutralises_markers ... FAILED
+
+failures:
+
+---- webhook::untrusted::tests::untrusted_alert_block_wraps_and_neutralises_markers stdout ----
+
+thread 'webhook::untrusted::tests::untrusted_alert_block_wraps_and_neutralises_markers' (571026) panicked at src/webhook/untrusted.rs:17:9:
+assertion `left == right` failed: expected exactly one opening marker, got: 
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    webhook::untrusted::tests::untrusted_alert_block_wraps_and_neutralises_markers
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3198 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+
+=== MUTATION RUN (step: truncation keeps every alert) ===
+Edit: cap_alerts changed to `(alerts.into_iter().collect(), dropped)` (take() removed).
+$ cargo test --lib alerts_over_the_cap
+running 1 test
+test webhook::server::tests::alerts_over_the_cap_are_dropped_and_counted ... FAILED
+
+failures:
+
+---- webhook::server::tests::alerts_over_the_cap_are_dropped_and_counted stdout ----
+
+thread 'webhook::server::tests::alerts_over_the_cap_are_dropped_and_counted' (587014) panicked at src/webhook/server.rs:496:9:
+assertion `left == right` failed: the first 100 alerts are kept
+  left: 150
+ right: 100
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    webhook::server::tests::alerts_over_the_cap_are_dropped_and_counted
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3204 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+(Restored: the take(MAX_ALERTS_PER_POST) edit was undone by re-patching the same hunk.
+cargo test --lib alerts_over_the_cap → ok. 1 passed.)
+
+=== NO TEST REMOVED ===
+$ git diff 3c6fde51 -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+(grep exits 1 on count 0; the count printed is 0.)
+
+=== LITERAL GREP ===
+$ grep -rn "untrusted-alert-data" src docs/security.md tests/integration.rs | wc -l
+15
+sites: src/webhook/untrusted.rs (markers + test), src/webhook/process.rs (watchdog query),
+src/daemon/ghost.rs (first turn), src/daemon/notice_sinks.rs (history sink),
+tests/integration.rs (assertion), docs/security.md §3.
+
+=== GATES (each run once) ===
+$ cargo fmt --all
+(clean)
+$ cargo build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.41s
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s
+$ cargo test
+test result: ok. 3195 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.82s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.32s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.36s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+```

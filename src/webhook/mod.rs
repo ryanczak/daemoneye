@@ -15,6 +15,9 @@ mod parse;
 mod process;
 pub(crate) mod server;
 mod trigger;
+mod untrusted;
+
+pub(crate) use untrusted::untrusted_alert_block;
 
 pub use parse::*;
 pub use process::*;

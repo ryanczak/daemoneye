@@ -143,11 +143,18 @@ pub fn default_routes(threshold: Severity) -> SinkRoutes {
     }
 }
 
-/// The `Message` a history sink appends for `notice`.
+/// The `Message` a history sink appends for `notice`. A webhook notice's
+/// text is attacker-controlled, so it enters the history inside an
+/// untrusted-data block; every other source passes through unchanged.
 fn history_message(notice: &Notice) -> Message {
+    let content = if notice.source == Source::Webhook {
+        crate::webhook::untrusted_alert_block(&notice.history_text())
+    } else {
+        notice.history_text()
+    };
     Message {
         role: "user".to_string(),
-        content: notice.history_text(),
+        content,
         tool_calls: None,
         tool_results: None,
         turn: None,
@@ -885,8 +892,60 @@ mod tests {
         });
         assert_eq!(
             content.as_deref(),
-            Some(notice.history_text().as_str()),
-            "the message content is the notice's history_text"
+            Some(crate::webhook::untrusted_alert_block(&notice.history_text()).as_str()),
+            "a webhook notice's message content is its history_text inside the untrusted-data block"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_sink_frames_only_webhook_notices() {
+        let _guard = crate::test_home();
+        let sessions = SessionStore::new();
+        insert_resident(&sessions, "a");
+
+        let webhook = Notice::new(Severity::Warning, Source::Webhook, "HighCPU", "CPU at 95%");
+        let scheduler = Notice::new(Severity::Warning, Source::Scheduler, "job", "nightly sweep");
+        let bus = Bus::with_journal(|_| {});
+        let mut routes = default_routes(Severity::Warning);
+        routes.history.push(crate::bus::Filter {
+            sources: vec![Source::Scheduler],
+            ..crate::bus::Filter::default()
+        });
+        register_default_sinks(&bus, sessions.clone(), routes);
+        bus.publish(webhook);
+        bus.publish(scheduler);
+
+        let contents = with_sessions(&sessions, |store| {
+            store.get("a").map(|e| {
+                e.history
+                    .messages
+                    .iter()
+                    .map(|m| m.content.clone())
+                    .collect::<Vec<_>>()
+            })
+        })
+        .unwrap_or_default();
+        assert_eq!(
+            contents.len(),
+            2,
+            "both notices were injected: {contents:?}"
+        );
+        let expected_webhook = crate::webhook::untrusted_alert_block(
+            &Notice::new(Severity::Warning, Source::Webhook, "HighCPU", "CPU at 95%")
+                .history_text(),
+        );
+        assert_eq!(
+            contents[0], expected_webhook,
+            "the webhook notice's content is framed"
+        );
+        assert!(
+            contents[0].contains("<untrusted-alert-data>"),
+            "the webhook notice's content holds the opening marker: {:?}",
+            contents[0]
+        );
+        assert_eq!(
+            contents[1], "nightly sweep",
+            "the scheduler notice's content is its history_text, byte for byte"
         );
     }
 

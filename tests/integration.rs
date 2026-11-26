@@ -980,10 +980,10 @@ fn webhook_alert_at_threshold_is_injected() {
     );
     assert_eq!(first_role.as_deref(), Some("user"));
     assert!(
-        first_content
-            .as_deref()
-            .is_some_and(|c| c.starts_with("[Webhook Alert]")),
-        "the injected message carries the [Webhook Alert] prefix: {first_content:?}"
+        first_content.as_deref().is_some_and(|c| {
+            c.contains("[Webhook Alert]") && c.contains("<untrusted-alert-data>")
+        }),
+        "the injected message carries the [Webhook Alert] prefix inside the untrusted-data block: {first_content:?}"
     );
 
     match old_home {
@@ -1724,8 +1724,8 @@ fn webhook_alert_error_severity_passes_warning_gate() {
     assert_eq!(count, 1, "history gains exactly one message");
     let first = first.unwrap_or_default();
     assert!(
-        first.starts_with("[Webhook Alert] [FIRING]"),
-        "the history message is the notice's history_text: {first:?}"
+        first.contains("[Webhook Alert] [FIRING]") && first.contains("<untrusted-alert-data>"),
+        "the history message is the notice's history_text inside the untrusted-data block: {first:?}"
     );
 
     match old_home {
