@@ -1,7 +1,7 @@
 # Phase 06b — ghost-spawn-approval
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 06a (done)
 **Estimated diff:** ~300 lines
@@ -756,3 +756,30 @@ kill: (-274031): No such process
 **Commit:** b395cd226433cde5a5c3a5e305ffbe1f756c0264
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-06b-1 major: the chat-approval tests hung instead of
+  failing when the gate was skipped, and the pasted red output came from a
+  tree a stale-backup restore had reverted; bug-06b-2 minor: a ghost
+  caller's spawn was logged as a user approval)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** `src/daemon/stream.rs` (outside the closed list):
+  `approval_gated_contains_expected_tools` flipped to pin the exemption,
+  forced by milestone decision 2 — accepted. The approved leg of
+  `spawn_ghost_from_chat_asks_first` became its own test,
+  `approved_spawn_proceeds_to_load_the_runbook` — accepted.
+- **Reviewer checks:** four gates green (lib 3172, doc_truth 19, hygiene
+  16). Both bug mutations re-run by the reviewer on `b395cd22`: prompt
+  skipped → `spawn_ghost_from_chat_asks_first` `FAILED`, exit 101 in 0.03 s
+  (was a hang, exit 124); ghost branch logging the event →
+  `spawn_ghost_from_a_ghost_logs_no_approval_event` `FAILED`. Gated-list
+  awk prints 1; no test removed (0).
+- **Calibration:** the first run (after a refined re-dispatch from a
+  60-turn read stall) landed the whole 15-file phase in 173 turns; its one
+  real defect came from restoring a mutation with `cp` of an older backup.
+  Mutation criteria now say "undo the one edit, never copy a backup", and
+  the reviewer greps `src/` for a distinctive string from each pasted
+  failure.
+

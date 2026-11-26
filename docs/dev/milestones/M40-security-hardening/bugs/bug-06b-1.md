@@ -1,7 +1,7 @@
 # Bug 1 on phase-06b: the chat-approval tests hang, not fail, when the gate is skipped
 
 **Severity:** major
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `b395cd22`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong

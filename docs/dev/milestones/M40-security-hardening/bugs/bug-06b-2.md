@@ -1,7 +1,7 @@
 # Bug 2 on phase-06b: a ghost caller's spawn is logged as user-approved
 
 **Severity:** minor
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `b395cd22`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong
