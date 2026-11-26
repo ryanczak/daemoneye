@@ -403,7 +403,8 @@ pub async fn spawn_sbx_host(
 /// True when a ControlMaster is already running for `entry` under
 /// `control_path`: `ssh -O check` exits 0 (measured 2–3 ms). Any error —
 /// `ssh` missing, the check timing out, a spawn failure — reads as "no
-/// master", the safe answer: the caller then tries to establish one.
+/// master", the safe answer: the caller then tries to establish one. The
+/// `--` before the destination ends the option list.
 pub fn master_running(entry: &crate::config::HostEntry, control_path: &std::path::Path) -> bool {
     let Ok(program) = which_ssh() else {
         return false;
@@ -414,6 +415,7 @@ pub fn master_running(entry: &crate::config::HostEntry, control_path: &std::path
             "check".to_string(),
             "-o".to_string(),
             format!("ControlPath={}/%C", control_path.display()),
+            "--".to_string(),
             entry.ssh.clone(),
         ])
         .stdout(std::process::Stdio::null())

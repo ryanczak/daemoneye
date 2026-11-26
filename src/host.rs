@@ -40,6 +40,11 @@ impl HostId {
                 name.len()
             ));
         }
+        if name.starts_with('-') {
+            return Err(format!(
+                "host name {name:?} starts with a leading '-'; expected [A-Za-z0-9._-]+, 1-64 chars"
+            ));
+        }
         if !name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
@@ -154,13 +159,15 @@ pub fn resolve_ssh_target(
 /// an interactive shell. The ControlMaster trio is measured, not assumed:
 /// cold connect 157 ms, warm 4–5 ms.
 ///
-/// `entry.ssh` is passed as **one** argv element: `ssh` treats everything
-/// after the destination as the remote command, so splitting it on whitespace
-/// would turn the remainder into a command. The control path ends in `%C`
-/// unquoted — `ssh` receives it as argv, so shell quoting would become part
-/// of the path. No `-o BatchMod''e=yes`: prompts must reach the user, and
-/// suppressing them here would defeat the credential mechanism (pinned by
-/// `ssh_argv_does_not_set_batch_mode`).
+/// `--` then `entry.ssh` is last, and `entry.ssh` is passed as **one** argv
+/// element: `ssh` treats everything after the destination as the remote
+/// command, so splitting it on whitespace would turn the remainder into a
+/// command. The `--` ends the option list, so an `ssh` value that starts with
+/// `-` is read as a host name (and rejected by ssh) rather than as an option.
+/// The control path ends in `%C` unquoted — `ssh` receives it as argv, so
+/// shell quoting would become part of the path. No `-o BatchMod''e=yes`:
+/// prompts must reach the user, and suppressing them here would defeat the
+/// credential mechanism (pinned by `ssh_argv_does_not_set_batch_mode`).
 pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String> {
     vec![
         "-tt".to_string(),
@@ -170,6 +177,7 @@ pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String
         format!("ControlPath={}/%C", control_path.display()),
         "-o".to_string(),
         "ControlPersist=10m".to_string(),
+        "--".to_string(),
         entry.ssh.clone(),
     ]
 }
@@ -178,7 +186,9 @@ pub fn ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String
 /// without a remote command: `-M -N -f`, the same `ControlPath` and
 /// `ControlPersist` as [`ssh_argv`] so every later shell multiplexes
 /// through it, and `-o BatchMode=yes` when `batch` (a ghost: never prompt).
-/// The destination is last — options after it become the remote command.
+/// `--` then the destination is last — options after it become the remote
+/// command, and the `--` keeps a destination that starts with `-` from
+/// reading as an option.
 pub fn connect_argv(entry: &HostEntry, control_path: &std::path::Path, batch: bool) -> Vec<String> {
     let mut argv = vec![
         "-M".to_string(),
@@ -192,18 +202,19 @@ pub fn connect_argv(entry: &HostEntry, control_path: &std::path::Path, batch: bo
     if batch {
         argv.extend(["-o".to_string(), "BatchMode=yes".to_string()]);
     }
+    argv.push("--".to_string());
     argv.push(entry.ssh.clone());
     argv
 }
 
 /// `ssh_argv` for a ghost's shell: the same argv with `-o BatchMode=yes`
-/// inserted **before the destination**, so ssh never prompts — a host that
-/// wants a password or an unknown key fails at once instead of waiting for
-/// an answer nobody can give. Options after the destination would become
-/// the remote command, so the insertion point is load-bearing.
+/// inserted **before the `--` that precedes the destination**, so ssh never
+/// prompts — a host that wants a password or an unknown key fails at once
+/// instead of waiting for an answer nobody can give. After the `--` ssh reads
+/// an option as the host name, so the insertion point is load-bearing.
 pub fn ghost_ssh_argv(entry: &HostEntry, control_path: &std::path::Path) -> Vec<String> {
     let mut argv = ssh_argv(entry, control_path);
-    let dest = argv.len() - 1;
+    let dest = argv.len() - 2;
     argv.splice(dest..dest, ["-o".to_string(), "BatchMode=yes".to_string()]);
     argv
 }
@@ -343,6 +354,31 @@ mod tests {
         }
     }
 
+    /// A leading `-` would let a host name read as an ssh option once it is
+    /// spliced into the argv, so it is refused before argv construction.
+    #[test]
+    fn host_id_refuses_a_leading_dash() {
+        for name in ["-oProxyCommand=x", "-", "-web", "--x"] {
+            let err = HostId::parse(name).err();
+            let err = err.unwrap_or_else(|| panic!("{name:?} should have been rejected"));
+            assert!(
+                err.contains(&format!("{name:?}")),
+                "error for {name:?} must name the offending value, got {err:?}"
+            );
+            assert!(
+                err.contains("leading '-'"),
+                "error for {name:?} must name the leading dash, got {err:?}"
+            );
+        }
+        for name in ["web-1", "a-"] {
+            let id = HostId::parse(name);
+            assert!(
+                matches!(id, Ok(HostId::Named(_))),
+                "{name:?} is a normal name with an inner or trailing dash and must parse, got {id:?}"
+            );
+        }
+    }
+
     fn entry(ssh: &str) -> HostEntry {
         HostEntry {
             ssh: ssh.to_string(),
@@ -370,7 +406,7 @@ mod tests {
         // Statement-wise on the flag set, so the "last" claim cannot pass on
         // the prefix the builder happens to produce.
         assert_eq!(
-            &argv[..argv.len() - 1],
+            &argv[..argv.len() - 2],
             &[
                 "-tt".to_string(),
                 "-o".to_string(),
@@ -380,7 +416,12 @@ mod tests {
                 "-o".to_string(),
                 "ControlPersist=10m".to_string(),
             ],
-            "every element before the destination is a flag or its value: {argv:?}"
+            "every element before the `--` is a flag or its value: {argv:?}"
+        );
+        assert_eq!(
+            &argv[argv.len() - 2..],
+            &["--".to_string(), "matt@web01.lan".to_string()],
+            "`--` ends the option list so a destination that starts with `-` cannot read as an option: {argv:?}"
         );
     }
 
@@ -493,15 +534,15 @@ mod tests {
             "the destination is still the last element: {argv:?}"
         );
         assert_eq!(
-            &argv[argv.len() - 3..argv.len() - 1],
+            &argv[argv.len() - 4..argv.len() - 2],
             &["-o".to_string(), "BatchMode=yes".to_string()],
-            "the BatchMode pair sits immediately before the destination: {argv:?}"
+            "the BatchMode pair sits immediately before the `--` that precedes the destination: {argv:?}"
         );
         let base = ssh_argv(&entry("db01"), std::path::Path::new("/tmp/cp"));
         let without: Vec<String> = argv
             .iter()
             .enumerate()
-            .filter(|(i, _)| !(argv.len() - 3..argv.len() - 1).contains(i))
+            .filter(|(i, _)| !(argv.len() - 4..argv.len() - 2).contains(i))
             .map(|(_, a)| a.clone())
             .collect();
         assert_eq!(
@@ -589,6 +630,46 @@ mod tests {
         assert!(
             is_self_destination(" matt@pinky ", "pinky"),
             "a padded user@destination is trimmed too"
+        );
+    }
+
+    /// Every builder's argv ends `--`, destination, and the destination keeps
+    /// one element — so an `ssh` value starting with `-` reaches ssh as a
+    /// host name, not as an option.
+    #[test]
+    fn ssh_argvs_end_with_double_dash_then_destination() {
+        let entry = entry("-oProxyCommand=evil");
+        let cp = std::path::Path::new("/tmp/cp");
+        for (name, argv) in [
+            ("ssh_argv", ssh_argv(&entry, cp)),
+            (
+                "connect_argv(batch: false)",
+                connect_argv(&entry, cp, false),
+            ),
+            ("connect_argv(batch: true)", connect_argv(&entry, cp, true)),
+            ("ghost_ssh_argv", ghost_ssh_argv(&entry, cp)),
+        ] {
+            assert_eq!(
+                &argv[argv.len() - 2..],
+                &["--".to_string(), "-oProxyCommand=evil".to_string()],
+                "{name} must end `--`, destination so `-oProxyCommand=evil` cannot read as an option: {argv:?}"
+            );
+            assert_eq!(
+                argv.last().map(String::as_str),
+                Some("-oProxyCommand=evil"),
+                "{name} keeps the destination as one element: {argv:?}"
+            );
+        }
+        let batch = connect_argv(&entry, cp, true);
+        assert!(
+            !batch[..batch.len() - 2].contains(&"-oProxyCommand=evil".to_string()),
+            "the destination appears once, after the `--`: {batch:?}"
+        );
+        let ghost = ghost_ssh_argv(&entry, cp);
+        assert_eq!(
+            &ghost[ghost.len() - 4..ghost.len() - 2],
+            &["-o".to_string(), "BatchMode=yes".to_string()],
+            "BatchMode sits before the `--`, where ssh still reads it as an option: {ghost:?}"
         );
     }
 }

@@ -340,7 +340,7 @@ pub fn client_supports_rgb() -> bool {
 
     if !termname.is_empty()
         && let Ok(out) =
-            crate::process::bounded_output(Command::new("infocmp").args(["-x", &termname]))
+            crate::process::bounded_output(Command::new("infocmp").args(infocmp_args(&termname)))
         && out.status.success()
         && terminfo_advertises_rgb(&String::from_utf8_lossy(&out.stdout))
     {
@@ -367,6 +367,13 @@ fn termfeatures_have_rgb(features: &str) -> bool {
     features
         .split(',')
         .any(|f| f.trim().eq_ignore_ascii_case("RGB"))
+}
+
+/// The `infocmp` argv for a terminfo probe: `-x`, then the termname. The
+/// `--` ends the option list, so a termname that starts with `-` (it comes
+/// from the tmux client) is read as a terminal type, not as an option.
+fn infocmp_args(termname: &str) -> [&str; 3] {
+    ["-x", "--", termname]
 }
 
 /// Does an `infocmp -x` dump advertise truecolor? Matches the `Tc` / `RGB`
@@ -490,6 +497,17 @@ mod tests {
             has_bell: false,
             has_activity: false,
         }
+    }
+
+    /// The `--` before the termname ends infocmp's option list, so a
+    /// client-reported termname starting with `-` cannot read as an option.
+    #[test]
+    fn infocmp_args_end_options_before_the_termname() {
+        assert_eq!(infocmp_args("-V"), ["-x", "--", "-V"]);
+        assert_eq!(
+            infocmp_args("xterm-256color"),
+            ["-x", "--", "xterm-256color"]
+        );
     }
 
     fn sess_with_flags(

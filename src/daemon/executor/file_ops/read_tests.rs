@@ -674,7 +674,7 @@ fn build_remote_read_cmd_is_unchanged() {
     let with_grep = super::build_remote_read_cmd("/tmp/f", 1, 5, Some("er+r?or"));
     assert_eq!(
         with_grep,
-        "echo '__DE_S__'; sed -n '1,5p' '/tmp/f' 2>&1 | grep -E 'er+r?or'; \
+        "echo '__DE_S__'; sed -n '1,5p' '/tmp/f' 2>&1 | grep -E -e 'er+r?or'; \
              echo '__DE_E__'; echo '__DE_DONE__'",
         "the grep suffix is part of the same wire format"
     );

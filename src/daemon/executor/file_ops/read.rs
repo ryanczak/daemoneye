@@ -140,7 +140,7 @@ fn extract_marked(snap: &str, start: &str, end: &str) -> Option<String> {
 fn build_remote_read_cmd(path: &str, start: usize, end: usize, pattern: Option<&str>) -> String {
     let safe_path = super::sq_escape(path);
     let grep_part = pattern
-        .map(|p| format!(" | grep -E '{}'", super::sq_escape(p)))
+        .map(|p| format!(" | grep -E -e '{}'", super::sq_escape(p)))
         .unwrap_or_default();
     format!(
         "echo '__DE_S__'; sed -n '{},{}p' '{}' 2>&1{}; echo '__DE_E__'; echo '__DE_DONE__'",

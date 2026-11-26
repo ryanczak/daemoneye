@@ -1,7 +1,7 @@
 # Phase 08 — argv-injection
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 07 (done)
 **Estimated diff:** ~200 lines
@@ -160,3 +160,123 @@ It is red today: the leading-dash names parse. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 19:40 (started)
+
+**Executor started phase 08.** Status flipped to `in-progress` here and in the
+milestone README phase table.
+
+**Task breakdown** (each closes the acceptance item named):
+
+1. Write the red test `host_id_refuses_a_leading_dash` in `src/host.rs`'s
+   tests and run it red — closes "Leading dash refused".
+2. Add the leading-`-` check to `HostId::parse`; re-run the test green —
+   closes "Leading dash refused".
+3. `ssh_argv`, `connect_argv`, `ghost_ssh_argv` (in `src/host.rs`) and
+   `master_running` (in `src/shell/session.rs`) each emit `"--"` immediately
+   before `entry.ssh`; `entry.ssh` stays last and one element. Insert
+   `BatchMode` before the `--` in `ghost_ssh_argv`; fix the same insertion in
+   `src/daemon/executor/shell_exec_hosted_tests.rs`. Update doc comments that
+   say "the destination is last". Update existing argv tests — closes
+   "ssh argv ends `--`, destination" and "Existing argv tests".
+4. Write `ssh_argvs_end_with_double_dash_then_destination` — closes
+   "ssh argv ends `--`, destination".
+5. `build_remote_read_cmd` emits `| grep -E -e '<pattern>'`; update
+   `build_remote_read_cmd_is_unchanged` in `read_tests.rs` — closes
+   "grep takes `-e`".
+6. Add `infocmp_args` to `src/tmux/session.rs` returning
+   `["-x", "--", termname]`; `client_supports_rgb` calls it; add
+   `infocmp_args_end_options_before_the_termname` — closes
+   "infocmp takes `--`".
+7. Mutation run on `ssh_argv`'s `--` push (fail, restore) — closes
+   "Mutation run".
+8. Grep checks: `grep -c "grep -E -e '"` on `read.rs` prints 1;
+   `git diff e37513ed -- src | grep -cE '^-\s*#\[(tokio::)?test\]'` prints 0 —
+   closes "No test removed".
+9. Run the four gates (`cargo fmt --all`, `cargo build`,
+   `cargo clippy --all-targets --all-features -- -D warnings`,
+   `cargo test`), capture output — closes "Gates".
+10. End-to-end verification entry; commit as one `fix:` commit.
+
+### Update — 2026-11-26 19:55 (end-to-end verification)
+
+**Red run** (before the `HostId::parse` fix):
+
+```
+---- host::tests::host_id_refuses_a_leading_dash stdout ----
+
+thread 'host::tests::host_id_refuses_a_leading_dash' (385424) panicked at src/host.rs:357:13:
+error for "-oProxyCommand=x" must name the leading dash, got "host name \"-oProxyCommand=x\" contains a character outside [A-Za-z0-9._-]; expected [A-Za-z0-9._-]+, 1-64 chars"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    host::tests::host_id_refuses_a_leading_dash
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3187 filtered out; finished in 0.00s
+```
+
+**Mutation run** — removed the `"--"` push from `ssh_argv` only, then:
+
+```
+$ cargo test --lib ssh_argvs_end_with_double_dash_then_destination
+
+failures:
+    host::tests::ssh_argvs_end_with_double_dash_then_destination
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3189 filtered out; finished in 0.00s
+```
+
+Restored by re-adding the one line (verified green afterwards). Positive
+control: the mutation makes the pinned test fail, so the test is live.
+
+**Grep — grep takes `-e`:**
+
+```
+$ grep -c "grep -E -e '" src/daemon/executor/file_ops/read.rs
+1
+```
+
+**Grep — no test removed:**
+
+```
+$ git diff e37513ed -- src | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+```
+
+**Existing argv tests updated, not removed:** `ssh_argv_puts_the_destination_last`
+and `ghost_ssh_argv_sets_batch_mode_before_the_destination` in `src/host.rs`
+now pin `--` immediately before the destination; the BatchMode pair still
+comes before the destination. Files whose argv assertions changed:
+`src/host.rs`, `src/daemon/executor/shell_exec_hosted_tests.rs`.
+
+**Live ssh/infocmp behaviour** (checked by the architect in the phase doc):
+`ssh -G -- -oProxyCommand=evil` → "hostname contains invalid characters";
+`infocmp -x -- -V` → `no match ... for terminal type "-V"`;
+`grep -E -e '-x'` matches a line `-x`.
+
+**Gates:**
+
+```
+$ cargo fmt --all && echo FMT_OK
+FMT_OK
+
+$ cargo build 2>&1 | tail -3
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.44s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -5
+    Checking daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.36s
+
+$ cargo test 2>&1 | grep -E "^test result:"
+test result: ok. 3180 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 152.61s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.33s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```

@@ -1121,8 +1121,8 @@ async fn an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable() {
     let reg = ShellRegistry::default();
     let owner = Owner::Chat("pinky-08f".into());
     // The spawn step: in-process, the real `ssh` argv with `-o
-    // BatchMode=yes` inserted **before the destination** (the last argv
-    // element — options after it become the remote command). In-process
+    // BatchMode=yes` inserted **before the `--` that precedes the
+    // destination** (after the `--` ssh reads an option as the host name). In-process
     // rather than `spawn_detached` because a test binary cannot be
     // re-invoked as the shell host.
     let spawn = |id: ShellId| async move {
@@ -1133,7 +1133,7 @@ async fn an_unanswerable_password_prompt_on_pinky_leaves_the_shell_usable() {
             ..Default::default()
         };
         let mut argv = crate::host::ssh_argv(&entry, &control);
-        let dest = argv.len() - 1;
+        let dest = argv.len() - 2;
         argv.insert(dest, "BatchMode=yes".to_string());
         argv.insert(dest, "-o".to_string());
         let program = crate::shell::which_ssh()?;
