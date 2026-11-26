@@ -1,7 +1,7 @@
 # Phase 05 — name-validation
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress (bounced: [bug-05-1](bugs/bug-05-1.md), [bug-05-2](bugs/bug-05-2.md))
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -493,3 +493,133 @@ $ grep -rn "ingress_name_error" src/daemon/server/ | wc -l
 namespaces: &[&str])` — the bounce note's `list_memories(&[...])` sketch was
 adapted to `list_memories(None, &["../../outside"])` to match the real
 signature.
+
+### Update — 2026-11-26 05:37 (complete, server-authored)
+
+**Summary:** Fixed both bounced bugs test-only, as directed. **bug-05-1:** the fixture in `load_named_prompt_ignores_a_traversing_name` now plants `evil.toml` at `prompts_dir().parent()` (`etc/evil.toml`), the path `"../evil"` actually resolves to, keeping the valid-name positive control. **bug-05-2:** added `memory_readers_refuse_a_traversing_namespace` beside the `add_memory` test, asserting `read_memory`, `delete_memory` and `list_memories(None, &["../../outside"])` each return `Err`. The required mutation check was run and pasted: with `validate_path_name` neutered both tests failed, and after restoring `git diff src/util.rs` is empty.
+
+**Notes for review:**
+- One adaptation: the bounce note sketched `list_memories(&["../../outside"])`, but the real signature is `list_memories(category: Option<MemoryCategory>, namespaces: &[&str])` — the test calls `list_memories(None, &["../../outside"])`.
+- Finish condition met exactly: the lib suite reports **3159 passed; 0 failed**. All four gates clean (`fmt --check` exits 0, build/lint no warnings, full `cargo test` green across every target). Both required greps re-verified: no-test-removed → **0**, `ingress_name_error` count → **9**.
+- Evidence appended to the phase doc's Update Log; committed as `test:` on top of the prior `fix:` work. `git status` is clean; phase status left at `in-progress` for the server's completion tail.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+t ipc_session_info_round_trip ... ok
+test ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test event_log_append_read ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (25597): No such process
+kill: (-26321): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M40-security-hardening/phase-05-name-validation.md` — +58 -0
+- `src/config/tests.rs` — +5 -1
+- `src/memory_tests.rs` — +21 -0
+
+**Commit:** 1413e8ca4e3c2aef91670d108b5c7128a847ff0d
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
