@@ -1,7 +1,7 @@
 # Phase 07 — schedule-delete-gate
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 06b (done)
 **Estimated diff:** ~250 lines
@@ -782,3 +782,30 @@ kill: (-373890): No such process
 **Commit:** 1c0090baa5035b2964731fffb80a2d9dc72f7605
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-07-1 major: `remove_schedule` checked membership and
+  then re-fetched the job under `.expect`, a panic on a removal race; fixed
+  in `1c0090ba` with one `let … else` lookup, 18 turns)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** `tests/hygiene_allowlist.txt` gained
+  `src/cli/commands/stream_prompts.rs 810` with a reason (the spec allowed
+  an entry for `src/ipc.rs`; the overflow landed in the client prompt file
+  instead) — accepted. Two new `#[allow(clippy::too_many_arguments)]`
+  (`remove_schedule`, `prompt_schedule_remove_ratatui`) — accepted, the
+  repo's established convention (43 sites).
+- **Reviewer checks:** four gates green (lib 3177, doc_truth 19,
+  hygiene 16); the production half of `schedule.rs` has no
+  `unwrap`/`expect`/`panic!`; gated list prints 2; no test removed (0).
+  The pasted mutation returned the denial text rather than approving, so
+  it proved only the approved leg; reading
+  `delete_schedule_from_chat_asks_first`, its denied leg asserts the
+  denial text, the prompt frame and the job still listed, so a skipped
+  prompt treated as approved fails it.
+- **Calibration:** the first run landed the whole 18-file phase in 119
+  turns with no read stall — the canned-reply harness (`Vec<u8>` writer,
+  `Cursor` reader) removed the hang class that cost 06b a bounce. The
+  bounce fix took 18 turns.
+
