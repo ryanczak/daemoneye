@@ -649,6 +649,35 @@ pub(super) async fn prompt_schedule_write_ratatui(
     approved
 }
 
+/// A ghost spawn is never auto-approved: no session approval covers a
+/// specialist running autonomously.
+pub(super) async fn prompt_ghost_spawn_ratatui(
+    renderer: &mut crate::cli::render_ratatui::RatatuiRendererStdout,
+    stdin: &AsyncStdin,
+    status: &crate::cli::status_bar::StatusModel,
+    runbook: &str,
+    agent: Option<&str>,
+    host: Option<&str>,
+    message: &str,
+) -> bool {
+    let _ = renderer.commit(&format!(
+        "\n  👻 AI wants to spawn a ghost shell for runbook: {}\n",
+        runbook
+    ));
+    if let Some(a) = agent {
+        let _ = renderer.commit(&format!("  Agent: {a}\n"));
+    }
+    if let Some(h) = host {
+        let _ = renderer.commit(&format!("  Host: {h}\n"));
+    }
+    let _ = renderer.commit(&format!("  Message: {message}\n"));
+    let approved = prompt_yes_no_ratatui(renderer, stdin, status, "", "Approve?").await;
+    if approved {
+        let _ = renderer.commit("  ✓ approved\n");
+    }
+    approved
+}
+
 /// A sudo edit is never auto-approved: neither the session-wide file-edit
 /// approval nor a per-path one covers an edit that runs as root. Neither
 /// covers a config edit (`always_asked`) either.

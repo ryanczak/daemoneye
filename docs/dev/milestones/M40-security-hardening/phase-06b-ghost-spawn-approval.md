@@ -319,3 +319,97 @@ an edit or a `cargo` command.
   - an edit order that starts with the smallest mechanical edit,
     `src/ipc.rs`.
 - A takeover is held back for a second same-class stall.
+
+
+### Update — 2026-11-26 (red run + mutation run, pasted as output)
+
+The first red run of `spawn_ghost_from_chat_asks_first`, against the tree
+before the daemon gate existed (the prompt frame had no sender yet; the
+client half timed out waiting for it):
+
+```
+no GhostSpawnPrompt arrived within 5s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::dispatch_meta::tests::spawn_ghost_from_chat_asks_first
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3180 filtered out; finished in 5.04s
+```
+
+(The client half waits under a 5 s timeout so a missing prompt fails the
+test instead of hanging the suite.)
+
+The mutation run — the chat branch's approval call replaced with a bare
+`true` (prompt skipped), one run of
+`cargo test --lib spawn_ghost_from_chat_asks_first`, then restored; after
+the restore `git diff --stat` matched the pre-mutation diff exactly
+(15 files, +368/−10, no new or missing files):
+
+```
+no GhostSpawnPrompt arrived within 5s
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::executor::dispatch_meta::tests::spawn_ghost_from_chat_asks_first
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3180 filtered out; finished in 5.04s
+
+error: test failed, to rerun pass `--lib`
+```
+
+### Update — 2026-11-26 (end-to-end verification)
+
+The two pinned greps, run once each:
+
+```
+$ awk '/APPROVAL_GATED_TOOLS/,/\];/' src/ai/tools/defs.rs | grep -c spawn_ghost_shell
+1
+
+$ git diff 93da74f6 -- src | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+```
+
+The four gates, run once each on the final tree:
+
+```
+$ cargo fmt --all
+(no output, exit 0)
+
+$ cargo build 2>&1 | tail -2
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.38s
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -2
+    Checking daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.44s
+
+$ cargo test 2>&1 | grep -E "test result:"
+test result: ok. 3171 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.22s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.31s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The named acceptance tests, driven once against the real code paths:
+
+- `daemon::executor::dispatch_meta::tests::spawn_ghost_from_chat_asks_first`
+  (denied leg) and `approved_spawn_proceeds_to_load_the_runbook`
+  (approved leg, proves the spawn went ahead once approved) —
+  `test result: ok. 3 passed` (with
+  `spawn_ghost_from_a_ghost_sends_no_prompt`, which asserts the client side
+  reads 0 bytes after the daemon drops its writer);
+- `ipc::tests::ghost_spawn_prompt_round_trips` —
+  `test result: ok. 1 passed`;
+- `program_status_emit` frame-state table including
+  `(GhostSpawnPrompt, Kind::Permission)` — `test result: ok. 44 passed`;
+- `daemon::stream::tests::approval_gated_contains_expected_tools` —
+  `test result: ok. 1 passed`;
+- `ghost_narrow` (5) and `ghost_host` (4) phase-06a tests pass unchanged;
+- `cargo test --test doc_truth` — `test result: ok. 19 passed; 0 failed`.

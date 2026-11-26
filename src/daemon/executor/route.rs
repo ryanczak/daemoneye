@@ -94,6 +94,7 @@ where
             dispatch_meta::dispatch(
                 call,
                 tx,
+                rx,
                 session_id,
                 sessions,
                 &snap.ghost_policy,

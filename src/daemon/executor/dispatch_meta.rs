@@ -3,10 +3,60 @@
 
 use super::*;
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn dispatch<W>(
+/// The chat-only approval round trip for a ghost spawn: send the prompt,
+/// await the reply under `USER_PROMPT_TIMEOUT`, and accept only an explicit
+/// `GhostSpawnResponse { approved: true }`. A ghost caller never reaches
+/// this.
+async fn ask_chat_approval<W, R>(
     call: &PendingCall,
     tx: &mut W,
+    rx: &mut R,
+    runbook: &str,
+    agent: Option<&str>,
+    host: Option<&str>,
+    message: &str,
+) -> anyhow::Result<bool>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
+{
+    send_response_split(
+        tx,
+        Response::GhostSpawnPrompt {
+            id: call.id().to_string(),
+            runbook: runbook.to_string(),
+            agent: agent.map(str::to_string),
+            host: host.map(str::to_string),
+            message: message.to_string(),
+        },
+    )
+    .await?;
+    let mut line = Vec::new();
+    let read_result = tokio::time::timeout(
+        USER_PROMPT_TIMEOUT,
+        crate::ipc::read_bounded_line(rx, &mut line, crate::ipc::MAX_IPC_MESSAGE_BYTES),
+    )
+    .await;
+    if matches!(read_result, Ok(Ok(0))) {
+        return Err(anyhow::anyhow!("EOF"));
+    }
+    match read_result {
+        Ok(Ok(_)) => Ok(matches!(
+            serde_json::from_slice::<Request>(&line).ok(),
+            Some(Request::GhostSpawnResponse { approved: true, .. })
+        )),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => Err(anyhow::anyhow!(
+            "ghost spawn reply line too large ({e}); refusing the prompt and ending the turn"
+        )),
+        _ => Ok(false),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn dispatch<W, R>(
+    call: &PendingCall,
+    tx: &mut W,
+    rx: &mut R,
     session_id: Option<&str>,
     sessions: &SessionStore,
     ghost_policy: &Option<GhostPolicy>,
@@ -16,6 +66,7 @@ pub(super) async fn dispatch<W>(
 ) -> anyhow::Result<ToolCallOutcome>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
+    R: tokio::io::AsyncBufReadExt + Unpin,
 {
     match call {
         PendingCall::InvalidArgs {
@@ -83,6 +134,33 @@ where
                         .to_string(),
                 ));
             }
+            let approved = if ghost_policy.is_none() {
+                ask_chat_approval(
+                    call,
+                    tx,
+                    rx,
+                    runbook,
+                    agent.as_deref(),
+                    host.as_deref(),
+                    message,
+                )
+                .await?
+            } else {
+                true
+            };
+            crate::daemon::utils::log_event(
+                "ghost_spawn_approval",
+                serde_json::json!({
+                    "session": session_id.unwrap_or("-"),
+                    "runbook": runbook,
+                    "decision": if approved { "approved" } else { "denied" },
+                }),
+            );
+            if !approved {
+                break 'arm Ok(ToolCallOutcome::Result(
+                    "Ghost shell spawn denied by user".to_string(),
+                ));
+            }
             knowledge::spawn_ghost(
                 runbook,
                 message,
@@ -101,5 +179,144 @@ where
             "{} is not one of the tool-set and delegation tools",
             other.tool_name()
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spawn_ghost_call() -> PendingCall {
+        PendingCall::SpawnGhost {
+            id: "gs-1".to_string(),
+            thought_signature: None,
+            runbook: "rb06b".to_string(),
+            message: "do the thing".to_string(),
+            agent: None,
+            host: None,
+        }
+    }
+
+    async fn run_spawn(approved: bool) -> ToolCallOutcome {
+        let (_guard, _home) = crate::test_home();
+        let (daemon_tx, client_rx) = tokio::io::duplex(64 * 1024);
+        let (mut client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_tx = daemon_tx;
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let mut client_rx = tokio::io::BufReader::new(client_rx);
+        let sessions = SessionStore::new();
+        let call = spawn_ghost_call();
+
+        let daemon = async {
+            dispatch(
+                &call,
+                &mut daemon_tx,
+                &mut daemon_rx,
+                Some("chat-1"),
+                &sessions,
+                &None,
+                &None,
+                0,
+                &None,
+            )
+            .await
+        };
+        let client = async {
+            let mut line = Vec::new();
+            crate::ipc::read_bounded_line(&mut client_rx, &mut line, 1024 * 1024)
+                .await
+                .expect("read prompt");
+            let resp: Response = serde_json::from_slice(&line).expect("parse prompt");
+            match resp {
+                Response::GhostSpawnPrompt { runbook, .. } => {
+                    assert_eq!(runbook, "rb06b");
+                    let reply = Request::GhostSpawnResponse {
+                        id: "gs-1".to_string(),
+                        approved,
+                    };
+                    use tokio::io::AsyncWriteExt;
+                    client_tx
+                        .write_all(
+                            format!("{}\n", serde_json::to_string(&reply).unwrap()).as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                    client_tx.flush().await.unwrap();
+                    drop(client_tx);
+                    client_rx
+                }
+                other => panic!("expected GhostSpawnPrompt, got {other:?}"),
+            }
+        };
+        let (outcome, client_rx) = tokio::join!(daemon, client);
+        drop(client_rx);
+        outcome.expect("dispatch must not error")
+    }
+
+    #[tokio::test]
+    async fn spawn_ghost_from_chat_asks_first() {
+        let outcome = run_spawn(false).await;
+        let ToolCallOutcome::Result(text) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(
+            text.contains("denied"),
+            "denied leg must name the denial, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_spawn_proceeds_to_load_the_runbook() {
+        let outcome = run_spawn(true).await;
+        let ToolCallOutcome::Result(text) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(
+            text.contains("Failed to load runbook"),
+            "an approved spawn proceeds to spawn_ghost, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_ghost_from_a_ghost_sends_no_prompt() {
+        let (_guard, _home) = crate::test_home();
+        let (daemon_tx, client_rx) = tokio::io::duplex(64 * 1024);
+        let (_client_tx, daemon_rx) = tokio::io::duplex(64 * 1024);
+        let mut daemon_tx = daemon_tx;
+        let mut daemon_rx = tokio::io::BufReader::new(daemon_rx);
+        let mut client_rx = tokio::io::BufReader::new(client_rx);
+        let sessions = SessionStore::new();
+        let policy = crate::daemon::policy::GhostPolicy::from_config(&crate::ipc::GhostConfig {
+            spawn_depth: 1,
+            ..Default::default()
+        });
+        let ghost_policy = Some(policy);
+
+        let outcome = dispatch(
+            &spawn_ghost_call(),
+            &mut daemon_tx,
+            &mut daemon_rx,
+            Some("gsid-1"),
+            &sessions,
+            &ghost_policy,
+            &None,
+            1,
+            &None,
+        )
+        .await
+        .expect("dispatch must not error");
+        let ToolCallOutcome::Result(text) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(
+            text.contains("Failed to load runbook"),
+            "a ghost caller spawns without asking, got: {text}"
+        );
+        drop(daemon_tx);
+        let mut line = Vec::new();
+        let n = crate::ipc::read_bounded_line(&mut client_rx, &mut line, 1024 * 1024)
+            .await
+            .expect("read after drop");
+        assert_eq!(n, 0, "no prompt frame may reach the client");
     }
 }

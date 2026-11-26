@@ -34,6 +34,7 @@ pub static APPROVAL_GATED_TOOLS: &[&str] = &[
     "run_terminal_command",
     "schedule_command",
     "send_input",
+    "spawn_ghost_shell",
     "write_runbook",
     "write_script",
 ];

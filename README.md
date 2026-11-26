@@ -604,7 +604,7 @@ Tools marked **⚠** require explicit user approval before they execute.
 | `list_schedules` | List scheduled jobs with status and next fire time |
 | `cancel_schedule` | Cancel a scheduled job |
 | `delete_schedule` | Permanently delete a scheduled job |
-| `spawn_ghost_shell` | Delegate a task to an autonomous background Ghost Shell; `host?` runs the specialist on a configured host or "local", fenced by both the runbook's and your own `hosts:` lists |
+| `spawn_ghost_shell` **⚠** | Delegate a task to an autonomous background Ghost Shell; approval-gated from chat; `host?` runs the specialist on a configured host or "local", fenced by both the runbook's and your own `hosts:` lists |
 | `await_agent_result` | Wait for a spawned agent ghost shell and return its result |
 | `load_tools` | Pull a deferred tool group into the active tool set |
 

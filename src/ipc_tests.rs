@@ -691,6 +691,58 @@ fn request_schedule_write_response_roundtrip() {
 }
 
 #[test]
+fn ghost_spawn_prompt_round_trips() {
+    let with_both = Response::GhostSpawnPrompt {
+        id: "gs_1".to_string(),
+        runbook: "rb06b".to_string(),
+        agent: Some("agent-7".to_string()),
+        host: Some("web-1".to_string()),
+        message: "Spawning ghost".to_string(),
+    };
+    match roundtrip_resp(&with_both) {
+        Response::GhostSpawnPrompt {
+            id,
+            runbook,
+            agent,
+            host,
+            message,
+        } => {
+            assert_eq!(id, "gs_1");
+            assert_eq!(runbook, "rb06b");
+            assert_eq!(agent.as_deref(), Some("agent-7"));
+            assert_eq!(host.as_deref(), Some("web-1"));
+            assert_eq!(message, "Spawning ghost");
+        }
+        _ => panic!("wrong variant"),
+    }
+    let bare = Response::GhostSpawnPrompt {
+        id: "gs_2".to_string(),
+        runbook: "rb06b".to_string(),
+        agent: None,
+        host: None,
+        message: "Spawning ghost".to_string(),
+    };
+    match roundtrip_resp(&bare) {
+        Response::GhostSpawnPrompt { agent, host, .. } => {
+            assert!(agent.is_none());
+            assert!(host.is_none());
+        }
+        _ => panic!("wrong variant"),
+    }
+    let req = Request::GhostSpawnResponse {
+        id: "gs_1".to_string(),
+        approved: true,
+    };
+    match roundtrip_req(&req) {
+        Request::GhostSpawnResponse { id, approved } => {
+            assert_eq!(id, "gs_1");
+            assert!(approved);
+        }
+        _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
 fn response_schedule_write_prompt_roundtrip() {
     let resp = Response::ScheduleWritePrompt {
         id: "sch_2".to_string(),

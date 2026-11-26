@@ -175,7 +175,11 @@ the caller is a ghost). Six fields:
   a child with no policy takes the caller's.
 
 A chat caller (`caller_policy: None`) is not narrowed and sees none of
-this; the interactive-chat approval prompt for a spawn is a separate gate.
+this; the interactive-chat approval prompt for a spawn is a separate gate:
+from chat, `spawn_ghost_shell` asks the user first, is never
+session-approved, and — being on `APPROVAL_GATED_TOOLS` — is exempt from
+the per-turn, per-session and per-tool budget caps in `daemon::stream`
+(spawns stay bounded by `max_concurrent_ghosts` and the depth cap).
 
 ---
 

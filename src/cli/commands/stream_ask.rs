@@ -194,6 +194,25 @@ async fn handle_script_or_schedule_prompt(
                     .await;
             send_request(tx, Request::ScheduleWriteResponse { id, approved }).await?;
         }
+        Response::GhostSpawnPrompt {
+            id,
+            runbook,
+            agent,
+            host,
+            message,
+        } => {
+            let approved = prompt_ghost_spawn_ratatui(
+                renderer,
+                stdin,
+                sb,
+                &runbook,
+                agent.as_deref(),
+                host.as_deref(),
+                &message,
+            )
+            .await;
+            send_request(tx, Request::GhostSpawnResponse { id, approved }).await?;
+        }
         _ => {}
     }
     status.reply();
@@ -453,7 +472,8 @@ async fn handle_stream_frame(
         }
         Response::ScriptDeletePrompt { .. }
         | Response::ScriptWritePrompt { .. }
-        | Response::ScheduleWritePrompt { .. } => {
+        | Response::ScheduleWritePrompt { .. }
+        | Response::GhostSpawnPrompt { .. } => {
             handle_script_or_schedule_prompt(msg, tx, renderer, stdin, sb, approval, status)
                 .await?;
             Ok(false)

@@ -144,6 +144,11 @@ pub enum Request {
         id: String,
         approved: bool,
     },
+    /// Approve or deny a ghost shell spawn proposed by the AI.
+    GhostSpawnResponse {
+        id: String,
+        approved: bool,
+    },
     /// Approve or deny a runbook write proposed by the AI.
     RunbookWriteResponse {
         id: String,
@@ -509,6 +514,17 @@ pub enum Response {
         name: String,
         kind: String,
         action: String,
+    },
+    /// The AI wants to spawn a ghost shell; the client MUST prompt the user
+    /// for approval, then return `Request::GhostSpawnResponse`.
+    GhostSpawnPrompt {
+        id: String,
+        runbook: String,
+        #[serde(default)]
+        agent: Option<String>,
+        #[serde(default)]
+        host: Option<String>,
+        message: String,
     },
     /// The current list of scheduled jobs.
     ScheduleList { jobs: Vec<ScheduleListItem> },

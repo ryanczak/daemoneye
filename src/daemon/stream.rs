@@ -344,12 +344,13 @@ mod tests {
         // The 2026-08-08 reconciliation, pinned in both directions. These four
         // are the tools whose budget treatment changed when the exemption
         // stopped being a hand-maintained copy and became the prompting set.
-        // `spawn_ghost_shell` and `delete_schedule` prompt for nothing, so a
-        // cap can now reach them; `create_agent` and `delete_agent` do prompt,
-        // so a cap no longer can.
+        // `spawn_ghost_shell` now prompts from chat (M40 phase 06b), so it is
+        // exempt; `delete_schedule` prompts for nothing, so a cap can reach
+        // it; `create_agent` and `delete_agent` do prompt, so a cap no longer
+        // can.
         assert!(
-            !APPROVAL_GATED.contains(&"spawn_ghost_shell"),
-            "spawn_ghost_shell sends no approval prompt — it must be cappable"
+            APPROVAL_GATED.contains(&"spawn_ghost_shell"),
+            "spawn_ghost_shell prompts from chat — it must be exempt from the caps"
         );
         assert!(
             !APPROVAL_GATED.contains(&"delete_schedule"),

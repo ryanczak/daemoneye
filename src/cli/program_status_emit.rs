@@ -95,6 +95,7 @@ pub fn frame_state(frame: &crate::ipc::Response) -> Option<crate::shell::program
         | R::ScriptWritePrompt { .. }
         | R::ScriptDeletePrompt { .. }
         | R::ScheduleWritePrompt { .. }
+        | R::GhostSpawnPrompt { .. }
         | R::RunbookWritePrompt { .. }
         | R::RunbookDeletePrompt { .. }
         | R::CredentialPrompt { .. }
@@ -117,6 +118,7 @@ pub fn frame_kind(frame: &crate::ipc::Response) -> Option<crate::shell::program_
         | R::ScriptWritePrompt { .. }
         | R::ScriptDeletePrompt { .. }
         | R::ScheduleWritePrompt { .. }
+        | R::GhostSpawnPrompt { .. }
         | R::RunbookWritePrompt { .. }
         | R::RunbookDeletePrompt { .. } => Some(Kind::Permission),
         _ => None,

@@ -448,6 +448,16 @@ fn program_status_emit_frame_mapping() {
             Kind::Permission,
         ),
         (
+            R::GhostSpawnPrompt {
+                id: String::new(),
+                runbook: String::new(),
+                agent: None,
+                host: None,
+                message: String::new(),
+            },
+            Kind::Permission,
+        ),
+        (
             R::RunbookWritePrompt {
                 id: String::new(),
                 runbook_name: String::new(),
