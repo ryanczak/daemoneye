@@ -13,7 +13,7 @@
 mod active;
 mod parse;
 mod process;
-mod server;
+pub(crate) mod server;
 mod trigger;
 
 pub use parse::*;

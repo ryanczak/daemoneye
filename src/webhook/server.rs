@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use axum::{
-    Json, Router,
+    Router,
     extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode},
     routing::post,
@@ -76,6 +76,19 @@ fn admit_request(state: &WebhookState, ip: IpAddr) -> bool {
 // HTTP handler
 // ---------------------------------------------------------------------------
 
+/// Byte-equality with no early return on contents, so the comparison does not
+/// leak how many leading bytes matched. The length may leak; the bytes may not.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Returns true if the request is authorized for the given secret.
 /// When `secret` is empty, all requests are allowed.
 fn is_authorized(secret: &str, headers: &HeaderMap) -> bool {
@@ -86,14 +99,18 @@ fn is_authorized(secret: &str, headers: &HeaderMap) -> bool {
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    auth == format!("Bearer {}", secret)
+    let expected = format!("Bearer {}", secret);
+    constant_time_eq(auth.as_bytes(), expected.as_bytes())
 }
+
+/// Axum's old default body cap before phase 09a moved the read past auth.
+const MAX_WEBHOOK_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 async fn handle_webhook(
     State(state): State<Arc<WebhookState>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
-    Json(body): Json<Value>,
+    body: axum::body::Body,
 ) -> StatusCode {
     let source_ip = addr.ip();
     if !admit_request(&state, source_ip) {
@@ -121,6 +138,40 @@ async fn handle_webhook(
         );
         return StatusCode::UNAUTHORIZED;
     }
+
+    let bytes = match axum::body::to_bytes(body, MAX_WEBHOOK_BODY_BYTES).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            log::warn!(
+                "Webhook: body over {} bytes or unreadable",
+                MAX_WEBHOOK_BODY_BYTES
+            );
+            crate::daemon::stats::record_webhook_rejected();
+            crate::daemon::utils::log_event(
+                "webhook_discarded",
+                serde_json::json!({
+                    "reason": "body_too_large",
+                    "alert_name": "-",
+                }),
+            );
+            return StatusCode::PAYLOAD_TOO_LARGE;
+        }
+    };
+
+    let body: Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            log::warn!("Webhook: received payload with no parseable alerts");
+            crate::daemon::utils::log_event(
+                "webhook_discarded",
+                serde_json::json!({
+                    "reason": "unparseable",
+                    "alert_name": "-",
+                }),
+            );
+            return StatusCode::BAD_REQUEST;
+        }
+    };
 
     let alerts = parse_payload(&body);
     if alerts.is_empty() {
@@ -155,7 +206,10 @@ async fn handle_webhook(
 /// (`docs/design/daemon-instance.md` § 4.2).
 /// Fail-closed guard for the webhook listener (H2). Returns `Err` when the
 /// configured bind would expose an unauthenticated webhook to the network.
-fn validate_webhook_bind(bind_ip: &std::net::IpAddr, secret: &str) -> Result<(), String> {
+pub(crate) fn validate_webhook_bind(
+    bind_ip: &std::net::IpAddr,
+    secret: &str,
+) -> Result<(), String> {
     // Every webhook post can launch an autonomous ghost shell that runs
     // arbitrary commands on this host. Exposing that to the network without
     // a bearer token is an unauthenticated remote-code-execution vector, so
@@ -281,6 +335,101 @@ mod tests {
             "mysecret".parse().unwrap(),
         );
         assert!(!is_authorized("mysecret", &h));
+    }
+
+    #[test]
+    fn constant_time_eq_matches_only_equal_bytes() {
+        assert!(constant_time_eq(b"", b""), "two empty slices match");
+        assert!(
+            constant_time_eq(b"daemon-eye", b"daemon-eye"),
+            "equal slices match"
+        );
+        assert!(
+            !constant_time_eq(b"xismatch", b"oismatch"),
+            "a difference at the first byte is caught"
+        );
+        assert!(
+            !constant_time_eq(b"middle-diff", b"middlf-diff"),
+            "a difference in the middle is caught"
+        );
+        assert!(
+            !constant_time_eq(b"tail-end", b"tail-enx"),
+            "a difference at the last byte is caught"
+        );
+        assert!(
+            !constant_time_eq(b"short", b"shorter"),
+            "a length difference is caught"
+        );
+    }
+
+    // ── Auth and the body cap run before the body is read ──────────────────
+
+    #[tokio::test]
+    async fn webhook_refuses_before_reading_the_body() {
+        let _guard = crate::test_home();
+        let mut cfg = crate::config::Config::default();
+        cfg.webhook.secret = "s3cret".into();
+        let handle = std::sync::Arc::new(crate::config::ConfigHandle::new(cfg));
+        let state = std::sync::Arc::new(test_state_from(handle));
+        let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+        let oversized: Vec<u8> = vec![b'x'; 3 * 1024 * 1024];
+
+        // Wrong token, 3 MiB body: refused before the body is read.
+        let resp = handle_webhook(
+            State(std::sync::Arc::clone(&state)),
+            headers_with_bearer("wrong"),
+            ConnectInfo(addr),
+            axum::body::Body::from(oversized.clone()),
+        )
+        .await;
+        assert_eq!(
+            resp,
+            StatusCode::UNAUTHORIZED,
+            "a wrong token is refused without the 3 MiB body being parsed"
+        );
+
+        // Right token, same 3 MiB body: over the 2 MiB cap → 413.
+        let resp = handle_webhook(
+            State(std::sync::Arc::clone(&state)),
+            headers_with_bearer("s3cret"),
+            ConnectInfo(addr),
+            axum::body::Body::from(oversized),
+        )
+        .await;
+        assert_eq!(
+            resp,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "a 3 MiB body exceeds the 2 MiB cap"
+        );
+
+        // Right token, unparseable body → 400.
+        let resp = handle_webhook(
+            State(std::sync::Arc::clone(&state)),
+            headers_with_bearer("s3cret"),
+            ConnectInfo(addr),
+            axum::body::Body::from("not json"),
+        )
+        .await;
+        assert_eq!(
+            resp,
+            StatusCode::BAD_REQUEST,
+            "a non-JSON body is refused as unparseable"
+        );
+
+        // Right token, valid JSON with no alerts → 400 (unchanged path).
+        let resp = handle_webhook(
+            State(std::sync::Arc::clone(&state)),
+            headers_with_bearer("s3cret"),
+            ConnectInfo(addr),
+            axum::body::Body::from("{}"),
+        )
+        .await;
+        assert_eq!(
+            resp,
+            StatusCode::BAD_REQUEST,
+            "a JSON body with no parseable alerts is refused"
+        );
     }
 
     // ── Fail-closed bind validation (H2) ───────────────────────────────────

@@ -74,6 +74,14 @@ HTTPS-terminating proxy in front of axum). Every request to the webhook now
 beats a per-IP fixed-window rate limit (default 30 req/60 s), since each one
 can trigger a ghost-shell AI burn.
 
+The rate limit and the Bearer check both run **before** the request body is
+read: an unauthenticated client is refused without getting the JSON parser
+for free, and the body is capped at 2 MiB (`413` past the cap). The secret
+compare is constant-time — a mismatch leaks nothing about how many leading
+bytes matched. A `daemoneye reload` rotates `webhook.secret` live, and a
+reload that would empty the secret while the running bind is non-loopback is
+refused whole — nothing applied, the running config untouched.
+
 ### 4. Ghost trigger strictness
 
 `evaluate_watchdog_response` acts **only** on an explicit, final

@@ -225,7 +225,7 @@ asymmetry**: for scripts, runbooks and memory the *write* side is core while the
 
 ## Important Invariants
 
-- Daemon-side code reads its config through `config::current()` (`src/config/handle.rs`), never `Config::load()`. The daemon installs the process-wide handle in `run_daemon`; `Request::Reload` / `daemoneye reload` re-reads `config.toml`, keeps the restart-only sections (`daemon`, `webhook`, `sandbox`, `execution`) at their running values, and swaps the rest. Uninstalled — a CLI process or a unit test — `current()` falls back to a per-call `Config::load().unwrap_or_default()`, so only a daemon reads a swapped config.
+- Daemon-side code reads its config through `config::current()` (`src/config/handle.rs`), never `Config::load()`. The daemon installs the process-wide handle in `run_daemon`; `Request::Reload` / `daemoneye reload` re-reads `config.toml`, keeps the restart-only sections (`daemon`, `webhook`, `sandbox`, `execution`) at their running values, and swaps the rest — except `webhook.secret`, which a reload rotates (a reload that would empty it while the running `bind_addr` is not loopback is refused whole). Uninstalled — a CLI process or a unit test — `current()` falls back to a per-call `Config::load().unwrap_or_default()`, so only a daemon reads a swapped config.
 - Every `events.jsonl` record carries `ts`, `event`, and `pid`; `log_event` stamps
   `pid` itself, so call sites must not pass one. Key **order** in the serialized
   line is `serde_json`'s (alphabetical — this crate does not enable

@@ -1,7 +1,7 @@
 # Phase 09a — webhook-auth
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 08 (done)
 **Estimated diff:** ~250 lines
@@ -222,3 +222,35 @@ restart. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 21:20 (started)
+
+Work on phase 09a (webhook-auth) has begun. First red test
+`reload_rotates_the_webhook_secret` written and confirmed red: `applied`
+is empty and the running secret stays `"old"`.
+
+Task list (each line names the acceptance item it closes):
+
+1. Write the reload-rotation fix in `ConfigHandle::reload` (`[webhook]`
+   restart-only except `secret`; `webhook.secret` reported under
+   `applied`) → closes **Secret rotates**.
+2. Write and pass `reload_holds_the_webhook_port_for_a_restart` → closes
+   **Other webhook keys still wait**.
+3. Fail-closed refusal: a reload that would empty `webhook.secret` on a
+   non-loopback running bind is refused whole (`error` naming
+   `webhook.secret`, nothing applied); `validate_webhook_bind` raised to
+   `pub(crate)` → closes **No empty secret on an exposed bind**.
+4. `constant_time_eq` + test; route `is_authorized` through it → closes
+   **Constant-time compare**.
+5. Handler reorder: `Body` extractor in place of `Json<Value>`, rate
+   limit → Bearer check → `to_bytes(MAX_WEBHOOK_BODY_BYTES)` →
+   `from_slice`; 413/`body_too_large` and 400/`unparseable` paths; new
+   test `webhook_refuses_before_reading_the_body` → closes **Auth
+   before the body**.
+6. Docs: README § Configuration, CLAUDE.md Important Invariants,
+   `docs/security.md` § 3 → doc criterion.
+7. Existing-test check + integration run + mutation run + no-test-removed
+   grep → closes **Existing tests**, **Mutation run**, **No test
+   removed**.
+8. Four gates once each, evidence entry, one `fix:` commit → closes
+   **Gates**, **Capture the evidence**.

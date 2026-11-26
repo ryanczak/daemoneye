@@ -36,6 +36,24 @@ impl ConfigHandle {
             },
             Ok(mut fresh) => {
                 let old = self.current();
+                // Fail closed: a reload that would empty the secret while the
+                // running listener is exposed is refused whole, running config
+                // untouched.
+                let fresh_secret = fresh.webhook.secret.clone();
+                let bind_ip: std::net::IpAddr = old
+                    .webhook
+                    .bind_addr
+                    .parse()
+                    .unwrap_or_else(|_| std::net::Ipv4Addr::LOCALHOST.into());
+                if let Err(reason) =
+                    crate::webhook::server::validate_webhook_bind(&bind_ip, &fresh_secret)
+                {
+                    return ReloadReport {
+                        applied: Vec::new(),
+                        restart_required: Vec::new(),
+                        error: Some(anyhow::anyhow!("reload refused (webhook.secret): {reason}")),
+                    };
+                }
                 // Restart-only sections keep their running values; keys that
                 // changed inside one are reported as waiting for a restart.
                 let mut restart_required = Vec::new();
@@ -49,8 +67,10 @@ impl ConfigHandle {
                         ));
                     }
                 }
+                restart_required.retain(|key| key != "webhook.secret");
                 fresh.daemon = old.daemon.clone();
                 fresh.webhook = old.webhook.clone();
+                fresh.webhook.secret = fresh_secret;
                 fresh.sandbox = old.sandbox.clone();
                 fresh.execution = old.execution.clone();
 
@@ -374,6 +394,69 @@ mod tests {
     }
 
     #[test]
+    fn reload_holds_the_webhook_port_for_a_restart() {
+        let _guard = crate::test_home();
+        write_config("[webhook]\nport = 9393\nsecret = \"keep\"\n");
+        let handle = std::sync::Arc::new(ConfigHandle::new(Config::load().expect("start")));
+
+        write_config("[webhook]\nport = 9400\nsecret = \"keep\"\n");
+        let report = handle.reload();
+
+        assert!(
+            report.error.is_none(),
+            "the file parses: {:?}",
+            report.error
+        );
+        assert!(
+            report
+                .restart_required
+                .contains(&"webhook.port".to_string()),
+            "the port waits for a restart: {:?}",
+            report.restart_required
+        );
+        assert!(
+            !report.applied.contains(&"webhook.port".to_string()),
+            "the port is never applied live: {:?}",
+            report.applied
+        );
+        assert_eq!(
+            handle.current().webhook.port,
+            9393,
+            "the running port is unchanged until a restart"
+        );
+    }
+
+    #[test]
+    fn reload_refuses_to_empty_the_secret_on_a_public_bind() {
+        let _guard = crate::test_home();
+        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nsecret = \"old\"\n");
+        let handle = std::sync::Arc::new(ConfigHandle::new(Config::load().expect("start")));
+
+        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nsecret = \"\"\n");
+        let report = handle.reload();
+
+        let err = report
+            .error
+            .as_ref()
+            .expect("emptying the secret on an exposed bind is refused");
+        let text = format!("{err:#}");
+        assert!(
+            text.contains("webhook.secret"),
+            "the refusal names the key: {text}"
+        );
+        assert!(
+            report.applied.is_empty() && report.restart_required.is_empty(),
+            "nothing is applied from a refused reload: {:?}",
+            report
+        );
+        assert_eq!(
+            handle.current().webhook.secret,
+            "old",
+            "the running secret survives the refusal"
+        );
+    }
+
+    #[test]
     fn reload_reply_names_keys_never_values() {
         let _guard = crate::test_home();
         write_config(
@@ -420,6 +503,39 @@ mod tests {
             "no change gives two empty lists: applied={:?} restart={:?}",
             report.applied,
             report.restart_required
+        );
+    }
+
+    #[test]
+    fn reload_rotates_the_webhook_secret() {
+        let _guard = crate::test_home();
+        write_config("[webhook]\nsecret = \"old\"\n");
+        let handle = std::sync::Arc::new(ConfigHandle::new(Config::load().expect("start")));
+
+        write_config("[webhook]\nsecret = \"new\"\n");
+        let report = handle.reload();
+
+        assert!(
+            report.error.is_none(),
+            "a valid file reloads cleanly: {:?}",
+            report.error
+        );
+        assert!(
+            report.applied.contains(&"webhook.secret".to_string()),
+            "the rotated secret is reported as applied: {:?}",
+            report.applied
+        );
+        assert!(
+            !report
+                .restart_required
+                .contains(&"webhook.secret".to_string()),
+            "the secret never waits for a restart: {:?}",
+            report.restart_required
+        );
+        assert_eq!(
+            handle.current().webhook.secret,
+            "new",
+            "the running secret followed the reload"
         );
     }
 

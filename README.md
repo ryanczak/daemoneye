@@ -714,7 +714,7 @@ View logs with `daemoneye logs` (tails `~/.daemoneye/var/log/daemon.log`) or thr
 
 ## Configuration
 
-DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values. Every key below also appears — commented, with its default — in the seeded template (`assets/etc/config.toml`); a test gate keeps that template in sync with the config structs, so the file on disk is always a complete reference. A hand edit to the file takes effect when the daemon next reloads it (`daemoneye reload`) or restarts — not at the next request; a few sections (`[daemon]`, `[webhook]`, `[sandbox]`, `[execution]`) always wait for a restart.
+DaemonEye stores its configuration in `~/.daemoneye/etc/config.toml`. The file is created automatically on first launch with default values. Every key below also appears — commented, with its default — in the seeded template (`assets/etc/config.toml`); a test gate keeps that template in sync with the config structs, so the file on disk is always a complete reference. A hand edit to the file takes effect when the daemon next reloads it (`daemoneye reload`) or restarts — not at the next request; a few sections (`[daemon]`, `[sandbox]`, `[execution]`) always wait for a restart, as does `[webhook]` except `webhook.secret`, which a reload rotates.
 
 ### Full example
 

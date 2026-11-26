@@ -195,10 +195,20 @@ fn parse_generic(body: &Value) -> Option<InternalAlert> {
         .to_string();
 
     let description = if description.is_empty() {
-        serde_json::to_string_pretty(body).unwrap_or_default()
+        // Fall back to the full JSON body as description — but only when the
+        // body actually carried something; `{}` has nothing to describe.
+        if body.as_object().is_some_and(|o| !o.is_empty()) {
+            serde_json::to_string_pretty(body).unwrap_or_default()
+        } else {
+            String::new()
+        }
     } else {
         description
     };
+
+    if summary.is_empty() && description.is_empty() {
+        return None;
+    }
 
     let severity = body["severity"]
         .as_str()
@@ -418,6 +428,15 @@ mod tests {
         let alerts = parse_payload(&payload);
         assert_eq!(alerts.len(), 1);
         assert!(!alerts[0].description.is_empty());
+    }
+
+    #[test]
+    fn generic_empty_object_yields_no_alert() {
+        let payload = serde_json::json!({});
+        assert!(
+            parse_payload(&payload).is_empty(),
+            "`{{}}` describes nothing — an empty object must not become an alert"
+        );
     }
 
     #[test]
