@@ -1,7 +1,7 @@
 # Phase 06b — ghost-spawn-approval
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: bug-06b-1, bug-06b-2)
 **Drafted:** 2026-11-26
 **Depends on:** 06a (done)
 **Estimated diff:** ~300 lines
@@ -154,6 +154,19 @@ It is red today: no prompt frame is sent. Paste the red run.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 93da74f6 -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`
 - [ ] **Gates:** all four pass, run once each.
+- [ ] **bug-06b-1, the mutation fails rather than hangs:**
+      1. Put `if true { return Ok(true); }` at the top of
+         `ask_chat_approval`.
+      2. Run `cargo test --lib --no-run`, then run
+         `timeout 120 cargo test --lib spawn_ghost_from_chat_asks_first`
+         once.
+      3. It prints `test result: FAILED` and its exit code is **not 124**.
+         Today it is 124, a hang.
+      4. Restore by undoing that one edit, not by copying a backup file.
+- [ ] **bug-06b-2, a ghost caller logs no approval:**
+      `spawn_ghost_from_a_ghost_logs_no_approval_event` passes. Today it
+      does not exist, and the event is logged. The lib suite reports
+      **3172** passed, **not 3171**.
 
 ## Spec
 
@@ -559,3 +572,52 @@ kill: (-235437): No such process
 **Commit:** 4f2b7cbeb9189229f6c43d8621fab7f13379c953
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce: bug-06b-1, bug-06b-2)
+
+**All four gates are green and the tree is clean. That is expected here,
+and it is NOT evidence the phase is done.**
+
+**Already approved, do not redo:**
+- the wire pair and its round-trip test;
+- `ask_chat_approval` and its round trip;
+- the clients;
+- `APPROVAL_GATED_TOOLS` and the README `**⚠**`;
+- the docs;
+- the `daemon/stream.rs` assertion flip. It is outside the closed list but
+  forced by decision 2, and it is accepted.
+
+**There are exactly two edits left, both in
+`src/daemon/executor/dispatch_meta.rs`:**
+
+1. **bug-06b-1, the test harness.**
+   - **The problem:** in `run_spawn`, the daemon future borrows
+     `daemon_tx`, and the client's prompt read has no time bound. So when
+     the gate is skipped, the test hangs.
+   - **The fix:** make the daemon side an `async move` block that owns
+     `daemon_tx` (and whatever else `dispatch` needs) so the writer drops
+     when `dispatch` returns. Or bound the client read with
+     `tokio::time::timeout`, as you did at turn 160. Either works.
+   - **Your turn-162 restore** (`cp /tmp/dm_good.rs …`) reverted that
+     timeout. The red and mutation outputs pasted above came from a tree
+     that is no longer committed.
+   - **Restore with `git diff` / an undo of the single mutation line.**
+     Never copy a backup over the file.
+2. **bug-06b-2, the event.** Log `ghost_spawn_approval` only on the chat
+   branch, after `ask_chat_approval` returns. Then add
+   `spawn_ghost_from_a_ghost_logs_no_approval_event`:
+   - **Setup:** that of `spawn_ghost_from_a_ghost_sends_no_prompt`.
+   - **Read:** `crate::daemon::utils::for_each_event_between(None, None,
+     &mut |v| …)` under the same `crate::test_home()`. `log_event` writes
+     synchronously into that HOME.
+   - **Assert:** no record has `v["event"] == "ghost_spawn_approval"`.
+
+**Finish condition:** the lib suite reports **3172 passed**, not 3171.
+
+**Paste three outputs, each run once, each from the tree you commit:**
+- the bug-06b-1 mutation run (`test result: FAILED`, plus `echo $?` showing
+  a value other than 124);
+- the bug-06b-2 mutation run (the `log_event` moved back outside the
+  branch, so the new test fails);
+- the four gates.
+
