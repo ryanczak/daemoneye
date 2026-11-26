@@ -1,7 +1,7 @@
 # Phase 05 — name-validation
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: [bug-05-1](bugs/bug-05-1.md), [bug-05-2](bugs/bug-05-2.md))
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -162,8 +162,17 @@ red run.
       `session_store_tests` and `config::tests` suites pass unchanged.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 8c8ddcf0 -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`
-- [ ] **Gates:** all four pass, run once each. The lib suite reports **more
-      than 3149** passed (3149 today).
+- [ ] **Prompt test is real (bug-05-1):** with `validate_path_name`
+      mutated to always return `Ok`, `cargo test --lib load_named_prompt_ignores_a_traversing_name`
+      **fails**. Run it once, paste the output, and restore. Today it passes
+      under the mutation.
+- [ ] **Memory readers tested (bug-05-2):**
+      `memory_readers_refuse_a_traversing_namespace` passes, and fails
+      under the same mutation.
+- [ ] **Gates:** all four pass, run once each. The lib suite reports
+      **exactly 3159** passed: 3158 today, plus
+      `memory_readers_refuse_a_traversing_namespace`. The prompt test is
+      rewritten, not added.
 
 ## Spec
 
@@ -388,3 +397,41 @@ kill: (-4165698): No such process
 **Commit:** f3b37f7be2907cce9083f7e4549ea6d9b4fc01e6
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+the phase is done.**
+
+**Already approved, do not redo:**
+- `validate_path_name` and its test;
+- the agents, memory, ingress and session-store checks, and their tests;
+- `load_named_prompt`'s fallback, which is correct;
+- `docs/security.md` § 9.
+
+**Exactly two pieces of work are left. Both are test-only:**
+
+1. **[bug-05-1](bugs/bug-05-1.md).** Fix the fixture in
+   `load_named_prompt_ignores_a_traversing_name` (`src/config/tests.rs`).
+   Plant `evil.toml` (system `EVIL`) at `prompts_dir().parent()`, joined
+   with `evil.toml`. That is where `"../evil"` points. Today the test
+   plants it inside `prompts_dir()`, so it passes even without the fix.
+   Keep its positive control, adjusting it so that it still reads a valid
+   name.
+2. **[bug-05-2](bugs/bug-05-2.md).** Add
+   `memory_readers_refuse_a_traversing_namespace` to `src/memory_tests.rs`,
+   beside `add_memory_refuses_a_traversing_namespace`, with the same
+   temp-`HOME` helper. `read_memory`, `delete_memory` and
+   `list_memories(&["../../outside"])` must each return `Err`.
+
+**Mutation check (required, pasted as output):**
+1. In `src/util.rs`, make `validate_path_name` return `Ok(())` as its
+   first statement.
+2. Run both tests, once each, and see each fail.
+3. Restore. `git diff src/util.rs` must then be empty.
+
+**Closed file list:** `src/config/tests.rs`, `src/memory_tests.rs`, and
+`src/util.rs` for the temporary mutation only. Read at most **2** files
+before your first edit.
+
+**Finish condition:** the lib suite reports **3159**, not 3158 or 3160.
