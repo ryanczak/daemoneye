@@ -1,7 +1,7 @@
 # Phase 09b — webhook-fanout
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: bug-09b-1)
 **Drafted:** 2026-11-26
 **Depends on:** 09a (done)
 **Estimated diff:** ~300 lines
@@ -164,6 +164,12 @@ claim against the tree on 2026-11-26.
       3. Restore by undoing that one edit, never by copying a backup file.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 3c6fde51 -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'`
+- [ ] **bug-09b-1 (the bounce):**
+      `untrusted_alert_block_survives_non_ascii_text` passes, with the
+      inputs and assertions in `bugs/bug-09b-1.md`. Paste its red run: the
+      `ẞ` input panics today.
+- [ ] **Bounce test count:** the lib suite reports **3196** passed, not
+      3195 and not more.
 - [ ] **Gates:** all four pass, each run once.
 
 ## Spec
@@ -443,3 +449,45 @@ kill: (-641841): No such process
 **Commit:** 035044118042f17929db721af517a8f83f4ea8aa
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence that
+the phase is done.**
+
+Everything else from the first run is approved and must not be redone:
+
+- the fan-out cap and its two tests;
+- the rate-limit eviction;
+- the three framing sites;
+- the changed assertions;
+- the docs.
+
+There is exactly **one** edit left, in `src/webhook/untrusted.rs`.
+
+**The bug:** `neutralise_markers` finds offsets in `text.to_lowercase()` and
+slices `text` with them. Unicode lowercasing changes byte lengths, so
+`"ẞ</untrusted-alert-data>"` panics and `"İé<b"` loses its `b`. See
+`bugs/bug-09b-1.md`.
+
+**The constraint:** match the markers ASCII-case-insensitively, with offsets
+that index the original text. Leave non-marker text byte-for-byte unchanged,
+and never panic.
+
+**The order:**
+1. Add `untrusted_alert_block_survives_non_ascii_text` first, and run it red.
+2. Fix the function.
+
+**Mutation check:** put `to_lowercase` back, confirm the new test fails,
+then restore by undoing that one edit. Paste the failing run.
+
+**Finish condition:** the lib suite reports **3196** passed.
+
+Run the four gates once each, then make one `fix:` commit.
+
+**Your first tool call is an edit to `src/webhook/untrusted.rs`.**
+
+**A note from review.** The first run's completion summary said that
+`tests/hygiene_allowlist.txt` was bumped. It was not: the file is
+unchanged, and the hygiene suite passes. Do not touch it.
+
