@@ -1,7 +1,7 @@
 # Phase 06a — ghost-fence
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: [bug-06a-1](bugs/bug-06a-1.md), [bug-06a-2](bugs/bug-06a-2.md))
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -180,7 +180,22 @@ error as the red run.
       and the rest of `ghost_host_tests` pass unchanged.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 9fd155bb -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`
-- [ ] **Gates:** all four pass, run once each.
+- [ ] **Host override (bug-06a-1):**
+      `spawn_ghost_lets_a_host_override_replace_the_runbook_ssh_target`
+      passes.
+      - **Setup:** a temp `HOME` with `[hosts.db01]` and `[hosts.db02]`,
+        and a runbook with `ssh_target: db02`.
+      - **Call:** `spawn_ghost` with a caller `GhostPolicy` whose `hosts`
+        is `[db01]`, and `host: Some("db01")`.
+      - **Assert:** the outcome text does **not** contain
+        `cannot spawn this specialist`.
+      - Red run pasted: today it is refused.
+- [ ] **Doc comment (bug-06a-2):** this prints **0** (1 today):
+      `grep -B12 "pub(super) fn narrow_to_caller" src/daemon/executor/knowledge/ghost.rs | grep -c "Spawn a ghost session from a runbook"`
+- [ ] **CLAUDE.md row (bug-06a-2):** this prints **1** (0 today):
+      ``grep -c '^| `spawn_ghost_shell` .*host?' CLAUDE.md``
+- [ ] **Gates:** all four pass, run once each. The lib suite reports
+      **exactly 3167** passed: 3166 today, plus the host-override test.
 
 ## Spec
 
@@ -436,3 +451,41 @@ kill: (-63112): No such process
 **Commit:** 771a2f0fce9ba2741714670cf5a540831b516261
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+the phase is done.**
+
+**Already approved, do not redo:**
+- `ToolPolicy::intersect` and its test;
+- the hosts, scripts, flags and tool-policy narrowing, and their tests;
+- the wiring in `spawn_ghost`, `dispatch_meta` and `route.rs`, including
+  the new `#[allow(clippy::too_many_arguments)]` on
+  `dispatch_meta::dispatch`, which is accepted;
+- the `docs/security.md` § 10 guard.
+
+**Exactly three pieces of work are left:**
+
+1. **[bug-06a-1](bugs/bug-06a-1.md).** Make the `ssh_target` check in the
+   narrowing run **only when `host` is `None`**. With `host` given,
+   `spawn_host_target` already checks the named host against the narrowed
+   child and the caller. How the narrowing learns about `host` is your
+   choice. For example, it could take a `host_given: bool`, or
+   `spawn_ghost` could run the check itself. Update the existing
+   narrowing tests' calls to match. Add
+   `spawn_ghost_lets_a_host_override_replace_the_runbook_ssh_target` beside
+   `spawn_ghost_refuses_a_child_outside_the_caller_fence`, with the same
+   setup pattern, and run it red first.
+2. **[bug-06a-2](bugs/bug-06a-2.md), part 1.** Move `spawn_ghost`'s `///`
+   doc comment back directly above its `#[allow]` and `pub async fn
+   spawn_ghost`, so `narrow_to_caller` keeps only its own doc.
+3. **[bug-06a-2](bugs/bug-06a-2.md), part 2.** In CLAUDE.md's
+   `spawn_ghost_shell` row, put back
+   `` `host?` runs the specialist on a configured host or "local" ``
+   before the narrowing sentence.
+
+**Closed file list:** `src/daemon/executor/knowledge/ghost.rs` and
+`CLAUDE.md`. Read at most **2** files before your first edit.
+
+**Finish condition:** the lib suite reports **3167**, not 3166 or 3168.
