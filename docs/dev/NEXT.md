@@ -6,8 +6,8 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** phase-05 name-validation (audit S8), to be drafted with
-`/rexymcp:architect next`. Phase 04 path-guard is done (2026-11-26,
+**Active phase:** [phase-05 name-validation](milestones/M40-security-hardening/phase-05-name-validation.md)
+(`todo`): dispatch with `/rexymcp:dispatch 05`. Phase 04 path-guard is done (2026-11-26,
 approved after one bounce); S7 is closed. Phase 03 temp-files is done (2026-11-25,
 escalated: the bug-03-1 bounce was taken over). S6 is closed. Phase 03 also
 fixed a PTY race in the shell substrate: a line over 4095 bytes written to
