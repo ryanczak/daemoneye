@@ -6,8 +6,8 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** none drafted — next is phase-08; draft it with
-`/rexymcp:architect next`. Phase 07 schedule-delete-gate is done
+**Active phase:** [phase-08 argv-injection](milestones/M40-security-hardening/phase-08-argv-injection.md)
+(`todo`): dispatch with `/rexymcp:dispatch 08`. Phase 07 schedule-delete-gate is done
 (2026-11-26, approved after one bounce): schedule removals are refused to
 ghosts and asked in chat; S12 is closed. Phase 06b ghost-spawn-approval is done
 (2026-11-26, approved after one bounce): chat's `spawn_ghost_shell` asks
