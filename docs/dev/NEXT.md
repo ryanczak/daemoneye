@@ -6,9 +6,12 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** [phase-03 temp-files](milestones/M40-security-hardening/phase-03-temp-files.md)
-(`todo`): dispatch with `/rexymcp:dispatch 03`. Phase 02 is done
-(2026-11-25, approved first try); S5 is closed.
+**Active phase:** phase-04 (audit S7, path canonicalization), to be drafted
+with `/rexymcp:architect next`. Phase 03 temp-files is done (2026-11-25,
+escalated: the bug-03-1 bounce was taken over). S6 is closed. Phase 03 also
+fixed a PTY race in the shell substrate: a line over 4095 bytes written to
+a fresh shell before readline went raw was cut short (`PtyBackend::input`
+now waits for the line editor).
 
 **Deferred from the M39 live check:** a command that times out and stops
 on Ctrl-C always waits the full 5 s interrupt grace, because the end

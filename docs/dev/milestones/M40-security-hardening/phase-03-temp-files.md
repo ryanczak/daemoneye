@@ -1,7 +1,7 @@
 # Phase 03 — temp-files
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress (bounced: [bug-03-1](bugs/bug-03-1.md))
+**Status:** done
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~300 lines
@@ -191,7 +191,7 @@ It is red today. Paste the red run.
       2. run `cargo test --lib remote_edit_ignores_a_planted_temp_symlink`
          once and see the Python branch fail;
       3. restore it.
-- [ ] **Failures name their cause (bug-03-1):**
+- [x] **Failures name their cause (bug-03-1):**
       `remote_payload_failures_name_their_cause` passes, per the bug's
       Definition of done. It fails today with `None` for both branches.
 - [ ] **Gates:** all four pass, run once each. The lib suite reports **at
@@ -525,3 +525,109 @@ three causes:
 - **Mutation check:** restore one Perl payload's `${…}` message, run the
   new test once, see it fail, then restore.
 - **Finish condition:** the lib suite reports **3142**.
+
+### Update — 2026-11-25 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** the bug-03-1 bounce run hard-failed at turn 66 with a task
+no-edit stall: 40 turns of reads on task 2 after it had written the red test
+and nearly all of the payload fix. Run against the partial tree, the
+file_ops tests showed one defect: the Perl edit payload's
+`my @st=stat($p)` had become `my $st=stat($p) …`. The next lines still read
+`$st[2]` and `$st[4]` from the now-empty `@st`, so the payload chmodded the
+edited file to 0. That broke `the_perl_branch_keeps_the_files_mode`,
+`remote_edit_ignores_a_planted_temp_symlink` and
+`the_root_edit_line_runs_under_both_interpreters`. A one-line fix on a
+small bounce is the PE's standing case for a takeover.
+
+The architect restored `my @st=stat($p) or do{…}` and fixed two
+`.err().expect()` clippy errors in the new test (now `expect_err`).
+
+**A second finding came out of the gates.** In the full suite, two existing
+host-shell tests timed out at 30 s:
+`edit_on_a_named_host_runs_through_the_shell` and
+`a_failed_edit_on_a_sentinel_path_is_an_error`. They pass alone. The
+longer payloads took the typed edit command from about 3750 bytes to 4154.
+A PTY in canonical mode cuts a line at 4095 bytes. A line written to a
+fresh bash before readline has put the terminal in raw mode is truncated,
+the command never runs, and its end marker never prints. A direct PTY
+experiment showed it: a 4154-byte line written at once ran 0 of 5 times,
+and 5 of 5 after a 0.5 s delay; a 3700-byte line ran 5 of 5 either way.
+The race already existed for any long command sent to a cold shell. The PE
+chose to fix it in this phase, which widened the closed file list to
+`src/shell/backend.rs` and `src/shell/backend_tests.rs`:
+
+- `PtyBackend::input` calls `await_line_editor` before writing input
+  longer than `CANON_LINE_MAX` (4095). The wait polls `raw_mode()` every
+  10 ms and holds the shell lock only for each `tcgetattr`, at most
+  `LINE_EDITOR_WAIT` (5 s). It is remembered in `line_editor_settled` once
+  raw mode is seen or the wait runs out. Only a fresh shell's first long
+  input waits, and a canonical-mode reader later on (`cat`, a password
+  prompt) never does. `SbxBackend` delegates to `PtyBackend`, so it is
+  covered.
+- New test `a_long_line_to_a_fresh_shell_runs_whole`: a 4154-byte line,
+  written the moment the backend is spawned, must print its
+  `LONG-LINE-LEN-4125` output.
+
+**Red run of `remote_payload_failures_name_their_cause`** (the HEAD payloads,
+new test kept):
+
+```
+the python3 edit branch must name its cause: "Traceback (most recent call last): … PermissionError: [Errno 13] Permission denied: '/tmp/.tmpMkixbQ/.ecchzuvh.de_tmp'\n__DE_DONE__\n"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3151 filtered out
+```
+
+**Mutation check (bug-03-1):** the Perl edit payload's failure line was set
+back to `"DE_ERROR: ${$e||'edit failed'}"`, then the new test was run:
+
+```
+the perl edit failure's reason must be non-empty: "DE_ERROR:"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3151 filtered out
+```
+
+Restored, it passes.
+
+**Mutation check (PTY race):** with the `await_line_editor` call removed,
+the new test failed 3 of 3 runs:
+
+```
+the 4154-byte line must run whole and print LONG-LINE-LEN-4125
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3152 filtered out; finished in 10.00s
+```
+
+Restored, it passed 3 of 3. **Under load** (32 busy loops on 16 cores), the
+two host-shell tests passed 8 of 8 runs with the fix and failed in 2 of 8
+without it.
+
+**Gates** on the final tree: `cargo fmt --all -- --check` passes, and build
+and clippy (`--all-targets --all-features -D warnings`) are clean.
+`cargo test`:
+
+```
+test result: ok. 3143 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 152.06s
+```
+
+Every other target's `test result:` line is ok, including `hygiene` (16)
+and `doc_truth` (19).
+
+### Review verdict — 2026-11-25
+
+- **Verdict:** escalated
+- **Bounces:** 1 (bug-03-1, minor: a remote edit or create that could not
+  create its temp printed no `DE_ERROR:` line)
+- **Executor:** GLM-5.3-Flash. Run 1 completed the phase. The bounce run
+  wrote the test and most of the fix, then stalled at turn 66 on a no-edit
+  stall. Claude (direct) did the rest.
+- **Scope deviations:**
+  - `the_edit_payloads_restore_ownership`'s needles were updated to the
+    fd and handle forms in run 1. Accepted: the behaviour it pins is
+    unchanged.
+  - The closed file list was widened to `src/shell/backend.rs` and
+    `backend_tests.rs` for the PTY line-limit race, by PE decision.
+- **Calibration:**
+  - The executor regressed the Perl `stat` while adding error handling and
+    never ran the existing tests. It stalled before any gate.
+  - The new payloads crossed a hidden 4095-byte limit that only showed
+    under full-suite load. A phase that grows a command typed into a PTY
+    should state the command's length budget, or rely on the substrate's
+    wait, now fixed.
