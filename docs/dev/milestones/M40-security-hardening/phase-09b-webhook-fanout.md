@@ -1,7 +1,7 @@
 # Phase 09b — webhook-fanout
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress (bounced: bug-09b-1)
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** 09a (done)
 **Estimated diff:** ~300 lines
@@ -544,3 +544,129 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 Gates: `cargo fmt --all` clean, `cargo build` Finished, `cargo clippy
 --all-targets --all-features -- -D warnings` Finished, `cargo test` all green
 (lib suite: 3196 passed, as the bounce condition requires).
+
+### Update — 2026-11-26 23:35 (complete, server-authored)
+
+**Summary:** Fixed bug-09b-1, the only outstanding item from the bounce: `neutralise_markers` in `src/webhook/untrusted.rs` now folds the markers ASCII-case-insensitively over `text.bytes().map(b.to_ascii_lowercase)`, which preserves byte lengths, so every match offset indexes the original text exactly. Non-marker text is copied byte-for-byte unchanged (`İé<b` survives verbatim, `ẞ` and `İİİİ` intact), and none of the three bug inputs panic. I ran the mutation check the note asked for — restored `to_lowercase` momentarily, the new `untrusted_alert_block_survives_non_ascii_text` failed with the expected `end byte index 2 is not a char boundary; it is inside 'ẞ'` panic, then restored the ASCII fold by undoing that single edit.
+
+**Notes for review:** the lib suite reports **3196 passed** (3195 + the bounce test), matching the finish condition; all four gates (`fmt`, `build`, `clippy -D warnings`, full `test`) ran clean once each; the no-test-removed grep still prints 0; the literal grep shows 22 `untrusted-alert-data` occurrences across src/docs/tests. Committed as one `fix:` commit (`47a16973`, working tree clean); phase-doc status left at `in-progress` with no hand-written completion entry, per the split. One correction from the earlier run: my first attempt at the mutation probe left a stray duplicate function body in the file — the verifier caught it and it is fully removed; `clippy -D warnings` and the full build now pass on the clean file.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+t ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test g4_briefing_masking_applied ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test event_log_append_read ... ok
+test attach_sends_session_counters_after_ok ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test default_server_unchanged ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.37s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (676634): No such process
+kill: (-677298): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M40-security-hardening/phase-09b-webhook-fanout.md` — +53 -0
+- `src/webhook/untrusted.rs` — +37 -14
+
+**Commit:** 47a16973ca6a27c60b8b149d303cecd44e4a9cda
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
