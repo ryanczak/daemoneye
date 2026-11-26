@@ -6,8 +6,8 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** phase-06b ghost-spawn-approval (audit S9, second half),
-to be drafted with `/rexymcp:architect next`. Phase 06a ghost-fence is done
+**Active phase:** [phase-06b ghost-spawn-approval](milestones/M40-security-hardening/phase-06b-ghost-spawn-approval.md)
+(`todo`): dispatch with `/rexymcp:dispatch 06b`. Phase 06a ghost-fence is done
 (2026-11-26, approved after one bounce): a delegated ghost is narrowed to
 its caller. Phase 05 name-validation is done (2026-11-26,
 approved after one bounce); S8 is closed. Phase 04 path-guard is done (2026-11-26,
