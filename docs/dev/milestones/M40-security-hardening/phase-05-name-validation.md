@@ -1,7 +1,7 @@
 # Phase 05 — name-validation
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** none
 **Estimated diff:** ~350 lines
@@ -201,3 +201,20 @@ red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 04:25 (started)
+
+**Started:** phase-05-name-validation — writing the first red test, then the
+validator, then memory/agents, ingress, prompts, saved sessions, docs.
+
+### Update — 2026-11-26 04:25 (task breakdown)
+
+1. `src/memory_tests.rs`: `add_memory_refuses_a_traversing_namespace` (red first) → Memory criteria.
+2. `src/util.rs`: `validate_path_name` + `path_name_validator_accepts_and_refuses` → Validator criterion.
+3. `src/memory.rs`: validate ns in `add_memory`, `delete_memory`, `read_memory`, `update_memory`, `list_memories`, `list_memories_with_tags`; skip-invalid in `load_session_memory_block`; `session_memory_block_skips_an_invalid_namespace` test → Memory + Memory block criteria.
+4. `src/agents/mod.rs`: validate `memory_namespace` + `read_namespaces` in `save_agent`/`load_agent`; tests `save_agent_refuses_a_traversing_namespace`, `load_agent_refuses_a_traversing_namespace` → Agents criteria.
+5. `src/daemon/server/`: `ingress_name_error` + wire into `handle_client`; test `ingress_refuses_traversing_names`; grep ≥2 → Ingress criteria.
+6. `src/config/load.rs`: `load_named_prompt` falls back on invalid name; test `load_named_prompt_ignores_a_traversing_name` → Prompts criterion.
+7. `src/session_store.rs`: validate names in `load_session_meta`, `load_session_messages`, `delete_session`, `rename_session` old name; test `load_session_meta_refuses_a_traversing_name` → Saved sessions criterion.
+8. `docs/security.md`: `### 9. Names that become paths` guard → Docs criterion.
+9. Run 4 gates; paste evidence; commit `fix:` → Gates + No test removed criteria.

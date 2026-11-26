@@ -1648,3 +1648,27 @@ fn provider_key_vars_cover_every_provider() {
         );
     }
 }
+
+#[test]
+fn load_named_prompt_ignores_a_traversing_name() {
+    let _guard = crate::test_home_guard();
+    let dir = prompts_dir();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("evil.toml"),
+        "name = \"evil\"\nsystem = \"EVIL\"\n",
+    )
+    .unwrap();
+
+    let def = load_named_prompt("../evil");
+    assert_ne!(
+        def.system, "EVIL",
+        "a traversing prompt name must not read etc/evil.toml"
+    );
+
+    let ok = load_named_prompt("evil");
+    assert_eq!(
+        ok.system, "EVIL",
+        "positive control: the file is readable by a valid name"
+    );
+}

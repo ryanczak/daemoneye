@@ -604,3 +604,35 @@ fn incident_memory_gets_session_origin_stamped() {
         );
     });
 }
+
+#[test]
+fn load_session_meta_refuses_a_traversing_name() {
+    with_temp_home(|| {
+        // Plant a valid meta.toml where "../../x" resolves from the saved-sessions dir:
+        // saved_sessions_dir() = config_dir()/var/sessions, so "../.." is config_dir()/x.
+        let planted = crate::config::config_dir().join("x");
+        std::fs::create_dir_all(crate::session_store::saved_sessions_dir()).unwrap();
+        std::fs::create_dir_all(&planted).unwrap();
+        std::fs::write(
+            planted.join("meta.toml"),
+            "schema_version = 2\nname = \"x\"\ncreated_at = \"2026-01-01T00:00:00Z\"\nlast_resumed_at = \"2026-01-01T00:00:00Z\"\nturn_count = 1\nmessage_count = 1\n",
+        )
+        .unwrap();
+
+        let result = load_session_meta("../../x");
+        assert!(
+            result.is_err(),
+            "a traversing name must be refused before the disk is touched: {:?}",
+            result
+        );
+
+        // Positive control: the same file is readable through the real path
+        // (saved_sessions_dir()/x), so the refusal above is the validator's,
+        // not a missing file.
+        let real = crate::session_store::saved_sessions_dir().join("x");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::copy(planted.join("meta.toml"), real.join("meta.toml")).unwrap();
+        let ok = load_session_meta("x");
+        assert!(ok.is_ok(), "positive control failed: {:?}", ok);
+    });
+}

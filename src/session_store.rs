@@ -137,6 +137,12 @@ pub fn validate_session_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Load-path check: a saved-session name only needs to be a safe path
+/// component; reserved-name and `auto-` rules apply to saving, not loading.
+fn check_load_name(name: &str) -> Result<()> {
+    crate::util::validate_path_name("session name", name).map_err(|e| anyhow::anyhow!(e))
+}
+
 // ── Index helpers ─────────────────────────────────────────────────────────────
 
 fn load_index() -> HashMap<String, IndexEntry> {
@@ -262,6 +268,7 @@ pub fn save_session(args: SaveSessionArgs<'_>) -> Result<()> {
 
 /// Load the metadata for a named session.
 pub fn load_session_meta(name: &str) -> Result<SavedSessionMeta> {
+    check_load_name(name)?;
     let path = meta_path(name);
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
@@ -271,6 +278,7 @@ pub fn load_session_meta(name: &str) -> Result<SavedSessionMeta> {
 /// Load the last `max_count` messages from a named session's JSONL file.
 /// Pass `max_count = 0` to load all messages.
 pub fn load_session_messages(name: &str, max_count: usize) -> Result<Vec<Message>> {
+    check_load_name(name)?;
     let path = messages_path(name);
     if !path.exists() {
         return Ok(Vec::new());
@@ -302,6 +310,7 @@ pub fn session_exists(name: &str) -> bool {
 
 /// Delete a named session from disk and from the index.
 pub fn delete_session(name: &str) -> Result<()> {
+    check_load_name(name)?;
     let mut index = load_index();
     if !index.contains_key(name) {
         bail!("no saved session named '{}'", name);
@@ -318,6 +327,7 @@ pub fn delete_session(name: &str) -> Result<()> {
 /// Rename a saved session.  Updates the directory and the index.
 /// Artifact `session_origin` frontmatter rewrite is deferred to Phase 3.
 pub fn rename_session(old_name: &str, new_name: &str) -> Result<()> {
+    check_load_name(old_name)?;
     validate_session_name(new_name).map_err(|e| anyhow::anyhow!(e))?;
     let mut index = load_index();
     if !index.contains_key(old_name) {

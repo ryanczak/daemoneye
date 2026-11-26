@@ -643,3 +643,29 @@ fn memory_scan_is_confined_to_supplied_namespaces() {
         );
     });
 }
+
+#[test]
+fn add_memory_refuses_a_traversing_namespace() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        let result = add_memory("k", "v", MemoryCategory::Knowledge, "../../outside");
+        assert!(result.is_err(), "expected Err, got {:?}", result);
+        assert!(
+            !tmp.path().join("outside").exists(),
+            "$HOME/outside must not be created"
+        );
+    });
+}
+
+#[test]
+fn session_memory_block_skips_an_invalid_namespace() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        add_memory("good", "kept-value", MemoryCategory::Session, "global").unwrap();
+        let block = load_session_memory_block(&["global", "../../x"]);
+        assert!(
+            block.contains("kept-value"),
+            "valid namespace memory must still load, got: {block}"
+        );
+    });
+}

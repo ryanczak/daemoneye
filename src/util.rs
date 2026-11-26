@@ -39,6 +39,30 @@ pub(crate) fn truncate_chars(s: &str, max_bytes: usize) -> &str {
     &s[..s.floor_char_boundary(max_bytes)]
 }
 
+/// Validate a name that is joined into a path under the config directory
+/// (memory namespace, session id, prompt name, saved-session name).
+/// Valid: non-empty, at most 128 bytes, every byte ASCII `A-Z`, `a-z`, `0-9`, `-` or `_`.
+pub fn validate_path_name(kind: &str, name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err(format!("{kind} cannot be empty"));
+    }
+    if name.len() > 128 {
+        return Err(format!(
+            "{kind} is too long ({} bytes, maximum is 128)",
+            name.len()
+        ));
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(format!(
+            "{kind} contains characters outside the allowed set A-Z, a-z, 0-9, '-' and '_'"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +107,44 @@ mod tests {
         assert_eq!(cut, "x".repeat(119), "cut lands before the straddling 'é'");
         assert!(cut.len() <= 120);
         assert!(frame.starts_with(cut));
+    }
+}
+
+#[cfg(test)]
+mod path_name_tests {
+    use super::validate_path_name;
+
+    #[test]
+    fn path_name_validator_accepts_and_refuses() {
+        for ok in [
+            "global",
+            "sre",
+            "266f80f28f5db7e6",
+            "3f2a9c1e-7b4d-4e8a-9f00-12ab34cd56ef",
+            "my_prompt",
+            "a".repeat(128).as_str(),
+        ] {
+            assert!(
+                validate_path_name("memory namespace", ok).is_ok(),
+                "expected '{ok}' to be accepted"
+            );
+        }
+        for bad in [
+            "",
+            "..",
+            ".",
+            "../x",
+            "a/b",
+            "a.b",
+            "a b",
+            "a\0b",
+            "é",
+            &"a".repeat(129),
+        ] {
+            assert!(
+                validate_path_name("memory namespace", bad).is_err(),
+                "expected '{bad}' to be refused"
+            );
+        }
     }
 }

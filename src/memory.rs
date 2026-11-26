@@ -268,6 +268,10 @@ fn validate_memory_key(key: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_namespace(namespace: &str) -> Result<()> {
+    crate::util::validate_path_name("memory namespace", namespace).map_err(|e| anyhow::anyhow!(e))
+}
+
 /// Update specific fields of an existing memory entry without rewriting the whole file.
 /// Only provided (Some) fields are changed; omitted fields are preserved.
 /// If the entry does not exist, a new one is created.
@@ -298,6 +302,7 @@ pub fn update_memory(args: UpdateMemoryArgs<'_>) -> Result<()> {
         namespace,
     } = args;
     validate_memory_key(key)?;
+    validate_namespace(namespace)?;
     let dir = memory_dir_for_namespace(namespace, &category);
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("creating memory dir {}", dir.display()))?;
@@ -377,6 +382,7 @@ pub fn update_memory(args: UpdateMemoryArgs<'_>) -> Result<()> {
 
 pub fn add_memory(key: &str, value: &str, category: MemoryCategory, namespace: &str) -> Result<()> {
     validate_memory_key(key)?;
+    validate_namespace(namespace)?;
     let dir = memory_dir_for_namespace(namespace, &category);
     std::fs::create_dir_all(&dir)
         .with_context(|| format!("creating memory dir {}", dir.display()))?;
@@ -390,6 +396,7 @@ pub fn add_memory(key: &str, value: &str, category: MemoryCategory, namespace: &
 }
 
 pub fn delete_memory(key: &str, category: MemoryCategory, namespace: &str) -> Result<()> {
+    validate_namespace(namespace)?;
     let path = memory_dir_for_namespace(namespace, &category).join(format!("{}.md", key));
     if path.exists() {
         std::fs::remove_file(&path)?;
@@ -402,6 +409,7 @@ pub fn delete_memory(key: &str, category: MemoryCategory, namespace: &str) -> Re
 }
 
 pub fn read_memory(key: &str, category: MemoryCategory, namespace: &str) -> Result<String> {
+    validate_namespace(namespace)?;
     let path = memory_dir_for_namespace(namespace, &category).join(format!("{}.md", key));
     let val = std::fs::read_to_string(&path)
         .with_context(|| format!("reading memory key '{}' from {}", key, path.display()))?;
@@ -423,6 +431,7 @@ pub fn list_memories(
     };
     let mut results = Vec::new();
     for ns in namespaces {
+        validate_namespace(ns)?;
         for cat in &categories {
             let dir = memory_dir_for_namespace(ns, cat);
             if !dir.exists() {
@@ -464,6 +473,9 @@ pub fn list_memories_with_tags(
     };
     let mut results = Vec::new();
     for ns in namespaces {
+        if validate_namespace(ns).is_err() {
+            continue;
+        }
         for cat in &categories {
             let dir = memory_dir_for_namespace(ns, cat);
             if !dir.exists() {
@@ -535,6 +547,10 @@ pub fn load_session_memory_block(namespaces: &[&str]) -> String {
     // Collect (key, namespace, mtime) tuples across all namespaces.
     let mut entries: Vec<(String, String, std::time::SystemTime)> = Vec::new();
     for ns in namespaces {
+        if validate_namespace(ns).is_err() {
+            log::warn!("skipping invalid memory namespace in session memory block");
+            continue;
+        }
         let dir = memory_dir_for_namespace(ns, &MemoryCategory::Session);
         if !dir.exists() {
             continue;

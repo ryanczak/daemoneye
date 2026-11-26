@@ -368,6 +368,11 @@ pub fn runbooks_dir() -> PathBuf {
 /// Load a named prompt from ~/.daemoneye/prompts/<name>.toml.
 /// Falls back to the built-in SRE prompt for "sre", then to the minimal default.
 pub fn load_named_prompt(name: &str) -> PromptDef {
+    // An invalid name would join into a path outside etc/prompts/; fall back
+    // exactly as for a missing file.
+    if crate::util::validate_path_name("prompt name", name).is_err() {
+        return PromptDef::builtin_minimal();
+    }
     // First try the file on disk.
     let path = prompts_dir().join(format!("{name}.toml"));
     if let Ok(text) = std::fs::read_to_string(&path)

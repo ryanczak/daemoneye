@@ -150,6 +150,13 @@ pub fn ensure_agents_dir() -> Result<()> {
 /// config for the same name.
 pub fn save_agent(config: &AgentConfig) -> Result<()> {
     validate_agent_name(&config.name)?;
+    // An empty memory_namespace means "this agent's own name"; normalize
+    // before validating so the on-disk "" form round-trips.
+    let mut effective = config.clone();
+    if effective.memory_namespace.is_empty() {
+        effective.memory_namespace = effective.name.clone();
+    }
+    validate_agent_namespaces(&effective)?;
     ensure_agents_dir()?;
     let dir = agent_dir(&config.name);
     std::fs::create_dir_all(&dir)
@@ -160,6 +167,15 @@ pub fn save_agent(config: &AgentConfig) -> Result<()> {
     std::fs::write(&tmp, &text).with_context(|| format!("writing {}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
         .with_context(|| format!("renaming {} → {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+fn validate_agent_namespaces(config: &AgentConfig) -> Result<()> {
+    crate::util::validate_path_name("memory namespace", &config.memory_namespace)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    for ns in &config.read_namespaces {
+        crate::util::validate_path_name("memory namespace", ns).map_err(|e| anyhow::anyhow!(e))?;
+    }
     Ok(())
 }
 
@@ -174,9 +190,12 @@ pub fn load_agent(name: &str) -> Result<AgentConfig> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     let mut config: AgentConfig =
         toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    // The empty namespace means "this agent's own name" (it is written that
+    // way by create_agent), so normalize before validating.
     if config.memory_namespace.is_empty() {
         config.memory_namespace = config.name.clone();
     }
+    validate_agent_namespaces(&config)?;
     Ok(config)
 }
 
@@ -559,5 +578,49 @@ prompt = ""
         };
         apply_agent_to_ghost_config(&agent, &mut gc);
         assert_eq!(gc.auto_approve_scripts, vec!["shared.sh"]);
+    }
+
+    #[test]
+    fn save_agent_refuses_a_traversing_namespace() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let mut cfg = sample_config("bad-ns");
+            cfg.memory_namespace = "../../outside".to_string();
+            let result = save_agent(&cfg);
+            assert!(
+                result.is_err(),
+                "traversing memory_namespace must be refused: {:?}",
+                result
+            );
+
+            let mut cfg2 = sample_config("bad-read");
+            cfg2.read_namespaces = vec!["../x".to_string()];
+            let result2 = save_agent(&cfg2);
+            assert!(
+                result2.is_err(),
+                "traversing read_namespaces entry must be refused: {:?}",
+                result2
+            );
+        });
+    }
+
+    #[test]
+    fn load_agent_refuses_a_traversing_namespace() {
+        let tmp = temp_home();
+        with_home(&tmp, || {
+            let dir = agent_dir("hand-edited");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("config.toml"),
+                "name = \"hand-edited\"\nmemory_namespace = \"../../outside\"\n",
+            )
+            .unwrap();
+            let result = load_agent("hand-edited");
+            assert!(
+                result.is_err(),
+                "hand-edited traversing memory_namespace must be refused: {:?}",
+                result
+            );
+        });
     }
 }

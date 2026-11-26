@@ -6,6 +6,7 @@ mod ask;
 mod catchup;
 mod chat_presence;
 mod handlers;
+mod ingress;
 mod notices;
 mod sessions;
 mod shells;
@@ -161,6 +162,16 @@ pub async fn handle_client(
             return Ok(());
         }
     };
+
+    if let Some(e) = ingress::ingress_name_error(&request) {
+        let mut stream = reader.into_inner();
+        send_response(
+            &mut stream,
+            Response::Error(format!("Invalid request: {}", e)),
+        )
+        .await?;
+        return Ok(());
+    }
 
     let (rx_half, mut tx) = reader.into_inner().into_split();
     let mut rx = BufReader::new(rx_half);

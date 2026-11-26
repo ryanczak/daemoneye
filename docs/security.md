@@ -126,6 +126,33 @@ user who exports a key in their own shell rc file still gets it in login
 shells, by their own choice; this guard covers only what the daemon
 itself passes down.
 
+### 9. Names that become paths
+
+Four kinds of client-supplied name are joined into paths under
+`~/.daemoneye/`: memory namespaces (`agents/<ns>/memory/…`), session ids
+(`var/log/sessions/<id>.jsonl` and friends), prompt names
+(`etc/prompts/<name>.toml`) and saved-session names (`var/sessions/<name>/…`).
+All four pass through one validator, `validate_path_name` in `src/util.rs`:
+non-empty, at most 128 bytes, and every byte ASCII `A–Z`, `a–z`, `0–9`, `-`
+or `_` — no separators, no `.` prefix, no traversal. Where each is checked:
+
+- **Memory namespaces** — in `agents::save_agent` / `agents::load_agent`
+  (config `memory_namespace` and every `read_namespaces` entry) and at the
+  top of every public function in `src/memory.rs` that takes a namespace.
+  `load_session_memory_block` skips an invalid namespace with a warning
+  instead of failing the whole block.
+- **Session ids** — at the single IPC ingress point
+  (`ingress_name_error` in `src/daemon/server/`), before the request is
+  dispatched. Daemon- and CLI-minted ids (16-hex, UUID) and ghost session
+  ids (`ghost-<runbook>-<hex>`, built from already-validated runbook names)
+  pass the validator unchanged.
+- **Prompt names** — `config::load_named_prompt` refuses the disk read for
+  an invalid name and falls back exactly as for a missing file.
+- **Saved-session names** — `load_session_meta`, `load_session_messages`,
+  `delete_session` and `rename_session`'s old name in
+  `src/session_store.rs`. Saving a session is stricter: `validate_session_name`
+  also refuses reserved names and the `auto-` prefix.
+
 ---
 
 ## The agent sandbox (opt-in)
