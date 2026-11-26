@@ -254,3 +254,105 @@ Task list (each line names the acceptance item it closes):
    removed**.
 8. Four gates once each, evidence entry, one `fix:` commit → closes
    **Gates**, **Capture the evidence**.
+
+### Update — 2026-11-26 22:05 (end-to-end verification)
+
+Red run (first edit of the phase, `reload_rotates_the_webhook_secret`
+before the reload fix existed):
+
+```
+running 1 test
+test config::handle::tests::reload_rotates_the_webhook_secret ... FAILED
+
+---- config::handle::tests::reload_rotates_the_webhook_secret stdout ----
+thread '...' panicked at src/config/handle.rs:440:9:
+the rotated secret is reported as applied: []
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+failures:
+    config::handle::tests::reload_rotates_the_webhook_secret
+test result: FAILED. 0 passed; 1 failed; ... 3190 filtered out
+```
+
+Mutation run — moved the `to_bytes` read above the Bearer check:
+
+```
+mutated: to_bytes moved above the Bearer check
+
+running 1 test
+thread 'webhook::server::tests::webhook_refuses_before_reading_the_body'
+panicked at src/webhook/server.rs:373:9:
+assertion `left == right` failed: a wrong token is refused without the
+3 MiB body being parsed
+  left: 413
+ right: 401
+test result: FAILED. 0 passed; 1 failed; ... 3195 filtered out
+```
+
+Restored by undoing that one edit (re-inserting the auth block before the
+read), never by copying a file; the restored test is green:
+
+```
+test result: ok. 1 passed; 0 failed; ... 3195 filtered out
+```
+
+No test removed (criterion's grep, run once):
+
+```
+$ git diff 70a7e93e -- src | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+```
+
+Literal grep — the phase's pinned reason strings and cap landed in the
+handler:
+
+```
+$ grep -n 'constant_time_eq\|MAX_WEBHOOK_BODY_BYTES\|reason.*unauthorized\|reason.*body_too_large\|reason.*unparseable' src/webhook/server.rs
+81:fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+103:    constant_time_eq(auth.as_bytes(), expected.as_bytes())
+107:const MAX_WEBHOOK_BODY_BYTES: usize = 2 * 1024 * 1024;
+135:                "reason": "unauthorized",
+142:    let bytes = match axum::body::to_bytes(body, MAX_WEBHOOK_BODY_BYTES).await {
+147:                MAX_WEBHOOK_BODY_BYTES
+153:                    "reason": "body_too_large",
+168:                    "reason": "unparseable",
+```
+
+Gates, each run once:
+
+- `cargo fmt --all` (+ `--check`): clean, exit 0.
+- `cargo build`: `Finished 'dev' profile`, zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings`:
+  `Finished 'dev' profile`, no diagnostics.
+- `cargo test`: all suites green — lib `3186 passed; 0 failed`,
+  integration `45 passed; 0 failed`, plus doc/doctest suites `ok`;
+  no `FAILED` line anywhere in the run.
+
+Acceptance items, with their evidence:
+
+- **Secret rotates:** `reload_rotates_the_webhook_secret` (red run above,
+  then passing) — `applied` contains `webhook.secret`, `restart_required`
+  does not, running secret becomes `"new"`.
+- **Other webhook keys still wait:** `reload_holds_the_webhook_port_for_a_restart`
+  — `restart_required` names `webhook.port`, `current().webhook.port`
+  stays 9393.
+- **No empty secret on an exposed bind:** `reload_refuses_to_empty_the_secret_on_a_public_bind`
+  — `error` is `Some` naming `webhook.secret`, `applied`/`restart_required`
+  empty, running secret still `"old"`.
+- **Constant-time compare:** `constant_time_eq_matches_only_equal_bytes`
+  — two empty slices and equal slices true; first/middle/last one-byte
+  differences and a length difference false.
+- **Auth before the body:** `webhook_refuses_before_reading_the_body` —
+  wrong token + 3 MiB → 401, right token + 3 MiB → 413, `not json` → 400,
+  `{}` → 400.
+- **Existing tests:** all `is_authorized`, rate-limit, bind and
+  `webhook_state_sees_a_reloaded_model` tests pass unchanged;
+  `cargo test --test integration` green (45 passed).
+- **Mutation run / No test removed / Gates:** above.
+
+Note: making `{}` a 400 (the spec's "no parseable alerts" path) required
+one small behavior change outside the closed list — `parse_generic` in
+`src/webhook/parse.rs` no longer turns a completely empty JSON object into
+a `GenericAlert` with an empty summary (its description fallback was the
+serialized `{}` itself, which is not content). A new unit test
+`generic_empty_object_yields_no_alert` pins it; every other payload
+(non-empty objects, alertmanager, grafana) parses exactly as before.
