@@ -72,7 +72,7 @@ at drafting.
 | 06a | [ghost-fence](phase-06a-ghost-fence.md) — a ghost's `spawn_ghost_shell` narrows the child to the caller's hosts (`host: None` included), scripts, flags and tool policy; disjoint host lists refuse | S9 | done |
 | 06b | [ghost-spawn-approval](phase-06b-ghost-spawn-approval.md) — `spawn_ghost_shell` from interactive chat is approval-gated (a dedicated prompt, joining `APPROVAL_GATED_TOOLS`) | S9 | done        |
 | 07 | [schedule-delete-gate](phase-07-schedule-delete-gate.md) — `cancel_schedule` / `delete_schedule` are refused to ghosts without policy and approval-gated in chat | S12 | done        |
-| 08 | [argv-injection](phase-08-argv-injection.md) — `HostId::parse` rejects a leading `-`; ssh argv builders put `--` before the destination; remote `grep` takes `-e`; `infocmp` takes `--` | S11 | in-progress |
+| 08 | [argv-injection](phase-08-argv-injection.md) — `HostId::parse` rejects a leading `-`; ssh argv builders put `--` before the destination; remote `grep` takes `-e`; `infocmp` takes `--` | S11 | review      |
 | 09a | webhook-auth — constant-time secret compare, auth and rate limit before the body is parsed, the secret read through `config::current()` so a reload rotates it | S10 | todo |
 | 09b | webhook-fanout — one POST's alert array fans out under a bound; the rate-limit map evicts; alert text enters every prompt inside an untrusted-data block | S10 | todo |
 | 10 | masking — the JSON secret rule keeps its key (capture expansion actually happens, test through `mask_sensitive`, not the rule table); the credential round trip stays in `Zeroizing`; the secret-bearing structs redact in `Debug` | S13 S14 | todo |
