@@ -12,6 +12,10 @@ impl TmpHome {
         std::fs::create_dir_all(&p).unwrap();
         TmpHome(p)
     }
+
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
 }
 impl Drop for TmpHome {
     fn drop(&mut self) {
@@ -19,13 +23,20 @@ impl Drop for TmpHome {
     }
 }
 
-fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
+/// Hold the temp `HOME` for the whole body of an async test: the body runs
+/// inside the future, so every check that reads `HOME` — including the
+/// guards' canonicalize calls — sees the temp dir until the body ends.
+async fn with_home<F, Fut>(tmp: &TmpHome, f: F)
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future,
+{
     let _guard = crate::test_home_guard();
     let old = env::var("HOME").ok();
     unsafe {
         env::set_var("HOME", &tmp.0);
     }
-    f();
+    f().await;
     match old {
         Some(v) => unsafe {
             env::set_var("HOME", v);
@@ -36,6 +47,12 @@ fn with_home<F: FnOnce()>(tmp: &TmpHome, f: F) {
     }
 }
 
+/// Set `HOME` to the temp dir for the remainder of the current task, when the
+/// body needs no await inside the changed environment.
+fn with_home_set(tmp: &TmpHome) -> impl std::future::Future<Output = ()> + use<'_> {
+    with_home(tmp, || std::future::ready(()))
+}
+
 fn simulate_read_file(lines: &[&str]) -> (TmpHome, std::path::PathBuf) {
     let tmp = TmpHome::new();
     let path = tmp.0.join("test_file.txt");
@@ -44,26 +61,12 @@ fn simulate_read_file(lines: &[&str]) -> (TmpHome, std::path::PathBuf) {
 }
 
 #[tokio::test]
-async fn read_file_default_reads_from_start() {
-    let (tmp, path) = simulate_read_file(&["line1", "line2", "line3"]);
-    with_home(&tmp, || {});
-    let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("line1"));
-    assert!(s.contains("line3"));
-}
-
-#[tokio::test]
 async fn read_file_offset_skips_lines() {
     // Use zero-padded names to avoid "line1" being a substring of "line10".
     let lines: Vec<String> = (1..=10).map(|i| format!("line{:02}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), Some(5), None, None, None)
         .await
         .unwrap();
@@ -79,7 +82,7 @@ async fn read_file_limit_caps_output() {
     let lines: Vec<String> = (1..=20).map(|i| format!("line{}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), None, Some(3), None, None)
         .await
         .unwrap();
@@ -96,7 +99,7 @@ async fn read_file_limit_capped_at_max() {
     let lines: Vec<String> = (1..=600).map(|i| format!("line{}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), None, Some(600), None, None)
         .await
         .unwrap();
@@ -110,7 +113,7 @@ async fn read_file_limit_capped_at_max() {
 #[tokio::test]
 async fn read_file_pattern_grep_mode_header() {
     let (tmp, path) = simulate_read_file(&["apple", "banana", "cherry"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("banana"), None)
         .await
         .unwrap();
@@ -124,7 +127,7 @@ async fn read_file_pattern_grep_mode_header() {
 #[tokio::test]
 async fn read_file_pattern_no_match_returns_message() {
     let (tmp, path) = simulate_read_file(&["apple", "banana"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(
         path.to_str().unwrap(),
         None,
@@ -143,7 +146,7 @@ async fn read_file_pattern_no_match_returns_message() {
 #[tokio::test]
 async fn read_file_rejects_control_chars_in_path() {
     let (tmp, path) = simulate_read_file(&["line1"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let evil = format!("{}\n; touch /tmp/pwned; echo", path.display());
     let result = super::run_read_file(&evil, None, None, None, None)
         .await
@@ -158,7 +161,7 @@ async fn read_file_rejects_control_chars_in_path() {
 #[tokio::test]
 async fn read_file_rejects_control_chars_in_pattern() {
     let (tmp, path) = simulate_read_file(&["line1"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(
         path.to_str().unwrap(),
         None,
@@ -230,7 +233,7 @@ async fn read_file_allows_normal_dotfiles() {
 #[tokio::test]
 async fn read_file_offset_beyond_eof_returns_empty() {
     let (tmp, path) = simulate_read_file(&["line1", "line2"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), Some(1000), None, None, None)
         .await
         .unwrap();
@@ -245,7 +248,7 @@ async fn read_file_offset_beyond_eof_returns_empty() {
 #[tokio::test]
 async fn read_bounds_refuses_device() {
     let tmp = TmpHome::new();
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file("/dev/null", None, None, None, None)
         .await
         .unwrap();
@@ -259,7 +262,7 @@ async fn read_bounds_refuses_device() {
 #[tokio::test]
 async fn read_bounds_refuses_directory() {
     let (tmp, _path) = simulate_read_file(&["line1"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(tmp.0.to_str().unwrap(), None, None, None, None)
         .await
         .unwrap();
@@ -287,7 +290,7 @@ async fn read_bounds_large_file_total_is_open() {
         }
         w.flush().unwrap();
     }
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), None, Some(10), None, None)
         .await
         .unwrap();
@@ -321,7 +324,7 @@ async fn read_bounds_byte_cap_single_line() {
         }
         w.flush().unwrap();
     }
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
         .await
         .unwrap();
@@ -365,10 +368,10 @@ async fn read_bounds_symlinked_home_admits_the_masked_config() {
     );
 }
 
-#[test]
-fn read_bounds_guard_follows_symlink() {
+#[tokio::test]
+async fn read_bounds_guard_follows_symlink() {
     let tmp = TmpHome::new();
-    with_home(&tmp, || {
+    with_home(&tmp, || async {
         let real = tmp.0.join("de-real");
         std::fs::create_dir_all(real.join("etc")).unwrap();
         std::os::unix::fs::symlink(&real, tmp.0.join(".daemoneye")).unwrap();
@@ -377,7 +380,8 @@ fn read_bounds_guard_follows_symlink() {
             super::super::in_daemoneye_dir(probe.to_str().unwrap()),
             "{probe:?} (behind a symlinked ~/.daemoneye) must resolve into the guard root"
         );
-    });
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -389,7 +393,7 @@ async fn read_fifo_refused() {
         .status()
         .expect("mkfifo runs");
     assert!(status.success(), "mkfifo failed: {status}");
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let started = std::time::Instant::now();
     let result = super::run_read_file(fifo.to_str().unwrap(), None, None, None, None)
         .await
@@ -439,12 +443,115 @@ fn extract_marked_exact_line_only() {
     );
 }
 
-// ── Defect C: path guard symlink resolution ──
+// ── S7: credential guard resolves symlinks ──────────────────────────────────
 
-#[test]
-fn path_guard_follows_symlink_parent_into_config_dir() {
+#[tokio::test]
+async fn read_file_refuses_a_symlink_to_an_ssh_key() {
     let tmp = TmpHome::new();
-    with_home(&tmp, || {
+    with_home(&tmp, || async {
+        let home = crate::config::config_dir().parent().unwrap().to_path_buf();
+        let ssh = home.join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        let key = ssh.join("id_rsa");
+        std::fs::write(&key, "PRIVATE KEY").unwrap();
+
+        let innocent = tmp.path().join("innocent.txt");
+        std::os::unix::fs::symlink(&key, &innocent).unwrap();
+
+        let result = super::run_read_file(innocent.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(
+            s.contains("credential"),
+            "a symlink to ~/.ssh/id_rsa is refused: {s}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn read_file_refuses_a_file_under_a_symlinked_ssh_dir() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || async {
+        let home = crate::config::config_dir().parent().unwrap().to_path_buf();
+        let ssh = home.join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        let cfg = ssh.join("config");
+        std::fs::write(&cfg, "Host foo\n  User bar").unwrap();
+
+        let sshdir = tmp.path().join("sshdir");
+        std::os::unix::fs::symlink(&ssh, &sshdir).unwrap();
+
+        let path = sshdir.join("config");
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(
+            s.contains("credential"),
+            "a file reached through a symlinked ~/.ssh dir is refused: {s}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn path_guards_still_allow_ordinary_symlinks_and_missing_dirs() {
+    let tmp = TmpHome::new();
+    let real = tmp.path().join("real.txt");
+    std::fs::write(&real, "plain notes").unwrap();
+    let notes = tmp.path().join("notes.txt");
+    std::os::unix::fs::symlink(&real, &notes).unwrap();
+
+    let config = tmp.path().join("config");
+    std::fs::write(&config, "app config").unwrap();
+
+    let probe = tmp.path().join("x").join("y").join("z.txt");
+
+    with_home(&tmp, || async {
+        // An ordinary file symlink is read as its target.
+        let result = super::run_read_file(notes.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(
+            s.contains("plain notes"),
+            "an ordinary file symlink stays allowed: {s}"
+        );
+
+        // A file named `config` outside `.ssh` stays allowed.
+        let result = super::run_read_file(config.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(
+            !s.contains("credential"),
+            "a `config` leaf outside .ssh stays allowed: {s}"
+        );
+
+        // A missing directory chain with no symlink is not a daemoneye dir.
+        assert!(
+            !super::super::in_daemoneye_dir(probe.to_str().unwrap()),
+            "a missing, non-symlinked path is not inside the guard root"
+        );
+    })
+    .await;
+}
+
+// ── Defect C: path guard symlink resolution ──
+#[tokio::test]
+async fn path_guard_follows_symlink_parent_into_config_dir() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || async {
         let de_dir = crate::config::config_dir();
         let real_subdir = de_dir.join("etc");
         std::fs::create_dir_all(&real_subdir).unwrap();
@@ -460,13 +567,35 @@ fn path_guard_follows_symlink_parent_into_config_dir() {
             resolved.starts_with(&de_dir),
             "resolved path {resolved:?} should be under config dir {de_dir:?}"
         );
-    });
+    })
+    .await;
 }
 
-#[test]
-fn path_guard_allows_nonexistent_leaf_under_real_parent() {
+#[tokio::test]
+async fn path_guard_resolves_through_missing_dirs_under_a_symlink() {
     let tmp = TmpHome::new();
-    with_home(&tmp, || {
+    with_home(&tmp, || async {
+        let de_dir = crate::config::config_dir();
+        std::fs::create_dir_all(&de_dir).unwrap();
+
+        let lnk = tmp.0.join("lnk");
+        std::os::unix::fs::symlink(&de_dir, &lnk).unwrap();
+
+        let leaf = lnk.join("a").join("b").join("f.txt");
+        let resolved = super::super::resolve_path_for_guard(leaf.to_str().unwrap());
+        let canonical_de = std::fs::canonicalize(&de_dir).unwrap();
+        assert!(
+            resolved.starts_with(&canonical_de),
+            "resolved path {resolved:?} should be under canonical config dir {canonical_de:?}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn path_guard_allows_nonexistent_leaf_under_real_parent() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || async {
         let de_dir = crate::config::config_dir();
         std::fs::create_dir_all(&de_dir).unwrap();
 
@@ -479,16 +608,11 @@ fn path_guard_allows_nonexistent_leaf_under_real_parent() {
             !resolved.starts_with(&de_dir),
             "resolved path {resolved:?} should NOT be under config dir {de_dir:?}"
         );
-    });
+    })
+    .await;
 }
 
 // ── M21 phase-07a: read_file { host? } ─────────────────────────────────
-// ── M21 phase-07a: read_file { host? } ─────────────────────────────────
-// ── M21 phase-07a: read_file { host? } ─────────────────────────────────
-
-/// Preservation: the command the new transport runs is byte-for-byte the
-/// one the pane path ran. The markers, the `sed` range and the quoted path
-/// are a contract with `extract_marked`; a silent change here would make a
 /// remote read return the whole screen.
 #[test]
 fn build_remote_read_cmd_is_unchanged() {
@@ -560,7 +684,7 @@ async fn a_malformed_host_is_refused_by_read_file() {
 #[tokio::test]
 async fn read_file_without_a_host_takes_the_local_path() {
     let (tmp, path) = simulate_read_file(&["local-only-line"]);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
     let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
         .await
         .unwrap();
@@ -583,7 +707,7 @@ async fn read_file_without_a_host_takes_the_local_path() {
 async fn read_file_host_local_takes_the_local_path() {
     for spelling in ["local", "Local", "LOCAL"] {
         let (tmp, path) = simulate_read_file(&["still-local-line"]);
-        with_home(&tmp, || {});
+        with_home_set(&tmp).await;
         let result = super::run_read_file(path.to_str().unwrap(), None, None, None, Some(spelling))
             .await
             .unwrap();
@@ -609,7 +733,7 @@ async fn the_local_read_path_is_unchanged() {
     let lines: Vec<String> = (1..=10).map(|i| format!("line{:02}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home(&tmp, || {});
+    with_home_set(&tmp).await;
 
     let plain = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
         .await

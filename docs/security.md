@@ -160,7 +160,9 @@ privileges, under the guards above.
   in session output by accident. It is not a sandbox.
 - **Path guards on read/edit** — they stop `..` traversal and control chars;
   the model can still reach anywhere it knows about via the terminal tool.
-  Guarded paths are documented in the controls, not in code comments only.
+  The guards resolve symlinks — including through directories that do not
+  exist yet — and the credential block checks both the given and the resolved
+  path. Guarded paths are documented in the controls, not in code comments only.
 - **The approval gate** — trust that "the daemon's own user approved". It is
   implemented over the socket; with SO_PEERCRED in front of it, only your
   processes can answer. It doesn't protect you from yourself.

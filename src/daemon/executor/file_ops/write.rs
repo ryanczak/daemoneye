@@ -353,6 +353,48 @@ pub(super) fn build_remote_sudo_edit_cmd(path: &str, old_string: &str, new_strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_home_guard;
+
+    #[tokio::test]
+    async fn edit_create_under_a_symlinked_missing_path_is_refused() {
+        let tmp = std::env::temp_dir().join(format!("de_edit_guard_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let guard_scope = async {
+            let _guard = test_home_guard();
+            unsafe {
+                std::env::set_var("HOME", &tmp);
+            }
+            std::fs::create_dir_all(&tmp).unwrap();
+            let home = crate::config::config_dir().parent().unwrap().to_path_buf();
+            let de_dir = crate::config::config_dir();
+            std::fs::create_dir_all(&de_dir).unwrap();
+
+            let lnk = home.join("lnk");
+            std::os::unix::fs::symlink(&de_dir, &lnk).unwrap();
+
+            let target = lnk.join("a").join("b").join("f.txt");
+            let args = EditArgs {
+                id: "t-1",
+                path: target.to_str().unwrap(),
+                operation: "create",
+                old_string: None,
+                new_string: None,
+                content: Some("hello"),
+                dest_path: None,
+                host: None,
+                sudo: false,
+            };
+            let err = validate_edit_file_request(&args, false).expect_err(
+                "a create under a symlinked, not-yet-existing directory chain is refused",
+            );
+            assert!(
+                err.contains("daemoneye configuration directory"),
+                "expected the config-directory refusal, got: {err}"
+            );
+        };
+        guard_scope.await;
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     /// An oversized edit reply is refused within the byte budget: the reader
     /// hands out at most `MAX_IPC_MESSAGE_BYTES + 64 KiB` of a 64 MiB source,

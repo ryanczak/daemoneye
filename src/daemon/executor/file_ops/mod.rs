@@ -58,11 +58,28 @@ fn contains_control(s: &str) -> bool {
 /// malicious, or prompt-injected model can't casually dump keys into session
 /// output.
 fn is_blocked_secret_path(path: &str) -> bool {
+    if is_blocked_secret_path_resolved(path) {
+        return true;
+    }
+    is_blocked_secret_path_resolved(resolve_path_for_guard(path).to_string_lossy().as_ref())
+}
+
+/// The credential rules applied to one path form: the `$HOME/.ssh` prefix
+/// (raw, and canonical so a symlinked `HOME` cannot hide it) plus the
+/// file-name rules, both evaluated against the path as given.
+fn is_blocked_secret_path_resolved(path: &str) -> bool {
     let p = std::path::Path::new(path);
-    // $HOME/.ssh (and everything beneath it).
+    // $HOME/.ssh (and everything beneath it), raw and canonical: a symlinked
+    // HOME must not be able to hide the directory, the same reason
+    // `guard_roots` keeps both forms of `~/.daemoneye`.
     if let Ok(home) = std::env::var("HOME") {
         let home_ssh = std::path::Path::new(&home).join(".ssh");
         if p.starts_with(&home_ssh) {
+            return true;
+        }
+        if let Ok(canonical) = std::fs::canonicalize(&home_ssh)
+            && p.starts_with(&canonical)
+        {
             return true;
         }
     }
@@ -89,20 +106,37 @@ fn is_blocked_secret_path(path: &str) -> bool {
     )
 }
 
-/// Resolve a path for security-guard checks, following symlinks even when the
-/// leaf does not yet exist.  Canonicalizes the full path if it exists; otherwise
-/// canonicalizes the parent directory and rejoins the final component.  Falls
-/// back to the lexical path if neither can be resolved.
+/// Resolve a path for security-guard checks, following symlinks even when
+/// components of the path do not yet exist.  Canonicalizes the full path if
+/// it exists; otherwise canonicalizes the **deepest existing ancestor** and
+/// rejoins the remaining components, in their original order, so a symlink
+/// partway through a not-yet-created directory chain still resolves (M40
+/// finding S7: `lnk → ~/.daemoneye` with `a/b/f.txt` missing below it used
+/// to fall back to the lexical path and escape the guard).  Falls back to
+/// the lexical path when no ancestor can be resolved.
 fn resolve_path_for_guard(path: &str) -> std::path::PathBuf {
     let p = std::path::Path::new(path);
     if let Ok(c) = std::fs::canonicalize(p) {
         return c;
     }
-    if let Some(parent) = p.parent()
-        && let Some(file_name) = p.file_name()
-        && let Ok(cp) = std::fs::canonicalize(parent)
-    {
-        return cp.join(file_name);
+    if let Some(mut ancestor) = p.ancestors().skip(1).find_map(|a| {
+        std::fs::canonicalize(a)
+            .ok()
+            .filter(|_| a != std::path::Path::new(""))
+    }) {
+        let resolved_len = p
+            .ancestors()
+            .take_while(|a| std::fs::canonicalize(a).is_err())
+            .count();
+        let missing: Vec<_> = p
+            .components()
+            .rev()
+            .take(resolved_len.saturating_sub(1))
+            .collect();
+        for comp in missing.into_iter().rev() {
+            ancestor.push(comp);
+        }
+        return ancestor;
     }
     std::path::PathBuf::from(path)
 }

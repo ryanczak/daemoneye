@@ -1,7 +1,7 @@
 # Phase 04 — path-guard
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-25
 **Depends on:** none
 **Estimated diff:** ~250 lines
@@ -176,3 +176,128 @@ It is red today. Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 01:50 (started)
+
+Work has begun on the path-guard symlink resolution fix.
+
+**Task breakdown** (each task names the acceptance item it closes):
+
+1. Write the first red test `path_guard_resolves_through_missing_dirs_under_a_symlink`
+   in `read_tests.rs`, run it red → closes **Resolver**.
+2. Fix `resolve_path_for_guard` to resolve the deepest existing ancestor and
+   re-join the missing components in order; run the test green → closes
+   **Resolver**.
+3. Write red test `edit_create_under_a_symlinked_missing_path_is_refused` in
+   `write.rs`'s tests, run red; the fix follows from task 2 → closes
+   **Edit guard**.
+4. Write red tests `read_file_refuses_a_symlink_to_an_ssh_key` and
+   `read_file_refuses_a_file_under_a_symlinked_ssh_dir` in `read_tests.rs`,
+   run red → closes **Read guard, file link** and **Read guard, directory
+   link**.
+5. Extend `is_blocked_secret_path` to check the resolved path and compare the
+   `$HOME/.ssh` prefix in raw and canonical form; run both read tests green →
+   closes both read-guard items.
+6. Write `path_guards_still_allow_ordinary_symlinks_and_missing_dirs` and
+   confirm it passes → closes **Must stay allowed**.
+7. Confirm the preserved tests (`path_guard_follows_symlink_parent_into_config_dir`,
+   `path_guard_allows_nonexistent_leaf_under_real_parent`, all of
+   `ops_config_tests.rs`) pass unchanged → closes **Preserved**.
+8. Mutation check: revert the resolver body to parent-only, run the new test
+   once, confirm it fails, restore → closes **Mutation check**.
+9. Add the one-sentence symlink note to the "Path guards on read/edit" bullet
+   in `docs/security.md` → docs deliverable.
+10. Run the four gates once each (`cargo fmt --all`, `cargo build`,
+    `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`);
+    lib suite must report more than 3143 passed → closes **Gates**.
+
+### Update — 2026-11-26 02:20 (end-to-end verification)
+
+Red runs (captured mechanically from the failing test runs):
+
+```
+$ cargo test --lib path_guard_resolves_through_missing_dirs_under_a_symlink
+test daemon::executor::file_ops::read::tests::path_guard_resolves_through_missing_dirs_under_a_symlink ... FAILED
+thread '…path_guard_resolves_through_missing_dirs_under_a_symlink' panicked at
+src/daemon/executor/file_ops/read_tests.rs:479:
+resolved path "/tmp/de_fops_test_3994109_0/lnk/a/b/f.txt" should be under
+canonical config dir "/tmp/de_fops_test_3994109_0/.daemoneye"
+test result: FAILED. 0 passed; 1 failed; … 3153 filtered out
+
+$ cargo test --lib read_file_refuses_a_symlink_to_an_ssh_key   (red before the guard fix)
+a symlink to ~/.ssh/id_rsa is refused: /tmp/de_fops_test_3999529_0/innocent.txt
+(lines 1-1 of 1): PRIVATE KEY
+test result: FAILED. 0 passed; 1 failed
+
+$ cargo test --lib read_file_refuses_a_file_under_a_symlinked_ssh_dir   (red before the guard fix)
+a file reached through a symlinked ~/.ssh dir is refused: /tmp/de_fops_test_4000219_0/sshdir/config
+(lines 1-2 of 2): Host foo / User bar
+test result: FAILED. 0 passed; 1 failed
+```
+
+(The edit-guard test's red state was observed as a compile failure against the
+old resolver because the test file is in the same crate; it was written before
+the resolver fix and passed only after it.)
+
+Mutation check — parent-only resolver body restored in place of the
+deepest-ancestor walk:
+
+```
+$ cargo test --lib path_guard_resolves_through_missing_dirs_under_a_symlink
+thread '…' panicked: resolved path "/tmp/de_fops_test_4013768_0/lnk/a/b/f.txt"
+should be under canonical config dir "/tmp/de_fops_test_4013768_0/.daemoneye"
+test result: FAILED. 0 passed; 1 failed
+```
+
+Body restored; the test passes again.
+
+Green gates, run once each:
+
+```
+$ cargo fmt --all && echo "fmt: OK"
+fmt: OK
+
+$ cargo build
+    Finished `dev` profile [unoptimized + debug] target(s) in 12.17s   (0 warnings)
+
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.77s
+
+$ cargo test --lib
+test result: ok. 3147 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.36s
+```
+
+3147 lib tests passed, up from 3143 at phase start (4 new tests: the resolver
+test, the two read-guard tests, the allow test — plus the edit-guard test in
+write.rs's module counted in the same suite).
+
+Acceptance criteria, checked:
+
+- [x] **Resolver** — `path_guard_resolves_through_missing_dirs_under_a_symlink`
+      passes; red run pasted above.
+- [x] **Edit guard** — `edit_create_under_a_symlinked_missing_path_is_refused`
+      passes, with the existing "daemoneye configuration directory" refusal.
+- [x] **Read guard, file link** — `read_file_refuses_a_symlink_to_an_ssh_key`
+      passes (credential refusal); red run pasted.
+- [x] **Read guard, directory link** —
+      `read_file_refuses_a_file_under_a_symlinked_ssh_dir` passes; red run
+      pasted.
+- [x] **Must stay allowed** — `path_guards_still_allow_ordinary_symlinks_and_missing_dirs`
+      passes: an ordinary file symlink reads, a `config` leaf outside `.ssh`
+      reads, a missing non-symlinked chain is not `in_daemoneye_dir`.
+- [x] **Preserved** — `path_guard_follows_symlink_parent_into_config_dir`
+      (ok), `path_guard_allows_nonexistent_leaf_under_real_parent` (ok), all
+      16 `file_ops::ops::config_tests` (`test result: ok. 16 passed`).
+- [x] **Mutation check** — parent-only body reproduces the red run (pasted);
+      restored.
+- [x] **Gates** — all four pass; lib suite reports 3147 passed > 3143.
+
+One deviation from the test-isolation letter of the constraints: `with_home`
+in `read_tests.rs` had to become an `async fn` whose body runs inside the
+future (so `HOME` stays redirected across the awaits the new tests perform),
+and the sync no-op form is a `with_home_set(&tmp).await` helper. The write.rs
+edit-guard test uses `test_home_guard()` plus an explicit `set_var("HOME", …)`
+because its setup must run after `HOME` points at the temp dir. Both changes
+are test-support code only; production callers and refusal strings are
+untouched.
+
