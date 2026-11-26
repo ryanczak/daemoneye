@@ -218,3 +218,30 @@ validator, then memory/agents, ingress, prompts, saved sessions, docs.
 7. `src/session_store.rs`: validate names in `load_session_meta`, `load_session_messages`, `delete_session`, `rename_session` old name; test `load_session_meta_refuses_a_traversing_name` → Saved sessions criterion.
 8. `docs/security.md`: `### 9. Names that become paths` guard → Docs criterion.
 9. Run 4 gates; paste evidence; commit `fix:` → Gates + No test removed criteria.
+
+### Update — 2026-11-26 (end-to-end verification)
+
+**Gates (run once each):**
+
+- `cargo fmt --all` — clean.
+- `cargo build` — `Finished 'dev' profile [unoptimized + debuginfo] target(s)` no warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — `Finished 'dev' profile`, no warnings.
+- `cargo test` — `test result: ok. 3158 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out` (lib),
+  `3265 passed total` across all targets; was 3149 lib passed before this phase.
+
+**Red runs (as captured when written):**
+
+```
+---- memory::tests::add_memory_refuses_a_traversing_namespace stdout ----
+thread 'memory::tests::add_memory_refuses_a_traversing_namespace' (4092815) panicked at src/memory_tests.rs:652:9:
+expected Err, got Ok(())
+```
+
+**Greps:**
+
+```
+$ git diff 8c8ddcf0 -- src | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+$ grep -rn "ingress_name_error" src/daemon/server/ | wc -l
+9
+```
