@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use async_trait::async_trait;
@@ -67,6 +67,19 @@ fn ends_secret_entry(bytes: &[u8]) -> bool {
     bytes.contains(&b'\n') || bytes.contains(&b'\r') || bytes.contains(&0x03)
 }
 
+/// The longest line a PTY in canonical mode takes whole: Linux's
+/// `N_TTY_BUF_SIZE` is 4096 bytes, and the line end takes one. A longer line
+/// written before the shell's line editor has put the terminal in raw mode is
+/// cut at this length, so the command never runs whole and its end marker
+/// never prints (phase 03 of M40: a remote edit payload of 4154 bytes timed
+/// out on a cold shell under load).
+const CANON_LINE_MAX: usize = 4095;
+
+/// How long `input` waits for a fresh shell's line editor before writing a
+/// long line anyway. A shell without one (`sh`, `dash`) never leaves
+/// canonical mode, so the wait must end.
+const LINE_EDITOR_WAIT: Duration = Duration::from_secs(5);
+
 /// A live shell behind phase-05a's `ShellBackend`: one pump task feeds the
 /// subscriber broadcast, the cast log and the screen from the same PTY bytes.
 pub struct PtyBackend {
@@ -90,6 +103,11 @@ pub struct PtyBackend {
     /// new prompt, and the spec forbids dropping a `working` record on it
     /// ("a terminal MUST NOT require re-sending to keep a record").
     line_epoch: std::sync::atomic::AtomicU64,
+    /// Set once the shell's line editor has been seen holding the terminal
+    /// in raw mode, or once [`LINE_EDITOR_WAIT`] ran out looking for it.
+    /// From then on a long input is written at once: a canonical-mode reader
+    /// later on (`cat`, a password prompt) is never waited for.
+    line_editor_settled: AtomicBool,
 }
 
 impl PtyBackend {
@@ -117,6 +135,7 @@ impl PtyBackend {
             screen: Mutex::new(screen),
             awaiting_secret: AtomicBool::new(false),
             line_epoch: std::sync::atomic::AtomicU64::new(1),
+            line_editor_settled: AtomicBool::new(false),
             out_tx,
             started,
         });
@@ -184,6 +203,9 @@ impl PtyBackend {
 #[async_trait]
 impl ShellBackend for PtyBackend {
     async fn input(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        if bytes.len() > CANON_LINE_MAX {
+            self.await_line_editor().await;
+        }
         let no_job = {
             let shell = self.shell.lock().unwrap_or_log();
             !shell.has_foreground_job() && shell.resumed_pgid_alive().is_none()
@@ -377,6 +399,27 @@ impl ShellBackend for PtyBackend {
 }
 
 impl PtyBackend {
+    /// Wait, at most [`LINE_EDITOR_WAIT`], until the shell's line editor has
+    /// put the terminal in raw mode, so a line longer than
+    /// [`CANON_LINE_MAX`] is not cut by the canonical line discipline of a
+    /// shell still starting up. Only the first long input waits: the result
+    /// is remembered in `line_editor_settled` either way. The shell lock is
+    /// held only for each `tcgetattr`, never across the sleep.
+    async fn await_line_editor(&self) {
+        if self.line_editor_settled.load(Ordering::SeqCst) {
+            return;
+        }
+        let deadline = tokio::time::Instant::now() + LINE_EDITOR_WAIT;
+        loop {
+            let raw = self.shell.lock().unwrap_or_log().raw_mode();
+            if raw == Some(true) || tokio::time::Instant::now() >= deadline {
+                self.line_editor_settled.store(true, Ordering::SeqCst);
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
     /// The visible screen, exactly as `status()` reports from it.
     pub fn screen_contents(&self) -> String {
         self.screen.lock().unwrap_or_log().contents()

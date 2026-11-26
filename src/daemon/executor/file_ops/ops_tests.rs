@@ -702,6 +702,109 @@ fn remote_create_ignores_a_planted_temp_symlink() {
     }
 }
 
+/// A remote edit or create that cannot create its temp (here: an unwritable
+/// directory) must still print one `DE_ERROR: <reason>` line with a
+/// non-empty reason naming the cause, in both interpreter branches —
+/// bug-03-1. A probe create proves the directory really is unwritable so
+/// the test cannot pass vacuously when run as root.
+#[test]
+fn remote_payload_failures_name_their_cause() {
+    let which = |prog: &str| -> String {
+        let out = std::process::Command::new("sh")
+            .args(["-c", &format!("command -v {prog}")])
+            .output()
+            .unwrap_or_else(|e| panic!("resolving {prog}: {e}"));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    let bash = which("bash");
+    assert!(!bash.is_empty(), "bash must resolve");
+    for (interpreter, link) in [("python3", "python3"), ("perl", "perl")] {
+        let resolved = which(interpreter);
+        assert!(!resolved.is_empty(), "{interpreter} must resolve");
+        let bin = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&resolved, bin.path().join(link)).unwrap();
+
+        // Edit: an existing file in an unwritable directory.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("g.txt");
+        std::fs::write(&file, "a\nold-line\nb\n").unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let probe = dir.path().join("de-03-1-probe");
+        let probe_err = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .expect_err("the probe create must fail in a 0555 directory");
+        assert_eq!(
+            probe_err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "the directory really is unwritable for the {interpreter} branch: {probe_err}"
+        );
+        let edit_cmd =
+            super::super::write::build_remote_edit_cmd(file.to_str().unwrap(), "old-line", "new");
+        let out = std::process::Command::new(&bash)
+            .arg("-c")
+            .arg(&edit_cmd)
+            .env("PATH", bin.path())
+            .output()
+            .unwrap_or_else(|e| panic!("running the {interpreter} edit branch: {e}"));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let outcome = super::super::remote_write_outcome(&stdout);
+        let Some(Err(line)) = outcome else {
+            panic!("the {interpreter} edit branch must name its cause: {stdout:?}")
+        };
+        let reason = line.trim_start_matches("DE_ERROR:").trim();
+        assert!(
+            !reason.is_empty(),
+            "the {interpreter} edit failure's reason must be non-empty: {line:?}"
+        );
+        assert!(
+            reason.contains("denied") || reason.contains("temp"),
+            "the {interpreter} edit failure must name the cause, not a generic label: {line:?}"
+        );
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Create: a new file in a fresh unwritable directory.
+        let dir2 = tempfile::tempdir().unwrap();
+        let new_file = dir2.path().join("h.txt");
+        std::fs::set_permissions(dir2.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let probe2 = dir2.path().join("de-03-1-probe");
+        let probe2_err = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe2)
+            .expect_err("the probe create must fail in a 0555 directory");
+        assert_eq!(
+            probe2_err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "the directory really is unwritable for the {interpreter} branch: {probe2_err}"
+        );
+        let create_cmd =
+            super::super::ops::build_remote_create_cmd(new_file.to_str().unwrap(), "x");
+        let out = std::process::Command::new(&bash)
+            .arg("-c")
+            .arg(&create_cmd)
+            .env("PATH", bin.path())
+            .output()
+            .unwrap_or_else(|e| panic!("running the {interpreter} create branch: {e}"));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let outcome = super::super::remote_write_outcome(&stdout);
+        let Some(Err(line)) = outcome else {
+            panic!("the {interpreter} create branch must name its cause: {stdout:?}")
+        };
+        let reason = line.trim_start_matches("DE_ERROR:").trim();
+        assert!(
+            !reason.is_empty(),
+            "the {interpreter} create failure's reason must be non-empty: {line:?}"
+        );
+        assert!(
+            reason.contains("denied") || reason.contains("temp"),
+            "the {interpreter} create failure must name the cause, not a generic label: {line:?}"
+        );
+        std::fs::set_permissions(dir2.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
 /// `commit_local_create` must ignore a symlink planted at the temp name
 /// the old code used: the new file is written through an `O_EXCL` temp at
 /// a random name, so the planted link and its target are untouched.

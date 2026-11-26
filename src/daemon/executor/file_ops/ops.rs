@@ -478,20 +478,22 @@ fn build_remote_create_cmd(path: &str, content: &str) -> String {
          p=bytes.fromhex('{path_hex}').decode()\n\
          c=bytes.fromhex('{content_hex}').decode()\n\
          if os.path.exists(p): print('DE_ERROR: file already exists: '+p); sys.exit(1)\n\
-         os.makedirs(os.path.dirname(p) or '.', exist_ok=True)\n\
-         m=os.umask(0); os.umask(m)\n\
-         fd,t=tempfile.mkstemp(suffix='.de_tmp',prefix='.',dir=os.path.dirname(p) or '.')\n\
+         t=None\n\
          try:\n\
+         \x20 os.makedirs(os.path.dirname(p) or '.', exist_ok=True)\n\
+         \x20 m=os.umask(0); os.umask(m)\n\
+         \x20 fd,t=tempfile.mkstemp(suffix='.de_tmp',prefix='.',dir=os.path.dirname(p) or '.')\n\
          \x20 f=os.fdopen(fd,'w')\n\
          \x20 f.write(c)\n\
          \x20 f.flush()\n\
          \x20 os.fchmod(fd,0o666&~m)\n\
          \x20 f.close()\n\
          \x20 os.rename(t,p)\n\
-         except BaseException:\n\
-         \x20 try: os.unlink(t)\n\
-         \x20 except OSError: pass\n\
-         \x20 print('DE_ERROR: create failed'); sys.exit(1)\n\
+         except BaseException as e:\n\
+         \x20 if t:\n\
+         \x20  try: os.unlink(t)\n\
+         \x20  except OSError: pass\n\
+         \x20 print('DE_ERROR: create failed: '+(str(e) or type(e).__name__)); sys.exit(1)\n\
          print('DE_OK: Created '+p)\n"
     );
     let py_hex = super::to_hex(&py);
@@ -505,15 +507,16 @@ fn build_remote_create_cmd(path: &str, content: &str) -> String {
          if(-e $p){{print \"DE_ERROR: file already exists\\n\";exit 1}}\n\
          make_path(dirname($p));\n\
          my $m=umask;\n\
-         my ($f,$t)=tempfile('.deXXXXXXXX',DIR=>dirname($p),SUFFIX=>'.de_tmp',UNLINK=>0) or do{{print \"DE_ERROR: $!\\n\";exit 1}};\n\
+         my ($f,$t);\n\
          my $ok=eval{{\n\
-         \x20 print $f $c or die;\n\
-         \x20 $f->flush or die;\n\
-         \x20 chmod(0666&~$m,$f) or die;\n\
-         \x20 close($f) or die;\n\
-         \x20 rename($t,$p) or die;\n\
+         \x20 ($f,$t)=tempfile('.deXXXXXXXX',DIR=>dirname($p),SUFFIX=>'.de_tmp',UNLINK=>0) or die \"tempfile: $!\";\n\
+         \x20 print $f $c or die \"write: $!\";\n\
+         \x20 $f->flush or die \"flush: $!\";\n\
+         \x20 chmod(0666&~$m,$f) or die \"chmod: $!\";\n\
+         \x20 close($f) or die \"close: $!\";\n\
+         \x20 rename($t,$p) or die \"rename: $!\";\n\
          \x20 1}};\n\
-         if(!$ok){{my $e=$@;close($f);unlink($t);print \"DE_ERROR: ${{$e||'create failed'}}\\n\";exit 1}}\n\
+         if(!$ok){{my $e=$@;$e=~s/\\s+at .* line \\d+\\.?\\s*//;$e=~s/\\s+$//;close($f) if $f;unlink($t) if $t;print \"DE_ERROR: create failed: \".($e ne ''?$e:'unknown error').\"\\n\";exit 1}}\n\
          print \"DE_OK: Created $p\\n\";\n"
     );
     let pl_hex = super::to_hex(&pl);

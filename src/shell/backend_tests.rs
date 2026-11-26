@@ -422,6 +422,45 @@ fn backend_records_input_as_an_i_event() {
     );
 }
 
+/// A command line longer than the canonical line limit, written the moment
+/// the shell is spawned, still runs whole: `input` waits for bash's line
+/// editor to take the terminal out of canonical mode first. Without the wait
+/// the line is cut at 4095 bytes, the command never runs and the expected
+/// output never arrives.
+#[test]
+fn a_long_line_to_a_fresh_shell_runs_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let backend = spawn_backend(&dir);
+    let mut rx = backend.subscribe();
+    let head = "A=";
+    let tail = "; echo LONG-LINE-LEN-${#A}\n";
+    let pad = "x".repeat(4154 - head.len() - tail.len());
+    let line = format!("{head}{pad}{tail}");
+    assert!(
+        line.len() > CANON_LINE_MAX,
+        "the line must exceed the limit"
+    );
+    tokio::runtime::Runtime::new()
+        .expect("runtime")
+        .block_on(backend.input(line.as_bytes()))
+        .expect("write the long line");
+    let want = format!("LONG-LINE-LEN-{}", pad.len());
+    let mut seen = Vec::new();
+    let found = recv_until(
+        &mut rx,
+        std::time::Instant::now() + Duration::from_secs(10),
+        |chunk| {
+            seen.extend_from_slice(chunk);
+            String::from_utf8_lossy(&seen).contains(&want)
+        },
+    );
+    assert!(
+        found.is_some(),
+        "the {}-byte line must run whole and print {want}",
+        line.len()
+    );
+}
+
 #[test]
 fn looks_like_secret_prompt_matches_the_real_sudo_prompt() {
     assert!(
