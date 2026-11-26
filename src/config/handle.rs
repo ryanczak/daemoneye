@@ -38,21 +38,26 @@ impl ConfigHandle {
                 let old = self.current();
                 // Fail closed: a reload that would empty the secret while the
                 // running listener is exposed is refused whole, running config
-                // untouched.
+                // untouched. A disabled listener binds nothing, so the check
+                // does not apply.
                 let fresh_secret = fresh.webhook.secret.clone();
-                let bind_ip: std::net::IpAddr = old
-                    .webhook
-                    .bind_addr
-                    .parse()
-                    .unwrap_or_else(|_| std::net::Ipv4Addr::LOCALHOST.into());
-                if let Err(reason) =
-                    crate::webhook::server::validate_webhook_bind(&bind_ip, &fresh_secret)
-                {
-                    return ReloadReport {
-                        applied: Vec::new(),
-                        restart_required: Vec::new(),
-                        error: Some(anyhow::anyhow!("reload refused (webhook.secret): {reason}")),
-                    };
+                if old.webhook.enabled {
+                    let bind_ip: std::net::IpAddr = old
+                        .webhook
+                        .bind_addr
+                        .parse()
+                        .unwrap_or_else(|_| std::net::Ipv4Addr::LOCALHOST.into());
+                    if let Err(reason) =
+                        crate::webhook::server::validate_webhook_bind(&bind_ip, &fresh_secret)
+                    {
+                        return ReloadReport {
+                            applied: Vec::new(),
+                            restart_required: Vec::new(),
+                            error: Some(anyhow::anyhow!(
+                                "reload refused (webhook.secret): {reason}"
+                            )),
+                        };
+                    }
                 }
                 // Restart-only sections keep their running values; keys that
                 // changed inside one are reported as waiting for a restart.
@@ -429,10 +434,10 @@ mod tests {
     #[test]
     fn reload_refuses_to_empty_the_secret_on_a_public_bind() {
         let _guard = crate::test_home();
-        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nsecret = \"old\"\n");
+        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nenabled = true\nsecret = \"old\"\n");
         let handle = std::sync::Arc::new(ConfigHandle::new(Config::load().expect("start")));
 
-        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nsecret = \"\"\n");
+        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nenabled = true\nsecret = \"\"\n");
         let report = handle.reload();
 
         let err = report
@@ -536,6 +541,32 @@ mod tests {
             handle.current().webhook.secret,
             "new",
             "the running secret followed the reload"
+        );
+    }
+
+    #[test]
+    fn reload_with_a_disabled_webhook_skips_the_secret_check() {
+        let _guard = crate::test_home();
+        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nenabled = false\nsecret = \"old\"\n");
+        let handle = std::sync::Arc::new(ConfigHandle::new(Config::load().expect("start")));
+
+        write_config("[webhook]\nbind_addr = \"0.0.0.0\"\nenabled = false\nsecret = \"\"\n");
+        let report = handle.reload();
+
+        assert!(
+            report.error.is_none(),
+            "a disabled listener binds nothing, so an empty secret is allowed: {:?}",
+            report.error
+        );
+        assert!(
+            report.applied.contains(&"webhook.secret".to_string()),
+            "the secret change is still applied: {:?}",
+            report.applied
+        );
+        assert_eq!(
+            handle.current().webhook.secret,
+            "",
+            "the running config took the empty secret"
         );
     }
 

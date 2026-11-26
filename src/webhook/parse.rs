@@ -259,7 +259,14 @@ pub fn parse_payload(body: &Value) -> Vec<InternalAlert> {
         return vec![a];
     }
 
-    // Generic fallback.
+    // Generic fallback: index into a non-object body is a JSON `Value::Null`
+    // at every key, so route scalars/arrays through the object shape they
+    // would have been indexed from — the full-body description fallback.
+    if !body.is_object() {
+        let wrapped = serde_json::json!({ "description": body.to_string() });
+        return parse_generic(&wrapped).map(|a| vec![a]).unwrap_or_default();
+    }
+
     parse_generic(body).map(|a| vec![a]).unwrap_or_default()
 }
 
@@ -437,6 +444,27 @@ mod tests {
             parse_payload(&payload).is_empty(),
             "`{{}}` describes nothing — an empty object must not become an alert"
         );
+    }
+
+    #[test]
+    fn generic_non_object_body_still_alerts() {
+        for payload in [
+            serde_json::json!("a bare string"),
+            serde_json::json!([1, 2, 3]),
+            serde_json::json!(42),
+        ] {
+            let alerts = parse_payload(&payload);
+            assert_eq!(
+                alerts.len(),
+                1,
+                "a non-object body still carries content: {payload}"
+            );
+            assert_eq!(alerts[0].alert_name, "GenericAlert");
+            assert!(
+                !alerts[0].description.is_empty(),
+                "the full-body description fallback survives for {payload}"
+            );
+        }
     }
 
     #[test]
