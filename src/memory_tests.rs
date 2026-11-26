@@ -657,6 +657,27 @@ fn add_memory_refuses_a_traversing_namespace() {
     });
 }
 
+/// bug-05-2: the read-side namespace entry points must refuse invalid
+/// namespaces too, not just the writer.
+#[test]
+fn memory_readers_refuse_a_traversing_namespace() {
+    let tmp = temp_home();
+    with_home(&tmp, || {
+        assert!(
+            read_memory("k", MemoryCategory::Knowledge, "../../outside").is_err(),
+            "read_memory must refuse an invalid namespace"
+        );
+        assert!(
+            delete_memory("k", MemoryCategory::Knowledge, "../../outside").is_err(),
+            "delete_memory must refuse an invalid namespace"
+        );
+        assert!(
+            list_memories(None, &["../../outside"]).is_err(),
+            "list_memories must refuse an invalid namespace"
+        );
+    });
+}
+
 #[test]
 fn session_memory_block_skips_an_invalid_namespace() {
     let tmp = temp_home();

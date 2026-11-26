@@ -435,3 +435,61 @@ the phase is done.**
 before your first edit.
 
 **Finish condition:** the lib suite reports **3159**, not 3158 or 3160.
+
+### Update — 2026-11-26 05:35 (bounce-1 fixes, end-to-end verification)
+
+**bug-05-1 — fixture fixed.** `load_named_prompt_ignores_a_traversing_name`
+(`src/config/tests.rs`) now plants `evil.toml` at `prompts_dir().parent()`
+(i.e. `etc/evil.toml`), which is where `"../evil"` from `etc/prompts/`
+resolves. The positive control still reads the same file by the valid name
+`"evil"`, so it proves the fixture is live.
+
+**bug-05-2 — readers test added.** `memory_readers_refuse_a_traversing_namespace`
+(`src/memory_tests.rs`, beside the `add_memory` test, same `temp_home()` +
+`with_home` helper) asserts `read_memory`, `delete_memory` and
+`list_memories(None, &["../../outside"])` each return `Err`.
+
+**Mutation check (required by the bounce note):** `validate_path_name` was
+temporarily made to return `Ok(())` as its first statement, then both tests
+were run once each — **both failed under the mutation** — then the mutation
+was restored and `git diff src/util.rs` is empty (verified: 0 lines).
+
+```
+$ cargo test --lib -- load_named_prompt_ignores_a_traversing_name memory_readers_refuse_a_traversing_namespace   # with mutation
+
+---- config::tests::load_named_prompt_ignores_a_traversing_name stdout ----
+thread 'config::tests::load_named_prompt_ignores_a_traversing_name' panicked at src/config/tests.rs:1668:5:
+assertion `left != right` failed: a traversing prompt name must not read etc/evil.toml
+  left: "EVIL"
+ right: "EVIL"
+---- memory::tests::memory_readers_refuse_a_traversing_namespace stdout ----
+thread 'memory::tests::memory_readers_refuse_a_traversing_namespace' panicked at src/memory_tests.rs:670:9:
+delete_memory must refuse an invalid namespace
+ (x2)
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 3167 filtered out
+
+$ git diff src/util.rs | wc -l
+0
+```
+
+**Gates (run once each after restore):**
+
+- `cargo fmt --all` — clean (`cargo fmt --all -- --check` exits 0).
+- `cargo build` — `Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 4.36s`, no warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — `Finished \`dev\` profile ... in 13.83s`, no warnings.
+- `cargo test --lib` — **`test result: ok. 3159 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out`** (the finish condition: 3159, not 3158 or 3160).
+- Full `cargo test` — all targets green: 3159 + 2 + 6 + 19 + 16 + 45 + 13 + 2 + 4 + 0 passed, 0 failed.
+
+**Greps (run once each):**
+
+```
+$ git diff 8c8ddcf0 -- src | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+$ grep -rn "ingress_name_error" src/daemon/server/ | wc -l
+9
+```
+
+**Adaptation:** `list_memories` takes `(category: Option<MemoryCategory>,
+namespaces: &[&str])` — the bounce note's `list_memories(&[...])` sketch was
+adapted to `list_memories(None, &["../../outside"])` to match the real
+signature.

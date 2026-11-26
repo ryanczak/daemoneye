@@ -1654,8 +1654,12 @@ fn load_named_prompt_ignores_a_traversing_name() {
     let _guard = crate::test_home_guard();
     let dir = prompts_dir();
     std::fs::create_dir_all(&dir).unwrap();
+    // "../../evil" from etc/prompts/ resolves to etc/evil.toml, so plant the
+    // file beside prompts/, not inside it.
     std::fs::write(
-        dir.join("evil.toml"),
+        dir.parent()
+            .expect("prompts_dir always has a parent")
+            .join("evil.toml"),
         "name = \"evil\"\nsystem = \"EVIL\"\n",
     )
     .unwrap();
