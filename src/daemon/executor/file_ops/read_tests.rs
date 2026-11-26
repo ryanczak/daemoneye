@@ -593,6 +593,36 @@ async fn path_guard_resolves_through_missing_dirs_under_a_symlink() {
 }
 
 #[tokio::test]
+async fn path_guard_keeps_every_missing_component() {
+    let tmp = TmpHome::new();
+    with_home(&tmp, || async {
+        let de_dir = crate::config::config_dir();
+        std::fs::create_dir_all(&de_dir).unwrap();
+
+        let lnk = tmp.0.join("lnk");
+        std::os::unix::fs::symlink(&de_dir, &lnk).unwrap();
+        let canonical_de = std::fs::canonicalize(&de_dir).unwrap();
+
+        let one = lnk.join("f.txt");
+        let resolved = super::super::resolve_path_for_guard(one.to_str().unwrap());
+        assert_eq!(
+            resolved,
+            canonical_de.join("f.txt"),
+            "a single missing component is kept: {resolved:?}"
+        );
+
+        let deep = lnk.join("a").join("b").join("f.txt");
+        let resolved = super::super::resolve_path_for_guard(deep.to_str().unwrap());
+        assert_eq!(
+            resolved,
+            canonical_de.join("a").join("b").join("f.txt"),
+            "every missing component is kept, in order: {resolved:?}"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn path_guard_allows_nonexistent_leaf_under_real_parent() {
     let tmp = TmpHome::new();
     with_home(&tmp, || async {
@@ -612,7 +642,25 @@ async fn path_guard_allows_nonexistent_leaf_under_real_parent() {
     .await;
 }
 
-// ── M21 phase-07a: read_file { host? } ─────────────────────────────────
+// ── M21 phase-07a: read_file { host? } ───────────────────────────────── (x3)
+
+#[tokio::test]
+async fn read_file_default_reads_from_start() {
+    let (tmp, path) = simulate_read_file(&["line1", "line2", "line3"]);
+    with_home_set(&tmp).await;
+    let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+        .await
+        .unwrap();
+    let ToolCallOutcome::Result(s) = result else {
+        panic!()
+    };
+    assert!(s.contains("line1"), "default read starts at line1: {s}");
+    assert!(s.contains("line3"), "default read includes line3: {s}");
+}
+
+/// Preservation: the command the new transport runs is byte-for-byte the
+/// one the pane path ran. The markers, the `sed` range and the quoted path
+/// are a contract with `extract_marked`; a silent change here would make a
 /// remote read return the whole screen.
 #[test]
 fn build_remote_read_cmd_is_unchanged() {

@@ -128,11 +128,7 @@ fn resolve_path_for_guard(path: &str) -> std::path::PathBuf {
             .ancestors()
             .take_while(|a| std::fs::canonicalize(a).is_err())
             .count();
-        let missing: Vec<_> = p
-            .components()
-            .rev()
-            .take(resolved_len.saturating_sub(1))
-            .collect();
+        let missing: Vec<_> = p.components().rev().take(resolved_len).collect();
         for comp in missing.into_iter().rev() {
             ancestor.push(comp);
         }
