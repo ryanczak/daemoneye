@@ -6,8 +6,11 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** [phase-09b webhook-fanout](milestones/M40-security-hardening/phase-09b-webhook-fanout.md)
-(`todo`): dispatch with `/rexymcp:dispatch 09b`. Phase 09a webhook-auth is done (2026-11-26,
+**Active phase:** none drafted — next is phase-10; draft it with
+`/rexymcp:architect next`. Phase 09b webhook-fanout is done (2026-11-26,
+approved after one bounce): one POST fans out at most 100 alerts in one
+task, the analysis rate-limit map evicts, and alert text reaches every
+prompt inside an untrusted-data block; S10 is closed. Phase 09a webhook-auth is done (2026-11-26,
 approved after one bounce): auth and the rate limit run before the body is
 read, the Bearer compare is constant-time, and a reload rotates the secret.
 S10 stays open until 09b. Phase 08 argv-injection is done (2026-11-26,

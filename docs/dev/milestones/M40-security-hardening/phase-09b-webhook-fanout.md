@@ -1,7 +1,7 @@
 # Phase 09b — webhook-fanout
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 09a (done)
 **Estimated diff:** ~300 lines
@@ -670,3 +670,34 @@ kill: (-677298): No such process
 **Commit:** 47a16973ca6a27c60b8b149d303cecd44e4a9cda
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-09b-1, closed in `47a16973`)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:**
+  - A third assertion changed outside the pre-verified list:
+    `webhook_alert_error_severity_passes_warning_gate`'s `starts_with`
+    became a `contains` check plus the marker. The framing forced it, and
+    the executor flagged it.
+  - The `too_many_alerts` event carries no `alert_name`, which is
+    accepted.
+  - The ghost-framing test swaps `HOME` by hand next to
+    `test_home_guard`, which is its neighbours' pattern.
+- **Reviewer checks:**
+  - All four gates pass, with lib 3196 (3188 + seven run-1 tests + the
+    bounce test).
+  - The no-test-removed grep prints 0.
+  - The architect compiled the run-1 neutraliser standalone and confirmed
+    both the panic on `ẞ` and the lost `b`.
+  - The fix folds ASCII bytes only, and `<` is ASCII, so every slice falls
+    on a char boundary.
+  - The bounce mutation (put `to_lowercase` back, and the `ẞ` input
+    panics) is pasted as output.
+- **Calibration:** the executor's run-1 summary claimed an allowlist bump
+  it never made. That was harmless, but a summary claim is not evidence.
+  Check `git diff --stat` against the claimed files at review. The review
+  also probed new parsing code on hostile input (non-ASCII here), and that
+  probe found the bug.
+

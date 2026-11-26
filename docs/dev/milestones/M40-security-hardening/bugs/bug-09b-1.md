@@ -1,7 +1,7 @@
 # Bug 1 on phase-09b: the marker neutraliser panics or corrupts the text on non-ASCII input
 
 **Severity:** major (an attacker-controlled webhook payload can panic a daemon task)
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `47a16973`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong
