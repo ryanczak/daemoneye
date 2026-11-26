@@ -6,8 +6,11 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** [phase-09a webhook-auth](milestones/M40-security-hardening/phase-09a-webhook-auth.md)
-(`todo`): dispatch with `/rexymcp:dispatch 09a`. Phase 08 argv-injection is done (2026-11-26,
+**Active phase:** none drafted — next is phase-09b; draft it with
+`/rexymcp:architect next`. Phase 09a webhook-auth is done (2026-11-26,
+approved after one bounce): auth and the rate limit run before the body is
+read, the Bearer compare is constant-time, and a reload rotates the secret.
+S10 stays open until 09b. Phase 08 argv-injection is done (2026-11-26,
 approved first try): leading-dash values can no longer read as options;
 S11 is closed. Phase 07 schedule-delete-gate is done
 (2026-11-26, approved after one bounce): schedule removals are refused to

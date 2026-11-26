@@ -1,7 +1,7 @@
 # Bug 2 on phase-09a: a non-object JSON body no longer becomes a generic alert
 
 **Severity:** major (a regression in the generic payload fallback)
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `7ad1d417`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong

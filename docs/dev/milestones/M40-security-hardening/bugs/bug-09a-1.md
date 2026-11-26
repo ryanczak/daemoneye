@@ -1,7 +1,7 @@
 # Bug 1 on phase-09a: a disabled webhook on a non-loopback bind can never reload
 
 **Severity:** major (a regression: `daemoneye reload` stops working for a valid config)
-**Status:** open
+**Status:** closed (2026-11-26, fixed in `7ad1d417`; see the phase's review verdict)
 **Filed:** 2026-11-26
 
 ## What's wrong

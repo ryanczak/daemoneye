@@ -1,7 +1,7 @@
 # Phase 09a — webhook-auth
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 08 (done)
 **Estimated diff:** ~250 lines
@@ -692,3 +692,40 @@ kill: (-560321): No such process
 **Commit:** 7ad1d417cf5ee58a20b67b6059572c8954966d07
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-09a-1 and bug-09a-2, both closed in `7ad1d417`)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:**
+  - `src/webhook/parse.rs` was touched outside the first closed list. My
+    spec's false claim about `{}` forced it; the executor flagged it, and
+    it was authorized at the bounce.
+  - `src/webhook/mod.rs` became `pub(crate) mod server`. This is harmless;
+    the glob re-export already carried the `pub(crate)` function.
+  - bug-09a-2's fix wraps a non-object body as `{"description": …}` instead
+    of narrowing the guard. A non-object description is now compact JSON
+    rather than pretty-printed, which is accepted.
+  - The disabled-webhook test empties the secret instead of changing
+    `[limits]`. That is a stronger check of the same gate.
+- **Reviewer checks:**
+  - All four gates pass, with lib 3188 (3180 + six run-1 tests + two
+    bounce tests).
+  - The no-test-removed grep prints 0.
+  - The production code adds no `unwrap`, `expect`, `#[allow]` or debug
+    output.
+  - The run-1 mutation (read above auth gives 413) and the bounce mutation
+    (dropping `enabled` makes the reload refused) are both pasted as
+    output.
+- **Calibration:** two architect slips, both of the kind "a claim about
+  current behaviour not probed at drafting":
+  - `{}` was asserted to be a 400, when it was a `GenericAlert`.
+  - The startup bind check was assumed unconditional, when it runs only
+    for an enabled listener.
+
+  The same lesson appeared at 08 (the `-oProxyCommand=x` claim). That makes
+  three occurrences, which is enough to propose a fold: "every claim about
+  today's behaviour in a spec gets a one-line probe at drafting". The
+  proposal needs the PE's approval.
+
