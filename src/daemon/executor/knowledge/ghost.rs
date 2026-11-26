@@ -51,11 +51,6 @@ pub(super) fn spawn_host_target(
     Ok(Some(host.to_string()))
 }
 
-/// Spawn a ghost session from a runbook. `agent_name` optionally names an
-/// agent to run as; `host` names the machine the child's commands run on
-/// (a configured `[hosts]` key or `"local"`), overriding the runbook's
-/// `ssh_target`, and `caller_policy` is the calling ghost's `hosts:` fence
-/// (`None` for a chat caller).
 /// Narrow a child ghost, about to be spawned by `caller`, so it never holds
 /// more than its caller: hosts, `ssh_target`, pre-approved sudo scripts, the
 /// sudo/command/TUI flags and the agent tool policy. Mutates `child` in
@@ -67,6 +62,7 @@ pub(super) fn narrow_to_caller(
     child: &mut crate::ipc::GhostConfig,
     caller: &crate::daemon::policy::GhostPolicy,
     caller_tool_policy: Option<&crate::agents::ToolPolicy>,
+    host_given: bool,
     hosts: &std::collections::HashMap<String, crate::config::HostEntry>,
 ) -> Result<(), String> {
     // Hosts: an empty caller list is unrestricted; an empty child list
@@ -96,8 +92,10 @@ pub(super) fn narrow_to_caller(
     }
 
     // ssh_target: resolved as at ghost start, it must pass the narrowed
-    // hosts: list. A child with no ssh_target passes.
-    if let Some(target) = child.ssh_target.as_deref() {
+    // hosts: list. A child with no ssh_target passes. With an explicit
+    // `host`, the runbook's ssh_target is replaced, so it is not checked
+    // here — spawn_host_target checks the named host instead (bug-06a-1).
+    if !host_given && let Some(target) = child.ssh_target.as_deref() {
         let remote_host = match crate::host::resolve_ssh_target(target, hosts) {
             crate::host::SshTargetResolution::Configured(key) => {
                 crate::host::HostId::parse(&key).ok()
@@ -150,6 +148,11 @@ pub(super) fn narrow_to_caller(
     Ok(())
 }
 
+/// Spawn a ghost session from a runbook. `agent_name` optionally names an
+/// agent to run as; `host` names the machine the child's commands run on
+/// (a configured `[hosts]` key or `"local"`), overriding the runbook's
+/// `ssh_target`, and `caller_policy` is the calling ghost's `hosts:` fence
+/// (`None` for a chat caller).
 #[allow(clippy::too_many_arguments)]
 pub async fn spawn_ghost(
     runbook: &str,
@@ -201,6 +204,7 @@ pub async fn spawn_ghost(
             &mut ghost_config,
             caller,
             caller_tool_policy,
+            host.is_some(),
             &spawn_config.hosts,
         )
     {
@@ -355,8 +359,14 @@ mod ghost_narrow_tests {
     fn narrow_to_caller_intersects_hosts() {
         // caller [] (unrestricted): the child keeps its list.
         let mut c = child(&["db01"]);
-        narrow_to_caller(&mut c, &caller(&[]), None, &host_map(&["db01", "db02"]))
-            .expect("an unrestricted caller changes nothing");
+        narrow_to_caller(
+            &mut c,
+            &caller(&[]),
+            None,
+            false,
+            &host_map(&["db01", "db02"]),
+        )
+        .expect("an unrestricted caller changes nothing");
         assert_eq!(c.hosts, vec!["db01".to_string()]);
 
         // child [] (unrestricted): it takes the caller's list.
@@ -365,6 +375,7 @@ mod ghost_narrow_tests {
             &mut c,
             &caller(&["db01", "db02"]),
             None,
+            false,
             &host_map(&["db01", "db02", "db03"]),
         )
         .expect("an unfenced child inherits the caller's fence");
@@ -376,6 +387,7 @@ mod ghost_narrow_tests {
             &mut c,
             &caller(&["db01", "db02"]),
             None,
+            false,
             &host_map(&["db01", "db02", "db03"]),
         )
         .expect("overlapping lists intersect");
@@ -387,6 +399,7 @@ mod ghost_narrow_tests {
             &mut c,
             &caller(&["db01"]),
             None,
+            false,
             &host_map(&["db01", "db02"]),
         )
         .expect_err("disjoint host lists must refuse");
@@ -405,7 +418,7 @@ mod ghost_narrow_tests {
             ssh_target: Some("db02".to_string()),
             ..child(&[])
         };
-        let err = narrow_to_caller(&mut c, &fence, None, &hosts)
+        let err = narrow_to_caller(&mut c, &fence, None, false, &hosts)
             .expect_err("an ssh_target outside the caller's fence must refuse");
         assert!(
             err.contains("db02"),
@@ -416,11 +429,12 @@ mod ghost_narrow_tests {
             ssh_target: Some("db01".to_string()),
             ..child(&[])
         };
-        narrow_to_caller(&mut c, &fence, None, &hosts)
+        narrow_to_caller(&mut c, &fence, None, false, &hosts)
             .expect("an ssh_target inside the caller's fence passes");
 
         let mut c = child(&[]);
-        narrow_to_caller(&mut c, &fence, None, &hosts).expect("a child with no ssh_target passes");
+        narrow_to_caller(&mut c, &fence, None, false, &hosts)
+            .expect("a child with no ssh_target passes");
     }
 
     #[test]
@@ -434,7 +448,7 @@ mod ghost_narrow_tests {
         };
         let mut f = GhostPolicy::from_config(&GhostConfig::default());
         f.auto_approve_scripts = vec!["a.sh".to_string(), "b.sh".to_string()];
-        narrow_to_caller(&mut c, &f, None, &host_map(&[]))
+        narrow_to_caller(&mut c, &f, None, false, &host_map(&[]))
             .expect("a caller with no host fence does not refuse");
         assert_eq!(
             c.auto_approve_scripts,
@@ -449,7 +463,7 @@ mod ghost_narrow_tests {
             allow_tui_input: true,
             ..child(&[])
         };
-        narrow_to_caller(&mut c, &f, None, &host_map(&[])).expect("narrowed");
+        narrow_to_caller(&mut c, &f, None, false, &host_map(&[])).expect("narrowed");
         assert!(!c.run_with_sudo && !c.auto_approve_commands && !c.allow_tui_input);
 
         // Both true: each flag stays true.
@@ -463,7 +477,7 @@ mod ghost_narrow_tests {
             allow_tui_input: true,
             ..child(&[])
         };
-        narrow_to_caller(&mut c, &t, None, &host_map(&[])).expect("narrowed");
+        narrow_to_caller(&mut c, &t, None, false, &host_map(&[])).expect("narrowed");
         assert!(c.run_with_sudo && c.auto_approve_commands && c.allow_tui_input);
     }
 
@@ -480,8 +494,14 @@ mod ghost_narrow_tests {
             allow: None,
             deny: Some(vec!["send_input".to_string()]),
         };
-        narrow_to_caller(&mut c, &caller(&[]), Some(&caller_policy), &host_map(&[]))
-            .expect("a caller with no host fence does not refuse");
+        narrow_to_caller(
+            &mut c,
+            &caller(&[]),
+            Some(&caller_policy),
+            false,
+            &host_map(&[]),
+        )
+        .expect("a caller with no host fence does not refuse");
         let narrowed = c.tool_policy.expect("the child keeps a policy");
         assert!(
             narrowed.permits("read_file"),
@@ -498,8 +518,14 @@ mod ghost_narrow_tests {
             allow: Some(vec!["read_file".to_string()]),
             deny: None,
         };
-        narrow_to_caller(&mut c, &caller(&[]), Some(&caller_policy), &host_map(&[]))
-            .expect("narrowed");
+        narrow_to_caller(
+            &mut c,
+            &caller(&[]),
+            Some(&caller_policy),
+            false,
+            &host_map(&[]),
+        )
+        .expect("narrowed");
         let narrowed = c
             .tool_policy
             .expect("the child inherits the caller's policy");
@@ -517,7 +543,7 @@ mod ghost_narrow_tests {
             }),
             ..child(&[])
         };
-        narrow_to_caller(&mut c, &caller(&[]), None, &host_map(&[])).expect("narrowed");
+        narrow_to_caller(&mut c, &caller(&[]), None, false, &host_map(&[])).expect("narrowed");
         let kept = c.tool_policy.expect("policy unchanged");
         assert!(kept.permits("read_file"));
         assert!(!kept.permits("send_input"), "still only its own allow list");
@@ -733,6 +759,66 @@ mod ghost_host_tests {
         assert!(
             !started,
             "no session may be started when the spawn is refused"
+        );
+        drop(guard);
+    }
+
+    /// Door test (bug-06a-1): a runbook `ssh_target` outside the caller's
+    /// fence does not refuse a spawn that names `host` — the named host
+    /// replaces the runbook's target, and `spawn_host_target` checks it
+    /// against the caller.
+    #[test]
+    fn spawn_ghost_lets_a_host_override_replace_the_runbook_ssh_target() {
+        let guard = crate::test_home_guard();
+        let home = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("HOME", home.path());
+        }
+        crate::config::Config::ensure_dirs().expect("daemon tree");
+        std::fs::write(
+            crate::config::etc_dir().join("config.toml"),
+            "[hosts.db01]\nssh = \"db01\"\n\n[hosts.db02]\nssh = \"db02\"\n",
+        )
+        .expect("write config");
+        std::fs::write(
+            crate::config::runbooks_dir().join("rb06a-h.md"),
+            "---\nenabled: true\nssh_target: db02\n---\n# Runbook: rb06a-h\n\n## Alert Criteria\n- x\n",
+        )
+        .expect("write runbook");
+
+        let sessions = crate::daemon::session::SessionStore::new();
+        let caller = GhostPolicy {
+            hosts: vec!["db01".to_string()],
+            ..GhostPolicy::from_config(&crate::ipc::GhostConfig::default())
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let outcome = rt
+            .block_on(crate::daemon::executor::knowledge::spawn_ghost(
+                "rb06a-h",
+                "task",
+                None,
+                Some("db01"),
+                Some(&caller),
+                None,
+                &sessions,
+                0,
+                None,
+            ))
+            .expect("a refusal is a normal outcome, not an error");
+        let text = match outcome {
+            crate::daemon::executor::ToolCallOutcome::Result(text) => text,
+            crate::daemon::executor::ToolCallOutcome::UserMessage(t) => t,
+            crate::daemon::executor::ToolCallOutcome::SpawnGhostSession { tool_result, .. } => {
+                tool_result
+            }
+        };
+        assert!(
+            !text.contains("cannot spawn this specialist"),
+            "an explicit host override replaces the runbook ssh_target, so the \
+             narrowed ssh_target check must not fire: {text}"
         );
         drop(guard);
     }
