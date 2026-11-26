@@ -1,7 +1,7 @@
 # Phase 07 — schedule-delete-gate
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: bug-07-1)
 **Drafted:** 2026-11-26
 **Depends on:** 06b (done)
 **Estimated diff:** ~250 lines
@@ -204,6 +204,10 @@ Paste the red run.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 640d4fea -- src | grep -cE '^-\s*#\[(tokio::)?test\]'`
 - [ ] **Gates:** all four pass, each run once.
+- [ ] **bug-07-1, no `expect` in production code:** this prints nothing.
+      Today it prints line 376:
+      `awk '/^#\[cfg\(test\)\]/{exit} {print}' src/daemon/executor/schedule.rs | grep -nE '\.(unwrap|expect)\(|panic!\('`
+      The lib suite stays at **3177**, not 3178.
 
 ## Spec
 
@@ -622,3 +626,29 @@ kill: (-340881): No such process
 **Commit:** 051e6c5d18cdb7b6e119512a7973858e3b386338
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce: bug-07-1)
+
+**All four gates are green and the tree is clean. That is expected here,
+and it is NOT evidence the phase is done.** Everything else in phase 07 is
+approved; do not redo it:
+- the wire pair;
+- the gate's behaviour;
+- the five tests;
+- the clients;
+- the gated list;
+- the docs;
+- the `stream_prompts.rs` allowlist entry.
+
+**There is exactly one edit left.** In `remove_schedule`
+(`src/daemon/executor/schedule.rs`), replace the `any(…)` check and the
+`find(…).expect("job was found above")` with **one** lookup. Use a `let
+Some(job) = … else { return Ok(ToolCallOutcome::Result(format!("Job {}
+not found", job_id))); };` (or an equivalent `match`) that returns the
+not-found text. Then take `name`, `kind` and `action` from that one job.
+
+**Finish condition:** the awk/grep in the bug-07-1 criterion prints
+nothing, and `cargo test` reports **3177** lib tests passed, **not 3178**.
+Paste both outputs and the four gate results. No mutation run is needed:
+the edit adds no behaviour.
+
