@@ -6,8 +6,8 @@
 Performance and M43 Architecture, then the MCP surface (M44) and
 Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
 
-**Active phase:** none drafted — next is phase-11; draft it with
-`/rexymcp:architect next`. Phase 10 masking is done (2026-11-26, approved
+**Active phase:** [phase-11 prompt-ids](milestones/M40-security-hardening/phase-11-prompt-ids.md)
+(`todo`): dispatch with `/rexymcp:dispatch 11`. Phase 10 masking is done (2026-11-26, approved
 after one bounce): the JSON secret rule keeps its key, the credential stays
 zeroizing end to end on the daemon side, and the secret-bearing types
 redact in `Debug`; S13 and S14 are closed. Phase 09b webhook-fanout is done (2026-11-26,

@@ -76,7 +76,7 @@ at drafting.
 | 09a | [webhook-auth](phase-09a-webhook-auth.md) — constant-time secret compare, auth and rate limit before the body is parsed, the secret read through `config::current()` so a reload rotates it | S10 | done        |
 | 09b | [webhook-fanout](phase-09b-webhook-fanout.md) — one POST's alert array fans out under a bound; the rate-limit map evicts; alert text enters every prompt inside an untrusted-data block | S10 | done        |
 | 10 | [masking](phase-10-masking.md) — the JSON secret rule keeps its key (capture expansion actually happens, test through `mask_sensitive`, not the rule table); the credential round trip stays in `Zeroizing`; the secret-bearing structs redact in `Debug` | S13 S14 | done        |
-| 11 | prompt-ids — every prompt-response handler drops a response whose id is not the prompt's | S15 | todo |
+| 11 | [prompt-ids](phase-11-prompt-ids.md) — every prompt-response handler drops a response whose id is not the prompt's (nine approve/deny handlers and the credential round trip) | S15 | todo |
 | 12 | fd-hygiene — `pipe2(O_CLOEXEC)` for the readiness pipe; `dup2` never closes its own target fd 0–2; `getpwuid_r` retries on `ERANGE` | S16 S17 S18 | todo |
 
 ## Notes
