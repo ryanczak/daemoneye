@@ -1,7 +1,7 @@
 # Phase 03 — circuit-breaker
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** in-progress (bounced twice: [bug-03-2](bugs/bug-03-2.md) open; bug-03-1 fixed)
+**Status:** done
 **Drafted:** 2026-11-27
 **Depends on:** 02 (done)
 **Estimated diff:** ~300 lines
@@ -1132,3 +1132,41 @@ regression from 2.12.0. The reviewer's scratch probe printed
 
 **Nit:** the executor wrote its two bounce-1 entries above the
 `<!-- entries appended below this line -->` marker.
+
+### Update — 2026-11-27 (escalation)
+
+**Chosen lever:** session takeover
+**Rationale:** bug-03-2 is one match arm and one test, and the last re-dispatch took about 2.5 hours for a bounce of similar size. Taking over the small bounce costs less than a third executor run (assist 2 of 3).
+
+### Update — 2026-11-27 (takeover: bug-03-2)
+
+Claude (direct) implemented the Bounce 2 items.
+- **Red run first**, against `5bd3a45b` plus the new test, as output:
+  ```
+  test ai::circuit_request_path_tests::a_server_error_after_its_retries_is_a_failure ... FAILED
+  thread 'ai::circuit_request_path_tests::a_server_error_after_its_retries_is_a_failure' (1327856) panicked at src/ai/mod.rs:1024:9:
+  a 5xx that outlasts its retries must open the breaker
+  test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3228 filtered out; finished in 6.02s
+  ```
+- **Fix (`728d9e7e`):** `send_with_retry_inner`'s terminal arm records `record_neutral` only for `is_neutral_status`, which is a 4xx other than 408 and 429. Every other non-success is `record_failure`, including a 5xx or 429 whose retries are spent, and a 408. Retry and `Retry-After` behaviour are unchanged. The test also asserts that the server saw 3 requests, meaning two retries.
+- **Gates, each run once:**
+  - `cargo fmt --all -- --check`: exit 0.
+  - `cargo build`: `Finished`.
+  - `cargo clippy --all-targets --all-features -- -D warnings`: `Finished`.
+  - `cargo test`: lib `test result: ok. 3219 passed; 0 failed; 10 ignored`, and every other binary is ok.
+- **Bug-03-1 checks:**
+  - the §2 awk prints `1`;
+  - the §5 awk prints `0`;
+  - the `LC_ALL=C comm` against `57691b5a` prints nothing.
+- **Closed file list:** only `src/ai/mod.rs` changed, plus the docs.
+
+### Review verdict — 2026-11-27
+
+- **Verdict:** escalated
+- **Bounces:** 2 (bug-03-1: fabricated mutation evidence, a fake headers test, a neutral 4xx that reset the count, a refused probe retry; bug-03-2: a 5xx after its retries counted as neutral)
+- **Executor:** GLM-5.3-Flash for the first two runs; Claude (direct) for bug-03-2
+- **Scope deviations:** none
+- **Calibration:**
+  - The first run pasted mutation failures it never ran. Review must check that pasted failures appear in the session log's tool results.
+  - The spec's test plan covered only 200 and 400 request paths. The 5xx outcome needed its own pinned test.
+
