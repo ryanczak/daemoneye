@@ -47,12 +47,6 @@ where
     }
 }
 
-/// Set `HOME` to the temp dir for the remainder of the current task, when the
-/// body needs no await inside the changed environment.
-fn with_home_set(tmp: &TmpHome) -> impl std::future::Future<Output = ()> + use<'_> {
-    with_home(tmp, || std::future::ready(()))
-}
-
 fn simulate_read_file(lines: &[&str]) -> (TmpHome, std::path::PathBuf) {
     let tmp = TmpHome::new();
     let path = tmp.0.join("test_file.txt");
@@ -66,15 +60,17 @@ async fn read_file_offset_skips_lines() {
     let lines: Vec<String> = (1..=10).map(|i| format!("line{:02}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), Some(5), None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(!s.contains("line01"), "offset should skip line01");
-    assert!(s.contains("line05"), "should start from line05");
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), Some(5), None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(!s.contains("line01"), "offset should skip line01");
+        assert!(s.contains("line05"), "should start from line05");
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -82,16 +78,18 @@ async fn read_file_limit_caps_output() {
     let lines: Vec<String> = (1..=20).map(|i| format!("line{}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, Some(3), None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("line1"));
-    assert!(s.contains("line3"));
-    assert!(!s.contains("line4"), "limit=3 should not include line4");
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(3), None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("line1"));
+        assert!(s.contains("line3"));
+        assert!(!s.contains("line4"), "limit=3 should not include line4");
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -99,83 +97,93 @@ async fn read_file_limit_capped_at_max() {
     let lines: Vec<String> = (1..=600).map(|i| format!("line{}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, Some(600), None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    // MAX_LINES = 500; line501 should not appear
-    assert!(!s.contains("line501"), "should be capped at 500 lines");
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(600), None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        // MAX_LINES = 500; line501 should not appear
+        assert!(!s.contains("line501"), "should be capped at 500 lines");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn read_file_pattern_grep_mode_header() {
     let (tmp, path) = simulate_read_file(&["apple", "banana", "cherry"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("banana"), None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("matching lines"));
-    assert!(s.contains("banana"));
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, Some("banana"), None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("matching lines"));
+        assert!(s.contains("banana"));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn read_file_pattern_no_match_returns_message() {
     let (tmp, path) = simulate_read_file(&["apple", "banana"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(
-        path.to_str().unwrap(),
-        None,
-        None,
-        Some("xyzzy_not_found"),
-        None,
-    )
-    .await
-    .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("no lines matched"));
+    with_home(&tmp, || async {
+        let result = super::run_read_file(
+            path.to_str().unwrap(),
+            None,
+            None,
+            Some("xyzzy_not_found"),
+            None,
+        )
+        .await
+        .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("no lines matched"));
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn read_file_rejects_control_chars_in_path() {
     let (tmp, path) = simulate_read_file(&["line1"]);
-    with_home_set(&tmp).await;
-    let evil = format!("{}\n; touch /tmp/pwned; echo", path.display());
-    let result = super::run_read_file(&evil, None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("control characters"), "got: {s}");
-    assert!(!std::path::Path::new("/tmp/pwned").exists());
+    with_home(&tmp, || async {
+        let evil = format!("{}\n; touch /tmp/pwned; echo", path.display());
+        let result = super::run_read_file(&evil, None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("control characters"), "got: {s}");
+        assert!(!std::path::Path::new("/tmp/pwned").exists());
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn read_file_rejects_control_chars_in_pattern() {
     let (tmp, path) = simulate_read_file(&["line1"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(
-        path.to_str().unwrap(),
-        None,
-        None,
-        Some("banana\n; touch /tmp/pwned2; echo"),
-        None,
-    )
-    .await
-    .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("control characters"), "got: {s}");
-    assert!(!std::path::Path::new("/tmp/pwned2").exists());
+    with_home(&tmp, || async {
+        let result = super::run_read_file(
+            path.to_str().unwrap(),
+            None,
+            None,
+            Some("banana\n; touch /tmp/pwned2; echo"),
+            None,
+        )
+        .await
+        .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("control characters"), "got: {s}");
+        assert!(!std::path::Path::new("/tmp/pwned2").exists());
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -233,14 +241,16 @@ async fn read_file_allows_normal_dotfiles() {
 #[tokio::test]
 async fn read_file_offset_beyond_eof_returns_empty() {
     let (tmp, path) = simulate_read_file(&["line1", "line2"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), Some(1000), None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("no lines matched"));
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), Some(1000), None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("no lines matched"));
+    })
+    .await;
 }
 
 // ── M36 phase-14: read bounds (S8) and the symlinked-home guard (S7) ─────
@@ -248,28 +258,32 @@ async fn read_file_offset_beyond_eof_returns_empty() {
 #[tokio::test]
 async fn read_bounds_refuses_device() {
     let tmp = TmpHome::new();
-    with_home_set(&tmp).await;
-    let result = super::run_read_file("/dev/null", None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("not a regular file"), "got: {s}");
-    assert!(!s.contains("no lines matched"), "got: {s}");
+    with_home(&tmp, || async {
+        let result = super::run_read_file("/dev/null", None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("not a regular file"), "got: {s}");
+        assert!(!s.contains("no lines matched"), "got: {s}");
+    })
+    .await;
 }
 
 #[tokio::test]
 async fn read_bounds_refuses_directory() {
     let (tmp, _path) = simulate_read_file(&["line1"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(tmp.0.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("not a regular file"), "got: {s}");
+    with_home(&tmp, || async {
+        let result = super::run_read_file(tmp.0.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("not a regular file"), "got: {s}");
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -290,25 +304,27 @@ async fn read_bounds_large_file_total_is_open() {
         }
         w.flush().unwrap();
     }
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, Some(10), None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    let header = s.lines().next().unwrap();
-    assert!(header.contains("(lines 1-10 of "), "{header}");
-    let total = header.split(" of ").nth(1).unwrap().trim_end_matches("):");
-    assert_eq!(
-        total.chars().last().unwrap(),
-        '+',
-        "the total must be open-ended (N+): {header}"
-    );
-    assert!(
-        total.trim_end_matches('+').parse::<usize>().is_ok(),
-        "the open total is a line count: {header}"
-    );
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, Some(10), None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        let header = s.lines().next().unwrap();
+        assert!(header.contains("(lines 1-10 of "), "{header}");
+        let total = header.split(" of ").nth(1).unwrap().trim_end_matches("):");
+        assert_eq!(
+            total.chars().last().unwrap(),
+            '+',
+            "the total must be open-ended (N+): {header}"
+        );
+        assert!(
+            total.trim_end_matches('+').parse::<usize>().is_ok(),
+            "the open total is a line count: {header}"
+        );
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -324,19 +340,21 @@ async fn read_bounds_byte_cap_single_line() {
         }
         w.flush().unwrap();
     }
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("[read stopped at the 8 MiB cap]"), "got: {s}");
-    assert!(
-        s.len() < 1024 * 1024,
-        "the result must not carry the whole 20 MiB line ({} bytes)",
-        s.len()
-    );
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("[read stopped at the 8 MiB cap]"), "got: {s}");
+        assert!(
+            s.len() < 1024 * 1024,
+            "the result must not carry the whole 20 MiB line ({} bytes)",
+            s.len()
+        );
+    })
+    .await;
 }
 
 /// A symlinked `~/.daemoneye` pointing to the real one: the config at its
@@ -393,19 +411,21 @@ async fn read_fifo_refused() {
         .status()
         .expect("mkfifo runs");
     assert!(status.success(), "mkfifo failed: {status}");
-    with_home_set(&tmp).await;
-    let started = std::time::Instant::now();
-    let result = super::run_read_file(fifo.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("not a regular file"), "got: {s}");
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "a FIFO must be refused at once, not opened"
-    );
+    with_home(&tmp, || async {
+        let started = std::time::Instant::now();
+        let result = super::run_read_file(fifo.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("not a regular file"), "got: {s}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "a FIFO must be refused at once, not opened"
+        );
+    })
+    .await;
 }
 
 // ── Defect A: sentinel collision ──
@@ -647,15 +667,17 @@ async fn path_guard_allows_nonexistent_leaf_under_real_parent() {
 #[tokio::test]
 async fn read_file_default_reads_from_start() {
     let (tmp, path) = simulate_read_file(&["line1", "line2", "line3"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(s.contains("line1"), "default read starts at line1: {s}");
-    assert!(s.contains("line3"), "default read includes line3: {s}");
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(s.contains("line1"), "default read starts at line1: {s}");
+        assert!(s.contains("line3"), "default read includes line3: {s}");
+    })
+    .await;
 }
 
 /// Preservation: the command the new transport runs is byte-for-byte the
@@ -732,21 +754,23 @@ async fn a_malformed_host_is_refused_by_read_file() {
 #[tokio::test]
 async fn read_file_without_a_host_takes_the_local_path() {
     let (tmp, path) = simulate_read_file(&["local-only-line"]);
-    with_home_set(&tmp).await;
-    let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(s) = result else {
-        panic!()
-    };
-    assert!(
-        s.contains("local-only-line"),
-        "the content came from the local file: {s}"
-    );
-    assert!(
-        !s.contains("on host"),
-        "the local label carries no host clause: {s}"
-    );
+    with_home(&tmp, || async {
+        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(s) = result else {
+            panic!()
+        };
+        assert!(
+            s.contains("local-only-line"),
+            "the content came from the local file: {s}"
+        );
+        assert!(
+            !s.contains("on host"),
+            "the local label carries no host clause: {s}"
+        );
+    })
+    .await;
 }
 
 /// `"local"` in any case parses to `HostId::Local` and takes the same
@@ -755,21 +779,24 @@ async fn read_file_without_a_host_takes_the_local_path() {
 async fn read_file_host_local_takes_the_local_path() {
     for spelling in ["local", "Local", "LOCAL"] {
         let (tmp, path) = simulate_read_file(&["still-local-line"]);
-        with_home_set(&tmp).await;
-        let result = super::run_read_file(path.to_str().unwrap(), None, None, None, Some(spelling))
-            .await
-            .unwrap();
-        let ToolCallOutcome::Result(s) = result else {
-            panic!()
-        };
-        assert!(
-            s.contains("still-local-line"),
-            "{spelling:?} read the local file: {s}"
-        );
-        assert!(
-            !s.contains("on host"),
-            "{spelling:?} must not label a host: {s}"
-        );
+        with_home(&tmp, || async {
+            let result =
+                super::run_read_file(path.to_str().unwrap(), None, None, None, Some(spelling))
+                    .await
+                    .unwrap();
+            let ToolCallOutcome::Result(s) = result else {
+                panic!()
+            };
+            assert!(
+                s.contains("still-local-line"),
+                "{spelling:?} read the local file: {s}"
+            );
+            assert!(
+                !s.contains("on host"),
+                "{spelling:?} must not label a host: {s}"
+            );
+        })
+        .await;
     }
 }
 
@@ -781,46 +808,48 @@ async fn the_local_read_path_is_unchanged() {
     let lines: Vec<String> = (1..=10).map(|i| format!("line{:02}", i)).collect();
     let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
     let (tmp, path) = simulate_read_file(&refs);
-    with_home_set(&tmp).await;
+    with_home(&tmp, || async {
+        let plain = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(plain) = plain else {
+            panic!()
+        };
+        let expected_body = (1..=10)
+            .map(|i| format!("line{i:02}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            plain,
+            format!("{} (lines 1-10 of 10):\n{}", path.display(), expected_body),
+            "the plain label is byte-identical to the pre-07a shape"
+        );
 
-    let plain = super::run_read_file(path.to_str().unwrap(), None, None, None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(plain) = plain else {
-        panic!()
-    };
-    let expected_body = (1..=10)
-        .map(|i| format!("line{i:02}"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert_eq!(
-        plain,
-        format!("{} (lines 1-10 of 10):\n{}", path.display(), expected_body),
-        "the plain label is byte-identical to the pre-07a shape"
-    );
+        let offset = super::run_read_file(path.to_str().unwrap(), Some(3), Some(2), None, None)
+            .await
+            .unwrap();
+        let ToolCallOutcome::Result(offset) = offset else {
+            panic!()
+        };
+        assert!(
+            offset.starts_with(&format!("{} (lines 3-4 of 10):", path.display())),
+            "offset+limit clamp unchanged: {offset:?}"
+        );
+        assert!(offset.contains("line03") && offset.contains("line04"));
 
-    let offset = super::run_read_file(path.to_str().unwrap(), Some(3), Some(2), None, None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(offset) = offset else {
-        panic!()
-    };
-    assert!(
-        offset.starts_with(&format!("{} (lines 3-4 of 10):", path.display())),
-        "offset+limit clamp unchanged: {offset:?}"
-    );
-    assert!(offset.contains("line03") && offset.contains("line04"));
-
-    let grep = super::run_read_file(path.to_str().unwrap(), None, None, Some("line0[12]"), None)
-        .await
-        .unwrap();
-    let ToolCallOutcome::Result(grep) = grep else {
-        panic!()
-    };
-    assert!(
-        grep.starts_with(&format!("{} (2 matching lines", path.display())),
-        "the grep label is unchanged: {grep:?}"
-    );
+        let grep =
+            super::run_read_file(path.to_str().unwrap(), None, None, Some("line0[12]"), None)
+                .await
+                .unwrap();
+        let ToolCallOutcome::Result(grep) = grep else {
+            panic!()
+        };
+        assert!(
+            grep.starts_with(&format!("{} (2 matching lines", path.display())),
+            "the grep label is unchanged: {grep:?}"
+        );
+    })
+    .await;
 }
 
 /// The in-process PTY host the transport tests drive, the same fixture
