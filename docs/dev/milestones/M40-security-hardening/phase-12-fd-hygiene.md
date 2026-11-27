@@ -1,7 +1,7 @@
 # Phase 12 — fd-hygiene
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 11 (done)
 **Estimated diff:** ~120 lines
@@ -722,3 +722,34 @@ kill: (-975926): No such process
 **Commit:** f0a9939441fba24a5ad902e5f8cf505e36b36cf7
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-12-1, closed in `f0a99394`)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:** `a_missing_passwd_entry_is_looked_up_once` starts
+  from 128 bytes, not the 8 that bug-12-1 pinned. This is accepted, and the
+  executor was right.
+  - **The architect re-probed on this host.** glibc returns `ERANGE` for a
+    missing uid at 8, 64 and 101 bytes, and `ENOENT` (rc 2) from 102 bytes.
+  - **So the 8-byte DoD could not be met.** It was an architect spec
+    error: the drafting probe checked `ERANGE` only for the user's own uid,
+    never for a missing one.
+  - **The executor handled it well.** It probed, recorded why, and kept
+    the assertion honest.
+- **Reviewer checks:**
+  - All four gates pass; the lib suite reports 3209, as pinned.
+  - The SAFETY grep prints 1; the stale-comment and `libc::pipe(` greps
+    print nothing; the no-test-removed grep prints 0.
+  - The S16 red run and mutation, and the bounce's `NoName` mutation, are
+    pasted as output.
+  - The only new `unsafe` is the authorized `sysconf` and `fcntl` FFI, each
+    with a `SAFETY` comment.
+- **Calibration:**
+  - A probe has to cover the exact input the criterion names: here, the
+    missing uid at 8 bytes.
+  - This is the fifth occurrence of the "probe current-behaviour claims at
+    drafting" pattern, counting the drafting probe that rejected S17. That
+    probe was the pattern working.
+

@@ -77,7 +77,7 @@ at drafting.
 | 09b | [webhook-fanout](phase-09b-webhook-fanout.md) — one POST's alert array fans out under a bound; the rate-limit map evicts; alert text enters every prompt inside an untrusted-data block | S10 | done        |
 | 10 | [masking](phase-10-masking.md) — the JSON secret rule keeps its key (capture expansion actually happens, test through `mask_sensitive`, not the rule table); the credential round trip stays in `Zeroizing`; the secret-bearing structs redact in `Debug` | S13 S14 | done        |
 | 11 | [prompt-ids](phase-11-prompt-ids.md) — every prompt-response handler drops a response whose id is not the prompt's (nine approve/deny handlers and the credential round trip) | S15 | done        |
-| 12 | [fd-hygiene](phase-12-fd-hygiene.md) — `pipe2(O_CLOEXEC)` for the readiness pipe; `getpwuid_r` retries on `ERANGE` (S17 rejected at drafting: Rust's runtime reopens a closed fd 0–2 before `main`) | S16 S18 | review      |
+| 12 | [fd-hygiene](phase-12-fd-hygiene.md) — `pipe2(O_CLOEXEC)` for the readiness pipe; `getpwuid_r` retries on `ERANGE` (S17 rejected at drafting: Rust's runtime reopens a closed fd 0–2 before `main`) | S16 S18 | done        |
 
 ## Notes
 
