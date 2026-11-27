@@ -1,7 +1,7 @@
 # Phase 10 — masking
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: bug-10-1)
 **Drafted:** 2026-11-26
 **Depends on:** 09b (done)
 **Estimated diff:** ~250 lines
@@ -159,6 +159,14 @@ Paste the red run.
       3. Restore by undoing that one edit, never by copying a backup file.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff 0b2a5ca8 -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'`
+- [ ] **bug-10-1, daemon copy:** this prints nothing:
+      `grep -n 'Zeroizing::new(credential.as_str' src/daemon/executor/shell_exec_auth.rs`.
+      The credential is moved into `Zeroizing`, not copied.
+- [ ] **bug-10-1, `write_answer`:** this prints **0**:
+      `grep -c 'mem::take' src/shell/client_read.rs`. The encoded
+      request's `bytes` are zeroized after `encode`.
+- [ ] **Bounce test count:** the lib suite reports **3202**, the same as
+      now. Do not add a test.
 - [ ] **Gates:** all four pass, each run once. `tests/hygiene.rs` passes
       with the allowlist untouched.
 
@@ -444,3 +452,46 @@ kill: (-728802): No such process
 **Commit:** 2451fd89465f9bbca1ad2fcb214b7b2a12df6204
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence that
+the phase is done.**
+
+Everything else from the first run is approved and must not be redone:
+
+- the S13 replacement path and its tests;
+- the `PromptReply` `Debug`;
+- the `Credential` newtype's wire format and `Debug`;
+- the config `Debug`s.
+
+There are exactly **two** edits left. Both are in `bugs/bug-10-1.md`.
+
+1. **`src/ipc_types.rs` + `src/daemon/executor/shell_exec_auth.rs`.**
+   - Give `Credential` a by-value accessor (`into_inner(self) -> String`).
+   - Make `credential_round_trip` **move** the credential into
+     `Zeroizing`: `Zeroizing::new(credential.into_inner())`.
+   - Today it zeroizes `as_str().to_string()`, a copy, and drops the
+     original unzeroed.
+2. **`src/shell/client_read.rs`, `write_answer`.**
+   - Remove the `mem::take`.
+   - Build the `ShellRequest::Input` in a local and encode it **by
+     reference**: `encode(&req)` works, since `encode` takes
+     `impl Serialize`.
+   - Then zeroize the request's `bytes`.
+   - The wire string stays `Zeroizing`.
+
+**Finish condition:**
+- both greps in the acceptance list print what they must;
+- the lib suite still reports **3202**.
+
+This is a pure correctness fix, so add no test.
+
+**Mutation check:** put the `as_str().to_string()` copy back, confirm the
+first grep prints its line, then restore it by undoing that one edit. Paste
+both grep outputs.
+
+Run the four gates once each, then make one `fix:` commit.
+
+**Your first tool call is an edit to `src/ipc_types.rs`.**
+
