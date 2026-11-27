@@ -1,7 +1,7 @@
 # Phase 10 — masking
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 09b (done)
 **Estimated diff:** ~250 lines
@@ -630,3 +630,34 @@ kill: (-771442): No such process
 **Commit:** 9b487f2d6ffc0a63d2753f884c119979993481fb
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 (bug-10-1, closed in `9b487f2d`)
+- **Executor:** GLM-5.3-Flash
+- **Scope deviations:**
+  - `PromptReply` dropped `PartialEq` / `Eq`, which the spec said to keep.
+    No caller compares it, so this is accepted.
+  - The new tests went into `src/config/tests.rs` and
+    `shell_exec_auth_tests.rs`, both outside the closed list. Both are test
+    files, so this is accepted.
+  - `Credential` gained `From<&str>` and `PartialEq<str>`, which is
+    accepted.
+- **Reviewer checks:**
+  - All four gates pass, with lib 3202 unchanged by the bounce, as
+    pinned.
+  - The no-test-removed grep prints 0.
+  - Both bug greps are clean: the copy grep prints nothing, and the
+    `mem::take` count is 0.
+  - The run-1 S13 red run and mutation, and the bounce's grep mutation, are
+    pasted as output.
+  - **Nit, not filed:** `write_answer` returns early through `encode(&req)?`
+    before zeroizing. Serializing a `Vec<u8>` cannot realistically fail.
+- **Calibration:**
+  - "Read it into `Zeroizing` as today" was too implicit. GLM turned a move
+    into a copy. Say "move, never copy" for secret plumbing.
+  - Zeroizing claims cannot be tested by behaviour, so the bounce used
+    structural greps as its falsifiable finish condition. That worked in
+    one run.
+
