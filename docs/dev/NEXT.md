@@ -1,41 +1,19 @@
 # NEXT
 
-**Active milestone:** M40 Security hardening
-([`README.md`](milestones/M40-security-hardening/README.md)), target
-`2.12.0`, signed off by the PE 2026-11-25. Then M41 Correctness, M42
-Performance and M43 Architecture, then the MCP surface (M44) and
-Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as `2.11.0`.
+**Active milestone:** none. M40 Security hardening
+([`README.md`](milestones/M40-security-hardening/README.md)) finished its
+phases 2026-11-27. The retrospective and live check are written. It waits on
+the PE's sign-off, then the `2.12.0` release per `REXYMCP.md` § Versioning.
+Next come M41 Correctness, M42 Performance and M43 Architecture, then the MCP
+surface (M44) and Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as
+`2.11.0`.
 
-**Active phase:** all M40 phases are done. The milestone close comes next,
-run with `/rexymcp:architect`: the retrospective, the calibration folds, and
-the 2.12.0 release. Phase 12 fd-hygiene is done (2026-11-26, approved after
-one bounce): the readiness pipe is close-on-exec, and `getpwuid_r` retries
-only on `ERANGE`. S16 and S18 are closed, and S17 was rejected at drafting.
-Phase 11 prompt-ids is done
-(2026-11-26): a reply for another prompt is a denial at every approve/deny
-handler, and a mismatched credential is never typed; S15 is closed. Phase 10 masking is done (2026-11-26, approved
-after one bounce): the JSON secret rule keeps its key, the credential stays
-zeroizing end to end on the daemon side, and the secret-bearing types
-redact in `Debug`; S13 and S14 are closed. Phase 09b webhook-fanout is done (2026-11-26,
-approved after one bounce): one POST fans out at most 100 alerts in one
-task, the analysis rate-limit map evicts, and alert text reaches every
-prompt inside an untrusted-data block; S10 is closed. Phase 09a webhook-auth is done (2026-11-26,
-approved after one bounce): auth and the rate limit run before the body is
-read, the Bearer compare is constant-time, and a reload rotates the secret.
-S10 stays open until 09b. Phase 08 argv-injection is done (2026-11-26,
-approved first try): leading-dash values can no longer read as options;
-S11 is closed. Phase 07 schedule-delete-gate is done
-(2026-11-26, approved after one bounce): schedule removals are refused to
-ghosts and asked in chat; S12 is closed. Phase 06b ghost-spawn-approval is done
-(2026-11-26, approved after one bounce): chat's `spawn_ghost_shell` asks
-first. Phase 06a ghost-fence is done (2026-11-26, approved after one
-bounce): a delegated ghost is narrowed to its caller; S9 is closed. Phase 05 name-validation is done (2026-11-26,
-approved after one bounce); S8 is closed. Phase 04 path-guard is done (2026-11-26,
-approved after one bounce); S7 is closed. Phase 03 temp-files is done (2026-11-25,
-escalated: the bug-03-1 bounce was taken over). S6 is closed. Phase 03 also
-fixed a PTY race in the shell substrate: a line over 4095 bytes written to
-a fresh shell before readline went raw was cut short (`PtyBackend::input`
-now waits for the line editor).
+**Active phase:** none.
+
+**Pending PE decisions from the M40 close:**
+- Fold A: probe every claim about current behaviour at drafting. It would
+  extend `WORKFLOW.md` § "Reproduce a defect before drafting its phase".
+- Whether to re-record the M40 bounces logged as `false_completion`.
 
 **Deferred from the M39 live check:** a command that times out and stops
 on Ctrl-C always waits the full 5 s interrupt grace, because the end
