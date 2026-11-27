@@ -120,8 +120,8 @@ check confirmed all ten rows marked `yes`.
 | Q3a | `let _ = self.save()` drops scheduler persistence errors | `scheduler.rs` | M41 10 | | |
 | Q3b | `rename_session` ignores the `meta.toml` write | `session_store.rs` | M41 06 | | |
 | Q3c | partial log rotation leaves `daemon.log` missing; non-atomic `pane_prefs` write | `utils/log_rotation.rs`, `pane_prefs.rs` | M41 16 | | |
-| Q4 | `lock_invariant.rs` and `tmux_read_only.rs` split on the first `#[cfg(test)]` and miss production code below it | `tests/` | M41 02 | | |
-| Q5 | `lock_invariant.rs` misses `.read()`/`.write()`/`try_*` | `tests/lock_invariant.rs` | M41 02 | | |
+| Q4 | `lock_invariant.rs` and `tmux_read_only.rs` split on the first `#[cfg(test)]` and miss production code below it | `tests/` | M41 02 | yes: probed 2026-11-27, about 290 production items sit below an early `#[cfg(test)]` (e.g. `shell/client.rs`, `search.rs`, `memory/index/mod.rs`); a scratch `syn` visitor found no violation hiding there | |
+| Q5 | `lock_invariant.rs` misses `.read()`/`.write()`/`try_*` | `tests/lock_invariant.rs` | M41 02 | yes: read 2026-11-27, the scanner matches only `.lock()`; the scratch visitor found no production `read`/`write`/`try_*` guard unwrapped | |
 | Q6 | 22- and 24-parameter status-section functions | `cli/status_sections.rs` | M43 03 | | |
 | Q7 | `base64 0.23` duplicates `0.22`; single-use `nix` (three versions in the lock) replaceable by `File::try_lock` | `Cargo.toml`, `daemon/instance.rs` | M43 02 | | |
 | Q8 | dead `#[allow(dead_code)] fn search_dir` | `search.rs` | M43 02 | | |
