@@ -1,7 +1,7 @@
 # Phase 12 — fd-hygiene
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** in-progress (bounced: bug-12-1)
 **Drafted:** 2026-11-26
 **Depends on:** 11 (done)
 **Estimated diff:** ~120 lines
@@ -101,6 +101,18 @@ Paste the red run.
          file.
 - [ ] **No test removed:** run this once. It prints **0**:
       `git diff f4e6da6a -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'`
+- [ ] **bug-12-1, ERANGE only:**
+      `a_missing_passwd_entry_is_looked_up_once` passes.
+      - **Setup:** uid `4000000000`, which has no entry on this host, and
+        an 8-byte start.
+      - **Asserts:** the lookup is `None` after exactly one `getpwuid_r`
+        attempt.
+- [ ] **bug-12-1, SAFETY:** this prints at least 1:
+      `grep -n -B4 'libc::sysconf' src/daemon/executor/shell_label.rs | grep -c 'SAFETY'`
+- [ ] **bug-12-1, doc comment:** this prints nothing:
+      `grep -n 'buffer is too small' src/daemon/executor/shell_label.rs`
+- [ ] **Bounce test count:** the lib suite reports **3209**, which is
+      today's 3208 plus the one new test. Not more.
 - [ ] **Gates:** all four pass, each run once.
 
 ## Spec
@@ -390,3 +402,45 @@ kill: (-912853): No such process
 **Commit:** a2b235441323a5befb80a3544bbe4e1534f48d2c
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Notes for executor — 2026-11-26 (bounce 1)
+
+**Green gates and a clean tree are expected here. They are NOT evidence that
+the phase is done.**
+
+Everything else is approved and must not be redone:
+
+- the S16 `pipe2(O_CLOEXEC)` fix and its test;
+- `a_tiny_passwd_buffer_still_finds_the_name`;
+- the `sysconf` start.
+
+There is exactly **one** file to change, `src/daemon/executor/shell_label.rs`,
+and the work is in `bugs/bug-12-1.md`.
+
+1. **Retry only on `ERANGE`.** Today `passwd_name_from` retries whenever an
+   attempt returns `None`, so a missing entry walks the whole ladder to
+   1 MiB.
+   - Make the per-attempt result tell "too small" (`rc == libc::ERANGE`)
+     apart from every other outcome.
+   - Only "too small" doubles and retries. Everything else returns on that
+     attempt.
+   - Make the attempt count observable to the test.
+2. **Add a test.** `a_missing_passwd_entry_is_looked_up_once`: uid
+   `4000000000` from an 8-byte start is `None` after exactly one attempt.
+3. **Add a `// SAFETY:` comment** on the `sysconf` call.
+4. **Fix the doc comment.** Drop "the buffer is too small" from
+   `passwd_name`'s list of `None` cases.
+
+**Finish condition:**
+- the three bug-12-1 acceptance items hold;
+- the lib suite reports **3209**, not 3208 and not 3210.
+
+**Mutation check:** make the "too small" arm also match the not-found
+outcome, so the old behaviour is back. Run
+`cargo test --lib a_missing_passwd_entry_is_looked_up_once` once; it must
+fail. Undo that one edit and paste the output.
+
+Run the four gates once each, then make one `fix:` commit.
+
+**Your first tool call is an edit to `src/daemon/executor/shell_label.rs`.**
+
