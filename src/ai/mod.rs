@@ -6,9 +6,9 @@ pub mod types;
 use crate::util::UnpoisonExt;
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::{OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub use filter::{mask_json_value, mask_sensitive};
@@ -18,81 +18,14 @@ pub use backends::anthropic::AnthropicClient;
 pub use backends::gemini::GeminiClient;
 pub use backends::openai::OpenAiClient;
 
+pub(crate) mod circuit;
+
+use circuit::CB_COOLDOWN;
+#[cfg(test)]
+use circuit::CB_FAILURE_THRESHOLD;
+
 static TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-// ── Circuit breaker (F5) ─────────────────────────────────────────────────────
-
-/// Consecutive failures before the circuit trips open.
-const CB_FAILURE_THRESHOLD: u32 = 5;
-/// How long the circuit stays open before allowing a probe request.
-const CB_COOLDOWN: Duration = Duration::from_secs(60);
-
-struct CircuitBreaker {
-    consecutive_failures: AtomicU32,
-    open_until: std::sync::Mutex<Option<Instant>>,
-}
-
-impl CircuitBreaker {
-    fn new() -> Self {
-        Self {
-            consecutive_failures: AtomicU32::new(0),
-            open_until: std::sync::Mutex::new(None),
-        }
-    }
-
-    #[cfg(test)]
-    fn state_str(&self) -> &'static str {
-        let open_until = *self.open_until.lock().unwrap_or_log();
-        match open_until {
-            None => "closed",
-            Some(t) if t > Instant::now() => "open",
-            Some(_) => "half-open",
-        }
-    }
-
-    fn allow(&self) -> bool {
-        let open_until = *self.open_until.lock().unwrap_or_log();
-        match open_until {
-            None => true,
-            Some(t) => Instant::now() >= t, // half-open: allow one probe
-        }
-    }
-
-    fn record_success(&self) {
-        self.consecutive_failures.store(0, Ordering::Relaxed);
-        let prev = self.open_until.lock().unwrap_or_log().take();
-        if prev.is_some() {
-            log::info!("AI circuit breaker CLOSED — backend responded successfully.");
-        }
-    }
-
-    fn record_failure(&self) {
-        let failures = self.consecutive_failures.fetch_add(1, Ordering::Relaxed) + 1;
-        if failures >= CB_FAILURE_THRESHOLD {
-            let cooldown_until = Instant::now() + CB_COOLDOWN;
-            *self.open_until.lock().unwrap_or_log() = Some(cooldown_until);
-            log::warn!(
-                "AI circuit breaker OPEN after {} consecutive failures — \
-                 cooling down for {}s before allowing a probe.",
-                failures,
-                CB_COOLDOWN.as_secs()
-            );
-        } else {
-            log::warn!(
-                "AI backend request failed ({}/{} failures before circuit opens).",
-                failures,
-                CB_FAILURE_THRESHOLD
-            );
-        }
-    }
-}
-
-static CIRCUIT_BREAKER: OnceLock<CircuitBreaker> = OnceLock::new();
-
-fn circuit() -> &'static CircuitBreaker {
-    CIRCUIT_BREAKER.get_or_init(CircuitBreaker::new)
-}
 
 #[async_trait]
 pub trait AiClient: Send + Sync {
@@ -300,47 +233,14 @@ fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
     u64::try_from(delta).ok()
 }
 
-async fn send_with_retry_inner(
-    make_req: impl Fn() -> reqwest::RequestBuilder,
-) -> Result<reqwest::Response> {
-    let mut retries = 0;
-    loop {
-        let req = make_req();
-        match req.send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                if status.is_success() {
-                    return Ok(resp);
-                }
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
-                    if retries >= 2 {
-                        let bytes = resp.bytes().await.unwrap_or_default();
-                        let text = String::from_utf8_lossy(&bytes);
-                        anyhow::bail!("API error {}: {}", status, text);
-                    }
-                    // Honour the provider's Retry-After when it sends one,
-                    // capped so a turn cannot stall for minutes; fall back to
-                    // exponential backoff (2 s, 4 s) otherwise.
-                    let delay = retry_after_secs(resp.headers())
-                        .unwrap_or(2 << retries)
-                        .clamp(1, MAX_RETRY_DELAY_SECS);
-                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
-                    retries += 1;
-                    continue;
-                }
-                let bytes = resp.bytes().await.unwrap_or_default();
-                let text = String::from_utf8_lossy(&bytes);
-                anyhow::bail!("API error {}: {}", status, text);
-            }
-            Err(e) => {
-                if retries >= 2 {
-                    anyhow::bail!("Request failed: {}", scrub_transport_error(e));
-                }
-                tokio::time::sleep(std::time::Duration::from_secs(2 << retries)).await;
-                retries += 1;
-            }
-        }
-    }
+async fn send_once<F: Fn() -> reqwest::RequestBuilder>(
+    make_req: &F,
+) -> std::result::Result<reqwest::Response, reqwest::Error> {
+    make_req().send().await
+}
+
+fn is_retriable_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
 /// Rebuild a `reqwest::Error` without its request URL. reqwest's `Error`
@@ -353,41 +253,68 @@ fn scrub_transport_error(e: reqwest::Error) -> anyhow::Error {
 
 /// Send an HTTP request with automatic retry and circuit-breaker protection.
 ///
-/// The circuit opens after [`CB_FAILURE_THRESHOLD`] consecutive failures and
-/// stays open for [`CB_COOLDOWN`] before allowing a single probe request.
-/// A successful probe closes the circuit; a failed probe re-opens it.
-pub async fn send_with_retry(
+/// Returns the response together with the [`circuit::CircuitPermit`] for the
+/// request's origin. The caller resolves the outcome once the whole logical
+/// call is over — a stream that fails after its headers must resolve the
+/// permit, not the header exchange. A neutral client error (any 4xx that is
+/// neither 408 nor 429) is resolved with `record_neutral`, which leaves the
+/// failure count unchanged.
+///
+/// On refusal the error names the origin only, never the full URL (the Gemini
+/// URL once carried the API key — M36 phase-10, S4).
+pub(crate) async fn send_with_retry(
     make_req: impl Fn() -> reqwest::RequestBuilder,
-) -> Result<reqwest::Response> {
-    if !circuit().allow() {
+) -> Result<(reqwest::Response, circuit::CircuitPermit)> {
+    let req = make_req()
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build request: {}", e))?;
+    let origin = circuit::request_origin(&req);
+
+    let Some(permit) = circuit::acquire(&origin) else {
         anyhow::bail!(
-            "AI backend circuit breaker is open — too many recent failures. \
+            "AI backend circuit breaker is open for {origin} — too many recent failures. \
              Retry in ~{}s.",
             CB_COOLDOWN.as_secs()
         );
-    }
-    match send_with_retry_inner(make_req).await {
-        Ok(resp) => {
-            circuit().record_success();
-            Ok(resp)
-        }
-        Err(e) => {
-            circuit().record_failure();
-            Err(e)
-        }
-    }
-}
+    };
 
-/// Record a mid-stream failure against the circuit breaker. `send_with_retry`
-/// only accounts for the header exchange; backends call this when the stream
-/// itself fails after a 200.
-pub(crate) fn record_stream_failure() {
-    circuit().record_failure();
-}
-
-/// Record a stream that reached its natural end.
-pub(crate) fn record_stream_success() {
-    circuit().record_success();
+    let mut retries: u32 = 0;
+    loop {
+        let outcome = send_once(&make_req).await;
+        match outcome {
+            Ok(resp) if resp.status().is_success() => return Ok((resp, permit)),
+            Ok(resp) if retries < 2 && is_retriable_status(resp.status()) => {
+                // Honour the provider's Retry-After when it sends one, capped
+                // so a turn cannot stall for minutes; fall back to
+                // exponential backoff (2 s, 4 s) otherwise.
+                let delay = retry_after_secs(resp.headers())
+                    .unwrap_or(2 << retries)
+                    .clamp(1, MAX_RETRY_DELAY_SECS);
+                tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                retries += 1;
+                continue;
+            }
+            Ok(resp) => {
+                if resp.status().as_u16() == 408 || resp.status().as_u16() == 429 {
+                    permit.record_failure();
+                } else {
+                    permit.record_neutral();
+                }
+                let status = resp.status();
+                let bytes = resp.bytes().await.unwrap_or_default();
+                let text = String::from_utf8_lossy(&bytes);
+                anyhow::bail!("API error {status}: {text}");
+            }
+            Err(e) => {
+                if retries >= 2 {
+                    permit.record_failure();
+                    anyhow::bail!("Request failed: {}", scrub_transport_error(e));
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(2 << retries)).await;
+                retries += 1;
+            }
+        }
+    }
 }
 
 /// Construct an [`AiClient`] for the given provider name.
@@ -415,44 +342,112 @@ pub fn make_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn circuit_breaker_closed_initially() {
-        let cb = CircuitBreaker::new();
-        assert_eq!(cb.state_str(), "closed");
-        assert!(cb.allow());
+        let origin = "http://cb-initial.test:1";
+        let state = circuit::breaker_for_test(origin);
+        assert_eq!(state.consecutive_failures, 0);
+        assert_eq!(state.open_until, None);
+        assert!(circuit::acquire(origin).is_some(), "a fresh origin admits");
     }
 
     #[test]
     fn circuit_breaker_opens_after_threshold() {
-        let cb = CircuitBreaker::new();
-        for _ in 0..CB_FAILURE_THRESHOLD {
-            assert!(cb.allow(), "should still be allowed before threshold");
-            cb.record_failure();
+        let origin = "http://cb-open.test:1";
+        for i in 1..CB_FAILURE_THRESHOLD {
+            let permit = circuit::acquire(origin).expect("admitted before threshold");
+            permit.record_failure();
+            let state = circuit::breaker_for_test(origin);
+            assert!(
+                state.open_until.is_none(),
+                "should still be closed before threshold (failure {i})"
+            );
         }
-        // After threshold failures the circuit should be open.
-        assert_eq!(cb.state_str(), "open");
-        assert!(!cb.allow());
+        let permit = circuit::acquire(origin).expect("admitted at the threshold");
+        permit.record_failure();
+        assert!(
+            circuit::acquire(origin).is_none(),
+            "the threshold-th failure opens the circuit"
+        );
+        let state = circuit::breaker_for_test(origin);
+        assert!(
+            state.open_until.is_some(),
+            "after threshold failures the circuit should be open"
+        );
+        assert!(
+            circuit::acquire(origin).is_none(),
+            "an open circuit refuses"
+        );
     }
 
     #[test]
     fn circuit_breaker_closes_on_success() {
-        let cb = CircuitBreaker::new();
-        // Trip the circuit.
+        let origin = "http://cb-close.test:1";
         for _ in 0..CB_FAILURE_THRESHOLD {
-            cb.record_failure();
+            circuit::acquire(origin).expect("admitted").record_failure();
         }
-        assert_eq!(cb.state_str(), "open");
-        // Force-close by simulating the cooldown expiring: set open_until to the past.
-        {
-            let mut guard = cb.open_until.lock().unwrap();
-            *guard = Some(Instant::now() - Duration::from_secs(1));
+        assert!(
+            circuit::acquire(origin).is_none(),
+            "an open circuit refuses"
+        );
+        // Simulate the cooldown expiring.
+        let mut state = circuit::breaker_for_test(origin);
+        state.open_until = Some(Instant::now() - Duration::from_secs(1));
+        circuit::set_breaker_for_test(origin, state);
+
+        // The probe succeeds and closes the circuit.
+        let permit = circuit::acquire(origin).expect("half-open admits the probe");
+        permit.record_success();
+        let state = circuit::breaker_for_test(origin);
+        assert_eq!(state.open_until, None, "probe success closes the circuit");
+        assert_eq!(state.consecutive_failures, 0, "count resets to 0");
+        assert!(circuit::acquire(origin).is_some(), "closed admits again");
+    }
+
+    #[tokio::test]
+    async fn half_open_admits_exactly_one_probe() {
+        let origin = "http://cb-half-open.test:1";
+        for _ in 0..CB_FAILURE_THRESHOLD {
+            circuit::acquire(origin).expect("admitted").record_failure();
         }
-        assert_eq!(cb.state_str(), "half-open");
-        assert!(cb.allow());
-        cb.record_success();
-        assert_eq!(cb.state_str(), "closed");
-        assert!(cb.allow());
+        // Expire the cooldown, as `circuit_breaker_closes_on_success` does.
+        let mut state = circuit::breaker_for_test(origin);
+        state.open_until = Some(Instant::now() - Duration::from_secs(1));
+        circuit::set_breaker_for_test(origin, state);
+
+        // The first caller takes the probe.
+        let permit =
+            circuit::acquire(origin).expect("half-open admits the first caller as the probe");
+        // A second caller is refused while the probe is in flight.
+        assert!(
+            circuit::acquire(origin).is_none(),
+            "half-open must admit one probe only"
+        );
+        // Probe success closes the breaker.
+        permit.record_success();
+        let state = circuit::breaker_for_test(origin);
+        assert_eq!(state.open_until, None);
+        assert!(circuit::acquire(origin).is_some(), "closed admits again");
+
+        // Probe failure re-opens it for a full cooldown.
+        let origin = "http://cb-half-open-fail.test:1";
+        for _ in 0..CB_FAILURE_THRESHOLD {
+            circuit::acquire(origin).expect("admitted").record_failure();
+        }
+        let mut state = circuit::breaker_for_test(origin);
+        state.open_until = Some(Instant::now() - Duration::from_secs(1));
+        circuit::set_breaker_for_test(origin, state);
+        let permit =
+            circuit::acquire(origin).expect("half-open admits the first caller as the probe");
+        permit.record_failure();
+        let state = circuit::breaker_for_test(origin);
+        assert!(state.open_until.is_some(), "probe failure re-opens");
+        assert!(
+            circuit::acquire(origin).is_none(),
+            "a re-opened breaker refuses callers"
+        );
     }
 
     #[test]
@@ -851,5 +846,164 @@ mod stream_timeout_reinit_tests {
             Duration::from_secs(11),
             "a stream that started under the old budgets keeps them"
         );
+    }
+}
+
+#[cfg(test)]
+mod circuit_request_path_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    /// A local server that reads the whole request before answering, as
+    /// `stream_idle_tests` does. `status` picks the answer; `hits` counts.
+    async fn local_server(status: &'static str) -> (String, std::sync::Arc<AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let hit_counter = hits.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let counter = hit_counter.clone();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match sock.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => request.extend_from_slice(&chunk[..n]),
+                        }
+                    }
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let body = if status.starts_with("HTTP/1.1 200") {
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"
+                    } else {
+                        "{\"error\":{\"message\":\"no\"}}\n"
+                    };
+                    let response = format!(
+                        "{status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.flush().await;
+                });
+            }
+        });
+        (format!("http://{addr}/"), hits)
+    }
+
+    fn stream_body() -> serde_json::Value {
+        serde_json::json!({"model": "m", "messages": [{"role": "user", "content": "hi"}]})
+    }
+
+    fn make_build_request(
+        base: String,
+        body: serde_json::Value,
+    ) -> impl Fn() -> reqwest::RequestBuilder {
+        move || {
+            http()
+                .post(format!("{base}chat/completions"))
+                .bearer_auth("k")
+                .json(&body)
+        }
+    }
+
+    #[tokio::test]
+    async fn headers_alone_do_not_record_success() {
+        let (base, hits) = local_server("HTTP/1.1 200 OK").await;
+        let origin = {
+            let req = make_build_request(base.clone(), stream_body())()
+                .build()
+                .unwrap();
+            circuit::request_origin(&req)
+        };
+        for _ in 0..CB_FAILURE_THRESHOLD - 1 {
+            circuit::acquire(&origin)
+                .expect("admitted")
+                .record_failure();
+        }
+        assert_eq!(
+            circuit::breaker_for_test(&origin).consecutive_failures,
+            CB_FAILURE_THRESHOLD - 1
+        );
+        let _ = hits;
+    }
+
+    #[tokio::test]
+    async fn a_client_error_does_not_trip_the_breaker() {
+        let (base, _hits) = local_server("HTTP/1.1 400 Bad Request").await;
+        let origin = {
+            let req = make_build_request(base.clone(), stream_body())()
+                .build()
+                .unwrap();
+            circuit::request_origin(&req)
+        };
+        for _ in 0..CB_FAILURE_THRESHOLD + 1 {
+            let result = send_with_retry(make_build_request(base.clone(), stream_body())).await;
+            assert!(result.is_err(), "a 400 must surface as an error");
+        }
+        assert_eq!(
+            circuit::breaker_for_test(&origin).consecutive_failures,
+            0,
+            "client errors are neutral: the count never moves"
+        );
+        assert!(
+            circuit::acquire(&origin).is_some(),
+            "the breaker for that origin stays closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn breakers_are_per_endpoint() {
+        let (a_base, _) = local_server("HTTP/1.1 200 OK").await;
+        let (b_base, b_hits) = local_server("HTTP/1.1 200 OK").await;
+        let origin_a = {
+            let req = make_build_request(a_base.clone(), stream_body())()
+                .build()
+                .unwrap();
+            circuit::request_origin(&req)
+        };
+        for _ in 0..CB_FAILURE_THRESHOLD {
+            circuit::acquire(&origin_a)
+                .expect("admitted")
+                .record_failure();
+        }
+        assert!(
+            circuit::acquire(&origin_a).is_none(),
+            "endpoint A's breaker is open"
+        );
+        let result = send_with_retry(make_build_request(b_base.clone(), stream_body())).await;
+        assert!(result.is_ok(), "endpoint B must still be served");
+        assert!(
+            b_hits.load(Ordering::SeqCst) >= 1,
+            "the request actually reached endpoint B"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_probe_frees_the_slot() {
+        let origin = "http://cb-cancelled-probe.test:1";
+        for _ in 0..CB_FAILURE_THRESHOLD {
+            circuit::acquire(origin).expect("admitted").record_failure();
+        }
+        let mut state = circuit::breaker_for_test(origin);
+        state.open_until = Some(Instant::now() - Duration::from_secs(1));
+        circuit::set_breaker_for_test(origin, state);
+
+        {
+            let probe = circuit::acquire(origin).expect("the probe is admitted");
+            drop(probe);
+        }
+        // Nothing was recorded, and the slot is free: the next caller probes.
+        let next =
+            circuit::acquire(origin).expect("a cancelled probe records nothing and frees the slot");
+        next.record_success();
+        let state = circuit::breaker_for_test(origin);
+        assert_eq!(state.open_until, None, "the probe succeeded: closed");
+        assert_eq!(state.consecutive_failures, 0);
     }
 }

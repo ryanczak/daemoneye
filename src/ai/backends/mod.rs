@@ -162,8 +162,12 @@ where
     let mut stall_retries: u32 = 0;
     let mut transport_retries: u32 = 0;
 
+    // One breaker outcome per call: the permit is acquired once and held
+    // across every internal retry, so its resolution — not the header
+    // exchange — is what the breaker records.
+    let (mut response, permit) = crate::ai::send_with_retry(&build_request).await?;
+
     loop {
-        let response = crate::ai::send_with_retry(&build_request).await?;
         let mut handler = make_handler();
         let mut usage = TokenBreakdown::default();
         let mut malformed_frames: u32 = 0;
@@ -180,7 +184,7 @@ where
 
         match drain {
             Ok(()) => {
-                crate::ai::record_stream_success();
+                permit.record_success();
                 if malformed_frames > 0 {
                     let _ = tx.send(AiEvent::Notice(format!(
                         "provider sent {malformed_frames} malformed stream frame(s) — the response may be incomplete"
@@ -201,6 +205,7 @@ where
                         );
                         tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
                             .await;
+                        response = crate::ai::send_with_retry(&build_request).await?.0;
                         continue;
                     }
                     if stall_retries < MAX_FIRST_TOKEN_RETRIES {
@@ -208,10 +213,11 @@ where
                         log::warn!(
                             "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
                         );
+                        response = crate::ai::send_with_retry(&build_request).await?.0;
                         continue;
                     }
                 }
-                crate::ai::record_stream_failure();
+                permit.record_failure();
                 return Err(e);
             }
         }
