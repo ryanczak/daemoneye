@@ -125,8 +125,8 @@ check confirmed all ten rows marked `yes`.
 | Q6 | 22- and 24-parameter status-section functions | `cli/status_sections.rs` | M43 03 | | |
 | Q7 | `base64 0.23` duplicates `0.22`; single-use `nix` (three versions in the lock) replaceable by `File::try_lock` | `Cargo.toml`, `daemon/instance.rs` | M43 02 | | |
 | Q8 | dead `#[allow(dead_code)] fn search_dir` | `search.rs` | M43 02 | | |
-| Q9 | 17 `with_home(&tmp, \|\| {})` no-op tests drop the guard before awaiting (env UB) | `file_ops/read_tests.rs` | M41 01 | | |
-| Q10 | `TestHomeGuard` held across `.await` on a multi-thread runtime | `shell/launch.rs` tests | M41 01 | | |
-| Q11 | test cleanup permanently removes `$SHELL`, `$TMUX`, `$TMUX_PANE` | `shell_exec_tests.rs`, `session_tests.rs`, `tests/isolation.rs` | M41 01 | | |
+| Q9 | 17 `with_home(&tmp, \|\| {})` no-op tests drop the guard before awaiting (env UB) | `file_ops/read_tests.rs` | M41 01 | yes: probed 2026-11-27, right after `with_home_set(&tmp).await` `HOME` was the real home, so its 17 callers run unguarded (the helper replaced the `with_home(&tmp, \|\| {})` form in M40 phase-04) | |
+| Q10 | `TestHomeGuard` held across `.await` on a multi-thread runtime | `shell/launch.rs` tests | M41 01 | latent: probed 2026-11-27, no stray `bash` and no failure; the spawned `run_host` task still outlives the guard, so the fix gets a preservation test | |
+| Q11 | test cleanup permanently removes `$SHELL`, `$TMUX`, `$TMUX_PANE` | `shell_exec_tests.rs`, `session_tests.rs`, `tests/isolation.rs` | M41 01 | yes: probed 2026-11-27, a scratch test after the session tests (`--test-threads=1`) saw `SHELL` = `None` | |
 | Q12 | `host_sends_lagged_when_subscriber_falls_behind` flakes under load | `shell/host.rs` tests | M39 10 | yes — fixed (`72daafe5`): 0 failures in 300 parallel runs, 0 in 20 sequential at the close | |
 | Q13 | no direct unit tests on the orchestration modules | `stream_ask.rs`, `conversation.rs`, `ask.rs`, `handlers.rs`, `route.rs`, `tmux/{pane,window}.rs` | — | | reject: a coverage count is not a defect (WORKFLOW § "Coverage claims are inadmissible without mutation proof"); tests arrive with the fixes that touch these modules |
