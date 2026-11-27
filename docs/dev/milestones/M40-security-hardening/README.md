@@ -176,7 +176,7 @@ at drafting.
   - 06b: a refined re-dispatch with the facts it was hunting for.
   - 03: a takeover.
 
-**Calibration proposed (needs PE sign-off):**
+**Calibration (PE 2026-11-27: A is held, not folded):**
 - **A. Probe every current-behaviour claim at drafting (5 occurrences).**
   Extend `WORKFLOW.md` § "Reproduce a defect before drafting its phase"
   rather than adding a section. Every statement a spec makes about how
@@ -196,10 +196,13 @@ at drafting.
     inputs (06a).
   - A summary claim is not evidence: check `git diff --stat` (09b).
 
-**Telemetry note.** Some M40 bounces were recorded with failure class
-`false_completion`, but none of them had a red gate. If the PE wants the
-scorecard corrected, re-record them as `missing_spec_test` or
-`scope_deviation`.
+**Telemetry corrected (PE 2026-11-27).** Five bounces had been recorded
+as `false_completion`, but none of them had a red gate. Their approvals
+were re-recorded, and the latest review is the one the profile reads:
+- 06b: `missing_spec_test`.
+- 07 and 09b: `prod_unwrap`. Both were a panic in a production path.
+- 09a and 10: `spec_bug`. The spec made a false claim or was too
+  implicit.
 
 **Release notes must say:**
 - `spawn_ghost_shell` from chat, and `cancel_schedule` and

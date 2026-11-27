@@ -10,10 +10,10 @@ surface (M44) and Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as
 
 **Active phase:** none.
 
-**Pending PE decisions from the M40 close:**
-- Fold A: probe every claim about current behaviour at drafting. It would
-  extend `WORKFLOW.md` § "Reproduce a defect before drafting its phase".
-- Whether to re-record the M40 bounces logged as `false_completion`.
+**Held by PE decision (2026-11-27):** M40 fold A. It would make every
+spec claim about current behaviour get a probe at drafting, using the
+criterion's exact input. There are 5 occurrences, all in the M40
+retrospective.
 
 **Deferred from the M39 live check:** a command that times out and stops
 on Ctrl-C always waits the full 5 s interrupt grace, because the end
