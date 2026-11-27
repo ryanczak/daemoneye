@@ -1,7 +1,7 @@
 # Phase 11 — prompt-ids
 
 **Milestone:** M40 — Security hardening
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-26
 **Depends on:** 10 (done)
 **Estimated diff:** ~250 lines
@@ -459,3 +459,40 @@ kill: (-864068): No such process
 **Commit:** a91008ae06651006216144955b689af8a722f4ad
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-26
+
+- **Verdict:** approved_first_try. There was no review bounce. The
+  `hard_fail` and the resume are recorded on their own runs.
+- **Bounces:** none
+- **Executor:** GLM-5.3-Flash
+  - The first run (315 turns) ended in a `NoProgressStall` after 60
+    turns in a row of only reading. It had the production fix written
+    and was stuck on the fixture-id gotcha.
+  - It was resumed with five edits enumerated and landed in a single
+    run.
+- **Scope deviations:** the helper lives in a new file,
+  `executor/prompt_reply.rs`, which the closed list allowed. The
+  executor also dropped one blank line between two tests in
+  `executor/mod.rs`, which is harmless.
+- **Reviewer checks:**
+  - **Gates:** all four pass. The lib suite reports 3206, which is
+    3203 + 3, as pinned. Every integration suite passes.
+  - **Greps:**
+    - both structural greps print nothing;
+    - the no-test-removed grep prints 0.
+  - **Mutation evidence:** the `reply_approval` id check replaced with
+    `if false` fails the first red test, and the pasted output shows it
+    (`Job … deleted permanently`).
+  - **Code health:** there are no production `unwrap`/`expect`/`panic`
+    calls. The wrong-id credential arm zeroizes the credential it
+    drops.
+- **Calibration:**
+  - The spec's "fix the fixture's id" gotcha named the class of failure
+    but not the fixture. GLM spent its stall hunting for
+    `run_with_transport`'s `""` prompt id.
+  - When a change will break existing fixtures, run the suite against a
+    probe of the change at drafting, and name the failing fixtures. This
+    is the fourth occurrence of the pending "probe current-behaviour
+    claims at drafting" fold, after 08 and 09a×2.
+
