@@ -73,7 +73,7 @@ at drafting.
 
 | #  | Phase | Ledger | Status |
 |----|-------|--------|--------|
-| 01 | [test-hazards](phase-01-test-hazards.md) — the 17 no-op `with_home` tests hold the HOME guard across their await; `launch.rs`'s multi-thread test stops holding a `std` guard across `.await`; env cleanup restores the previous value instead of removing it | Q9 Q10 Q11 | todo |
+| 01 | [test-hazards](phase-01-test-hazards.md) — the 17 no-op `with_home` tests hold the HOME guard across their await; `launch.rs`'s multi-thread test stops holding a `std` guard across `.await`; env cleanup restores the previous value instead of removing it | Q9 Q10 Q11 | done |
 | 02 | gate-blind-spots — `lock_invariant.rs` and `tmux_read_only.rs` walk the `syn` AST, skipping only test-only items; the lock gate covers `read`/`write`/`try_*` | Q4 Q5 | todo |
 | 03 | circuit-breaker — success is recorded when a stream finishes, a 4xx does not trip the breaker, the breaker is per provider, and half-open lets exactly one probe through | C7 | todo |
 | 04 | sse-retry — transport errors, stalls and non-retriable provider errors are classified apart; Gemini reports a malformed call once; `"error": null` is not an error | C12 C24 | todo |

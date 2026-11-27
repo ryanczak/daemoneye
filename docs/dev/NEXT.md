@@ -6,9 +6,11 @@ signed off by the PE 2026-11-27. Then M42 Performance and M43
 Architecture, then the MCP surface (M44) and Knowledge (M45). M40 (Security
 hardening) closed 2026-11-27 as `2.12.0`, pushed.
 
-**Active phase:** [phase 01 test-hazards](milestones/M41-correctness/phase-01-test-hazards.md)
-(Q9 Q10 Q11), `todo`, drafted 2026-11-27. Q9 and Q11 reproduced at
-drafting; Q10 is latent and gets a preservation test.
+**Active phase:** none drafted. Phase 01 test-hazards is done
+(2026-11-27, escalated): the executor wrote all the code across two stalled
+runs, and the architect produced the evidence. Q9, Q10 and Q11 are closed.
+Next is phase 02, gate-blind-spots (Q4 Q5), drafted with
+`/rexymcp:architect next`.
 
 **Held by PE decision (2026-11-27):** M40 fold A. It would make every
 spec claim about current behaviour get a probe at drafting, using the

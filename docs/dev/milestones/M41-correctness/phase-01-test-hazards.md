@@ -1,7 +1,7 @@
 # Phase 01 — test-hazards
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** todo
+**Status:** done
 **Drafted:** 2026-11-27
 **Depends on:** none
 **Estimated diff:** ~200 lines (tests only)
@@ -162,3 +162,99 @@ Paste the red run.
 - The Q10 abort-and-join fix in `launch.rs` is uncommitted.
 
 The stall came from out-of-scope work. The run added `run_for_session` assertions to `tests/isolation.rs` and spent its last 60 turns tracing ghost spawn paths. What is left is that removal, one commit, and the evidence entry.
+
+### Update — 2026-11-27 (architect takeover of the evidence step)
+
+The resumed run (165 turns) ended on a second `NoProgressStall`, the same
+class as the first. It committed the Q10 fix (`de34d7e1`) and removed the
+out-of-scope `run_for_session` assertions. It also committed one real fix,
+`c9c30862`: the `TMUX` / `TMUX_PANE` assertions in the isolation tests ran
+before the restore, and now run after it.
+
+It then stalled on the **no-test-removed** grep. That criterion was the
+architect's error. Q9 re-indents every converted body into a closure, so
+`git diff` shows each moved `#[tokio::test]` as a removed line. The grep
+prints 1 although no test was removed. A name-level comparison
+(`LC_ALL=C`, test fn names at `21e4c2e8` against `HEAD`) shows nothing
+removed, and exactly two added: `fish_shell_env_restores_the_previous_shell`
+and `with_fish_shell_restores_the_previous_shell`.
+
+The code was complete, so the architect produced the evidence directly.
+
+**Q11 mutations.** In each case, one edit turned the restore into
+`remove_var`, the named command ran once, and the edit was undone with
+`git checkout` of that file. The tree was clean afterwards.
+
+(a) `with_fish_shell`:
+```
+thread 'shell::session::tests::with_fish_shell_restores_the_previous_shell' (1120271) panicked at src/shell/session_tests.rs:507:5:
+  left: Err(NotPresent)
+ right: Ok("/bin/probe-shell")
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3220 filtered out; finished in 0.00s
+```
+
+(b) `FishShellEnv`'s `Drop`:
+```
+thread 'daemon::executor::shell_exec::tests::fish_shell_env_restores_the_previous_shell' (1120588) panicked at src/daemon/executor/shell_exec_tests.rs:1486:5:
+  left: Err(NotPresent)
+ right: Ok("/bin/probe-shell")
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3220 filtered out; finished in 0.00s
+```
+
+(c) the `TMUX` restore in `webhook_ghost_e2e_deterministic`, run with `TMUX=probe-sentinel TMUX_PANE=%99`:
+```
+thread 'webhook_ghost_e2e_deterministic' (1120843) panicked at tests/isolation.rs:539:5:
+  left: None
+ right: Some("probe-sentinel")
+test result: FAILED. 1 passed; 1 failed; 1 ignored; 0 measured; 11 filtered out; finished in 0.18s
+```
+
+**Loops and greps**, each run once:
+- Q9 stability loop (20 × `daemon::executor::file_ops::read::tests`, `39 passed`): `0`
+- Q10 preservation loop (20 × `launch_run_host_serves_status_over_its_socket`, `1 passed`): `0`
+- `grep -c 'with_home_set' …/read_tests.rs`: `0`
+
+**Gates**, each run once on `c9c30862`. fmt, build and clippy are clean.
+```
+test result: ok. 3211 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.34s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.35s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.37s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+### Review verdict — 2026-11-27
+
+- **Verdict:** escalated
+- **Bounces:** none. There were two `NoProgressStall` hard-fails: the first
+  run, then the resume.
+- **Executor:** GLM-5.3-Flash wrote every code change: Q9 (`1ed0ad05`),
+  Q11 with both named tests, Q10 (`de34d7e1`) and the isolation
+  assertion-order fix (`c9c30862`). Claude (direct) produced the mutation
+  evidence and ran the loops and the gates.
+- **Scope deviations:**
+  - The first run's `run_for_session` assertions in `tests/isolation.rs`
+    were out of scope. The resume removed them.
+  - The first run left nine commits, including two revert/re-apply pairs.
+    The net diff is correct. The history is unpushed, but it was left as
+    is rather than rewritten.
+- **Review checks:**
+  - All four gates pass, and the lib suite reports 3211 passed, as pinned.
+  - Only the five closed-list test files changed, and no production code.
+  - The converted Q9 bodies keep their assertions.
+  - Each Q11 test fails under its restore mutation.
+- **Calibration:**
+  - **A "no test removed" diff grep is wrong for a refactor that moves or
+    re-indents tests.** Compare test fn names before and after instead.
+    That is the architect's error, and it is what stalled the resume. It
+    is the sixth occurrence of the held "probe every claim at drafting"
+    pattern: the criterion was never run against the kind of diff the
+    phase makes.
+  - **The executor stretched a narrow rule** ("no spawned task outlives the
+    guard", meant for the launch test) to files where it was not asked,
+    and stalled there. One occurrence. Scope a rule to the named test.
