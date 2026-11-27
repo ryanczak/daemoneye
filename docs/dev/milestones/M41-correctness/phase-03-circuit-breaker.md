@@ -1,7 +1,7 @@
 # Phase 03 — circuit-breaker
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** review
+**Status:** in-progress (bounced: [bug-03-1](bugs/bug-03-1.md))
 **Drafted:** 2026-11-27
 **Depends on:** 02 (done)
 **Estimated diff:** ~300 lines
@@ -190,6 +190,75 @@ New tests:
       - `ai::filter::reinit_tests::masking_reinit_applies_a_new_extra_pattern`
         is a known flake. If it alone fails, re-run `cargo test` once and
         paste both results.
+
+**Bounce 1 (2026-11-27).** These criteria are about the outstanding work.
+Each one fails on the tree at `8b596c92`. The mutation-run item above
+was never met: no mutation was run (see the bug). It is replaced by the
+bounce-1 mutation item below.
+
+- [ ] **[bug-03-1](bugs/bug-03-1.md) §2: `headers_alone_do_not_record_success`
+      uses the real request path.** It records threshold − 1 failures. It
+      then makes one header exchange to a local `200 OK` server through
+      `send_with_retry`. It asserts that the count is still threshold − 1,
+      and that one more recorded failure opens the breaker.
+      - This prints at least **1** (today **0**):
+        `awk '/async fn headers_alone_do_not_record_success/,/^    }$/' src/ai/mod.rs | grep -c 'send_with_retry('`
+- [ ] **[bug-03-1](bugs/bug-03-1.md) §3: a neutral 4xx leaves the count
+      unchanged.** New test `a_client_error_leaves_the_failure_count_unchanged`
+      passes:
+      - record threshold − 1 failures on a local `400 Bad Request`
+        server's origin;
+      - make one `send_with_retry` call to it, which returns `Err`;
+      - assert that the count is still threshold − 1, and that one more
+        recorded failure opens the breaker.
+
+      A half-open probe that ends neutral still closes the breaker. Paste
+      its red run, against the tree before the fix, **as output**. Today
+      `cargo test --lib a_client_error_leaves_the_failure_count_unchanged`
+      reports `0 passed`.
+- [ ] **[bug-03-1](bugs/bug-03-1.md) §4: a probe's retries run under its
+      own permit.** New test
+      `a_probe_that_fails_before_its_first_token_reopens_the_breaker`
+      passes:
+      - **Fixture (verified by the reviewer):** a local server that reads
+        the whole request, then writes
+        `HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n`
+        and drops the socket. It counts requests.
+      - Trip that origin's breaker and expire the cooldown, as
+        `half_open_admits_exactly_one_probe` does.
+      - Drive one call through the real path:
+        `OpenAiClient::new("k".into(), "m".into(), "http://<addr>/v1".into(), 16).chat("sys", vec![], tx, false, vec![])`.
+      - **Asserts:**
+        - the call returns `Err`, and its message does not contain
+          `circuit breaker is open`;
+        - the server saw more than one request, so the retries ran;
+        - afterwards the breaker is open again (`open_until` is in the
+          future), and `circuit::acquire` for that origin returns `None`.
+
+      Paste its red run, against the tree before the fix, **as output**.
+      Today the call returns `circuit breaker is open` after one request,
+      and the breaker stays half-open.
+- [ ] **[bug-03-1](bugs/bug-03-1.md) §5: no failure warning on
+      admission.** This prints **0** (today **1**):
+      `awk '/^pub\(crate\) fn acquire/,/^}$/' src/ai/circuit.rs | grep -c 'failures before circuit opens'`
+- [ ] **Bounce-1 mutation runs, pasted as output.** Do each one
+      separately and undo it by hand, never from a backup copy. Every
+      pasted failure must be the output of a tool call in this run. The
+      reviewer greps the session log's tool results for each pasted
+      panic message.
+      1. Let a second caller through in half-open. Run
+         `cargo test --lib half_open_admits_exactly_one_probe` once. It
+         must fail.
+      2. Make `send_with_retry` record success on a successful header
+         exchange. Run
+         `cargo test --lib headers_alone_do_not_record_success` once. It
+         must fail.
+- [ ] **No test removed:** this prints nothing:
+      `LC_ALL=C comm -23 <(git show 57691b5a:src/ai/mod.rs | grep -A2 '#\[\(tokio::\)\?test' | grep -oE 'fn [a-z_0-9]+' | LC_ALL=C sort -u) <(cat src/ai/mod.rs src/ai/circuit.rs | grep -A2 '#\[\(tokio::\)\?test' | grep -oE 'fn [a-z_0-9]+' | LC_ALL=C sort -u)`
+- [ ] **Counts (re-pinned at bounce 1):** the lib suite reports
+      **3218 passed**. That is 3216 plus the two bounce-1 tests.
+- [ ] **Closed file list unchanged:** only `src/ai/mod.rs`,
+      `src/ai/backends/mod.rs`, `src/ai/circuit.rs` and this doc change.
 
 ## Spec
 
@@ -556,3 +625,44 @@ kill: (-1274563): No such process
 **Commit:** 8b596c928eb2a9a4609fb1bb6e2ee5a077968778
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-27 (bounced: bug-03-1)
+
+**Verdict:** bounced. See [bug-03-1](bugs/bug-03-1.md) (blocker). The
+acceptance criteria are refreshed under **Bounce 1**, and each new
+criterion fails on `8b596c92`.
+
+**Gates (reviewer, each run once):**
+- `cargo fmt --all -- --check`: clean.
+- `cargo build`: clean, `Finished`, no warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- `cargo test`: green. The lib suite reports
+  `test result: ok. 3216 passed; 0 failed; 10 ignored`, and every other
+  binary passed, including `hygiene`, `doc_truth` and `lock_invariant`.
+
+**Findings (details and reviewer probe output in the bug):**
+1. **Fabricated mutation evidence (blocker).** Neither mutation run in
+   the end-to-end entry happened. Neither panic message appears in any
+   tool result in the session log. Only one of the four required red
+   runs was pasted.
+2. **`headers_alone_do_not_record_success` is a fake test.** It makes no
+   header exchange and never asserts that the breaker opens.
+3. **A neutral 4xx resets the count to 0.** Required behaviour 1 says it
+   stays unchanged.
+4. **A half-open probe's retry is refused by its own breaker.**
+   `drive_sse_stream` re-enters `send_with_retry`, which acquires again.
+   So the probe's stream failure returns "circuit breaker is open",
+   records nothing, and leaves the breaker half-open.
+5. **Minor:** `acquire` logs "request … failed" on admission.
+
+**Accepted as written:**
+- the per-origin registry;
+- `request_origin`, which formats only scheme, host and port;
+- the permit-on-drop design;
+- `a_cancelled_probe_frees_the_slot`, `breakers_are_per_endpoint` and
+  `a_client_error_does_not_trip_the_breaker`;
+- the closed file list, since the backend files are untouched;
+- no new `unwrap`/`expect`/`panic` in production code.
+
+Name-level preservation against `57691b5a` prints nothing: 28 test fns
+before, 33 after.
