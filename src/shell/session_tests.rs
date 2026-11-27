@@ -482,12 +482,38 @@ async fn session_spawn_dedicated_for_removes_the_record_when_readiness_never_arr
 /// fish value is what mutation B must turn red on; the test itself owns
 /// both the set and the cleanup because the caller cannot observe it.
 fn with_fish_shell(f: impl FnOnce()) {
+    let entry = std::env::var_os("SHELL");
     unsafe {
         std::env::set_var("SHELL", "/usr/bin/fish");
     }
     f();
     unsafe {
-        std::env::remove_var("SHELL");
+        match &entry {
+            Some(value) => std::env::set_var("SHELL", value),
+            None => std::env::remove_var("SHELL"),
+        }
+    }
+}
+
+#[test]
+fn with_fish_shell_restores_the_previous_shell() {
+    let _guard = crate::test_home_guard();
+    let entry = std::env::var_os("SHELL");
+    unsafe {
+        std::env::set_var("SHELL", "/bin/probe-shell");
+    }
+    with_fish_shell(|| {});
+    let shell = std::env::var("SHELL");
+    assert_eq!(
+        shell.as_deref(),
+        Ok("/bin/probe-shell"),
+        "with_fish_shell must restore the caller's $SHELL, not drop it: {shell:?}"
+    );
+    unsafe {
+        match &entry {
+            Some(value) => std::env::set_var("SHELL", value),
+            None => std::env::remove_var("SHELL"),
+        }
     }
 }
 
@@ -522,6 +548,7 @@ fn a_remote_shell_uses_the_posix_exit_variable() {
 #[test]
 fn a_local_shell_still_uses_the_login_shell() {
     let _guard = crate::test_home_guard();
+    let entry = std::env::var_os("SHELL");
     unsafe {
         std::env::set_var("SHELL", "/usr/bin/fish");
     }
@@ -540,6 +567,12 @@ fn a_local_shell_still_uses_the_login_shell() {
         "bash",
         "no $SHELL falls back to bash, as login_shell always did"
     );
+    unsafe {
+        match &entry {
+            Some(value) => std::env::set_var("SHELL", value),
+            None => std::env::remove_var("SHELL"),
+        }
+    }
 }
 
 /// A sandbox shell's child is always `bash`, so its marker name is POSIX
