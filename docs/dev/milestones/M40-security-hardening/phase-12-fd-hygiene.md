@@ -1,7 +1,7 @@
 # Phase 12 — fd-hygiene
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress (bounced: bug-12-1)
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** 11 (done)
 **Estimated diff:** ~120 lines
@@ -591,3 +591,134 @@ test), as required.
 **Positive control:** the mutation run above is the positive control — the
 test's "exactly one attempt" assertion fails when the retry-on-every-failure
 behavior is restored, so the measurement is live.
+
+### Update — 2026-11-27 04:22 (complete, server-authored)
+
+**Summary:** Bounce 1 (bug-12-1) is resolved and committed as `f0a99394`. `passwd_name` now retries `getpwuid_r` **only** on `rc == ERANGE` (doubling from the `sysconf(_SC_GETPW_R_SIZE_MAX)` start, 16 KiB fallback, 1 MiB cap); every other outcome — no entry, an error code, an empty or non-UTF-8 name — ends the lookup on that attempt. The attempt count is observable through a new `passwd_name_attempts(uid, initial_len, &mut attempts)` seam; the `sysconf` call carries its `// SAFETY:` comment, and the doc comment no longer lists "buffer is too small" as a `None` case.
+
+**Notes for review:**
+- **One deliberate deviation, documented in the Update Log:** the spec pinned `a_missing_passwd_entry_is_looked_up_once` to an 8-byte start, but I probed this host's glibc 2.43 `nss_files` byte-by-byte (including loading `libnss_files_getpwuid_r` directly) and it returns `ERANGE` for **every** lookup below a fixed 102-byte floor — missing uid or not — so an 8-byte start cannot observe not-found in one attempt (it takes the 8→128 ladder, 5 attempts). The test now starts from **128 bytes** (above the floor) and asserts `None` after exactly one attempt. Production behavior is unaffected: `sysconf` gives 1024 here, above the floor. If the architect wants the 8-byte start pinned anyway, that needs a ruling on option (b) or (c) recorded in the blocker entry.
+- **Mutation run done as specified:** folding the `NoName` arm back into the retry ladder flipped the test red (pasted in the Update Log), then the single edit was restored and the test passed again.
+- All greps hold: SAFETY count 1, no "buffer is too small", no `libc::pipe(` in `ready.rs`, no tests removed vs `f4e6da6a`.
+- All four gates pass, each run once: fmt OK, build clean, clippy clean, and the lib suite reports exactly **3209 passed** (3208 + the one new test), with all integration suites green.
+- One intermediate syntax slip (a lost `if initial > 0 {` during a patch) was caught by the verifier and repaired before the gates ran; the final committed build is clean and the tree is empty.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+t ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test config_pricing_round_trip ... ok
+test schedule_store_persistence ... ok
+test g4_briefing_masking_applied ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test event_log_entry_format ... ok
+test event_log_append_read ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test default_server_unchanged ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (975216): No such process
+kill: (-975926): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M40-security-hardening/phase-12-fd-hygiene.md` — +147 -0
+- `src/daemon/executor/shell_label.rs` — +60 -17
+
+**Commit:** f0a9939441fba24a5ad902e5f8cf505e36b36cf7
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
