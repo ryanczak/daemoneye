@@ -1,7 +1,7 @@
 # Phase 02 — gate-blind-spots
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-27
 **Depends on:** 01 (done)
 **Estimated diff:** ~250 lines (tests only)
@@ -336,3 +336,136 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 today's `src/`: no production guard is `unwrap`ped/`expect`ed, and no
 production `Command::new("tmux")` write verb sits below a test-only
 item, matching the architect's probe.
+
+### Update — 2026-11-27 17:52 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Phase 02 is implemented and committed as `015774cb`; the working tree is clean and the phase doc's status is left at `in-progress` per the contract (no `(complete)` entry written — that is the server's). Both gates now parse each file with `syn` and scan only the lines outside a test-only item's span, found at any depth (module, free fn, impl/trait fn, nested item statements), using `tests/hygiene.rs`'s `is_test_only` rule copied into each gate; a file that fails to parse fails the gate naming the file, and the `#[cfg(test)]` string split is gone from both files (pinned grep prints 0). The lock scan covers `lock/read/write/try_lock/try_read/try_write` with empty parens followed by `.unwrap()`/`.expect(`, including the split form, still as a textual scan over production lines. Six new fixture tests (3 lock, 3 tmux) were each written and run red before their fix; the tree walks pass on today's `src/` — no production site flagged, matching the drafting probe.
+
+**Notes for review:**
+- All acceptance evidence is pasted as output in the end-to-end verification entry: the three red runs, the mutation run (`read` dropped from the guard regex → `the_gate_sees_rwlock_and_try_forms` fails, undone in place, no backup copy), the 0-printing split grep, the name-level preservation `comm` loop against `e971ea6f` (empty), and the counts. Full `cargo test`: lib **3211 passed**, `lock_invariant` **6 passed**, `tmux_read_only` **7 passed**, all other suites unchanged; fmt/build/clippy clean (one clippy `collapsible_if` fix in each traversal was needed after the first clippy run).
+- The spec pinned `lock_invariant` at **5 passed (2 + 3)** and `tmux_read_only` at **6 passed (4 + 2)**; both gates carry **+3** new tests because each got an additional unparsable-file test pinning the "a file that fails to parse fails the gate" rule from the statement of work — so the actual counts are 6 and 7. Flagging as a count deviation for the reviewer to accept or bounce.
+- The red-run line numbers in the fixtures reflect parsed production-line offsets (e.g. the tmux fixture's hit is on production line 3, not raw line 3), and the lock gate's `lock_unwrap_hits` now skips doc-comment lines — needed because `src/lib.rs:58` quotes `.lock().unwrap()` inside a doc comment that the old string split never reached; it is text, not a call site.
+- `is_test_only` and the AST walk are duplicated in each gate file rather than shared, per the spec's "copy the rule into each gate, or share it. Do not edit `hygiene.rs`" — sharing would have required a new module outside the closed file list.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+_jsonl_round_trip ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test event_log_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_namespace_field_persisted ... ok
+test g6_agent_config_roundtrip ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+
+running 6 tests
+test a_file_that_fails_to_parse_fails_the_gate ... ok
+test the_gate_scans_code_below_a_cfg_test_item ... ok
+test the_gate_sees_rwlock_and_try_forms ... ok
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test the_gate_skips_test_only_items_and_non_guards ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.83s
+
+
+running 7 tests
+test a_file_that_fails_to_parse_fails_the_gate ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_skips_test_only_items ... ok
+test gate_scans_code_below_a_cfg_test_item ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-dd5d2da56408d044)
+kill: (1157022): No such process
+kill: (-1157750): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-3b490f7e2ac543bd)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-a6982dccdeeb8a33)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-841a3f3a9da563a7)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-520ec95fc5dca130)
+     Running tests/integration.rs (target/debug/deps/integration-57568a692e2d61f7)
+     Running tests/isolation.rs (target/debug/deps/isolation-6ebb9273a140a81c)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-f322d1b546df6889)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-86e373785fc046fe)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M41-correctness/README.md` — +1 -1
+- `docs/dev/milestones/M41-correctness/phase-02-gate-blind-spots.md` — +150 -1
+- `tests/lock_invariant.rs` — +241 -14
+- `tests/tmux_read_only.rs` — +227 -11
+
+**Commit:** 015774cb6c8514d324b61abceabe9f3913502287
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
