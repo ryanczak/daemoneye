@@ -1,7 +1,7 @@
 # Phase 12 — fd-hygiene
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 11 (done)
 **Estimated diff:** ~120 lines
@@ -137,3 +137,123 @@ Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 19:16
+
+**Started.** First red test `the_readiness_pipe_is_close_on_exec` written to
+`src/daemon/ready.rs` and run red before any fix (pasted under Spec task 1
+evidence below).
+
+Task list (one line per task, naming the acceptance item it closes):
+
+1. Write red test `the_readiness_pipe_is_close_on_exec` in `ready.rs`, run it
+   red — closes S16 test half of acceptance item 1.
+2. Fix `create_pipe` to `libc::pipe2(fds, libc::O_CLOEXEC)` — closes S16,
+   acceptance item 1.
+3. Write red test `a_tiny_passwd_buffer_still_finds_the_name` in
+   `shell_label.rs` driving the `passwd_name_from(uid, 8)` seam — closes S18
+   test half of acceptance item 2.
+4. Add the `ERANGE` retry loop (start from `sysconf(_SC_GETPW_R_SIZE_MAX)`
+   when positive, else 16 KiB; double to a 1 MiB cap) behind
+   `passwd_name_from` — closes S18, acceptance item 2.
+5. `grep -n 'libc::pipe(' src/daemon/ready.rs` prints nothing — acceptance
+   item 3.
+6. Mutation run: flip `O_CLOEXEC` to `0`, run the S16 test once (must fail),
+   restore — acceptance item 4.
+7. `git diff f4e6da6a -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'`
+   prints 0 — acceptance item 5.
+8. Gates: `cargo fmt --all`, `cargo build`, `cargo clippy --all-targets
+   --all-features -- -D warnings`, `cargo test` — acceptance item 6.
+9. Evidence Update Log entry + one `fix:` commit — Spec task 4.
+
+### Update — 2026-11-26 19:24 (end-to-end verification)
+
+**Red run** (before the `pipe2` fix; `libc::fcntl` finds no `FD_CLOEXEC`):
+
+```
+$ cargo test --lib the_readiness_pipe_is_close_on_exec
+
+failures:
+
+---- daemon::ready::tests::the_readiness_pipe_is_close_on_exec stdout ----
+
+thread 'daemon::ready::tests::the_readiness_pipe_is_close_on_exec' (883421) panicked at src/daemon/ready.rs:217:13:
+read end (fd 3) lacks FD_CLOEXEC: subprocesses would inherit it
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::ready::tests::the_readiness_pipe_is_close_on_exec
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3216 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+**Mutation run** (`O_CLOEXEC` → `0` in `create_pipe`, test run once, then the
+one edit undone):
+
+```
+$ cargo test --lib the_readiness_pipe_is_close_on_exec
+
+thread 'daemon::ready::tests::the_readiness_pipe_is_close_on_exec' (888735) panicked at src/daemon/ready.rs:217:13:
+read end (fd 3) lacks FD_CLOEXEC: subprocesses would inherit it
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    daemon::ready::tests::the_readiness_pipe_is_close_on_exec
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3217 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`
+```
+
+**Stale-call grep** (acceptance item 3 — prints nothing):
+
+```
+$ grep -n 'libc::pipe(' src/daemon/ready.rs
+$ echo $?
+1
+```
+
+**No-test-removed grep** (acceptance item 5 — prints 0):
+
+```
+$ git diff f4e6da6a -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+```
+
+**Gates** (each run once; `cargo fmt --all` ran immediately before staging):
+
+```
+$ cargo fmt --all && echo "fmt: OK"
+fmt: OK
+
+$ cargo build
+   Compiling daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.79s
+
+$ cargo clippy --all-targets --all-features -- -D warnings
+    Checking daemoneye v2.11.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.39s
+
+$ cargo test --lib
+test result: ok. 3208 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 149.81s
+
+$ cargo test
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**The two phase tests, both green after the fix:**
+
+```
+$ cargo test --lib -- the_readiness_pipe_is_close_on_exec a_tiny_passwd_buffer_still_finds_the_name
+
+running 2 tests
+test daemon::ready::tests::the_readiness_pipe_is_close_on_exec ... ok
+test daemon::executor::shell_label::tests::a_tiny_passwd_buffer_still_finds_the_name ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3216 filtered out; finished in 0.00s
+```

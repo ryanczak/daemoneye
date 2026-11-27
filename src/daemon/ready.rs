@@ -22,7 +22,7 @@ pub fn create_pipe() -> std::io::Result<(OwnedFd, OwnedFd)> {
     // SAFETY: `fds` is a two-element array of RawFd, exactly what pipe(2)
     // requires. On success the kernel has written two fresh descriptors we take
     // sole ownership of via OwnedFd.
-    let rc = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    let rc = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
     if rc < 0 {
         return Err(std::io::Error::last_os_error());
     }
@@ -129,6 +129,7 @@ pub fn parse_report_line(line: &str) -> ChildReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::AsRawFd;
     use std::sync::Mutex as StdMutex;
 
     static REPORTER_TEST_LOCK: StdMutex<()> = StdMutex::new(());
@@ -201,6 +202,23 @@ mod tests {
         }
         // Must not panic
         report_ready();
+    }
+
+    #[test]
+    fn the_readiness_pipe_is_close_on_exec() {
+        let (read_end, write_end) = create_pipe().unwrap();
+        for (label, fd) in [
+            ("read", read_end.as_raw_fd()),
+            ("write", write_end.as_raw_fd()),
+        ] {
+            // SAFETY: `fd` is a live descriptor we own; F_GETFD reads its flags.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+            assert!(flags >= 0, "{label} end fcntl failed: {flags}");
+            assert!(
+                flags & libc::FD_CLOEXEC != 0,
+                "{label} end (fd {fd}) lacks FD_CLOEXEC: subprocesses would inherit it"
+            );
+        }
     }
 
     /// A multi-line failure survives the one-line protocol with its newlines,

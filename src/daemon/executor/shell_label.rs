@@ -43,8 +43,33 @@ pub fn local_username() -> String {
 /// `None` when there is no entry, the buffer is too small, or the name is
 /// empty or not UTF-8.
 fn passwd_name(uid: libc::uid_t) -> Option<String> {
+    // sysconf gives the glibc-recommended start; it is -1 when it does not
+    // know, so fall back to the same 16 KiB the fixed buffer used.
+    let initial = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    let initial = if initial > 0 {
+        initial as usize
+    } else {
+        16 * 1024
+    };
+    passwd_name_from(uid, initial)
+}
+
+fn passwd_name_from(uid: libc::uid_t, initial_len: usize) -> Option<String> {
+    let mut len = initial_len.max(1);
+    loop {
+        if let Some(name) = passwd_name_with_buffer(uid, len) {
+            return Some(name);
+        }
+        if len >= 1024 * 1024 {
+            return None;
+        }
+        len = (len * 2).min(1024 * 1024);
+    }
+}
+
+fn passwd_name_with_buffer(uid: libc::uid_t, len: usize) -> Option<String> {
     let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
-    let mut buf = vec![0u8; 16 * 1024];
+    let mut buf = vec![0u8; len];
     let mut result: *mut libc::passwd = std::ptr::null_mut();
     // SAFETY: every pointer is to a live local; `getpwuid_r` writes the
     // entry's strings into `buf`, which outlives the `CStr` read below, and
@@ -58,6 +83,9 @@ fn passwd_name(uid: libc::uid_t) -> Option<String> {
             &mut result,
         )
     };
+    if rc == libc::ERANGE {
+        return None;
+    }
     if rc != 0 || result.is_null() || pw.pw_name.is_null() {
         return None;
     }
@@ -126,6 +154,21 @@ mod tests {
             shell_where_label(Some("matt"), "pinky", None),
             "matt@pinky:new",
             "no shell picked reads `new`"
+        );
+    }
+
+    #[test]
+    fn a_tiny_passwd_buffer_still_finds_the_name() {
+        let uid = unsafe { libc::geteuid() };
+        let tiny = passwd_name_from(uid, 8);
+        let expected = passwd_name(uid);
+        assert_eq!(
+            tiny, expected,
+            "an 8-byte initial buffer retried to the same name as the default"
+        );
+        assert!(
+            tiny.is_some(),
+            "the test process's own euid has a passwd name"
         );
     }
 
