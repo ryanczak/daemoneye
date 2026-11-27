@@ -1,7 +1,7 @@
 # Phase 02 — gate-blind-spots
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** in-progress (bounced 2026-11-27: [bug-02-1](bugs/bug-02-1.md), [bug-02-2](bugs/bug-02-2.md))
+**Status:** review
 **Drafted:** 2026-11-27
 **Depends on:** 01 (done)
 **Estimated diff:** ~250 lines (tests only)
@@ -626,3 +626,171 @@ refreshed under **Bounce 1**, and each new criterion fails on `d2e30fe2`.
 - The bounce-1 red runs must be taken against the tree before the fix.
 - Preservation: the name-level `comm` loop against `e971ea6f` prints
   nothing. The pinned split grep prints 0.
+
+### Update — 2026-11-27 18:16 (complete, server-authored)
+
+**Summary:** **Summary + Notes for review**
+
+Bounce-1 work is complete and committed as `82d7978b` plus a one-line clippy fix `5e245cb3`; the tree is clean and the phase doc's status is left at `in-progress` for the server's completion tail. All four edits from the bounce notes landed in the two closed files only: (1) both gates' `nested_items` now read `ImplItemFn::attrs` / `TraitItemFn::attrs`, pushing a test-only member's own span into `collect_test_lines` so it is excluded from production lines while a production member is still scanned; (2) both vacuous `unwrap_or_default()` fixture calls are now `.expect("fixture parses")` (`grep -c` prints **0**); (3) `lock_unwrap_hits` skips every line whose trimmed start is `//` (covering `///` and `//!`), with red test `the_gate_ignores_plain_comment_lines`; (4) the three new tests (`the_gate_skips_cfg_test_impl_and_trait_fns`, `gate_skips_cfg_test_impl_and_trait_fns`, `the_gate_ignores_plain_comment_lines`) were each written red first and then made green.
+
+**Red runs (pasted as output, against the pre-fix tree at `82d7978b~1`, probed in a scratch clone so the closed files were never reverted in place):**
+
+Lock gate, `the_gate_skips_cfg_test_impl_and_trait_fns` (as a probe appended at `82d7978b~1`):
+```
+thread 'zz_probe_impl_and_trait_members' (1176381) panicked at tests/lock_invariant.rs:342:5:
+assertion `left == right` failed: probe: [(1, "struct S;"), (2, "impl S {"), (3, "    #[cfg(test)]"), (4, "    fn h() { let g = m.lock().unwrap(); }"), (5, ""), (6, "    #[test]"), (7, "    fn k() { let g = m.lock().unwrap(); }"), (8, ""), (9, "    fn prod() { let g = m.lock().unwrap(); }"), (10, "}"), (11, ""), (12, "trait T {"), (13, "    #[cfg(test)]"), (14, "    fn j() { let g = m.lock().unwrap(); }"), (15, "}")]
+  left: [4, 7, 9, 14]
+ right: [9]
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out
+```
+
+Tmux gate, `gate_skips_cfg_test_impl_and_trait_fns` (same probe method):
+```
+thread 'zz_probe_tmux_impl_trait_members' (1176607) panicked at tests/tmux_read_only.rs:487:5:
+assertion `left == right` failed: probe: [(4, "send-keys"), (7, "send-keys"), (9, "send-keys"), (14, "send-keys")]
+  left: [(4, "send-keys"), (7, "send-keys"), (9, "send-keys"), (14, "send-keys")]
+ right: [(9, "send-keys")]
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out
+```
+
+Comment test, red run in the real tree (the `//` skip was doc-only before the fix):
+```
+test the_gate_ignores_plain_comment_lines ... FAILED
+thread 'the_gate_ignores_plain_comment_lines' panicked at tests/lock_invariant.rs:366:5:
+assertion `left == right` failed: a plain comment quoting a guard unwrap is not a hit: [(1, "fn f() {"), (2, "    // m.lock().unwrap() would panic on poison"), (3, "    let g = m.lock().unwrap_or_log();"), (4, "}")]
+  left: [2]
+ right: []
+test result: FAILED. 7 passed; 1 failed
+```
+
+**Bounce-1 mutation run:** the impl/trait member check was disabled by patch in `tests/lock_invariant.rs`, run once, and restored by hand:
+```
+test the_gate_skips_cfg_test_impl_and_trait_fns ... FAILED
+  left: [4, 7, 9, 14] / right: [9]
+test result: FAILED. 7 passed; 1 failed; finished in 1.80s
+```
+
+**Counts and gates:** `cargo test --test lock_invariant` reports **8 passed**, `--test tmux_read_only` reports **8 passed**, full `cargo test` reports lib **3211 passed** (the known `masking_reinit` flake did not fire; every suite `ok`). fmt clean, build zero warnings, clippy `-D warnings` clean (one `needless_borrow` fix became commit `5e245cb3`). Preservation `comm` loop against `e971ea6f` prints nothing; the split grep prints **0**; `grep -c 'unwrap_or_default()' tests/lock_invariant.rs` prints **0**.
+
+**Notes for review:** the two red runs above were taken in a throwaway clone of the pre-fix commit with a probe test appended (the sandbox refuses `git checkout`/`stash` of session-edited files in the main tree), which is equivalent evidence to patching in place; the probe was removed there and the closed files in this tree were never reverted. During the clippy fix I briefly clobbered `the_gate_scans_code_below_a_cfg_test_item` with a bad patch and restored it immediately — the final file contains all 8 lock tests, confirmed by the 8-passed count and the preservation loop.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+_entry_format ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test config_contains_webhook_and_stub_url ... ok
+test default_server_unchanged ... ok
+test daemon_webhook_returns_200 ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+
+running 8 tests
+test a_file_that_fails_to_parse_fails_the_gate ... ok
+test the_gate_scans_code_below_a_cfg_test_item ... ok
+test the_gate_sees_rwlock_and_try_forms ... ok
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test the_gate_skips_cfg_test_impl_and_trait_fns ... ok
+test the_gate_skips_test_only_items_and_non_guards ... ok
+test the_gate_ignores_plain_comment_lines ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+
+
+running 8 tests
+test a_file_that_fails_to_parse_fails_the_gate ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test gate_scans_code_below_a_cfg_test_item ... ok
+test gate_skips_test_only_items ... ok
+test gate_skips_cfg_test_impl_and_trait_fns ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-dd5d2da56408d044)
+kill: (1190916): No such process
+kill: (-1191644): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-3b490f7e2ac543bd)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-a6982dccdeeb8a33)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-841a3f3a9da563a7)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-520ec95fc5dca130)
+     Running tests/integration.rs (target/debug/deps/integration-57568a692e2d61f7)
+     Running tests/isolation.rs (target/debug/deps/isolation-6ebb9273a140a81c)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-f322d1b546df6889)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-86e373785fc046fe)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `tests/lock_invariant.rs` — +67 -13
+- `tests/tmux_read_only.rs` — +54 -9
+
+**Commit:** 5e245cb37e30cea3b21df3f3ac76e2e5740d1e20
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
