@@ -344,6 +344,12 @@ impl Credential {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Consumes the newtype, yielding the credential so the caller can move
+    /// it into `Zeroizing` without an unzeroed copy.
+    pub fn into_inner(self) -> String {
+        self.0
+    }
 }
 
 impl From<String> for Credential {

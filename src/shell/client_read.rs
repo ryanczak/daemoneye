@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use zeroize::Zeroize;
 
 use super::{
     CommandTimedOut, EXIT_DRAIN_WINDOW, EXIT_POLL_INTERVAL, EXIT_STATUS_TIMEOUT, GIVE_UP_BYTES,
@@ -402,10 +403,13 @@ async fn write_answer<W>(writer: &mut W, bytes: &[u8]) -> anyhow::Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let mut input = zeroize::Zeroizing::new(bytes.to_vec());
-    let wire = zeroize::Zeroizing::new(encode(ShellRequest::Input {
-        bytes: std::mem::take(&mut *input),
-    })?);
+    let mut req = ShellRequest::Input {
+        bytes: bytes.to_vec(),
+    };
+    let wire = zeroize::Zeroizing::new(encode(&req)?);
+    if let ShellRequest::Input { bytes } = &mut req {
+        bytes.zeroize();
+    }
     tokio::time::timeout(PROMPT_ROUND_TIMEOUT, async {
         writer.write_all(wire.as_bytes()).await?;
         writer.flush().await?;

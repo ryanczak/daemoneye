@@ -79,7 +79,7 @@ where
         )),
         Ok(Ok(_)) => match serde_json::from_slice::<Request>(&cred_line) {
             Ok(Request::CredentialResponse { credential, .. }) => {
-                let credential = zeroize::Zeroizing::new(credential.as_str().to_string());
+                let credential = zeroize::Zeroizing::new(credential.into_inner());
                 // The newline is appended after a copy, so with the
                 // capacity reserved up front nothing reallocates and
                 // leaves a second unzeroed copy of the credential.
