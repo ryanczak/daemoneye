@@ -1,7 +1,7 @@
 # Phase 02 — gate-blind-spots
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** review
+**Status:** done
 **Drafted:** 2026-11-27
 **Depends on:** 01 (done)
 **Estimated diff:** ~250 lines (tests only)
@@ -132,33 +132,33 @@ function and scanner the gate's walk uses.
 
 ## Acceptance criteria
 
-- [ ] The five named tests pass. Paste the red runs of
+- [x] The five named tests pass. Paste the red runs of
       `the_gate_scans_code_below_a_cfg_test_item`, of
       `the_gate_sees_rwlock_and_try_forms` and of the tmux
       `gate_scans_code_below_a_cfg_test_item`, **as output**.
-- [ ] Both gates' tree walks pass on today's `src/`:
+- [x] Both gates' tree walks pass on today's `src/`:
       `cargo test --test lock_invariant --test tmux_read_only` is green.
-- [ ] **No split left:** this prints **0**:
+- [x] **No split left:** this prints **0**:
       `grep -c 'split("#\[cfg(test)\]")' tests/lock_invariant.rs tests/tmux_read_only.rs | awk -F: '{s+=$2} END{print s}'`
-- [ ] **Mutation run, pasted as output:**
+- [x] **Mutation run, pasted as output:**
       1. Remove `read` from the lock gate's guard-method list.
       2. Run `cargo test --test lock_invariant` once. It must fail.
       3. Undo that one edit, never by copying a backup file.
-- [ ] **No test removed (preservation):** run this once. It prints
+- [x] **No test removed (preservation):** run this once. It prints
       nothing:
       `for f in tests/lock_invariant.rs tests/tmux_read_only.rs; do LC_ALL=C comm -23 <(git show e971ea6f:$f | grep -A1 '^#\[test\]' | grep -oE 'fn [a-z_0-9]+' | sort) <(grep -A1 '^#\[test\]' $f | grep -oE 'fn [a-z_0-9]+' | sort); done`
-- [ ] **Counts** (re-pinned at bounce 1; the parse-failure test in each
+- [x] **Counts** (re-pinned at bounce 1; the parse-failure test in each
       gate is accepted):
       - `lock_invariant` reports **8 passed** (2 + 3 + the parse-failure
         test + the two bounce-1 tests).
       - `tmux_read_only` reports **8 passed** (4 + 2 + the parse-failure
         test + the bounce-1 test).
       - The lib suite stays at **3211 passed**.
-- [ ] **Gates:** all four pass, each run once.
+- [x] **Gates:** all four pass, each run once.
 
 **Bounce 1 (2026-11-27).** These criteria are about the outstanding work. Each one fails on the tree at `d2e30fe2`.
 
-- [ ] **[bug-02-1](bugs/bug-02-1.md): `impl` and `trait` members.**
+- [x] **[bug-02-1](bugs/bug-02-1.md): `impl` and `trait` members.**
       - Both gates treat an `impl` or `trait` member that carries a
         test-only attribute (`#[cfg(test)]`, `#[test]`, `#[…::test]`) as
         test-only.
@@ -175,10 +175,10 @@ function and scanner the gate's walk uses.
         exactly one hit.
       - Paste both red runs, against the tree before the fix, **as
         output**.
-- [ ] **[bug-02-1](bugs/bug-02-1.md): no vacuous fixtures.** This prints
+- [x] **[bug-02-1](bugs/bug-02-1.md): no vacuous fixtures.** This prints
       **0** (today **2**):
       `grep -c 'unwrap_or_default()' tests/lock_invariant.rs`
-- [ ] **[bug-02-2](bugs/bug-02-2.md): comments.** New test
+- [x] **[bug-02-2](bugs/bug-02-2.md): comments.** New test
       `the_gate_ignores_plain_comment_lines` in `tests/lock_invariant.rs`
       passes:
       - **Fixture:** a production fn with a `//` comment line quoting
@@ -186,11 +186,11 @@ function and scanner the gate's walk uses.
         `lock_unwrap_hits` and not pre-filtered.
       - **Asserts:** no hits.
       - Paste its red run (`left: [2]`) **as output**.
-- [ ] **Bounce-1 mutation run, pasted as output:**
+- [x] **Bounce-1 mutation run, pasted as output:**
       1. Disable the lock gate's new impl/trait member check.
       2. Run `cargo test --test lock_invariant` once. It must fail.
       3. Undo that one edit by hand, never from a backup copy.
-- [ ] **Closed file list unchanged:** only `tests/lock_invariant.rs` and
+- [x] **Closed file list unchanged:** only `tests/lock_invariant.rs` and
       `tests/tmux_read_only.rs` change, plus this doc.
 
 ## Spec
@@ -794,3 +794,50 @@ kill: (-1191644): No such process
 **Commit:** 5e245cb37e30cea3b21df3f3ac76e2e5740d1e20
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review verdict — 2026-11-27
+
+- **Verdict:** approved_after_1
+- **Bounces:** 1 ([bug-02-1](bugs/bug-02-1.md) major, [bug-02-2](bugs/bug-02-2.md) minor; both now `fixed`)
+- **Executor:** GLM-5.3-Flash (`015774cb`; bounce 1 `82d7978b`, clippy fix `5e245cb3`)
+- **Scope deviations:** none beyond the ones ruled on at bounce 1 (the extra parse-failure test per gate, accepted; the duplicated `is_test_only`, accepted). Only `tests/lock_invariant.rs` and `tests/tmux_read_only.rs` changed in the executor's commits.
+- **Calibration:** none
+
+**Gates (reviewer, each run once):** `cargo fmt --all -- --check` clean;
+`cargo build` clean; `cargo clippy --all-targets --all-features -- -D warnings`
+clean; `cargo test` all suites `ok` — lib **3211 passed**, `lock_invariant`
+**8 passed**, `tmux_read_only` **8 passed**. The known `masking_reinit` flake
+did not fire.
+
+**Bounce-1 criteria (reviewer re-run):** `grep -c 'unwrap_or_default()'
+tests/lock_invariant.rs` prints `0`; the split grep prints `0`; the
+`LC_ALL=C` preservation `comm` loop against `e971ea6f` prints nothing.
+
+**The executor's self-reports, checked against the session log
+(`session-phase-02-6b09c498.jsonl`):**
+1. **The clobbered test.** Turn 94's patch replaced the head of
+   `the_gate_scans_code_below_a_cfg_test_item`; turn 102 re-inserted it by
+   hand (no backup copy). Its body now differs from `015774cb` in one line
+   only, the bounce-1 `unwrap_or_default()` → `.expect("fixture parses")`
+   change. Intact.
+2. **The impl/trait red runs.** Adequate. The lock-gate red run was in fact
+   also taken in place at turn 8, before any fix landed (test written first,
+   `… FAILED`, the fixture's member lines hit). The tmux red run is a probe
+   with the identical fixture appended to a clone at `82d7978b~1`
+   (turn 79: `left: [(4,…), (7,…), (9,…), (14,…)]`, `right: [(9,…)]`), which
+   exercises the pre-fix gate exactly. The clone route was forced: the
+   executor's in-tree `git stash` / `git checkout` attempts (turns 62, 63,
+   67) were refused, so the main tree was never reverted. The `/tmp`
+   backup at turns 76–78 was used only inside the clone.
+3. **The mutation run.** Real: turn 83 restored the pre-fix `nested_items`
+   arms in the lock gate, turn 84 ran `cargo test --test lock_invariant`
+   and `the_gate_skips_cfg_test_impl_and_trait_fns` failed, turn 85 put the
+   member check back by a hand-written replace (8 passed). The pasted copy in
+   the completion entry condenses `left`/`right` onto one line, but the run
+   it describes is in the log.
+
+**Spot check:** `the_gate_skips_cfg_test_impl_and_trait_fns` pins
+`vec![9]`, so it fails both if a test-only member is scanned and if the
+production member is dropped; with `.expect("fixture parses")` a parse
+failure can no longer pass it vacuously. `the_gate_ignores_plain_comment_lines`
+goes through `production_lines` + `lock_unwrap_hits` without a pre-filter.
