@@ -61,6 +61,10 @@ impl BreakerState {
             self.probe_in_flight = false;
         }
         self.consecutive_failures += 1;
+        log::warn!(
+            "AI backend request to {origin} failed ({}/{CB_FAILURE_THRESHOLD} consecutive failures).",
+            self.consecutive_failures
+        );
         if self.consecutive_failures >= CB_FAILURE_THRESHOLD {
             self.open_until = Some(Instant::now() + CB_COOLDOWN);
             log::warn!(
@@ -74,12 +78,12 @@ impl BreakerState {
 
     fn record_neutral(&mut self, is_probe: bool) {
         if is_probe {
+            // The probe's 4xx means the endpoint answered, so half-open ends:
+            // close the breaker and free the probe slot.
             self.probe_in_flight = false;
+            self.open_until = None;
         }
-        // The endpoint answered with a client error: it is up, so the count
-        // resets and a half-open probe closes the breaker.
-        self.consecutive_failures = 0;
-        self.open_until = None;
+        // A neutral outcome never moves the failure count (required behaviour 1).
     }
 
     fn release(&mut self, is_probe: bool) {
@@ -111,16 +115,16 @@ impl CircuitPermit {
         }
     }
 
-    pub(crate) fn record_success(mut self) {
+    pub(crate) fn record_success(&mut self) {
         self.resolve(|s, probe| s.record_success(probe));
     }
 
-    pub(crate) fn record_failure(mut self) {
+    pub(crate) fn record_failure(&mut self) {
         let origin = self.origin.clone();
         self.resolve(|s, probe| s.record_failure(probe, &origin));
     }
 
-    pub(crate) fn record_neutral(mut self) {
+    pub(crate) fn record_neutral(&mut self) {
         self.resolve(|s, probe| s.record_neutral(probe));
     }
 }
@@ -175,13 +179,7 @@ pub(crate) fn acquire(origin: &str) -> Option<CircuitPermit> {
             return None;
         }
     };
-    let failures = state.consecutive_failures;
     drop(registry);
-    if failures > 0 {
-        log::warn!(
-            "AI backend request to {origin} failed ({failures}/{CB_FAILURE_THRESHOLD} failures before circuit opens)."
-        );
-    }
     Some(CircuitPermit {
         origin: origin.to_string(),
         is_probe,

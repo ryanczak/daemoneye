@@ -294,6 +294,182 @@ bounce-1 mutation item below.
 
 ## Update Log
 
+### Update — 2026-11-27 19:30 (started, bounce 1 re-dispatch)
+
+Resuming phase 03 at `8b596c92` per bug-03-1. Read the bug report,
+`src/ai/circuit.rs` and the test module of `src/ai/mod.rs`. Working the
+four remaining edits in the bounce-1 order, each red test before its fix,
+every pasted failure copied from a `cargo test` tool result in this run.
+
+### Update — 2026-11-27 19:30 (end-to-end verification, bounce 1)
+
+All four bounce-1 edits are done; each red run and mutation run below is the
+output of a `cargo test` tool call in this run.
+
+**Red run — `a_client_error_leaves_the_failure_count_unchanged`** (before the
+`record_neutral` fix; the neutral 4xx reset the count to 0):
+
+```
+running 1 test
+test ai::circuit_request_path_tests::a_client_error_leaves_the_failure_count_unchanged ... FAILED
+
+failures:
+
+---- ai::circuit_request_path_tests::a_client_error_leaves_the_failure_count_unchanged stdout ----
+
+thread 'ai::circuit_request_path_tests::a_client_error_leaves_the_failure_count_unchanged' (1287056) panicked at src/ai/mod.rs:981:9:
+assertion `left == right` failed: a neutral 4xx leaves the failure count unchanged
+  left: 0
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    ai::circuit_request_path_tests::a_client_error_leaves_the_failure_count_unchanged
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3226 filtered out; finished in 0.02s
+```
+
+**Red run — `a_probe_that_fails_before_its_first_token_reopens_the_breaker`**
+(before the `send_under_permit` fix; the retry was refused by its own breaker):
+
+```
+running 1 test
+test ai::circuit_request_path_tests::a_probe_that_fails_before_its_first_token_reopens_the_breaker ... FAILED
+
+failures:
+
+---- ai::circuit_request_path_tests::a_probe_that_fails_before_its_first_token_reopens_the_breaker stdout ----
+
+thread 'ai::circuit_request_path_tests::a_probe_that_fails_before_its_first_token_reopens_the_breaker' (1291859) panicked at src/ai/mod.rs:1108:9:
+the probe's retries run under its own permit, got: AI backend circuit breaker is open for http://127.0.0.1:38937 — too many recent failures. Retry in ~60s.
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    ai::circuit_request_path_tests::a_probe_that_fails_before_its_first_token_reopens_the_breaker
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3227 filtered out; finished in 0.27s
+```
+
+**Mutation run 1** — removed the `probe_in_flight` guard in
+`BreakerState::admit` so half-open admits everyone, then undone by hand
+(`git diff --stat` afterwards shows only the intended edits):
+
+```
+running 1 test
+test ai::tests::half_open_admits_exactly_one_probe ... FAILED
+
+failures:
+
+---- ai::tests::half_open_admits_exactly_one_probe stdout ----
+
+thread 'ai::tests::half_open_admits_exactly_one_probe' (1293759) panicked at src/ai/mod.rs:449:9:
+half-open must admit one probe only
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    ai::tests::half_open_admits_exactly_one_probe
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3227 filtered out; finished in 0.00s
+```
+
+**Mutation run 2** — moved the success resolution back into
+`send_with_retry_inner`'s header-success arm, then undone by hand:
+
+```
+running 1 test
+test ai::circuit_request_path_tests::headers_alone_do_not_record_success ... FAILED
+
+failures:
+
+---- ai::circuit_request_path_tests::headers_alone_do_not_record_success stdout ----
+
+thread 'ai::circuit_request_path_tests::headers_alone_do_not_record_success' (1294344) panicked at src/ai/mod.rs:966:9:
+assertion `left == right` failed: a header exchange alone records nothing
+  left: 0
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    ai::circuit_request_path_tests::headers_alone_do_not_record_success
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3227 filtered out; finished in 0.02s
+```
+
+**bug-03-1 §2 awk:** `awk '/async fn headers_alone_do_not_record_success/,/^    }$/' src/ai/mod.rs | grep -c 'send_with_retry('` prints **1** (target ≥ 1).
+
+**bug-03-1 §5 awk:** `awk '/^pub\(crate\) fn acquire/,/^}$/' src/ai/circuit.rs | grep -c 'failures before circuit opens'` prints **0** (target 0); the per-failure warning now lives in `BreakerState::record_failure` and is logged only when a failure is recorded.
+
+**No full URL in a breaker log or refusal:** every site interpolates the
+origin from `circuit::request_origin(&req)` —
+`format!("{}://{}:{}", url.scheme(), url.host_str().unwrap_or(""), url.port_or_known_default())`
+in `src/ai/circuit.rs:153` — never `url.path()` or `url.query()`.
+
+**No test removed:** the preservation `comm` printed nothing:
+
+```
+$ LC_ALL=C comm -23 <(git show 57691b5a:src/ai/mod.rs | grep -A2 '#\[\(tokio::\)\?test' | grep -oE 'fn [a-z_0-9]+' | LC_ALL=C sort -u) <(cat src/ai/mod.rs src/ai/circuit.rs | grep -A2 '#\[\(tokio::\)\?test' | grep -oE 'fn [a-z_0-9]+' | LC_ALL=C sort -u)
+(no output)
+```
+
+**Counts:** the lib suite reports **3218 passed** (3216 + the two bounce-1
+tests, `a_client_error_leaves_the_failure_count_unchanged` and
+`a_probe_that_fails_before_its_first_token_reopens_the_breaker`):
+
+```
+test result: ok. 3218 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.56s
+```
+
+**Gates** (each run once):
+
+```
+$ cargo fmt --all -- --check
+FMT_CLEAN
+
+$ cargo build 2>&1 | tail -5
+   Compiling daemoneye v2.12.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.25s
+(zero warnings)
+
+$ cargo clippy --all-targets --all-features -- -D warnings 2>&1 | tail -5
+    Checking daemoneye v2.12.0 (/home/matt/src/daemoneye)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 14.87s
+
+$ cargo test 2>&1 | grep -E "^test result"
+test result: ok. 3218 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.56s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.36s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.27s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.72s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The known flake `ai::filter::reinit_tests::masking_reinit_applies_a_new_extra_pattern`
+did not fail in any run.
+
+**circuit test group after the fixes:**
+
+```
+running 9 tests
+test ai::tests::circuit_breaker_closes_on_success ... ok
+test ai::tests::circuit_breaker_closed_initially ... ok
+test ai::tests::circuit_breaker_opens_after_threshold ... ok
+test ai::circuit_request_path_tests::a_cancelled_probe_frees_the_slot ... ok
+test ai::circuit_request_path_tests::headers_alone_do_not_record_success ... ok
+test ai::circuit_request_path_tests::breakers_are_per_endpoint ... ok
+test ai::circuit_request_path_tests::a_client_error_leaves_the_failure_count_unchanged ... ok
+test ai::circuit_request_path_tests::a_client_error_does_not_trip_the_breaker ... ok
+test ai::circuit_request_path_tests::a_probe_that_fails_before_its_first_token_reopens_the_breaker ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 3219 filtered out; finished in 1.78s
+```
+
+**Closed file list:** `git diff --stat` shows only this doc,
+`src/ai/backends/mod.rs`, `src/ai/circuit.rs` and `src/ai/mod.rs` changed.
+
 <!-- entries appended below this line -->
 
 ### Notes for executor — 2026-11-27 (bounce 1: read this first)

@@ -164,8 +164,10 @@ where
 
     // One breaker outcome per call: the permit is acquired once and held
     // across every internal retry, so its resolution — not the header
-    // exchange — is what the breaker records.
-    let (mut response, permit) = crate::ai::send_with_retry(&build_request).await?;
+    // exchange — is what the breaker records. Retries run under this same
+    // permit and never re-enter `send_with_retry`, which would be refused
+    // by the probe's own breaker in half-open (bug-03-1 §4).
+    let (mut response, mut permit) = crate::ai::send_with_retry(&build_request).await?;
 
     loop {
         let mut handler = make_handler();
@@ -205,7 +207,11 @@ where
                         );
                         tokio::time::sleep(crate::ai::stream_retry_backoff(transport_retries))
                             .await;
-                        response = crate::ai::send_with_retry(&build_request).await?.0;
+                        response = crate::ai::send_under_permit(&build_request, &mut permit)
+                            .await
+                            .inspect_err(|_| {
+                                permit.record_failure();
+                            })?;
                         continue;
                     }
                     if stall_retries < MAX_FIRST_TOKEN_RETRIES {
@@ -213,7 +219,11 @@ where
                         log::warn!(
                             "AI stream failed before first token (attempt {stall_retries}/{MAX_FIRST_TOKEN_RETRIES}): {e}"
                         );
-                        response = crate::ai::send_with_retry(&build_request).await?.0;
+                        response = crate::ai::send_under_permit(&build_request, &mut permit)
+                            .await
+                            .inspect_err(|_| {
+                                permit.record_failure();
+                            })?;
                         continue;
                     }
                 }
