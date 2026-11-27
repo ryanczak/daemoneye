@@ -2,7 +2,8 @@
 
 **Active milestone:** none. M40 Security hardening
 ([`README.md`](milestones/M40-security-hardening/README.md)) closed
-2026-11-27 as `2.12.0` (tagged, not yet pushed). Next come M41 Correctness, M42 Performance and M43 Architecture, then the MCP
+2026-11-27 as `2.12.0`, pushed. Next come M41 Correctness, M42
+Performance and M43 Architecture, then the MCP
 surface (M44) and Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as
 `2.11.0`.
 
