@@ -75,7 +75,7 @@ at drafting.
 |----|-------|--------|--------|
 | 01 | [test-hazards](phase-01-test-hazards.md) — the 17 no-op `with_home` tests hold the HOME guard across their await; `launch.rs`'s multi-thread test stops holding a `std` guard across `.await`; env cleanup restores the previous value instead of removing it | Q9 Q10 Q11 | done |
 | 02 | [gate-blind-spots](phase-02-gate-blind-spots.md) — `lock_invariant.rs` and `tmux_read_only.rs` walk the `syn` AST, skipping only test-only items; the lock gate covers `read`/`write`/`try_*` | Q4 Q5 | done                             |
-| 03 | circuit-breaker — success is recorded when a stream finishes, a 4xx does not trip the breaker, the breaker is per provider, and half-open lets exactly one probe through | C7 | todo |
+| 03 | [circuit-breaker](phase-03-circuit-breaker.md) — success is recorded when a stream finishes, a 4xx does not trip the breaker, the breaker is per provider, and half-open lets exactly one probe through | C7 | todo |
 | 04 | sse-retry — transport errors, stalls and non-retriable provider errors are classified apart; Gemini reports a malformed call once; `"error": null` is not an error | C12 C24 | todo |
 | 05 | role-coalescing — `AnthropicClient::convert_messages` merges consecutive same-role messages; a redirect keeps the results of tools that already ran in its batch | C8 | todo |
 | 06 | session-load — `load_session_messages` cuts at a clean turn start (as `read_session_file` does); `save_session` keeps `tags` and `parent`; `rename_session` reports a failed `meta.toml` write | C9 C21 Q3b | todo |

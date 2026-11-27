@@ -55,7 +55,7 @@ check confirmed all ten rows marked `yes`.
 | C4 | Anthropic `input_tokens` is already uncached; subtracting cache counts zeroes it | `anthropic.rs` · `parse_anthropic_start_usage` | M39 11 | yes — fixed (`93a7f0b1`) | |
 | C5 | `wrap_words` underflows on whitespace-only lines and on a 2-col char at width 1 | `cli/viewer_layout.rs` | M39 12 | yes — fixed (`745890bc`) | |
 | C6 | webhook dedup keys on fingerprint alone, so a `resolved` within 300 s of `firing` is dropped | `webhook/process.rs` | M41 09 | | |
-| C7 | circuit breaker records success on HTTP 200 headers, trips globally on 4xx, half-open has no probe gate | `ai/mod.rs` · `CircuitBreaker`, `send_with_retry` | M41 03 | | |
+| C7 | circuit breaker records success on HTTP 200 headers, trips globally on 4xx, half-open has no probe gate | `ai/mod.rs` · `CircuitBreaker`, `send_with_retry` | M41 03 | yes: probed 2026-11-27 with a scratch test — 10× header-OK + stream-fail left it `closed`; 5× HTTP 400 opened it; a different 200 endpoint was then refused; half-open `allow()` returned true three times | |
 | C8 | consecutive `user` messages (empty cancel, empty reply, redirect, client-gone, ghost note) reach Anthropic uncoalesced; redirect drops earlier results in the batch | `stream/conversation_helpers.rs`, `stream/endings.rs`, `anthropic.rs` | M41 05 | | |
 | C9 | `load_session_messages` drains without turn-boundary repair, leaving orphan tool results | `session_store.rs` | M41 06 | | |
 | C10 | background compaction: epoch 1 starts at `now`, ignores the session's model window, hardcodes `tail_first_turn = 0` | `context/background.rs` | M41 07 | | |
@@ -120,8 +120,8 @@ check confirmed all ten rows marked `yes`.
 | Q3a | `let _ = self.save()` drops scheduler persistence errors | `scheduler.rs` | M41 10 | | |
 | Q3b | `rename_session` ignores the `meta.toml` write | `session_store.rs` | M41 06 | | |
 | Q3c | partial log rotation leaves `daemon.log` missing; non-atomic `pane_prefs` write | `utils/log_rotation.rs`, `pane_prefs.rs` | M41 16 | | |
-| Q4 | `lock_invariant.rs` and `tmux_read_only.rs` split on the first `#[cfg(test)]` and miss production code below it | `tests/` | M41 02 | yes: probed 2026-11-27, about 290 production items sit below an early `#[cfg(test)]` (e.g. `shell/client.rs`, `search.rs`, `memory/index/mod.rs`); a scratch `syn` visitor found no violation hiding there | |
-| Q5 | `lock_invariant.rs` misses `.read()`/`.write()`/`try_*` | `tests/lock_invariant.rs` | M41 02 | yes: read 2026-11-27, the scanner matches only `.lock()`; the scratch visitor found no production `read`/`write`/`try_*` guard unwrapped | |
+| Q4 | `lock_invariant.rs` and `tmux_read_only.rs` split on the first `#[cfg(test)]` and miss production code below it | `tests/` | M41 02 | yes: probed 2026-11-27, about 290 production items sit below an early `#[cfg(test)]` (e.g. `shell/client.rs`, `search.rs`, `memory/index/mod.rs`); a scratch `syn` visitor found no violation hiding there | act: M41 phase-02 |
+| Q5 | `lock_invariant.rs` misses `.read()`/`.write()`/`try_*` | `tests/lock_invariant.rs` | M41 02 | yes: read 2026-11-27, the scanner matches only `.lock()`; the scratch visitor found no production `read`/`write`/`try_*` guard unwrapped | act: M41 phase-02 |
 | Q6 | 22- and 24-parameter status-section functions | `cli/status_sections.rs` | M43 03 | | |
 | Q7 | `base64 0.23` duplicates `0.22`; single-use `nix` (three versions in the lock) replaceable by `File::try_lock` | `Cargo.toml`, `daemon/instance.rs` | M43 02 | | |
 | Q8 | dead `#[allow(dead_code)] fn search_dir` | `search.rs` | M43 02 | | |
