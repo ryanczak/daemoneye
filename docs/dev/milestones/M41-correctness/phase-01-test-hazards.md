@@ -1,7 +1,7 @@
 # Phase 01 — test-hazards
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-27
 **Depends on:** none
 **Estimated diff:** ~200 lines (tests only)
@@ -153,3 +153,31 @@ Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-27 07:58 (started)
+
+Work has begun on the phase: the first red test
+(`with_fish_shell_restores_the_previous_shell`) is written and fails red as
+expected; the status is now `in-progress`.
+
+Task list (each line names the acceptance item it closes):
+
+1. Q11-session: add `with_fish_shell_restores_the_previous_shell` red test, then
+   make `with_fish_shell` in `session_tests.rs` restore the previous `$SHELL`.
+2. Q11-guard: add `fish_shell_env_restores_the_previous_shell` red test, then fix
+   `FishShellEnv`'s `Drop` in `shell_exec_tests.rs` to restore-or-remove
+   (second leg: unset-before stays unset-after).
+3. Q11-isolation: make each `webhook_ghost_*` test in `tests/isolation.rs`
+   restore `TMUX` and `TMUX_PANE` from their entry values, and add the end-of-test
+   assertions; capture the red run.
+4. Q11-session-2: make `a_local_shell_still_uses_the_login_shell` restore `$SHELL`
+   after its fallback assertion.
+5. Q9: convert every `with_home_set` caller in `read_tests.rs` to run inside
+   `with_home(&tmp, || async { ... }).await`, then delete `with_home_set`; grep
+   prints 0.
+6. Q10: in `launch.rs`'s tests module, abort the spawned `run_host` task and await
+   its handle before the guard and temp dir drop; run the 20× preservation loop.
+7. Preservation: confirm no `#[test]`/`#[tokio::test]` lines removed vs `21e4c2e8`,
+   and the lib suite reports 3211 passed.
+8. Capture evidence: run the four gates once each; paste into the
+   end-to-end verification entry; commit as one `test:` commit.

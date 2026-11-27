@@ -173,22 +173,29 @@ where
 
 /// `$SHELL` pointed at fish for the duration of one test, restored by
 /// `Drop` even when an assertion fails mid-test — the guard form of the
-/// session module's `with_fish_shell`, which cannot early-return.
-pub(super) struct FishShellEnv;
+/// session module's `with_fish_shell`, which cannot early-return. The
+/// previous value (including "unset") is what `Drop` puts back.
+pub(super) struct FishShellEnv {
+    entry: Option<std::ffi::OsString>,
+}
 
 impl FishShellEnv {
     pub(super) fn set() -> Self {
+        let entry = std::env::var_os("SHELL");
         unsafe {
             std::env::set_var("SHELL", "/usr/bin/fish");
         }
-        FishShellEnv
+        FishShellEnv { entry }
     }
 }
 
 impl Drop for FishShellEnv {
     fn drop(&mut self) {
         unsafe {
-            std::env::remove_var("SHELL");
+            match &self.entry {
+                Some(value) => std::env::set_var("SHELL", value),
+                None => std::env::remove_var("SHELL"),
+            }
         }
     }
 }
@@ -1463,6 +1470,42 @@ async fn a_run_command_appends_a_meta_index_record() {
         !String::from_utf8_lossy(&decoded).contains("DE_"),
         "the stored range must not carry marker text: {record:?}"
     );
+}
+
+#[test]
+fn fish_shell_env_restores_the_previous_shell() {
+    let _guard = crate::test_home_guard();
+    let entry = std::env::var_os("SHELL");
+    unsafe {
+        std::env::set_var("SHELL", "/bin/probe-shell");
+    }
+    {
+        let _fish = FishShellEnv::set();
+    }
+    let shell = std::env::var("SHELL");
+    assert_eq!(
+        shell.as_deref(),
+        Ok("/bin/probe-shell"),
+        "dropping FishShellEnv must restore the caller's $SHELL, not drop it: {shell:?}"
+    );
+
+    unsafe {
+        std::env::remove_var("SHELL");
+    }
+    {
+        let _fish = FishShellEnv::set();
+    }
+    let unset = std::env::var_os("SHELL");
+    assert!(
+        unset.is_none(),
+        "dropping FishShellEnv must leave $SHELL unset when it was unset before: {unset:?}"
+    );
+    unsafe {
+        match &entry {
+            Some(value) => std::env::set_var("SHELL", value),
+            None => std::env::remove_var("SHELL"),
+        }
+    }
 }
 
 #[path = "shell_exec_hosted_tests.rs"]
