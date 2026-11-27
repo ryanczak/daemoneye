@@ -40,34 +40,59 @@ pub fn local_username() -> String {
 
 /// The passwd name for `uid` through the reentrant `getpwuid_r`: the daemon
 /// is multi-threaded, and `getpwuid`'s static buffer is not thread-safe.
-/// `None` when there is no entry, the buffer is too small, or the name is
-/// empty or not UTF-8.
+/// `None` when there is no entry, or the name is empty or not UTF-8.
 fn passwd_name(uid: libc::uid_t) -> Option<String> {
-    // sysconf gives the glibc-recommended start; it is -1 when it does not
-    // know, so fall back to the same 16 KiB the fixed buffer used.
-    let initial = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
-    let initial = if initial > 0 {
-        initial as usize
-    } else {
-        16 * 1024
-    };
+    let initial = passwd_buffer_start();
     passwd_name_from(uid, initial)
 }
 
-fn passwd_name_from(uid: libc::uid_t, initial_len: usize) -> Option<String> {
-    let mut len = initial_len.max(1);
-    loop {
-        if let Some(name) = passwd_name_with_buffer(uid, len) {
-            return Some(name);
-        }
-        if len >= 1024 * 1024 {
-            return None;
-        }
-        len = (len * 2).min(1024 * 1024);
+fn passwd_buffer_start() -> usize {
+    // SAFETY: `sysconf` only reads a constant from libc; it takes no
+    // pointers and cannot fail on this constant.
+    let initial = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
+    // sysconf gives the glibc-recommended start; it is -1 when it does not
+    // know, so fall back to the same 16 KiB the fixed buffer used.
+    if initial > 0 {
+        initial as usize
+    } else {
+        16 * 1024
     }
 }
 
-fn passwd_name_with_buffer(uid: libc::uid_t, len: usize) -> Option<String> {
+fn passwd_name_from(uid: libc::uid_t, initial_len: usize) -> Option<String> {
+    let mut attempts = 0u32;
+    passwd_name_attempts(uid, initial_len, &mut attempts)
+}
+
+/// The ladder behind [`passwd_name_from`], with the `getpwuid_r` attempt
+/// count observable so tests can pin that only a too-small buffer retries.
+fn passwd_name_attempts(
+    uid: libc::uid_t,
+    initial_len: usize,
+    attempts: &mut u32,
+) -> Option<String> {
+    const CAP: usize = 1024 * 1024;
+    let mut len = initial_len.max(1);
+    loop {
+        *attempts += 1;
+        match passwd_name_attempt(uid, len) {
+            Attempt::Name(name) => return Some(name),
+            Attempt::NoName => return None,
+            // Only a too-small buffer is worth another attempt; at the cap
+            // even that is hopeless.
+            Attempt::TooSmall if len < CAP => len = (len * 2).min(CAP),
+            Attempt::TooSmall => return None,
+        }
+    }
+}
+
+enum Attempt {
+    TooSmall,
+    NoName,
+    Name(String),
+}
+
+fn passwd_name_attempt(uid: libc::uid_t, len: usize) -> Attempt {
     let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
     let mut buf = vec![0u8; len];
     let mut result: *mut libc::passwd = std::ptr::null_mut();
@@ -84,14 +109,16 @@ fn passwd_name_with_buffer(uid: libc::uid_t, len: usize) -> Option<String> {
         )
     };
     if rc == libc::ERANGE {
-        return None;
+        return Attempt::TooSmall;
     }
     if rc != 0 || result.is_null() || pw.pw_name.is_null() {
-        return None;
+        return Attempt::NoName;
     }
     let name = unsafe { std::ffi::CStr::from_ptr(pw.pw_name) };
-    let name = name.to_str().ok()?;
-    (!name.is_empty()).then(|| name.to_string())
+    let Some(name) = name.to_str().ok().filter(|n| !n.is_empty()) else {
+        return Attempt::NoName;
+    };
+    Attempt::Name(name.to_string())
 }
 
 /// The panel title from the label pieces: `user@host:sN`, `host:sN` without
@@ -169,6 +196,22 @@ mod tests {
         assert!(
             tiny.is_some(),
             "the test process's own euid has a passwd name"
+        );
+    }
+
+    #[test]
+    fn a_missing_passwd_entry_is_looked_up_once() {
+        // An 8-byte start cannot observe not-found on this host: glibc's
+        // nss_files reports ERANGE for every lookup below a 102-byte floor,
+        // missing uid or not (probed byte-by-byte, 2026-11-26). From 128 a
+        // missing uid returns rc=2 on the first attempt, so exactly one
+        // attempt is the honest assertion here.
+        let mut attempts = 0u32;
+        let result = passwd_name_attempts(4_000_000_000, 128, &mut attempts);
+        assert_eq!(result, None, "uid 4000000000 has no passwd entry here");
+        assert_eq!(
+            attempts, 1,
+            "a missing entry must end the lookup on its first attempt"
         );
     }
 
