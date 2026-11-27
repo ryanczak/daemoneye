@@ -153,3 +153,12 @@ Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-27 (escalation)
+
+**Chosen lever:** resume
+**Rationale:** the first run (347 turns) ended on a `NoProgressStall` with the phase nearly done. On the architect's re-run of the partial tree, all four gates pass and the lib suite reports 3211 passed, as pinned:
+- Q9, Q11 and both named tests are committed.
+- The Q10 abort-and-join fix in `launch.rs` is uncommitted.
+
+The stall came from out-of-scope work. The run added `run_for_session` assertions to `tests/isolation.rs` and spent its last 60 turns tracing ghost spawn paths. What is left is that removal, one commit, and the evidence entry.
