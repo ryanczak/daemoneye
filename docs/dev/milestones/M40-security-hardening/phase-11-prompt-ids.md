@@ -1,7 +1,7 @@
 # Phase 11 — prompt-ids
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 10 (done)
 **Estimated diff:** ~250 lines
@@ -190,3 +190,141 @@ Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-27 01:49 (started)
+
+Work has begun on the prompt-id check across the nine approve/deny handlers and
+the credential round trip. The first red test,
+`delete_schedule_refuses_a_reply_for_another_prompt`, is in place and red.
+
+**Task list (each line names the acceptance item it closes):**
+
+1. Write `delete_schedule_refuses_a_reply_for_another_prompt` (first red test;
+   acceptance: "First red test").
+2. Add the shared reply-check helper that returns `Option<(&str, bool)>`-style
+   (prompt id, approved) from a parsed `&Request`, and rewire the nine
+   approve/deny handlers + the edit-file handler's variant check to deny a
+   mismatched id with one `log::warn!` naming both ids (acceptance:
+   "Every approve/deny variant", "No handler ignores the id" grep).
+3. Write `an_approval_for_another_prompt_is_a_denial` — the table over all
+   seven reply variants, mismatched id denied, matching id approved as the
+   positive control (acceptance: "Every approve/deny variant").
+4. Write `write_script_refuses_a_reply_for_another_prompt` under
+   `crate::test_home()`, asserting no script file is written (acceptance:
+   "A real handler").
+5. Fix `credential_round_trip` to check the id: a `CredentialResponse` whose id
+   differs gives `PromptReply::GiveUp` naming the mismatch, credential still
+   zeroized (acceptance: "Credential" + "The credential match checks the id"
+   grep). Add `a_credential_for_another_prompt_is_not_sent`; keep
+   `credential_round_trip_returns_a_zeroizing_answer` green.
+6. Mutation run: drop the id comparison from the approve/deny path, run
+   `cargo test --lib delete_schedule_refuses_a_reply_for_another_prompt` once
+   (must fail), restore by undoing the edit (acceptance: "Mutation run").
+7. Run the no-test-removed grep (prints 0), the two no-match greps, the four
+   gates each once, `tests/hygiene.rs` with the allowlist untouched, capture
+   all evidence in an end-to-end Update Log entry, then commit as one `fix:`
+   commit (acceptance: "No test removed", "Gates", "Capture the evidence").
+
+### Update — 2026-11-26 (escalation)
+
+**Chosen lever:** resume.
+
+**Rationale:** the run stalled with `NoProgressStall` after 60 read-only
+turns, but the production fix is already in and is correct:
+- `reply_approval` and `approval_reply_decision` in `executor/mod.rs`;
+- the nine handlers rewired to them;
+- the credential id guard.
+
+Both structural greps print nothing. The architect's gate run on the partial
+tree:
+- build and clippy are green;
+- the lib suite fails 2 of 3203: `hosted::a_correct_password_is_sent_exactly_once`
+  and `hosted::a_later_command_on_the_line_still_gets_the_prompt_sentinel`.
+
+That is the spec's fixture-id gotcha. `run_with_transport`
+(`src/daemon/executor/shell_exec_tests.rs`) prompts with id `""`, while
+`answered_transport` answers with id `"p"`.
+
+The remaining work is small and enumerated, so a resume keeps the finished
+edits.
+
+### Update — 2026-11-27 03:05 (end-to-end verification)
+
+The prior run's production fix was kept; the five remaining edits landed:
+the `run_with_transport` fixture id (`""` → `"p"`), the credential mismatch
+arm now zeroizes the dropped credential, the three new tests
+(`a_credential_for_another_prompt_is_not_sent`,
+`an_approval_for_another_prompt_is_a_denial`,
+`write_script_refuses_a_reply_for_another_prompt`), and the shared
+approve/deny check moved verbatim into the new
+`src/daemon/executor/prompt_reply.rs` — `executor/mod.rs` had drifted over
+the 800-line hygiene cap with the helper inline, so the helper (and its test)
+now live in their own module, re-exported as `executor::reply_approval`.
+
+**End-to-end verification (all against the real lib suite and real files):**
+
+First red test (recorded before the fix, in the prior run; re-confirmed via
+the mutation run below — with the id comparison dropped the same test fails):
+
+```
+thread 'daemon::executor::schedule::tests::delete_schedule_refuses_a_reply_for_another_prompt' panicked at src/daemon/executor/schedule.rs:804:9:
+denial text: Job 28c67c34 deleted permanently
+```
+
+Mutation run (id comparison in `reply_approval` replaced with `if false`,
+then restored by undoing that one edit — no backup file was used):
+
+```
+failures:
+    daemon::executor::schedule::tests::delete_schedule_refuses_a_reply_for_another_prompt
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3215 filtered out; finished in 0.03s
+```
+
+After restore, the same test:
+
+```
+test daemon::executor::schedule::tests::delete_schedule_refuses_a_reply_for_another_prompt ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3215 filtered out; finished in 0.03s
+```
+
+Gates, each run once (final sequence, after `cargo fmt --all`):
+
+```
+cargo build:  Finished `dev` profile [unoptimized + debuginfo] target(s)
+cargo clippy --all-targets --all-features -- -D warnings:
+              Finished `dev` profile [unoptimized + debuginfo] target(s)
+cargo test:
+test result: ok. 3206 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.74s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.23s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.39s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+The lib suite reports 3206 passed — the pre-phase 3203 plus the three new
+tests. `tests/hygiene.rs` passes (16/16) with `tests/hygiene_allowlist.txt`
+untouched; `src/daemon/executor/mod.rs` is back under the cap at 1768 total
+lines because the helper moved out of it.
+
+Acceptance greps (all clean):
+
+```
+$ grep -rnE 'Response \{ approved: true, \.\. \}' src/daemon
+(no output, exit 1)
+
+$ grep -n 'CredentialResponse { credential, \.\. }' src/daemon/executor/shell_exec_auth.rs
+(no output, exit 1)
+
+$ git diff a5e158b3 -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+```
+
+The three new tests each call the production code paths: `reply_approval`
+(production, via the seven-variant table), `delete_schedule`, `write_script`
+and `credential_round_trip` exactly as production callers do.

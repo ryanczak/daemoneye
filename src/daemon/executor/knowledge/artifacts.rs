@@ -1,8 +1,8 @@
-use super::super::{ToolCallOutcome, USER_PROMPT_TIMEOUT};
+use super::super::{ToolCallOutcome, USER_PROMPT_TIMEOUT, reply_approval};
 use super::{ArtifactCtx, track_artifact};
 use crate::daemon::utils::log_event;
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{Request, Response, RunbookListItem, ScriptListItem};
+use crate::ipc::{Response, RunbookListItem, ScriptListItem};
 use crate::scheduler::ScheduleStore;
 use crate::scripts;
 use std::sync::Arc;
@@ -51,10 +51,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::ScriptWriteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(id, &line, "script write"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "script reply line too large ({e}); refusing the prompt and ending the turn"
@@ -177,10 +174,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::ScriptDeleteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(id, &line, "script delete"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "script reply line too large ({e}); refusing the prompt and ending the turn"
@@ -257,10 +251,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::RunbookWriteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(id, &line, "runbook write"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "runbook reply line too large ({e}); refusing the prompt and ending the turn"
@@ -346,10 +337,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::RunbookDeleteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(id, &line, "runbook delete"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "runbook reply line too large ({e}); refusing the prompt and ending the turn"
@@ -421,6 +409,7 @@ where
 mod tests {
     use super::super::testutil::{TmpHome, with_home};
     use super::*;
+    use crate::ipc::Request;
 
     #[test]
     fn read_script_missing_reports_error() {
@@ -432,6 +421,42 @@ mod tests {
                 "got: {out}"
             );
         });
+    }
+
+    /// An approved reply whose id is not the prompt's is a denial (S15): the
+    /// script is never written.
+    #[tokio::test]
+    async fn write_script_refuses_a_reply_for_another_prompt() {
+        let _guard = crate::test_home();
+        let store: &'static crate::daemon::session::SessionStore =
+            Box::leak(Box::new(crate::daemon::session::SessionStore::new()));
+        let ns: &[&str] = &["global"];
+        let ctx = ArtifactCtx {
+            session_id: None,
+            sessions: store,
+            saved_name: None,
+            turn_count: 0,
+            is_ghost: false,
+            namespaces: ns,
+        };
+        let reply = serde_json::to_string(&Request::ScriptWriteResponse {
+            id: "other".to_string(),
+            approved: true,
+        })
+        .expect("reply serialises");
+        let mut reader =
+            tokio::io::BufReader::new(std::io::Cursor::new(format!("{reply}\n").into_bytes()));
+        let outcome = write_script("c1", "x.sh", "echo hi", &ctx, &mut Vec::new(), &mut reader)
+            .await
+            .expect("mismatched-id reply returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result, got {outcome:?}");
+        };
+        assert!(msg.contains("denied"), "denial text: {msg}");
+        assert!(
+            crate::scripts::read_script("x.sh").is_err(),
+            "no script file is written for a mismatched-id reply"
+        );
     }
 
     #[test]

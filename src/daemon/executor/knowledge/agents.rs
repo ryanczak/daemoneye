@@ -1,8 +1,8 @@
-use super::super::{ToolCallOutcome, USER_PROMPT_TIMEOUT};
+use super::super::{ToolCallOutcome, USER_PROMPT_TIMEOUT, reply_approval};
 use super::{ArtifactCtx, track_artifact};
 use crate::daemon::utils::log_event;
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{Request, Response};
+use crate::ipc::Response;
 
 // ---------------------------------------------------------------------------
 // Agents
@@ -87,10 +87,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::ScriptWriteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(id, &line, "agent write"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "agent reply line too large ({e}); refusing the prompt and ending the turn"
@@ -229,10 +226,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::ScriptDeleteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(id, &line, "agent delete"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "agent reply line too large ({e}); refusing the prompt and ending the turn"

@@ -78,7 +78,10 @@ where
                  elevated privileges"
         )),
         Ok(Ok(_)) => match serde_json::from_slice::<Request>(&cred_line) {
-            Ok(Request::CredentialResponse { credential, .. }) => {
+            Ok(Request::CredentialResponse {
+                id: resp_id,
+                credential,
+            }) if resp_id == id => {
                 let credential = zeroize::Zeroizing::new(credential.into_inner());
                 // The newline is appended after a copy, so with the
                 // capacity reserved up front nothing reallocates and
@@ -87,6 +90,16 @@ where
                 bytes.extend_from_slice(credential.as_bytes());
                 bytes.push(b'\n');
                 PromptReply::Send(bytes)
+            }
+            Ok(Request::CredentialResponse {
+                id: resp_id,
+                credential,
+            }) => {
+                let _ = zeroize::Zeroizing::new(credential.into_inner());
+                PromptReply::GiveUp(format!(
+                    "credential reply id {resp_id:?} does not match prompt id {id:?} — \
+                     the credential was not typed into the command"
+                ))
             }
             _ => PromptReply::GiveUp("credentials could not be read".to_string()),
         },

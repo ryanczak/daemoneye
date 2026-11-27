@@ -29,6 +29,10 @@ mod schedule;
 pub(crate) mod shell_exec;
 mod shell_label;
 
+mod prompt_reply;
+
+pub(crate) use prompt_reply::reply_approval;
+
 use crate::ai::PendingCall;
 use crate::daemon::policy::GhostPolicy;
 use crate::daemon::session::{SessionStore, with_sessions};
@@ -1010,7 +1014,6 @@ mod tests {
             "a session's call owns its shells as the session id"
         );
     }
-
     /// The one owner rule: a ghost call's shells are owned by
     /// `Owner::Ghost(<session id>)`, so the end-of-run teardown closes them;
     /// a chat or ask call's owner stays what `chat_owner` gives.

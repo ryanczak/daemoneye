@@ -41,10 +41,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     match read_result {
-        Ok(Ok(_)) => Ok(matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::GhostSpawnResponse { approved: true, .. })
-        )),
+        Ok(Ok(_)) => Ok(reply_approval(call.id(), &line, "ghost spawn")),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => Err(anyhow::anyhow!(
             "ghost spawn reply line too large ({e}); refusing the prompt and ending the turn"
         )),

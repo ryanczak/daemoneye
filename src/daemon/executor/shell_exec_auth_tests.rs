@@ -69,3 +69,25 @@ async fn credential_round_trip_returns_a_zeroizing_answer() {
         "the answer carries the credential and the newline"
     );
 }
+
+/// A credential typed against a different prompt is never sent: the round
+/// trip gives up instead of passing another prompt's secret to the command.
+#[tokio::test]
+async fn a_credential_for_another_prompt_is_not_sent() {
+    let line = serde_json::to_string(&Request::CredentialResponse {
+        id: "other".to_string(),
+        credential: "pw".into(),
+    })
+    .expect("CredentialResponse serialises");
+    let mut rx = tokio::io::BufReader::new(std::io::Cursor::new(format!("{line}\n").into_bytes()));
+    let mut tx = std::io::Cursor::new(Vec::new());
+    let reply =
+        credential_round_trip(PROMPT_ID, &mut tx, &mut rx, "sudo password".to_string()).await;
+    let PromptReply::GiveUp(reason) = reply else {
+        panic!("a mismatched-id credential is a GiveUp, got {reply:?}");
+    };
+    assert!(
+        reason.contains("does not match prompt id"),
+        "the give-up names the mismatch: {reason}"
+    );
+}

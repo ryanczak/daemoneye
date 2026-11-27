@@ -1,8 +1,7 @@
-use super::ToolCallOutcome;
-use super::USER_PROMPT_TIMEOUT;
+use super::{ToolCallOutcome, USER_PROMPT_TIMEOUT, reply_approval};
 use crate::daemon::utils::log_event;
 use crate::daemon::utils::send_response_split;
-use crate::ipc::{Request, Response, ScheduleListItem};
+use crate::ipc::{Response, ScheduleListItem};
 use crate::scheduler::{ActionOn, JobStatus, ScheduleKind, ScheduleStore, ScheduledJob};
 use std::sync::Arc;
 
@@ -187,10 +186,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::ScheduleWriteResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(call_id, &line, "schedule write"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "schedule reply line too large ({e}); refusing the prompt and ending the turn"
@@ -392,10 +388,7 @@ where
         return Err(anyhow::anyhow!("EOF"));
     }
     let approved = match read_result {
-        Ok(Ok(_)) => matches!(
-            serde_json::from_slice::<Request>(&line).ok(),
-            Some(Request::ScheduleRemoveResponse { approved: true, .. })
-        ),
+        Ok(Ok(_)) => reply_approval(call_id, &line, "schedule removal"),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::InvalidData => {
             return Err(anyhow::anyhow!(
                 "schedule removal reply line too large ({e}); refusing the prompt and ending the turn"
@@ -457,6 +450,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ipc::Request;
 
     #[test]
     fn resolve_schedule_action_supports_script_and_ghost_modes() {
@@ -782,6 +776,33 @@ mod tests {
         assert!(out.is_empty(), "no prompt sent to a ghost");
         assert_eq!(store.list().len(), 1, "job unchanged after ghost refusal");
         assert_eq!(store.list()[0].status, JobStatus::Pending, "job unchanged");
+    }
+
+    #[tokio::test]
+    async fn delete_schedule_refuses_a_reply_for_another_prompt() {
+        let _guard = crate::test_home();
+        let (store, job_id) = test_store();
+        let mut out: Vec<u8> = Vec::new();
+        let mut rx = canned_reader(&Request::ScheduleRemoveResponse {
+            id: "other".to_string(),
+            approved: true,
+        });
+        let outcome = delete_schedule(
+            "c1",
+            &job_id,
+            false,
+            &store,
+            Some("sess-1"),
+            &mut out,
+            &mut rx,
+        )
+        .await
+        .expect("mismatched-id reply returns Ok");
+        let ToolCallOutcome::Result(msg) = outcome else {
+            panic!("expected Result");
+        };
+        assert!(msg.contains("denied"), "denial text: {msg}");
+        assert_eq!(store.list().len(), 1, "job is still in the store");
     }
 
     #[tokio::test]
