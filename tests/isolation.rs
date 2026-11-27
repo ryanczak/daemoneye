@@ -517,18 +517,6 @@ max_ghost_turns: 1
         before, after
     );
 
-    // Assert the isolation cleanup restored the operator's tmux environment.
-    assert_eq!(
-        std::env::var("TMUX").ok(),
-        entry_tmux,
-        "TMUX must hold its entry value after the test"
-    );
-    assert_eq!(
-        std::env::var("TMUX_PANE").ok(),
-        entry_tmux_pane,
-        "TMUX_PANE must hold its entry value after the test"
-    );
-
     // Restore environment.
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -546,6 +534,18 @@ max_ghost_turns: 1
         Some(v) => unsafe { std::env::set_var("TMUX_PANE", v) },
         None => unsafe { std::env::remove_var("TMUX_PANE") },
     }
+
+    // Assert the isolation cleanup restored the operator's tmux environment.
+    assert_eq!(
+        std::env::var("TMUX").ok(),
+        entry_tmux,
+        "TMUX must hold its entry value after the test"
+    );
+    assert_eq!(
+        std::env::var("TMUX_PANE").ok(),
+        entry_tmux_pane,
+        "TMUX_PANE must hold its entry value after the test"
+    );
 
     drop(_lock);
 }
@@ -761,18 +761,6 @@ ssh_target: e2e-host
         before, after
     );
 
-    // Assert the isolation cleanup restored the operator's tmux environment.
-    assert_eq!(
-        std::env::var("TMUX").ok(),
-        entry_tmux,
-        "TMUX must hold its entry value after the test"
-    );
-    assert_eq!(
-        std::env::var("TMUX_PANE").ok(),
-        entry_tmux_pane,
-        "TMUX_PANE must hold its entry value after the test"
-    );
-
     // Restore environment.
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -790,6 +778,18 @@ ssh_target: e2e-host
         Some(v) => unsafe { std::env::set_var("TMUX_PANE", v) },
         None => unsafe { std::env::remove_var("TMUX_PANE") },
     }
+
+    // Assert the isolation cleanup restored the operator's tmux environment.
+    assert_eq!(
+        std::env::var("TMUX").ok(),
+        entry_tmux,
+        "TMUX must hold its entry value after the test"
+    );
+    assert_eq!(
+        std::env::var("TMUX_PANE").ok(),
+        entry_tmux_pane,
+        "TMUX_PANE must hold its entry value after the test"
+    );
 
     drop(_lock);
 }
