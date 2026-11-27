@@ -1,7 +1,7 @@
 # Phase 02 — gate-blind-spots
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** review
+**Status:** in-progress (bounced 2026-11-27: [bug-02-1](bugs/bug-02-1.md), [bug-02-2](bugs/bug-02-2.md))
 **Drafted:** 2026-11-27
 **Depends on:** 01 (done)
 **Estimated diff:** ~250 lines (tests only)
@@ -147,11 +147,51 @@ function and scanner the gate's walk uses.
 - [ ] **No test removed (preservation):** run this once. It prints
       nothing:
       `for f in tests/lock_invariant.rs tests/tmux_read_only.rs; do LC_ALL=C comm -23 <(git show e971ea6f:$f | grep -A1 '^#\[test\]' | grep -oE 'fn [a-z_0-9]+' | sort) <(grep -A1 '^#\[test\]' $f | grep -oE 'fn [a-z_0-9]+' | sort); done`
-- [ ] **Counts:**
-      - `lock_invariant` reports **5 passed** (2 + 3).
-      - `tmux_read_only` reports **6 passed** (4 + 2).
+- [ ] **Counts** (re-pinned at bounce 1; the parse-failure test in each
+      gate is accepted):
+      - `lock_invariant` reports **8 passed** (2 + 3 + the parse-failure
+        test + the two bounce-1 tests).
+      - `tmux_read_only` reports **8 passed** (4 + 2 + the parse-failure
+        test + the bounce-1 test).
       - The lib suite stays at **3211 passed**.
 - [ ] **Gates:** all four pass, each run once.
+
+**Bounce 1 (2026-11-27).** These criteria are about the outstanding work. Each one fails on the tree at `d2e30fe2`.
+
+- [ ] **[bug-02-1](bugs/bug-02-1.md): `impl` and `trait` members.**
+      - Both gates treat an `impl` or `trait` member that carries a
+        test-only attribute (`#[cfg(test)]`, `#[test]`, `#[…::test]`) as
+        test-only.
+      - New test `the_gate_skips_cfg_test_impl_and_trait_fns` in
+        `tests/lock_invariant.rs` passes:
+        - **Fixture:** an `impl` with a `#[cfg(test)] fn` and a
+          `#[test] fn`, and a `trait` with a `#[cfg(test)] fn` that has a
+          default body. Each holds `m.lock().unwrap()`. The same `impl`
+          also has one **production** fn with `m.lock().unwrap()`.
+        - **Asserts:** exactly one hit, on the production line.
+      - New test `gate_skips_cfg_test_impl_and_trait_fns` in
+        `tests/tmux_read_only.rs` passes. It uses the same shapes with
+        `Command::new("tmux").args(["send-keys", …])`, and asserts
+        exactly one hit.
+      - Paste both red runs, against the tree before the fix, **as
+        output**.
+- [ ] **[bug-02-1](bugs/bug-02-1.md): no vacuous fixtures.** This prints
+      **0** (today **2**):
+      `grep -c 'unwrap_or_default()' tests/lock_invariant.rs`
+- [ ] **[bug-02-2](bugs/bug-02-2.md): comments.** New test
+      `the_gate_ignores_plain_comment_lines` in `tests/lock_invariant.rs`
+      passes:
+      - **Fixture:** a production fn with a `//` comment line quoting
+        `m.lock().unwrap()`, run through `production_lines` and
+        `lock_unwrap_hits` and not pre-filtered.
+      - **Asserts:** no hits.
+      - Paste its red run (`left: [2]`) **as output**.
+- [ ] **Bounce-1 mutation run, pasted as output:**
+      1. Disable the lock gate's new impl/trait member check.
+      2. Run `cargo test --test lock_invariant` once. It must fail.
+      3. Undo that one edit by hand, never from a backup copy.
+- [ ] **Closed file list unchanged:** only `tests/lock_invariant.rs` and
+      `tests/tmux_read_only.rs` change, plus this doc.
 
 ## Spec
 
@@ -469,3 +509,61 @@ kill: (-1157750): No such process
 **Commit:** 015774cb6c8514d324b61abceabe9f3913502287
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-27 (bounced: bug-02-1, bug-02-2)
+
+**Verdict:** bounced. See [bug-02-1](bugs/bug-02-1.md) (major) and
+[bug-02-2](bugs/bug-02-2.md) (minor). The acceptance criteria are
+refreshed under **Bounce 1**, and each new criterion fails on `d2e30fe2`.
+
+**Gates (reviewer, each run once):**
+- `cargo fmt --all -- --check`: clean.
+- `cargo build`: clean.
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- `cargo test`: one lib failure,
+  `ai::filter::reinit_tests::masking_reinit_applies_a_new_extra_pattern`
+  (`3210 passed; 1 failed`). This phase did not cause it:
+  - The phase touched no `src/` file.
+  - The test swaps the process-global masking set with `init_masking`
+    and asserts in between, so a concurrent test can re-init it. The
+    failure here was the JSON step finding the user pattern gone.
+  - Run alone (`cargo test --lib masking_reinit`) it passes, `1 passed`.
+  - Not charged to this phase. It is a candidate for a later
+    test-hazards fix.
+- Both gate suites: `lock_invariant` 6 passed, `tmux_read_only` 7 passed.
+
+**Findings:**
+1. **bug-02-1.** A `#[cfg(test)]` / `#[test]` fn that is an `impl` or
+   `trait` member is scanned as production. `nested_items` looks only at
+   the `Stmt::Item`s inside member fn bodies, never at the member's own
+   attributes. The statement of work names "an impl's fn". The tree has
+   such fns, for example `chat_presence.rs` `holds_presence` and
+   `registry.rs` `try_lock`. The probe output is in the bug. Two
+   fixtures also call `production_lines(…).unwrap_or_default()`, so the
+   skip test would pass vacuously on a parse failure.
+2. **bug-02-2.** Plain `//` comment lines are now lock-gate hits. Before
+   the phase they were filtered.
+
+**Rulings on the executor's flagged deviations:**
+1. **Extra parse-failure test in each gate: accepted.** It pins the
+   statement of work's "a file that fails to parse fails the gate". The
+   counts are re-pinned to 8 / 8, including the bounce-1 tests.
+2. **Doc-comment skip in `lock_unwrap_hits`: rejected as written.** The
+   `src/lib.rs` doc comment is a real need, but the skip should cover
+   every comment line, as the pre-phase filter did. Filed as bug-02-2.
+3. **`is_test_only` and the walk duplicated per gate: accepted.** The
+   spec allowed copy or share, and sharing would need a file outside the
+   closed list.
+
+**Evidence notes:**
+- The lock red runs and the mutation run are pasted as output and match
+  the diff. No `src/` file changed, so there is no stale-restore risk.
+- The tmux red run 3 is not a run against the pre-phase gate. It is a
+  compile error, then a wrong-expectation assertion (`left: [(3, …)]`,
+  `right: [(2, …)]`).
+- The pre-phase split keeps nothing after `#[cfg(test)] mod t {}`, so it
+  would have returned no hits and the test is genuinely red against it.
+  Accepted, with the note.
+- The bounce-1 red runs must be taken against the tree before the fix.
+- Preservation: the name-level `comm` loop against `e971ea6f` prints
+  nothing. The pinned split grep prints 0.
