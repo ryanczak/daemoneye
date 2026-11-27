@@ -318,6 +318,8 @@ fn webhook_ghost_e2e_deterministic() {
 
     let old_home = std::env::var("HOME").ok();
     let old_tmux_tmpdir = std::env::var("TMUX_TMPDIR").ok();
+    let entry_tmux = std::env::var("TMUX").ok();
+    let entry_tmux_pane = std::env::var("TMUX_PANE").ok();
     unsafe {
         std::env::set_var("HOME", env.root().to_str().unwrap());
         std::env::set_var("TMUX_TMPDIR", env.root().to_str().unwrap());
@@ -515,6 +517,18 @@ max_ghost_turns: 1
         before, after
     );
 
+    // Assert the isolation cleanup restored the operator's tmux environment.
+    assert_eq!(
+        std::env::var("TMUX").ok(),
+        entry_tmux,
+        "TMUX must hold its entry value after the test"
+    );
+    assert_eq!(
+        std::env::var("TMUX_PANE").ok(),
+        entry_tmux_pane,
+        "TMUX_PANE must hold its entry value after the test"
+    );
+
     // Restore environment.
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -523,6 +537,14 @@ max_ghost_turns: 1
     match old_tmux_tmpdir {
         Some(v) => unsafe { std::env::set_var("TMUX_TMPDIR", v) },
         None => unsafe { std::env::remove_var("TMUX_TMPDIR") },
+    }
+    match &entry_tmux {
+        Some(v) => unsafe { std::env::set_var("TMUX", v) },
+        None => unsafe { std::env::remove_var("TMUX") },
+    }
+    match &entry_tmux_pane {
+        Some(v) => unsafe { std::env::set_var("TMUX_PANE", v) },
+        None => unsafe { std::env::remove_var("TMUX_PANE") },
     }
 
     drop(_lock);
@@ -550,6 +572,8 @@ fn webhook_ghost_records_its_ssh_target_resolution() {
 
     let old_home = std::env::var("HOME").ok();
     let old_tmux_tmpdir = std::env::var("TMUX_TMPDIR").ok();
+    let entry_tmux = std::env::var("TMUX").ok();
+    let entry_tmux_pane = std::env::var("TMUX_PANE").ok();
     unsafe {
         std::env::set_var("HOME", env.root().to_str().unwrap());
         std::env::set_var("TMUX_TMPDIR", env.root().to_str().unwrap());
@@ -737,6 +761,18 @@ ssh_target: e2e-host
         before, after
     );
 
+    // Assert the isolation cleanup restored the operator's tmux environment.
+    assert_eq!(
+        std::env::var("TMUX").ok(),
+        entry_tmux,
+        "TMUX must hold its entry value after the test"
+    );
+    assert_eq!(
+        std::env::var("TMUX_PANE").ok(),
+        entry_tmux_pane,
+        "TMUX_PANE must hold its entry value after the test"
+    );
+
     // Restore environment.
     match old_home {
         Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -745,6 +781,14 @@ ssh_target: e2e-host
     match old_tmux_tmpdir {
         Some(v) => unsafe { std::env::set_var("TMUX_TMPDIR", v) },
         None => unsafe { std::env::remove_var("TMUX_TMPDIR") },
+    }
+    match &entry_tmux {
+        Some(v) => unsafe { std::env::set_var("TMUX", v) },
+        None => unsafe { std::env::remove_var("TMUX") },
+    }
+    match &entry_tmux_pane {
+        Some(v) => unsafe { std::env::set_var("TMUX_PANE", v) },
+        None => unsafe { std::env::remove_var("TMUX_PANE") },
     }
 
     drop(_lock);
