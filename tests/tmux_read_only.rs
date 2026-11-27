@@ -212,9 +212,12 @@ fn item_attrs(item: &Item) -> &[Attribute] {
     }
 }
 
-/// The nested items of a module, impl or trait, for recursion.
-fn nested_items(item: &Item) -> Vec<&Item> {
+/// The nested items of a module, impl or trait, for recursion. A member fn
+/// whose own attributes are test-only is excluded from production lines via
+/// its span; its body is still walked for nested test-only items.
+fn nested_items(item: &Item) -> (Vec<&Item>, Vec<proc_macro2::Span>) {
     let mut out: Vec<&Item> = Vec::new();
+    let mut member_spans: Vec<proc_macro2::Span> = Vec::new();
     match item {
         Item::Mod(m) => {
             if let Some((_, items)) = &m.content {
@@ -224,22 +227,28 @@ fn nested_items(item: &Item) -> Vec<&Item> {
         Item::Impl(i) => {
             for it in &i.items {
                 if let syn::ImplItem::Fn(f) = it {
+                    if is_test_only(&f.attrs) {
+                        member_spans.push(f.span());
+                    }
                     out.extend(f.block.stmts.iter().filter_map(stmt_as_item));
                 }
             }
         }
         Item::Trait(t) => {
             for it in &t.items {
-                if let syn::TraitItem::Fn(f) = it
-                    && let Some(b) = &f.default
-                {
-                    out.extend(b.stmts.iter().filter_map(stmt_as_item));
+                if let syn::TraitItem::Fn(f) = it {
+                    if is_test_only(&f.attrs) {
+                        member_spans.push(f.span());
+                    }
+                    if let Some(b) = &f.default {
+                        out.extend(b.stmts.iter().filter_map(stmt_as_item));
+                    }
                 }
             }
         }
         _ => {}
     }
-    out
+    (out, member_spans)
 }
 
 /// A statement as a general item, when it is an item statement (a nested
@@ -252,7 +261,8 @@ fn stmt_as_item(s: &syn::Stmt) -> Option<&Item> {
 }
 
 /// The line spans of every test-only item at any depth, collected in-place
-/// into `out`. An item's span covers its outer attributes.
+/// into `out`. An item's span covers its outer attributes. Test-only impl
+/// and trait member fns are excluded too, via their own attribute spans.
 fn collect_test_lines(items: &[&Item], out: &mut BTreeSet<usize>) {
     for item in items {
         if is_test_only(item_attrs(item)) {
@@ -265,7 +275,13 @@ fn collect_test_lines(items: &[&Item], out: &mut BTreeSet<usize>) {
         if let Item::Fn(f) = item {
             collect_test_lines(&block_items(&f.block), out);
         }
-        collect_test_lines(&nested_items(item), out);
+        let (nested, member_spans) = nested_items(item);
+        for span in member_spans {
+            for line in span.start().line..=span.end().line {
+                out.insert(line);
+            }
+        }
+        collect_test_lines(&nested, out);
     }
 }
 
@@ -359,6 +375,35 @@ fn gate_skips_test_only_items() {
     assert!(
         hits.is_empty(),
         "a write inside a #[test] fn is not scanned: {hits:?}"
+    );
+}
+
+#[test]
+fn gate_skips_cfg_test_impl_and_trait_fns() {
+    let src = [
+        "struct S;",
+        "impl S {",
+        "    #[cfg(test)]",
+        "    fn h() { Command::new(\"tmux\").args([\"send-keys\", \"-t\", \"x\"]); }",
+        "",
+        "    #[test]",
+        "    fn k() { Command::new(\"tmux\").args([\"send-keys\", \"-t\", \"x\"]); }",
+        "",
+        "    fn prod() { Command::new(\"tmux\").args([\"send-keys\", \"-t\", \"x\"]); }",
+        "}",
+        "",
+        "trait T {",
+        "    #[cfg(test)]",
+        "    fn j() { Command::new(\"tmux\").args([\"send-keys\", \"-t\", \"x\"]); }",
+        "}",
+    ]
+    .join("\n");
+    let hits = production_tmux_write_hits(Path::new("src/probe.rs"), &src)
+        .unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        hits,
+        vec![(9, "send-keys".to_string())],
+        "impl and trait members with test-only attrs are skipped; the production member is hit: {hits:?}"
     );
 }
 
