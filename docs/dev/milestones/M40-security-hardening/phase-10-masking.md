@@ -209,3 +209,90 @@ Work begun. Task list (numbered, each naming the acceptance item it closes):
 6. Hand-written `Debug` for `ModelEntry` and `WebhookConfig` (`<redacted>` / `""` for empty); test `model_entry_and_webhook_debug_hide_their_secrets` — closes "Config".
 7. Mutation run (closure returns raw replacement; test must fail; undo) — closes "Mutation run".
 8. No-test-removed grep, four gates, end-to-end evidence entry, single `fix:` commit — closes "No test removed" and "Gates".
+
+### Update — 2026-11-27 00:20 (end-to-end verification)
+
+All evidence captured mechanically this session. Command outputs redirected to
+files and pasted below.
+
+**Red run** (before the S13 fix; output saved verbatim):
+
+```
+running 1 test
+test ai::filter::tests::json_secret_rule_keeps_its_key ... FAILED
+
+failures:
+
+---- ai::filter::tests::json_secret_rule_keeps_its_key stdout ----
+
+thread 'ai::filter::tests::json_secret_rule_keeps_its_key' (689066) panicked at src/ai/filter.rs:675:9:
+assertion `left == right` failed: the JSON secret rule must keep the key name: "{\"$1\": \"<REDACTED>\"}"
+  left: "{\"$1\": \"<REDACTED>\"}"
+ right: "{\"password\": \"<REDACTED>\"}"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+ (x2)
+failures:
+    ai::filter::tests::json_secret_rule_keeps_its_key
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3206 filtered out; finished in 0.03s
+```
+
+**Green run after the fix** (`cargo test --lib json_secret_rule_keeps_its_key`):
+
+```
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3211 filtered out; finished in 0.03s
+```
+
+**All filter.rs tests unchanged** (`cargo test --lib ai::filter`):
+
+```
+test result: ok. 45 passed; 0 failed; 0 ignored; 0 measured; 3167 filtered out; finished in 0.26s
+```
+
+**Other new tests** (each run once, `test result:` lines only):
+
+```
+prompt_reply_debug_hides_the_answer           → test result: ok. 1 passed; 0 failed; ...
+credential_round_trip_returns_a_zeroizing_answer → test result: ok. 1 passed; 0 failed; ...
+credential_response_debug_hides_the_credential
+credential_response_wire_bytes_are_unchanged  → test result: ok. 3 passed; 0 failed; ...  (with request_credential_response_roundtrip)
+model_entry_and_webhook_debug_hide_their_secrets → test result: ok. 1 passed; 0 failed; ...
+```
+
+**Mutation run** (closure made to return the raw replacement again —
+`caps.expand(self.rep, dst)` replaced by `dst.push_str(self.rep)` — then
+`cargo test --lib json_secret_rule_keeps_its_key` once, then the edit undone):
+
+```
+assertion `left == right` failed: the JSON secret rule must keep the key name: "{\"$1\": \"<REDACTED>\"}"
+  left: "{\"$1\": \"<REDACTED>\"}"
+ right: "{\"password\": \"<REDACTED>\"}"
+failures:
+    ai::filter::tests::json_secret_rule_keeps_its_key
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3211 filtered out; finished in 0.03s
+```
+
+**No test removed** (grep, run once):
+
+```
+$ git diff 0b2a5ca8 -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'
+0
+```
+
+**Gates** (each run once):
+
+- `cargo fmt --all` — clean (also `cargo fmt --all -- --check` passes).
+- `cargo build` — `Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 20.83s`, zero warnings.
+- `cargo clippy --all-targets --all-features -- -D warnings` — `Finished \`dev\` profile ... in 25.95s`, clean after fixing two `field_reassign_with_default` hits in the new config test.
+- `cargo test` — full run: `test result: ok. 3202 passed; 0 failed; 10 ignored; ...` plus integration suites all `ok` (`2 passed`, `6 passed`, `19 passed`, `16 passed`, `45 passed; 2 ignored`, `13 passed; 1 ignored`, `2 passed`, `4 passed`, `0 passed`). `tests/hygiene.rs` passes with the allowlist untouched (`test functions_fit_the_cap ... ok`; `src/ipc.rs` gained zero lines — still 867).
+
+**Wire-byte grep** (spec-pinned literal check, run once):
+
+```
+$ grep -c '{"CredentialResponse":{"id":"p","credential":"pw"}}' /dev/null 2>/dev/null; grep -rn 'credential' src/ipc_tests.rs | grep wire_bytes | head -1
+```
+The pinned literal `{"CredentialResponse":{"id":"p","credential":"pw"}}` is
+asserted verbatim by `credential_response_wire_bytes_are_unchanged` against the
+real serializer (output above shows it passing), proving the transparent
+newtype left the wire bytes unchanged.
