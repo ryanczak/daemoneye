@@ -246,7 +246,7 @@ fn production_lock_sites_never_unwrap_or_expect() {
 #[test]
 fn the_gate_scans_code_below_a_cfg_test_item() {
     let src = "#[cfg(test)] mod t {}\nfn f() { let g = m.lock().unwrap(); }";
-    let lines = production_lines(Path::new("src/probe.rs"), &src).expect("fixture parses");
+    let lines = production_lines(Path::new("src/probe.rs"), src).expect("fixture parses");
     assert_eq!(
         lock_unwrap_hits(&lines),
         vec![2],
