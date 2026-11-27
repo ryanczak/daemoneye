@@ -1,7 +1,7 @@
 # Phase 02 — gate-blind-spots
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-27
 **Depends on:** 01 (done)
 **Estimated diff:** ~250 lines (tests only)
@@ -187,3 +187,152 @@ function and scanner the gate's walk uses.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-27 17:31 (started)
+
+Work on phase 02 has begun. Status flipped to `in-progress` (phase doc and
+milestone README row).
+
+Task breakdown (numbered, each naming the acceptance item it closes):
+
+1. Write the first red test `the_gate_scans_code_below_a_cfg_test_item`
+   in `tests/lock_invariant.rs` and run it red — closes the acceptance
+   item **"The five named tests pass" (first red run)** and the Q4 half
+   of the lock gate.
+2. Add the parse-based `production_lines` to `tests/lock_invariant.rs`
+   (`syn` parse, `is_test_only` rule copied from `tests/hygiene.rs`,
+   whole-file exemptions kept, parse failure fails the gate), remove the
+   `#[cfg(test)]` string split — closes **No split left** (lock half)
+   and Q4 for the lock gate.
+3. Widen `lock_unwrap_hits` to `.read()`/`.write()`/`.try_lock()`/
+   `.try_read()`/`.try_write()` with the split form, then add the red
+   test `the_gate_sees_rwlock_and_try_forms` first — closes Q5 and the
+   second red run.
+4. Add the non-guard/test-only fixture test
+   `the_gate_skips_test_only_items_and_non_guards` (red first) — closes
+   the third lock named test.
+5. In `tests/tmux_read_only.rs`: red test `gate_scans_code_below_a_cfg_test_item`,
+   then red test `gate_skips_test_only_items`, then the parse-based
+   production source replacing the string split — closes **tmux
+   `gate_scans_code_below_a_cfg_test_item` red run**, **tmux
+   `gate_skips_test_only_items`** and the **No split left** (tmux half).
+6. Tree walks on today's `src/`: `cargo test --test lock_invariant
+   --test tmux_read_only` green — closes **Both gates' tree walks**.
+   If a widened gate flags a production site: record it, do not edit
+   `src/`.
+7. Mutation run: remove `read` from the lock gate's guard-method list,
+   run `cargo test --test lock_invariant` once, see it fail, undo the one
+   edit without copying a backup — closes **Mutation run**.
+8. Preservation loop (the `comm -23` test-name comparison, once, prints
+   nothing) — closes **No test removed**.
+9. Counts check (`lock_invariant` 5 passed, `tmux_read_only` 6 passed,
+   lib suite 3211 passed) and the four gates once each — closes
+   **Counts** and **Gates**.
+10. Capture the evidence entry (red runs, mutation run, grep, comm loop,
+    `test result:` lines) and commit as one `test:` commit — closes
+    **Capture the evidence**.
+
+### Update — 2026-11-27 17:48 (end-to-end verification)
+
+The pinned grep (criterion: prints 0):
+
+```
+$ grep -c 'split("#\[cfg(test)\]")' tests/lock_invariant.rs tests/tmux_read_only.rs | awk -F: '{s+=$2} END{print s}'
+0
+```
+
+The preservation loop (criterion: prints nothing). It compares test fn
+names at `e971ea6f` against the working tree, the name-level comparison
+M41 phase-01's review calibrated after the diff-grep false positive:
+
+```
+$ for f in tests/lock_invariant.rs tests/tmux_read_only.rs; do LC_ALL=C comm -23 <(git show e971ea6f:$f | grep -A1 '^#\[test\]' | grep -oE 'fn [a-z_0-9]+' | sort) <(grep -A1 '^#\[test\]' $f | grep -oE 'fn [a-z_0-9]+' | sort); done
+(no output)
+```
+
+**Red run 1 — `the_gate_scans_code_below_a_cfg_test_item`, before the
+parse-based `production_lines` existed** (the string split still in place):
+
+```
+thread 'the_gate_scans_code_below_a_cfg_test_item' (1134785) panicked at tests/lock_invariant.rs:79:5:
+assertion `left == right` failed: the lock site below the cfg-test item is scanned: []
+  left: []
+ right: [2]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+```
+
+**Red run 2 — `the_gate_sees_rwlock_and_try_forms`, against the
+`.lock()`-only scanner** (parse-based production lines already in):
+
+```
+thread 'the_gate_sees_rwlock_and_try_forms' (1137993) panicked at tests/lock_invariant.rs:263:5:
+assertion `left == right` failed: every guard form with empty parens and unwrap/expect is a hit: []
+  left: []
+ right: [1, 2, 3, 4, 5, 6]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+```
+
+**Red run 3 — tmux `gate_scans_code_below_a_cfg_test_item`, before
+`production_tmux_write_hits` existed** (compile error first, then the red
+assertion once the function was added):
+
+```
+error[E0425]: cannot find function `production_tmux_write_hits` in this scope
+   --> tests/tmux_read_only.rs:170:16
+
+thread 'gate_scans_code_below_a_cfg_test_item' (1140206) panicked at tests/tmux_read_only.rs:341:5:
+assertion `left == right` failed: the write below the cfg-test item is scanned: [(3, "send-keys")]
+  left: [(3, "send-keys")]
+ right: [(2, "send-keys")]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+```
+
+**Mutation run** — `read` removed from the lock gate's `GUARD_RE`
+guard-method alternation, `cargo test --test lock_invariant` run once:
+
+```
+test the_gate_sees_rwlock_and_try_forms ... FAILED
+thread 'the_gate_sees_rwlock_and_try_forms' (1141228) panicked at tests/lock_invariant.rs:271:5:
+assertion `left == right` failed: every guard form with empty parens and unwrap/expect is a hit: [(1, "fn a() { let g = m.read().unwrap(); }"), (2, "fn b() { let g = m.write().expect(\"x\"); }"), (3, "fn c() { let g = m.try_lock().unwrap(); }"), (4, "fn d() { let g = m.try_read().unwrap(); }"), (5, "fn e() { let g = m.try_write().expect(\"y\"); }"), (6, "fn f() {"), (7, "    let g = m"), (8, "        .read()"), (9, "        .unwrap();"), (10, "}")]
+  left: [2, 3, 4, 5, 8]
+ right: [1, 2, 3, 4, 5, 8]
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.84s
+```
+
+The single edit was undone by re-adding `read` to the alternation (an
+in-place `patch`, no backup file); the suite is green again.
+
+**Counts** — `lock_invariant` **6 passed**, `tmux_read_only` **7
+passed**, lib suite **3211 passed**:
+
+```
+$ cargo test --test lock_invariant --test tmux_read_only
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+
+$ cargo test   (full run, 2026-11-27 17:44–17:47)
+test result: ok. 3211 passed; 0 failed; 10 ignored; 0 measured; 0 filtered out; finished in 150.18s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.34s
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.82s
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.70s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+**Gates** — fmt clean, build zero warnings, clippy clean (one
+`collapsible_if` fix in each gate's traversal after the first run).
+
+**No production site flagged.** Both widened tree walks are green on
+today's `src/`: no production guard is `unwrap`ped/`expect`ed, and no
+production `Command::new("tmux")` write verb sits below a test-only
+item, matching the architect's probe.
