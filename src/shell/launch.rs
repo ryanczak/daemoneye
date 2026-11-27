@@ -431,10 +431,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn launch_run_host_serves_status_over_its_socket() {
-        let (_guard, _dir) = crate::test_home();
+        let (guard, _dir) = crate::test_home();
         Config::ensure_dirs().ok();
         let id = "s1";
-        let _host = tokio::spawn(async move { run_host(id, "bash", &[], 24, 80).await });
+        let host = tokio::spawn(async move { run_host(id, "bash", &[], 24, 80).await });
 
         await_ready(&socket_path(id), Instant::now() + Duration::from_secs(15))
             .await
@@ -461,6 +461,13 @@ mod tests {
             } => {}
             other => panic!("expected an Idle Status reply, got {other:?}"),
         }
+
+        // No spawned task may outlive the guard: the host holds no shutdown
+        // signal, so abort it and wait for the abort to land before the
+        // guard's Drop touches the environment.
+        host.abort();
+        let _ = host.await;
+        drop(guard);
     }
 
     #[tokio::test]
