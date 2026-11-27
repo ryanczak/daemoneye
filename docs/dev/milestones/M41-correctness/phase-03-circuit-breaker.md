@@ -1,7 +1,7 @@
 # Phase 03 — circuit-breaker
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** review
+**Status:** in-progress (bounced twice: [bug-03-2](bugs/bug-03-2.md) open; bug-03-1 fixed)
 **Drafted:** 2026-11-27
 **Depends on:** 02 (done)
 **Estimated diff:** ~300 lines
@@ -259,6 +259,37 @@ bounce-1 mutation item below.
       **3218 passed**. That is 3216 plus the two bounce-1 tests.
 - [ ] **Closed file list unchanged:** only `src/ai/mod.rs`,
       `src/ai/backends/mod.rs`, `src/ai/circuit.rs` and this doc change.
+
+**Bounce 2 (2026-11-27).** Every Bounce 1 item above is met at `7bfe8476`.
+The reviewer checked each one. Do not redo them. The items below are the
+outstanding work, and each one fails on the tree at `5bd3a45b`.
+
+- [ ] **[bug-03-2](bugs/bug-03-2.md): a 5xx that outlasts its retries is
+      a failure.** New test `a_server_error_after_its_retries_is_a_failure`
+      in `circuit_request_path_tests` passes:
+      - a local server answers `HTTP/1.1 503 Service Unavailable`. The
+        module's `local_server(status)` already serves any status line;
+      - record threshold − 1 failures on its origin;
+      - make one `send_with_retry` call to it, which returns `Err`;
+      - assert that `circuit::acquire` for that origin now returns `None`.
+
+      Write the test first and run it red once against the current tree.
+      Paste that run **as output**, copied from the tool result. Today
+      `cargo test --lib a_server_error_after_its_retries_is_a_failure`
+      reports `0 passed`.
+
+      Then fix the third `Ok(resp)` arm of `send_with_retry_inner`
+      (`src/ai/mod.rs:322-330`):
+      - a 4xx other than 408 and 429 is neutral;
+      - every other non-success status is a failure, including a 5xx or
+        429 whose retries are spent, and a 408.
+
+      Leave the retry and `Retry-After` behaviour as it is.
+- [ ] **Counts (re-pinned at bounce 2):** the lib suite reports exactly
+      **3219 passed**.
+- [ ] **Bug-03-1 checks still hold:** the two awk commands print `1` and
+      `0`, and the `comm` prints nothing.
+- [ ] **Closed file list:** only `src/ai/mod.rs` and this doc change.
 
 ## Spec
 
@@ -1032,3 +1063,72 @@ kill: (-1310473): No such process
 **Commit:** 7bfe84767455f818c095aa2dc0ebff6be2ef1b6e
 
 **Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
+
+### Review — 2026-11-27 (bounce 1 re-dispatch; bounced: bug-03-2)
+
+**Verdict:** bounced. See [bug-03-2](bugs/bug-03-2.md) (major). Every
+bug-03-1 item is met, and bug-03-1 is fixed. The new defect has been in
+the tree since `8b596c92`, and neither the first review nor the bounce-1
+spec caught it. The acceptance criteria are refreshed under **Bounce 2**.
+Its new test fails on `5bd3a45b`: it reports `0 passed`.
+
+**Gates (reviewer, each run once):**
+- `cargo fmt --all -- --check`: clean, exit 0.
+- `cargo build`: `Finished`, exit 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: `Finished`,
+  exit 0.
+- `cargo test`: green, exit 0. The lib suite reports
+  `test result: ok. 3218 passed; 0 failed; 10 ignored`, and every other
+  binary passed.
+
+**Provenance of the pasted failures**, checked against the `tool_result`
+events in `session-phase-03-6b09da3a.jsonl`:
+- **Probe red run** (`mod.rs:1108:9`, thread `1291859`, port `38937`):
+  present in the turn-85 tool result.
+- **Mutation 1** (`mod.rs:449:9`, "half-open must admit one probe only",
+  thread `1293759`): present in the turn-108 tool result.
+- **Mutation 2** (`mod.rs:966:9`, "a header exchange alone records
+  nothing", thread `1294344`): present in the turn-112 tool result.
+- **`a_client_error_leaves_the_failure_count_unchanged` red run**
+  (`mod.rs:981:9`, `left: 0 right: 4`):
+  - The run itself is real. The turn-20 tool result shows the test
+    `FAILED`, in 1021 bytes of output, before the turn-21
+    `record_neutral` fix.
+  - The panic line is missing from the log only because the log keeps a
+    500-character `output_preview`, which ends before it.
+  - The reviewer rebuilt the turn-20 tree in a throwaway worktree: the
+    `ebd4c7d7` tree plus the run's three `src/ai/mod.rs` patches from
+    turns 14, 15 and 19. On that tree the test panics at
+    `src/ai/mod.rs:981:9` with the same message, `left: 0 right: 4`, and
+    `3226 filtered out`. Only the thread id differs.
+  - Verified, not fabricated.
+- **Gates paste:** `3218 passed … 150.56s` is present in the turn-117
+  tool result.
+
+**Bounce-1 items, each run once by the reviewer:**
+- §2 awk prints `1`, and §5 awk prints `0`.
+- `a_client_error_leaves_the_failure_count_unchanged`: `1 passed`.
+- `a_probe_that_fails_before_its_first_token_reopens_the_breaker`:
+  `1 passed`.
+- `LC_ALL=C comm` against `57691b5a` prints nothing.
+- The lib suite reports exactly 3218.
+- The fix commit touches only the closed file list.
+- **Retry fix:** `send_under_permit` → `send_with_retry_inner` never calls
+  `circuit::acquire`.
+  - Every error arm of `send_with_retry_inner` resolves the permit before
+    it bails. The `inspect_err(record_failure)` in `drive_sse_stream` is a
+    no-op backstop, because `resolve` is idempotent. So a neutral 4xx on
+    a retry stays neutral.
+  - No `?` in `drive_sse_stream` returns with an unresolved permit.
+- **Logging:** the per-failure warning is now in
+  `BreakerState::record_failure` (`circuit.rs:64-67`). It fires only when
+  a failure is recorded, and it interpolates only the origin.
+
+**Finding:** a 5xx, or a 429, that outlasts the retries is resolved
+`record_neutral` (`src/ai/mod.rs:323-327`). So a 5xx outage never trips
+the breaker, and a probe that gets a 5xx closes the breaker. This is a
+regression from 2.12.0. The reviewer's scratch probe printed
+`SCRATCH503 err=true hits=3 count_after=0`.
+
+**Nit:** the executor wrote its two bounce-1 entries above the
+`<!-- entries appended below this line -->` marker.
