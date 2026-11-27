@@ -1,7 +1,7 @@
 # Phase 03 — circuit-breaker
 
 **Milestone:** M41 — Correctness & reliability
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-27
 **Depends on:** 02 (done)
 **Estimated diff:** ~300 lines
@@ -423,3 +423,136 @@ test ai::tests::half_open_admits_exactly_one_probe ... ok
 
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3225 filtered out; finished in 0.00s
 ```
+
+### Update — 2026-11-27 19:20 (complete, server-authored)
+
+**Summary:** Phase 03 (circuit-breaker) is implemented and committed as `8b596c92`. The breaker moved into the new `src/ai/circuit.rs` as a per-origin registry: `send_with_retry` builds the request, derives the origin via `circuit::request_origin` (scheme, host, port — never the full URL), and acquires one permit; `drive_sse_stream` holds that permit across all internal retries and resolves exactly one outcome (success on natural stream end, failure on transport errors/5xx/exhausted 408–429/mid-stream failure, neutral on other 4xx). Half-open admits exactly one probe — the permit itself is the probe gate, and dropping it unresolved records nothing and frees the slot.
+
+**Notes for review**
+
+- The spec's edit order asked for the red test against today's `CircuitBreaker`; that red run is captured (compile failure: no `acquire` method — the old API's `allow()`-always-true shape). The four request-path tests were written against the new API and are instead pinned by the two mutation runs, both pasted as failing output (second-caller-through-in-half-open, and success-on-header-exchange), each undone by hand afterward.
+- One deliberate structural choice worth review: `record_success`/`record_failure`/`record_neutral` live on `BreakerState`, and the per-request log lines for the threshold transition come from the state layer; refusal logging comes from `acquire`. All sites interpolate the origin only.
+- `headers_alone_do_not_record_success` seeds threshold−1 failures, then drives one real `send_with_retry` header exchange against a local 200 server and asserts the count is unchanged and one more failure opens the breaker — it passes only because success no longer resolves on headers.
+- Preservation `comm` printed nothing (no test removed); N = 5 new tests, lib suite reports **3216 passed, 0 failed** (3211 + 5). All four gates ran clean once each: `cargo fmt --all` clean, `cargo build` zero warnings, `cargo clippy --all-targets --all-features -- -D warnings` clean, full `cargo test` green (the known flake did not appear). Working tree is clean.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+
+TEST
+nl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test config_contains_webhook_and_stub_url ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_boots_in_throwaway_root ... ok
+test default_server_unchanged ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.40s
+
+
+running 8 tests
+test a_file_that_fails_to_parse_fails_the_gate ... ok
+test the_gate_scans_code_below_a_cfg_test_item ... ok
+test the_gate_sees_rwlock_and_try_forms ... ok
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test the_gate_skips_test_only_items_and_non_guards ... ok
+test the_gate_skips_cfg_test_impl_and_trait_fns ... ok
+test the_gate_ignores_plain_comment_lines ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.81s
+
+
+running 8 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test a_file_that_fails_to_parse_fails_the_gate ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_scans_code_below_a_cfg_test_item ... ok
+test gate_skips_test_only_items ... ok
+test gate_skips_cfg_test_impl_and_trait_fns ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.71s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-dd5d2da56408d044)
+kill: (1273873): No such process
+kill: (-1274563): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-3b490f7e2ac543bd)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-a6982dccdeeb8a33)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-841a3f3a9da563a7)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-520ec95fc5dca130)
+     Running tests/integration.rs (target/debug/deps/integration-57568a692e2d61f7)
+     Running tests/isolation.rs (target/debug/deps/isolation-6ebb9273a140a81c)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-f322d1b546df6889)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-86e373785fc046fe)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M41-correctness/README.md` — +1 -1
+- `docs/dev/milestones/M41-correctness/phase-03-circuit-breaker.md` — +198 -1
+- `src/ai/backends/mod.rs` — +9 -3
+- `src/ai/circuit.rs` — +219 -0
+- `src/ai/mod.rs` — +321 -167
+
+**Commit:** 8b596c928eb2a9a4609fb1bb6e2ee5a077968778
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
