@@ -243,6 +243,14 @@ fn is_retriable_status(status: reqwest::StatusCode) -> bool {
     status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error()
 }
 
+/// A status the breaker records as neutral: a client error other than 408
+/// (request timeout) and 429 (rate limited).
+fn is_neutral_status(status: reqwest::StatusCode) -> bool {
+    status.is_client_error()
+        && status != reqwest::StatusCode::REQUEST_TIMEOUT
+        && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
 /// Rebuild a `reqwest::Error` without its request URL. reqwest's `Error`
 /// Display appends the full URL, and the Gemini URL once held the API key, so
 /// any transport error that reached a log carried the key with it (M36
@@ -320,12 +328,15 @@ async fn send_with_retry_inner(
                 continue;
             }
             Ok(resp) => {
-                if resp.status().as_u16() == 408 || resp.status().as_u16() == 429 {
-                    permit.record_failure();
-                } else {
-                    permit.record_neutral();
-                }
                 let status = resp.status();
+                // A request error (a 4xx other than 408/429) says nothing
+                // about the endpoint's health; every other non-success —
+                // a 5xx or 429 whose retries are spent, a 408 — is a failure.
+                if is_neutral_status(status) {
+                    permit.record_neutral();
+                } else {
+                    permit.record_failure();
+                }
                 let bytes = resp.bytes().await.unwrap_or_default();
                 let text = String::from_utf8_lossy(&bytes);
                 anyhow::bail!("API error {status}: {text}");
@@ -999,6 +1010,31 @@ mod circuit_request_path_tests {
         assert!(
             circuit::acquire(&origin).is_some(),
             "the breaker for that origin stays closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_error_after_its_retries_is_a_failure() {
+        let (base, hits) = local_server("HTTP/1.1 503 Service Unavailable").await;
+        let origin = {
+            let req = make_build_request(base.clone(), stream_body())()
+                .build()
+                .unwrap();
+            circuit::request_origin(&req)
+        };
+        for _ in 0..CB_FAILURE_THRESHOLD - 1 {
+            circuit::acquire(&origin)
+                .expect("admitted")
+                .record_failure();
+        }
+        // A 503 that is still failing once its retries are spent is an
+        // outage, not a request error: it is the threshold failure.
+        let result = send_with_retry(make_build_request(base.clone(), stream_body())).await;
+        assert!(result.is_err(), "a 503 must surface as an error");
+        assert_eq!(hits.load(Ordering::SeqCst), 3, "the 503 is retried twice");
+        assert!(
+            circuit::acquire(&origin).is_none(),
+            "a 5xx that outlasts its retries must open the breaker"
         );
     }
 
