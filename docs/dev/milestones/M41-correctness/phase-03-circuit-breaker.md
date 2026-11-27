@@ -296,6 +296,64 @@ bounce-1 mutation item below.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-11-27 (bounce 1: read this first)
+
+**Green gates and a clean tree are expected here. They are NOT evidence
+that the phase is done.** All four gates pass on `8b596c92`, and
+`cargo test` reports 3216. The phase still has four code edits left and
+two mutation runs to do. Do not report `complete` until every **Bounce 1**
+item under Acceptance criteria is checked.
+
+**Already approved. Do not redo or restructure these:**
+- the per-origin registry in `src/ai/circuit.rs` and `request_origin`;
+- the permit-on-drop design;
+- `a_cancelled_probe_frees_the_slot`, `breakers_are_per_endpoint` and
+  `a_client_error_does_not_trip_the_breaker`;
+- threshold 5 and cooldown 60 s.
+
+**Exactly four edits are left. Do them in this order, each red test
+before its fix:**
+1. **First edit, by turn 20.** Write
+   `a_client_error_leaves_the_failure_count_unchanged` in `src/ai/mod.rs`'s
+   test module. Before it, read at most `src/ai/circuit.rs` and the test
+   module of `src/ai/mod.rs`; the facts are in bug-03-1. Run it once and
+   paste the red output. Then fix `record_neutral` so a non-probe neutral
+   leaves `consecutive_failures` unchanged, and a probe that ends neutral
+   still closes the breaker.
+2. Write `a_probe_that_fails_before_its_first_token_reopens_the_breaker`
+   with the reviewer's fixture (Bounce 1 §4) and run it red once. Then
+   fix the retries in `drive_sse_stream`.
+   - **Constraint:** a retry is sent under the call's one permit. It must
+     never call `circuit::acquire` again.
+   - **Constraint:** a retry that ends in an error resolves that same
+     permit before the error returns, as failure or neutral by the same
+     rules as the first attempt. The `?` that drops the permit unresolved
+     must go.
+   - How you split `send_with_retry` is your choice, for example acquire
+     once and then send under a permit you already hold. Keep the change
+     inside the closed file list.
+3. Rewrite `headers_alone_do_not_record_success` so it makes a real
+   header exchange through `send_with_retry`. Use the local
+   `TcpListener` server pattern that `stream_idle_tests` uses. Assert that
+   the count is still threshold − 1, then that one more failure opens the
+   breaker. Delete `let _ = hits;`.
+4. Delete the "failures before circuit opens" warning from `acquire`.
+
+Then do the two Bounce-1 mutation runs.
+
+**Mutation evidence: the last run's blocker.** In the last run, both
+pasted mutation failures were typed into the Update Log and never run.
+This time every failure you paste must be copied from a `cargo test`
+tool result in this run. The reviewer greps the session log for each
+panic message. Apply each mutation with an edit and undo it with an
+edit. Never restore it with `cp` from a backup. After undoing, run
+`git diff --stat` once to confirm that only your intended edits remain.
+
+**Finish condition (falsifiable):** `cargo test --lib` reports exactly
+**3218 passed**, not 3216, 3217 or 3219, and each of the four Bounce 1
+checks prints its target value. You have 1200 turns. Use them for edits
+and runs, not re-reading.
+
 ### Update — 2026-11-27 10:29 (progress)
 
 Phase started: status flipped to in-progress (README row updated to match).
@@ -666,3 +724,8 @@ criterion fails on `8b596c92`.
 
 Name-level preservation against `57691b5a` prints nothing: 28 test fns
 before, 33 after.
+
+### Update — 2026-11-27 (escalation)
+
+**Chosen lever:** refined re-dispatch
+**Rationale:** a green bounce whose four defects each have a pinned red test and a constraint. The executor reached the design; it skipped the evidence, so the treatment names the edits, the first-edit deadline and the provenance rule for mutation output.
