@@ -56,7 +56,7 @@ fn answered_reader(credentials: &[&str]) -> impl tokio::io::AsyncBufRead + Unpin
         .map(|c| {
             let mut line = serde_json::to_string(&Request::CredentialResponse {
                 id: PROMPT_ID.to_string(),
-                credential: (*c).to_string(),
+                credential: (*c).to_string().into(),
             })
             .expect("CredentialResponse serialises");
             line.push('\n');

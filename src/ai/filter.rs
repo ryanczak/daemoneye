@@ -1,5 +1,5 @@
 use crate::util::UnpoisonExt;
-use regex::Regex;
+use regex::{Regex, Replacer};
 use std::borrow::Cow;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -201,18 +201,31 @@ pub fn mask_sensitive(text: &str) -> String {
             } else {
                 counter_for(rep_str)
             };
-            let mut n = 0usize;
-            result = Cow::Owned(
-                re.replace_all(&result, |_: &regex::Captures<'_>| {
-                    n += 1;
-                    rep_str
-                })
-                .into_owned(),
-            );
+            let n = replace_all_expanding(&mut result, re, rep_str);
             counter.fetch_add(n, Ordering::Relaxed);
         }
     }
     result.into_owned()
+}
+
+/// Replace every match of `re` in `result` with `rep`, expanding `$1`-style
+/// captures, and return the number of matches replaced.
+fn replace_all_expanding(result: &mut Cow<'_, str>, re: &regex::Regex, rep: &str) -> usize {
+    struct Expand<'a> {
+        rep: &'a str,
+        count: usize,
+    }
+
+    impl regex::Replacer for Expand<'_> {
+        fn replace_append(&mut self, caps: &regex::Captures<'_>, dst: &mut String) {
+            self.count += 1;
+            caps.expand(self.rep, dst);
+        }
+    }
+
+    let mut replacer = Expand { rep, count: 0 };
+    *result = Cow::Owned(re.replace_all(result, replacer.by_ref()).into_owned());
+    replacer.count
 }
 
 /// Recursively mask every string **value** in a JSON tree in place.
@@ -241,17 +254,27 @@ pub fn mask_json_value(v: &mut serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile_patterns, mask_json_value};
+    use super::{
+        REDACT_USER, compile_patterns, counter_for, mask_json_value, replace_all_expanding,
+    };
+    use std::sync::atomic::Ordering;
 
-    /// Run patterns compiled fresh (bypasses the global OnceLock) so tests are
-    /// isolated and can be run in any order without interfering with each other.
+    /// Run the production replacement path over patterns compiled fresh
+    /// (bypasses the global lock) so tests are isolated and can be run in any
+    /// order without interfering with each other.
     fn mask(text: &str) -> String {
         let pats = compile_patterns(&[]);
         let mut result: std::borrow::Cow<str> = std::borrow::Cow::Borrowed(text);
-        for (re, rep, _) in &pats {
+        for (re, rep, is_user) in &pats {
             if re.is_match(&result) {
-                result =
-                    std::borrow::Cow::Owned(re.replace_all(&result, rep.as_str()).into_owned());
+                let rep_str = rep.as_str();
+                let counter = if *is_user {
+                    &REDACT_USER
+                } else {
+                    counter_for(rep_str)
+                };
+                let n = replace_all_expanding(&mut result, re, rep_str);
+                counter.fetch_add(n, Ordering::Relaxed);
             }
         }
         result.into_owned()
@@ -666,6 +689,30 @@ mod tests {
                 "a non-secret string must be byte-identical: {text:?}"
             );
         }
+    }
+
+    #[test]
+    fn json_secret_rule_keeps_its_key() {
+        super::init_masking(&[]);
+        let out = super::mask_sensitive(r#"{"password": "hunter2"}"#);
+        assert_eq!(
+            out, r#"{"password": "<REDACTED>"}"#,
+            "the JSON secret rule must keep the key name: {out:?}"
+        );
+        assert!(
+            !out.contains("$1"),
+            "the raw capture token must not leak: {out:?}"
+        );
+
+        let out = super::mask_sensitive(r#"{"API_KEY":"abc"}"#);
+        assert_eq!(
+            out, r#"{"API_KEY": "<REDACTED>"}"#,
+            "the JSON secret rule must keep the key's case: {out:?}"
+        );
+        assert!(
+            !out.contains("$1"),
+            "the raw capture token must not leak: {out:?}"
+        );
     }
 }
 

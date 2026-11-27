@@ -75,7 +75,7 @@ fn auto_deny_raw_prompt(msg: &Response) -> Option<Request> {
         }),
         Response::CredentialPrompt { id, .. } => Some(Request::CredentialResponse {
             id: id.clone(),
-            credential: String::new(),
+            credential: String::new().into(),
         }),
         Response::PaneSelectPrompt { id, panes } => {
             let pane_id = panes.first().map(|p| p.id.clone()).unwrap_or_default();

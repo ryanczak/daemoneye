@@ -97,7 +97,14 @@ async fn handle_tool_or_cred_prompt(
         }
         Response::CredentialPrompt { id, prompt } => {
             let credential = prompt_credential_ratatui(renderer, stdin, sb, &prompt).await;
-            send_request(tx, Request::CredentialResponse { id, credential }).await?;
+            send_request(
+                tx,
+                Request::CredentialResponse {
+                    id,
+                    credential: credential.into(),
+                },
+            )
+            .await?;
         }
         Response::PaneSelectPrompt { id, panes } => {
             let pane_id = prompt_pane_select_ratatui(renderer, stdin, sb, &panes).await;

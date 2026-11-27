@@ -92,7 +92,7 @@ fn answered_transport() -> (
         .map(|_| {
             let mut line = serde_json::to_string(&Request::CredentialResponse {
                 id: "p".to_string(),
-                credential: CREDENTIAL.to_string(),
+                credential: CREDENTIAL.to_string().into(),
             })
             .expect("CredentialResponse serialises");
             line.push('\n');

@@ -331,3 +331,47 @@ impl Response {
         }
     }
 }
+
+/// A user-supplied credential (password / passphrase) on the wire. Transparent
+/// over `String`, so the serialized bytes are unchanged; the `Debug` never
+/// prints the credential.
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct Credential(String);
+
+impl Credential {
+    /// The credential as a string slice, for reading it into `Zeroizing`.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Credential {
+    fn from(s: String) -> Self {
+        Credential(s)
+    }
+}
+
+impl From<&str> for Credential {
+    fn from(s: &str) -> Self {
+        Credential(s.to_string())
+    }
+}
+
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<redacted>")
+    }
+}
+
+impl PartialEq<str> for Credential {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for Credential {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}

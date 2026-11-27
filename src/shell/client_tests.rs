@@ -747,7 +747,7 @@ mod scripted {
                 Duration::from_secs(10),
                 |output: &str| {
                     if output.contains("[de-sudo-prompt-0]") {
-                        std::future::ready(PromptReply::Send(b"let-me-through\n".to_vec()))
+                        std::future::ready(PromptReply::Send(b"let-me-through\n".to_vec().into()))
                     } else {
                         std::future::ready(PromptReply::Wait)
                     }
@@ -798,7 +798,7 @@ mod scripted {
                 Duration::from_secs(10),
                 |output: &str| {
                     if output.contains("[de-sudo-prompt-0]") {
-                        std::future::ready(PromptReply::Send(b"let-me-through\n".to_vec()))
+                        std::future::ready(PromptReply::Send(b"let-me-through\n".to_vec().into()))
                     } else {
                         std::future::ready(PromptReply::Wait)
                     }
@@ -1864,5 +1864,19 @@ async fn a_batchmode_ssh_shell_that_cannot_connect_fails_fast_on_pinky() {
     assert!(
         elapsed < Duration::from_secs(5),
         "the failure must land in seconds, not at the 20 s timeout: {elapsed:?}"
+    );
+}
+
+#[test]
+fn prompt_reply_debug_hides_the_answer() {
+    let reply: PromptReply = PromptReply::Send(b"hunter2\n".to_vec().into());
+    let text = format!("{reply:?}");
+    assert!(
+        !text.contains("hunter2"),
+        "the Debug of a Send must never print the answer bytes: {text}"
+    );
+    assert!(
+        text.contains("8 bytes"),
+        "the Debug names the answer's length instead: {text}"
     );
 }

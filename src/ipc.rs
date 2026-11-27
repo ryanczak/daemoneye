@@ -124,7 +124,7 @@ pub enum Request {
     /// `Response::CredentialPrompt`. The daemon injects it into the background tmux window.
     CredentialResponse {
         id: String,
-        credential: String,
+        credential: Credential,
     },
     /// User's pane selection in response to `Response::PaneSelectPrompt`.
     PaneSelectResponse {

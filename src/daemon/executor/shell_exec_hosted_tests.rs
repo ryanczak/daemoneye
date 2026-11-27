@@ -978,7 +978,7 @@ async fn an_answer_after_the_timeout_still_completes_the_command() {
         tokio::time::sleep(Duration::from_secs(3)).await;
         let mut line = serde_json::to_string(&Request::CredentialResponse {
             id: "p".to_string(),
-            credential: CREDENTIAL.to_string(),
+            credential: CREDENTIAL.to_string().into(),
         })
         .expect("CredentialResponse serialises");
         line.push('\n');

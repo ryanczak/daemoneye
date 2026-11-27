@@ -603,7 +603,7 @@ impl RouteConfig {
 /// Webhook ingestion configuration.
 /// When enabled, DaemonEye listens for HTTP POST alerts from Prometheus
 /// Alertmanager, Grafana, or any generic JSON alerting tool.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct WebhookConfig {
     /// Whether the webhook endpoint is active. Disabled by default.
     #[serde(default)]
@@ -624,6 +624,25 @@ pub struct WebhookConfig {
     /// Set to "0.0.0.0" to accept connections from all interfaces.
     #[serde(default = "default_webhook_bind")]
     pub bind_addr: String,
+}
+
+impl std::fmt::Debug for WebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("WebhookConfig");
+        d.field("enabled", &self.enabled);
+        d.field("port", &self.port);
+        // The secret is a bearer token: shown only as a placeholder, or ""
+        // when unset, so a config dump never prints it.
+        if self.secret.is_empty() {
+            d.field("secret", &"");
+        } else {
+            d.field("secret", &"<redacted>");
+        }
+        d.field("auto_analyze", &self.auto_analyze);
+        d.field("dedup_window_secs", &self.dedup_window_secs);
+        d.field("bind_addr", &self.bind_addr);
+        d.finish()
+    }
 }
 
 fn default_webhook_port() -> u16 {

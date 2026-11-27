@@ -79,8 +79,12 @@ where
         )),
         Ok(Ok(_)) => match serde_json::from_slice::<Request>(&cred_line) {
             Ok(Request::CredentialResponse { credential, .. }) => {
-                let credential = zeroize::Zeroizing::new(credential);
-                let mut bytes = credential.as_bytes().to_vec();
+                let credential = zeroize::Zeroizing::new(credential.as_str().to_string());
+                // The newline is appended after a copy, so with the
+                // capacity reserved up front nothing reallocates and
+                // leaves a second unzeroed copy of the credential.
+                let mut bytes = zeroize::Zeroizing::new(Vec::with_capacity(credential.len() + 1));
+                bytes.extend_from_slice(credential.as_bytes());
                 bytes.push(b'\n');
                 PromptReply::Send(bytes)
             }

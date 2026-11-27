@@ -395,14 +395,17 @@ where
 }
 
 /// Write the answer through the same connection's write half. `PROMPT_ROUND`
-/// bounds the write so a wedged host cannot wedge the caller.
+/// bounds the write so a wedged host cannot wedge the caller. The bytes and
+/// the encoded wire string may both carry a credential, so both are zeroized
+/// on the way out — each after its last use.
 async fn write_answer<W>(writer: &mut W, bytes: &[u8]) -> anyhow::Result<()>
 where
     W: tokio::io::AsyncWriteExt + Unpin,
 {
-    let wire = encode(ShellRequest::Input {
-        bytes: bytes.to_vec(),
-    })?;
+    let mut input = zeroize::Zeroizing::new(bytes.to_vec());
+    let wire = zeroize::Zeroizing::new(encode(ShellRequest::Input {
+        bytes: std::mem::take(&mut *input),
+    })?);
     tokio::time::timeout(PROMPT_ROUND_TIMEOUT, async {
         writer.write_all(wire.as_bytes()).await?;
         writer.flush().await?;

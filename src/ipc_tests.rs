@@ -191,7 +191,7 @@ fn request_tool_call_response_backward_compat_no_user_message() {
 fn request_credential_response_roundtrip() {
     let req = Request::CredentialResponse {
         id: "tc_2".to_string(),
-        credential: "hunter2".to_string(),
+        credential: "hunter2".into(),
     };
     match roundtrip_req(&req) {
         Request::CredentialResponse { id, credential } => {
@@ -1584,4 +1584,43 @@ fn alert_list_request_round_trips() {
 fn alert_state_names_itself_alert_state() {
     let resp = Response::AlertState { alerts: Vec::new() };
     assert_eq!(resp.kind(), "AlertState");
+}
+
+#[test]
+fn credential_response_debug_hides_the_credential() {
+    let req = Request::CredentialResponse {
+        id: "p".to_string(),
+        credential: "hunter2".into(),
+    };
+    let text = format!("{req:?}");
+    assert!(
+        !text.contains("hunter2"),
+        "the Debug of a CredentialResponse must never print the credential: {text}"
+    );
+    assert!(
+        text.contains("<redacted>"),
+        "the credential shows as <redacted>: {text}"
+    );
+}
+
+/// The newtype is `#[serde(transparent)]`, so the wire bytes are exactly what
+/// a plain `String` field produced — an older daemon reads a newer client.
+#[test]
+fn credential_response_wire_bytes_are_unchanged() {
+    let req = Request::CredentialResponse {
+        id: "p".to_string(),
+        credential: "pw".into(),
+    };
+    let json = serde_json::to_string(&req).expect("serialize");
+    assert_eq!(
+        json, r#"{"CredentialResponse":{"id":"p","credential":"pw"}}"#,
+        "the transparent newtype must not change the serialized bytes"
+    );
+    match roundtrip_req(&req) {
+        Request::CredentialResponse { id, credential } => {
+            assert_eq!(id, "p");
+            assert_eq!(credential, "pw");
+        }
+        _ => panic!("wrong variant"),
+    }
 }

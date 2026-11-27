@@ -1676,3 +1676,68 @@ fn load_named_prompt_ignores_a_traversing_name() {
         "positive control: the file is readable by a valid name"
     );
 }
+
+// ── Redacted Debug (phase 10, S14) ───────────────────────────────────────
+
+/// A `ModelEntry` or `WebhookConfig` holding a secret, and the `Config`
+/// holding both, must never print the secret in `Debug` — while still
+/// showing the ordinary fields.
+#[test]
+fn model_entry_and_webhook_debug_hide_their_secrets() {
+    let model = ModelEntry {
+        model: "claude-sonnet-4-6".to_string(),
+        api_key: "sk-xyz".to_string(),
+        ..ModelEntry::default()
+    };
+    let model_text = format!("{model:?}");
+    assert!(
+        !model_text.contains("sk-xyz"),
+        "ModelEntry Debug must not print the api key: {model_text}"
+    );
+    assert!(
+        model_text.contains("<redacted>"),
+        "ModelEntry Debug shows the api key as <redacted>: {model_text}"
+    );
+    assert!(
+        model_text.contains(r#"model: "claude-sonnet-4-6""#),
+        "ModelEntry Debug still shows the model field: {model_text}"
+    );
+
+    let webhook = WebhookConfig {
+        secret: "s3cret".to_string(),
+        ..WebhookConfig::default()
+    };
+    let webhook_text = format!("{webhook:?}");
+    assert!(
+        !webhook_text.contains("s3cret"),
+        "WebhookConfig Debug must not print the secret: {webhook_text}"
+    );
+    assert!(
+        webhook_text.contains("<redacted>"),
+        "WebhookConfig Debug shows the secret as <redacted>: {webhook_text}"
+    );
+    assert!(
+        webhook_text.contains("port: 9393"),
+        "WebhookConfig Debug still shows the port field: {webhook_text}"
+    );
+
+    let mut cfg = Config::default();
+    cfg.models.insert("default".to_string(), model.clone());
+    cfg.webhook = webhook.clone();
+    let cfg_text = format!("{cfg:?}");
+    assert!(
+        !cfg_text.contains("sk-xyz") && !cfg_text.contains("s3cret"),
+        "Config Debug must not print either secret: {cfg_text}"
+    );
+    assert!(
+        cfg_text.contains("port: 9393"),
+        "Config Debug still shows the webhook port: {cfg_text}"
+    );
+
+    // An empty secret shows as "", not as the placeholder.
+    let model_text = format!("{:?}", ModelEntry::default());
+    assert!(
+        !model_text.contains("<redacted>"),
+        "an empty api key shows as \"\", not the placeholder: {model_text}"
+    );
+}

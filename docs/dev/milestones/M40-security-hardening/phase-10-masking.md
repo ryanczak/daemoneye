@@ -1,7 +1,7 @@
 # Phase 10 — masking
 
 **Milestone:** M40 — Security hardening
-**Status:** todo
+**Status:** in-progress
 **Drafted:** 2026-11-26
 **Depends on:** 09b (done)
 **Estimated diff:** ~250 lines
@@ -196,3 +196,16 @@ Paste the red run.
 ## Update Log
 
 <!-- entries appended below this line -->
+
+### Update — 2026-11-26 23:50 (started)
+
+Work begun. Task list (numbered, each naming the acceptance item it closes):
+
+1. Write red test `json_secret_rule_keeps_its_key` in `src/ai/filter.rs` tests (goes through `mask_sensitive`) and run it red — closes S13 first-red-test.
+2. S13 fix: factor per-pattern replacement in `mask_sensitive` into one private function that expands captures via `Captures::expand` and counts matches; point the test helper `mask` at it — closes "One path" and "S13".
+3. `PromptReply::Send` becomes `Zeroizing<Vec<u8>>`; `credential_round_trip` reserves capacity before copying; `write_answer` zeroizes what it produces; hand-written `Debug` printing `Send(<N bytes redacted>)`; test `prompt_reply_debug_hides_the_answer` — closes "PromptReply".
+4. `credential_round_trip_returns_a_zeroizing_answer` test — closes "Round trip".
+5. Credential newtype in `src/ipc_types.rs` (`#[serde(transparent)]` over `String`, redacted `Debug`, `From<String>`, `as_str`), field type change in `src/ipc.rs`, all construction sites `.into()`; tests `credential_response_debug_hides_the_credential` and `credential_response_wire_bytes_are_unchanged` — closes "Request" and "Wire unchanged".
+6. Hand-written `Debug` for `ModelEntry` and `WebhookConfig` (`<redacted>` / `""` for empty); test `model_entry_and_webhook_debug_hide_their_secrets` — closes "Config".
+7. Mutation run (closure returns raw replacement; test must fail; undo) — closes "Mutation run".
+8. No-test-removed grep, four gates, end-to-end evidence entry, single `fix:` commit — closes "No test removed" and "Gates".

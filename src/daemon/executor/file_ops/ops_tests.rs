@@ -161,7 +161,7 @@ pub(super) async fn approve_and_answer_channel(
                             };
                             let reply = Request::CredentialResponse {
                                 id,
-                                credential: c.to_string(),
+                                credential: c.to_string().into(),
                             };
                             let mut wire = serde_json::to_string(&reply).unwrap();
                             wire.push('\n');

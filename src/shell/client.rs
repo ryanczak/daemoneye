@@ -302,15 +302,28 @@ async fn read_one(
 }
 
 /// What the prompt handler decided about the output so far.
-#[derive(Debug, PartialEq, Eq)]
 pub enum PromptReply {
     /// Nothing to answer; keep reading.
     Wait,
-    /// Write these bytes into the shell, then keep reading.
-    Send(Vec<u8>),
+    /// Write these bytes into the shell, then keep reading. The payload is a
+    /// password or passphrase as often as not, so it is zeroized on drop and
+    /// its `Debug` never prints the bytes.
+    Send(zeroize::Zeroizing<Vec<u8>>),
     /// Stop: this prompt cannot be answered. The command is abandoned. The
     /// string is the reason, surfaced in the returned error.
     GiveUp(String),
+}
+
+impl std::fmt::Debug for PromptReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptReply::Wait => f.write_str("Wait"),
+            PromptReply::Send(bytes) => {
+                write!(f, "Send({} bytes redacted)", bytes.len())
+            }
+            PromptReply::GiveUp(reason) => f.debug_tuple("GiveUp").field(reason).finish(),
+        }
+    }
 }
 
 /// A prompt the caller could not answer was cancelled with Ctrl-C.

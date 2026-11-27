@@ -1,4 +1,5 @@
 use super::auth::credential_round_trip;
+use crate::ipc::Request;
 use crate::shell::PromptReply;
 
 /// The prompt id the round trip echoes; nothing reads it here.
@@ -42,5 +43,29 @@ async fn credential_prompt_refuses_an_oversized_reply_within_budget() {
     assert!(
         handed_out <= (crate::ipc::MAX_IPC_MESSAGE_BYTES + (64 << 10)) as u64,
         "at most the cap plus 64 KiB is handed out before the refusal: {handed_out}"
+    );
+}
+
+/// The round trip's answer stays zeroized end to end: the payload is typed
+/// `Zeroizing<Vec<u8>>` and carries the credential plus the trailing newline.
+#[tokio::test]
+async fn credential_round_trip_returns_a_zeroizing_answer() {
+    let line = serde_json::to_string(&Request::CredentialResponse {
+        id: PROMPT_ID.to_string(),
+        credential: "pw".into(),
+    })
+    .expect("CredentialResponse serialises");
+    let mut rx = tokio::io::BufReader::new(std::io::Cursor::new(format!("{line}\n").into_bytes()));
+    let mut tx = std::io::Cursor::new(Vec::new());
+    let reply =
+        credential_round_trip(PROMPT_ID, &mut tx, &mut rx, "sudo password".to_string()).await;
+    let PromptReply::Send(answer) = reply else {
+        panic!("an answered prompt is a Send, got {reply:?}");
+    };
+    let answer: &zeroize::Zeroizing<Vec<u8>> = &answer;
+    assert_eq!(
+        answer.as_slice(),
+        b"pw\n",
+        "the answer carries the credential and the newline"
     );
 }

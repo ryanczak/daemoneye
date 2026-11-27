@@ -60,7 +60,7 @@ pub struct HostEntry {
 /// base_url = "http://localhost:11434/v1"
 /// context_window_tokens = 8192
 /// ```
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct ModelEntry {
     /// "anthropic" | "openai" | "gemini" | "ollama" | "lmstudio"
     #[serde(default = "default_provider")]
@@ -120,6 +120,29 @@ fn default_model() -> String {
 /// a provider added there must add its name here, and
 /// `provider_key_vars_cover_every_provider` pins the pairing.
 pub const PROVIDER_KEY_VARS: &[&str] = &["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"];
+
+impl std::fmt::Debug for ModelEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("ModelEntry");
+        d.field("provider", &self.provider);
+        // The api_key is a secret: shown only as a placeholder, or "" when
+        // unset, so a config dump never prints the key.
+        if self.api_key.is_empty() {
+            d.field("api_key", &"");
+        } else {
+            d.field("api_key", &"<redacted>");
+        }
+        d.field("model", &self.model);
+        d.field("base_url", &self.base_url);
+        d.field("context_window_tokens", &self.context_window_tokens);
+        d.field("max_tokens", &self.max_tokens);
+        d.field("input_cost_per_mtok", &self.input_cost_per_mtok);
+        d.field("output_cost_per_mtok", &self.output_cost_per_mtok);
+        d.field("cache_read_cost_per_mtok", &self.cache_read_cost_per_mtok);
+        d.field("cache_write_cost_per_mtok", &self.cache_write_cost_per_mtok);
+        d.finish()
+    }
+}
 
 impl Default for ModelEntry {
     fn default() -> Self {
