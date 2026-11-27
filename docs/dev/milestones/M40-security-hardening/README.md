@@ -8,7 +8,7 @@ delegation and schedule deletion go through policy and approval. The
 webhook listener authenticates before it parses. Masking does what its
 rules say.
 
-**Status:** phases complete 2026-11-27 — retrospective written; awaiting PE sign-off and the 2.12.0 release
+**Status:** closed 2026-11-27 — released as 2.12.0 on PE sign-off
 
 **Release:** 2.12.0
 

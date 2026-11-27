@@ -8,6 +8,98 @@ From 2.0 on, each milestone close is a minor release (M28 → 2.1.0, M29 →
 
 ## [Unreleased]
 
+## [2.12.0] — 2026-11-27 — M40 Security hardening
+
+This release closes the rest of the 2.10.0 audit's security rows. Each fix
+came with a test that failed first. S17 was rejected: Rust's runtime
+already reopens a closed fd 0–2 before `main`. The retrospective, live check
+and audit ledger are in
+`docs/dev/milestones/M40-security-hardening/README.md` and
+`docs/design/daemoneye_audit_ledger.md`.
+
+> **Behaviour change — three more tools ask first.**
+> - `spawn_ghost_shell` from chat now shows an approval prompt.
+> - So do `cancel_schedule` and `delete_schedule`, and a ghost may not
+>   call either.
+>
+> All three joined the approval-gated list, so like the other
+> approval-gated tools, they are exempt from the per-turn, per-session and
+> per-tool budget caps.
+
+> **Behaviour change — names that become paths are validated.** The
+> following must be 1–128 characters from `[A-Za-z0-9_-]`:
+> - memory namespaces;
+> - session ids;
+> - prompt names;
+> - the names given to `SaveSession` / `LoadSession`.
+>
+> A named session saved under a name with a `.` or a space can no longer
+> be loaded by that name.
+
+**Security**
+- **Bounded socket reads:**
+  - A request line to the daemon socket is refused at 1 MiB, and a shell
+    host frame at 16 MiB. Both caps are checked before the line is
+    allocated.
+  - So are the approval, credential and prompt replies, and the presence,
+    notice and tail streams.
+  - Both accept loops take a connection permit before `accept`.
+- **Provider API keys stay in the daemon.** `ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY` and `GEMINI_API_KEY` are removed from the environment
+  of:
+  - PTY shells;
+  - shell hosts;
+  - `command` notification routes.
+- **File edits:**
+  - A remote `edit_file` writes through an `O_EXCL`, mode 0600 temp file
+    that its payload creates, so a symlink planted at the temp name is
+    never followed.
+  - A local edit uses `create_new`, mode 0600 and a random suffix.
+- **Path guard:** the guard resolves the deepest existing ancestor and
+  checks the canonical path, which closes two holes:
+  - `read_file` of a symlink into `~/.ssh/` is refused;
+  - an edit through a missing path under a symlink to `~/.daemoneye/` is
+    refused.
+- **Ghost delegation:** `spawn_ghost_shell` from a ghost narrows the
+  child to the caller's:
+  - hosts, including a call with no `host`;
+  - pre-approved scripts;
+  - flags;
+  - tool policy.
+
+  Disjoint host lists refuse the spawn.
+- **Argument injection:**
+  - A host name starting with `-` is refused.
+  - ssh argv puts `--` before the destination.
+  - Remote `grep` takes its pattern with `-e`.
+  - `infocmp` takes `--`.
+- **Webhook:**
+  - Authentication and the rate limit run before the body is read.
+  - The Bearer compare is constant-time.
+  - Bodies are capped at 2 MiB.
+  - A `reload` rotates the secret.
+  - One POST enqueues at most 100 alerts.
+  - The analysis rate-limit map evicts.
+  - Alert text reaches watchdog, ghost and chat prompts inside an
+    untrusted-data block.
+- **Masking:**
+  - The JSON secret rule keeps the key: `{"password": "<REDACTED>"}`, not
+    `{"$1": …}`.
+  - A sudo credential stays in zeroizing memory end to end.
+  - Secret-bearing types redact in `Debug`.
+- **Prompt replies:** a reply whose id is not the open prompt's is a
+  denial at every approve/deny prompt. A credential reply for another
+  prompt is never typed.
+- **fd hygiene:**
+  - The readiness pipe is close-on-exec.
+  - The passwd lookup for the approval panel's `user@host` label retries
+    with a larger buffer only on `ERANGE`.
+
+**Fixes**
+- **Long lines typed into a fresh PTY shell are no longer cut short.**
+  Before, a line over 4095 bytes written before the line editor went raw
+  was truncated. Input now waits for the line editor.
+
 ## [2.11.0] — 2026-11-25 — M39 Critical fixes
 
 This release fixes the 2.10.0 audit's P0 rows: the exploitable holes and

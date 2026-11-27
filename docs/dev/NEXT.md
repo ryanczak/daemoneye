@@ -1,10 +1,8 @@
 # NEXT
 
 **Active milestone:** none. M40 Security hardening
-([`README.md`](milestones/M40-security-hardening/README.md)) finished its
-phases 2026-11-27. The retrospective and live check are written. It waits on
-the PE's sign-off, then the `2.12.0` release per `REXYMCP.md` § Versioning.
-Next come M41 Correctness, M42 Performance and M43 Architecture, then the MCP
+([`README.md`](milestones/M40-security-hardening/README.md)) closed
+2026-11-27 as `2.12.0` (tagged, not yet pushed). Next come M41 Correctness, M42 Performance and M43 Architecture, then the MCP
 surface (M44) and Knowledge (M45). M39 (Critical fixes) closed 2026-11-25 as
 `2.11.0`.
 
