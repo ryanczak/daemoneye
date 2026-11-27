@@ -228,6 +228,65 @@ function and scanner the gate's walk uses.
 
 <!-- entries appended below this line -->
 
+### Notes for executor — 2026-11-27 (bounce 1)
+
+**Green gates and a clean tree are EXPECTED here. They are NOT evidence
+that the phase is done.** Already approved, so do not redo it:
+- the `syn` walk;
+- the Q5 guard widening;
+- the five original tests;
+- the two parse-failure tests;
+- the duplicated `is_test_only`.
+
+There are exactly **four edits** left, all in `tests/lock_invariant.rs`
+and `tests/tmux_read_only.rs`:
+
+1. **bug-02-1, members.** In both gates, an `impl` member and a `trait`
+   member are test-only when their own attributes pass `is_test_only`:
+   - `syn::ImplItem::Fn(f)` → `f.attrs`;
+   - `syn::TraitItem::Fn(f)` → `f.attrs`.
+
+   Exclude the member's span (`f.span().start().line..=end().line`) from
+   the production lines.
+   - The analogue is `tests/hygiene.rs`'s `visit_impl_item_fn` /
+     `visit_trait_item_fn`.
+   - Today the walk is `nested_items` / `collect_test_lines`, which never
+     read a member's own `attrs`.
+   - A production member must still be scanned.
+2. **bug-02-1, fixtures.** Replace both `production_lines(…).unwrap_or_default()`
+   calls with `.expect("fixture parses")`. That is test code, so `expect`
+   is fine there.
+3. **bug-02-2.** `lock_unwrap_hits` skips every line whose trimmed start
+   is `//`. That covers doc comments, as before the phase.
+4. **The three new tests** named in the Bounce 1 criteria. Write each one
+   red first and paste its red run.
+
+**Your first tool call is an edit:** add the red test
+`the_gate_skips_cfg_test_impl_and_trait_fns` to `tests/lock_invariant.rs`.
+
+**Read limit:** read only the two gate files and `bugs/bug-02-1.md` before
+that edit.
+
+**Finish condition:** check it yourself, each command run once.
+- `cargo test --test lock_invariant` reports **8 passed** (not 6).
+- `cargo test --test tmux_read_only` reports **8 passed** (not 7).
+- `grep -c 'unwrap_or_default()' tests/lock_invariant.rs` prints **0**.
+
+**Mutation check:** before reporting, disable the member check in the
+lock gate and run `cargo test --test lock_invariant` once. It must fail.
+Then undo that one edit by hand, never by copying a backup. Paste that
+output as well.
+
+**Known flake, not yours:** `ai::filter::reinit_tests::masking_reinit_applies_a_new_extra_pattern`
+can fail in the full `cargo test` run. It races on a process-global, and
+it passes alone. If it fails, re-run `cargo test` once and paste both
+results. Do not touch `src/`.
+
+### Update — 2026-11-27 (escalation)
+
+**Chosen lever:** refined re-dispatch (green-bounce treatment, assist 1 of 3)
+**Rationale:** both bugs are well-specified spec gaps with probed red output, and the gates are green, so the edits must be enumerated and the finish condition made falsifiable.
+
 ### Update — 2026-11-27 17:31 (started)
 
 Work on phase 02 has begun. Status flipped to `in-progress` (phase doc and
