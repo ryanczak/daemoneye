@@ -1,7 +1,7 @@
 # Phase 12 — fd-hygiene
 
 **Milestone:** M40 — Security hardening
-**Status:** in-progress
+**Status:** review
 **Drafted:** 2026-11-26
 **Depends on:** 11 (done)
 **Estimated diff:** ~120 lines
@@ -257,3 +257,136 @@ test daemon::executor::shell_label::tests::a_tiny_passwd_buffer_still_finds_the_
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 3216 filtered out; finished in 0.00s
 ```
+
+### Update — 2026-11-27 03:26 (complete, server-authored)
+
+**Summary:** Phase 12 (fd-hygiene, S16 + S18) is implemented and committed as `a2b23544`. S16: `create_pipe` now uses `libc::pipe2(fds, libc::O_CLOEXEC)`, so the daemon's readiness write end no longer leaks into spawned subprocesses; the fork/handshake is untouched. S18: `passwd_name` now starts at `sysconf(_SC_GETPW_R_SIZE_MAX)` when positive (else 16 KiB), retries `getpwuid_r` on `ERANGE` doubling to a 1 MiB cap via a `passwd_name_from(uid, initial_len)` seam, and keeps all existing `None` cases (no entry, empty name, non-UTF-8 name).
+
+**Notes for review:**
+- Both red tests were written first and run red: `the_readiness_pipe_is_close_on_exec` failed with "read end (fd 3) lacks FD_CLOEXEC" before the fix; the `a_tiny_passwd_buffer_still_finds_the_name` test initially failed to compile (`passwd_name_from` not yet defined) and then passed only after the retry loop landed.
+- Mutation run done as specified: `O_CLOEXEC` → `0` flipped the S16 test red (pasted), then the single edit was undone.
+- All gates pass, each run once: `cargo fmt --all` OK, `cargo build` clean, `cargo clippy --all-targets --all-features -- -D warnings` clean, `cargo test` green (lib: 3208 passed, 0 failed, 10 ignored; integration suites green). `grep -n 'libc::pipe(' src/daemon/ready.rs` prints nothing; `git diff f4e6da6a -- src tests | grep -cE '^-\s*#\[(tokio::)?test\]'` prints 0.
+- Evidence (red run, mutation run, greps, gate tails) is in the phase doc's end-to-end verification Update Log entry. Status is left `in-progress` with no `(complete)` entry, per the lifecycle split — the server authors those.
+- The red run was captured with `tail -15`, which trimmed the `running 1 test` header line; the `test result: FAILED` line and panic message are complete.
+
+**Executor:** GLM-5.3-Flash
+
+**Gates:** format=run, build=run, lint=run, test=run
+
+**Command output tails:**
+
+```
+FORMAT
+
+
+BUILD
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s
+
+
+LINT
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+
+
+TEST
+t ipc_tool_call_response_round_trip ... ok
+test minimal_config_parsing ... ok
+test resume_run_request_roundtrip ... ok
+test schedule_store_persistence ... ok
+test config_pricing_round_trip ... ok
+test a_second_connection_gets_session_counters_at_attach ... ok
+test attach_sends_session_counters_after_ok ... ok
+test g4_briefing_masking_applied ... ok
+test event_log_entry_format ... ok
+test alert_list_request_returns_the_snapshot ... ok
+test event_log_append_read ... ok
+test cost_record_serializes_to_events_jsonl_round_trip ... ok
+test g4_briefing_injects_on_next_run ... ok
+test g4_briefing_read_and_clear ... ok
+test g6_agent_config_roundtrip ... ok
+test g6_agent_namespace_field_persisted ... ok
+test presence_attach_sends_alert_state_when_alerts_are_active ... ok
+test window_switch_does_not_corrupt_chat ... ignored
+test presence_attach_sends_ok_before_alert_state ... ok
+test session_index_persistence ... ok
+test session_jsonl_round_trip ... ok
+test g5_mailbox_write_and_read ... ok
+test webhook_alert_at_threshold_is_injected ... ok
+test webhook_alert_below_threshold_discarded ... ok
+test webhook_alert_below_threshold_is_not_injected ... ok
+test webhook_alert_below_threshold_is_recorded_active ... ok
+test webhook_alert_error_severity_passes_warning_gate ... ok
+test webhook_alert_no_severity_is_below_threshold ... ok
+test webhook_alert_publishes_one_notice ... ok
+test webhook_alert_to_event_log ... ok
+test webhook_alert_unrankable_severity_is_below_threshold ... ok
+test webhook_alert_unknown_severity_publishes_debug ... ok
+test webhook_alert_without_sinks_reaches_no_history ... ok
+
+test result: ok. 45 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+
+running 14 tests
+test webhook_ghost_e2e_http ... ignored
+test held_port_cannot_be_rebound ... ok
+test webhook_ports_differ_between_environments ... ok
+test stub_returns_canned_response_via_make_client ... ok
+test webhook_ghost_e2e_deterministic ... ok
+test webhook_ghost_records_its_ssh_target_resolution ... ok
+test config_contains_webhook_and_stub_url ... ok
+test daemon_installs_no_tmux_hooks ... ok
+test an_empty_session_starts_no_tmux_server ... ok
+test default_server_unchanged ... ok
+test notices_follow_streams_a_webhook_alert ... ok
+test daemon_webhook_returns_200 ... ok
+test daemon_boots_in_throwaway_root ... ok
+test daemon_start_replays_active_alerts ... ok
+
+test result: ok. 13 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+
+running 2 tests
+test the_gate_sees_both_forms_and_ignores_comments ... ok
+test production_lock_sites_never_unwrap_or_expect ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+
+running 4 tests
+test gate_catches_a_chained_write ... ok
+test gate_catches_an_abbreviated_write ... ok
+test gate_catches_a_multi_line_write ... ok
+test source_issues_no_tmux_write_verbs ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/daemoneye-f4e47940aad84bd2)
+kill: (912185): No such process
+kill: (-912853): No such process
+     Running unittests src/main.rs (target/debug/deps/daemoneye-20f7a263eb3505d4)
+     Running tests/bug_tracker.rs (target/debug/deps/bug_tracker-76388b7c8bf90a79)
+     Running tests/doc_truth.rs (target/debug/deps/doc_truth-4990f807dc1b822c)
+     Running tests/hygiene.rs (target/debug/deps/hygiene-2b9c25f5dc5fb2cd)
+     Running tests/integration.rs (target/debug/deps/integration-5b69b39d41a6d634)
+     Running tests/isolation.rs (target/debug/deps/isolation-1e4cc445234900f4)
+     Running tests/lock_invariant.rs (target/debug/deps/lock_invariant-cbce62edf1c01d9f)
+     Running tests/tmux_read_only.rs (target/debug/deps/tmux_read_only-6c3b6672991501e2)
+   Doc-tests daemoneye
+
+```
+
+**Files changed:**
+
+- `docs/dev/milestones/M40-security-hardening/README.md` — +1 -1
+- `docs/dev/milestones/M40-security-hardening/phase-12-fd-hygiene.md` — +121 -1
+- `src/daemon/executor/shell_label.rs` — +44 -1
+- `src/daemon/ready.rs` — +19 -1
+
+**Commit:** a2b235441323a5befb80a3544bbe4e1534f48d2c
+
+**Notes:** server-authored completion entry (executor no longer owns the bookkeeping tail; see M27 phase-03).
