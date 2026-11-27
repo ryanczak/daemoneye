@@ -60,7 +60,7 @@ check confirmed all ten rows marked `yes`.
 | C9 | `load_session_messages` drains without turn-boundary repair, leaving orphan tool results | `session_store.rs` | M41 06 | | |
 | C10 | background compaction: epoch 1 starts at `now`, ignores the session's model window, hardcodes `tail_first_turn = 0` | `context/background.rs` | M41 07 | | |
 | C11 | `AsyncStdin::read_line` decodes bytes as Latin-1 | `cli/input/tty.rs` | M41 14 | | |
-| C12 | SSE retry: transport errors fall into stall retries, non-retriable errors retry, Gemini malformed calls emit three errors | `ai/backends/mod.rs`, `gemini.rs` | M41 04 | | |
+| C12 | SSE retry: transport errors fall into stall retries, non-retriable errors retry, Gemini malformed calls emit three errors | `ai/backends/mod.rs`, `gemini.rs` | M41 04 | yes: probed 2026-11-27 with a scratch `drive_sse_stream` test — a dropped chunked body got 6 requests (1+3+2); a `quota exceeded` error frame got 3; an unrecoverable `MALFORMED_FUNCTION_CALL` got 3 requests and 3 `AiEvent::Error` | |
 | C13 | DST-skipped midnight resets daily spend | `daemon/spend.rs` · `local_day_bounds` | M41 16 | | |
 | C14 | `turn_inbox` missed on cold reload, leaked on early error exits | `server/ask_helpers.rs`, `stream/conversation.rs` | M41 11 | | |
 | C15 | chapter block prints epoch sequence ids as turns; unchecked `turn_end - turn_start` | `context/epochs.rs` | M41 07 | | |
@@ -76,7 +76,7 @@ check confirmed all ten rows marked `yes`.
 | C23c | unchecked `u16` SGR mouse math; bracketed paste drops `[` | `cli/input/tty.rs` | M41 14 | | |
 | C23d | `/clear` and `/new` leave status bar, transcript and `held_presence` stale | `cli/commands/chat_loop.rs` | M41 15 | | |
 | C23e | `top_tui_loop` has no panic restore and enables raw mode before the guard | `cli/commands/top_tui_loop.rs` | M41 15 | | |
-| C24 | `"error": null` aborts OpenAI/Gemini proxy streams | `openai.rs`, `gemini.rs` | M41 04 | | |
+| C24 | `"error": null` aborts OpenAI/Gemini proxy streams | `openai.rs`, `gemini.rs` | M41 04 | yes: probed 2026-11-27 — an `{"error":null,…"hi"…}` frame failed through `OpenAiClient::chat` and through the Gemini handler, 3 requests each | |
 | C25 | `finish_command` drops counters after six-slot eviction | `daemon/stats.rs` | M41 16 | | |
 | C26 | `gpt-5`, `gpt-4.1`, `o1`/`o3`/`o4` default to a 32k context window | `config/models.rs` | M41 16 | | |
 

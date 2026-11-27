@@ -6,8 +6,8 @@ signed off by the PE 2026-11-27. Then M42 Performance and M43
 Architecture, then the MCP surface (M44) and Knowledge (M45). M40 (Security
 hardening) closed 2026-11-27 as `2.12.0`, pushed.
 
-**Active phase:** [phase 03 circuit-breaker](milestones/M41-correctness/phase-03-circuit-breaker.md)
-(C7), done (escalated) 2026-11-27. Phase 04 is drafted next.
+**Active phase:** [phase 04 sse-retry](milestones/M41-correctness/phase-04-sse-retry.md)
+(C12 C24), `todo`, drafted 2026-11-27.
 - Phase 01, test-hazards: done (escalated). Closed Q9, Q10 and Q11.
 - Phase 02, gate-blind-spots: done (approved_after_1). Closed Q4 and Q5.
 - Phase 03, circuit-breaker: done (escalated after 2 bounces). Closed C7.
